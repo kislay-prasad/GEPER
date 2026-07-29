@@ -1,0 +1,10 @@
+#ClinGen Gene Curation Results
+#28 Jul,2026
+#Genomic Locations are reported on GRCh38 (hg38): GCF_000001405.36
+#https://www.ncbi.nlm.nih.gov/projects/dbvar/clingen
+#to create link: https://www.ncbi.nlm.nih.gov/projects/dbvar/clingen/clingen_gene.cgi?sym=Gene Symbol
+#Gene Symbol	Gene ID	cytoBand	Genomic Location	Haploinsufficiency Score	Haploinsufficiency Description	Haploinsufficiency PMID1	Haploinsufficiency PMID2	Haploinsufficiency PMID3	Haploinsufficiency PMID4	Haploinsufficiency PMID5	Haploinsufficiency PMID6	Triplosensitivity Score	Triplosensitivity Description	Triplosensitivity PMID1	Triplosensitivity PMID2	Triplosensitivity PMID3	Triplosensitivity PMID4	Triplosensitivity PMID5	Triplosensitivity PMID6	Date Last Evaluated	Haploinsufficiency Disease ID	Triplosensitivity Disease ID
+BRCA1	672	17q21.31	chr17:43044295-43170327	3	Sufficient evidence for dosage pathogenicity	32375709	21989022	11802209	24312913			0	No evidence available							2021-09-23	MONDO:0700268	
+BRCA2	675	13q13.1	chr13:32315508-32400268	3	Sufficient evidence for dosage pathogenicity	16199546	17063271	25632310	12097290	11897832	12569143	0	No evidence available							2021-07-14	MONDO:0700269	
+CFTR	1080	7q31.2	chr7:117480025-117668665	30	Gene associated with autosomal recessive phenotype							Not yet evaluated	Not yet evaluated							2016-08-22	MONDO:0009061	
+MYH7	4625	14q11.2	chr14:23412740-23435660	0	No evidence available							0	No evidence available							2015-11-15		

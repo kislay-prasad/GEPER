@@ -1,0 +1,3500 @@
+<?xml version='1.0' encoding='utf-8'?>
+<JDBOR date="2026-06-23 07:57:31" version="1.3.42 / 4.1.8 [2025-03-03]" copyright="Orphanet (c) 2026" dbserver="jdbc:sybase:Tds:canard.orpha.net:2020">
+  <DisorderList count="5">
+    <Disorder id="49">
+      <OrphaCode>586</OrphaCode>
+      <ExpertLink lang="en">http://www.orpha.net/consor/cgi-bin/OC_Exp.php?lng=en&amp;Expert=586</ExpertLink>
+      <Name lang="en">Cystic fibrosis</Name>
+      <DisorderType id="21394">
+        <Name lang="en">Disease</Name>
+      </DisorderType>
+      <DisorderGroup id="36547">
+        <Name lang="en">Disorder</Name>
+      </DisorderGroup>
+      <DisorderGeneAssociationList count="19">
+        <DisorderGeneAssociation>
+          <SourceOfValidation>19738092[PMID]</SourceOfValidation>
+          <Gene id="15271">
+            <Name lang="en">serpin family A member 1</Name>
+            <Symbol>SERPINA1</Symbol>
+            <SynonymList count="11">
+              <Synonym lang="en">A1A</Synonym>
+              <Synonym lang="en">A1AT</Synonym>
+              <Synonym lang="en">AAT</Synonym>
+              <Synonym lang="en">PI1</Synonym>
+              <Synonym lang="en">alpha-1 antitrypsin</Synonym>
+              <Synonym lang="en">alpha-1 proteinase inhibitor</Synonym>
+              <Synonym lang="en">alpha-1-antitrypsin</Synonym>
+              <Synonym lang="en">alpha1AT</Synonym>
+              <Synonym lang="en">anti-elastase</Synonym>
+              <Synonym lang="en">protease inhibitor 1</Synonym>
+              <Synonym lang="en">protease inhibitor 1 (anti-elastase), alpha-1-antitrypsin</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248485">
+                <Source>ClinVar</Source>
+                <Reference>SERPINA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="56950">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000197249</Reference>
+              </ExternalReference>
+              <ExternalReference id="25714">
+                <Source>Genatlas</Source>
+                <Reference>SERPINA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="25716">
+                <Source>HGNC</Source>
+                <Reference>8941</Reference>
+              </ExternalReference>
+              <ExternalReference id="25715">
+                <Source>OMIM</Source>
+                <Reference>107400</Reference>
+              </ExternalReference>
+              <ExternalReference id="56951">
+                <Source>Reactome</Source>
+                <Reference>P01009</Reference>
+              </ExternalReference>
+              <ExternalReference id="33829">
+                <Source>SwissProt</Source>
+                <Reference>P01009</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="90821">
+                <GeneLocus>14q32.13</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22214395[PMID]</SourceOfValidation>
+          <Gene id="15441">
+            <Name lang="en">CF transmembrane conductance regulator</Name>
+            <Symbol>CFTR</Symbol>
+            <SynonymList count="6">
+              <Synonym lang="en">ABC35</Synonym>
+              <Synonym lang="en">ATP-binding cassette sub-family C, member 7</Synonym>
+              <Synonym lang="en">CFTR/MRP</Synonym>
+              <Synonym lang="en">MRP7</Synonym>
+              <Synonym lang="en">TNR-CFTR</Synonym>
+              <Synonym lang="en">dJ760C5.1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="248640">
+                <Source>ClinVar</Source>
+                <Reference>CFTR</Reference>
+              </ExternalReference>
+              <ExternalReference id="56733">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000001626</Reference>
+              </ExternalReference>
+              <ExternalReference id="26534">
+                <Source>Genatlas</Source>
+                <Reference>CFTR</Reference>
+              </ExternalReference>
+              <ExternalReference id="26532">
+                <Source>HGNC</Source>
+                <Reference>1884</Reference>
+              </ExternalReference>
+              <ExternalReference id="82808">
+                <Source>IUPHAR</Source>
+                <Reference>707</Reference>
+              </ExternalReference>
+              <ExternalReference id="32319">
+                <Source>OMIM</Source>
+                <Reference>602421</Reference>
+              </ExternalReference>
+              <ExternalReference id="56734">
+                <Source>Reactome</Source>
+                <Reference>P13569</Reference>
+              </ExternalReference>
+              <ExternalReference id="32410">
+                <Source>SwissProt</Source>
+                <Reference>P13569</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91131">
+                <GeneLocus>7q31.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="25972">
+            <Name lang="en">Disease-causing germline mutation(s) (loss of function) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>18424453[PMID]</SourceOfValidation>
+          <Gene id="15606">
+            <Name lang="en">transforming growth factor beta 1</Name>
+            <Symbol>TGFB1</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">CED</Synonym>
+              <Synonym lang="en">Camurati-Engelmann disease</Synonym>
+              <Synonym lang="en">Diaphyseal dysplasia 1, progressive</Synonym>
+              <Synonym lang="en">TGFbeta</Synonym>
+              <Synonym lang="en">prepro-transforming growth factor beta-1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248795">
+                <Source>ClinVar</Source>
+                <Reference>TGFB1</Reference>
+              </ExternalReference>
+              <ExternalReference id="58047">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000105329</Reference>
+              </ExternalReference>
+              <ExternalReference id="27333">
+                <Source>Genatlas</Source>
+                <Reference>TGFB1</Reference>
+              </ExternalReference>
+              <ExternalReference id="27335">
+                <Source>HGNC</Source>
+                <Reference>11766</Reference>
+              </ExternalReference>
+              <ExternalReference id="27334">
+                <Source>OMIM</Source>
+                <Reference>190180</Reference>
+              </ExternalReference>
+              <ExternalReference id="58048">
+                <Source>Reactome</Source>
+                <Reference>P01137</Reference>
+              </ExternalReference>
+              <ExternalReference id="32577">
+                <Source>SwissProt</Source>
+                <Reference>P01137</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91441">
+                <GeneLocus>19q13.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>16690975[PMID]</SourceOfValidation>
+          <Gene id="16111">
+            <Name lang="en">glutamate-cysteine ligase catalytic subunit</Name>
+            <Symbol>GCLC</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">GCS</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249250">
+                <Source>ClinVar</Source>
+                <Reference>GCLC</Reference>
+              </ExternalReference>
+              <ExternalReference id="58976">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000001084</Reference>
+              </ExternalReference>
+              <ExternalReference id="29762">
+                <Source>Genatlas</Source>
+                <Reference>GCLC</Reference>
+              </ExternalReference>
+              <ExternalReference id="29760">
+                <Source>HGNC</Source>
+                <Reference>4311</Reference>
+              </ExternalReference>
+              <ExternalReference id="29759">
+                <Source>OMIM</Source>
+                <Reference>606857</Reference>
+              </ExternalReference>
+              <ExternalReference id="58977">
+                <Source>Reactome</Source>
+                <Reference>P48506</Reference>
+              </ExternalReference>
+              <ExternalReference id="33126">
+                <Source>SwissProt</Source>
+                <Reference>P48506</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92351">
+                <GeneLocus>6p12.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>16179637[PMID]</SourceOfValidation>
+          <Gene id="16399">
+            <Name lang="en">macrophage migration inhibitory factor</Name>
+            <Symbol>MIF</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">GIF</Synonym>
+              <Synonym lang="en">glycosylation-inhibiting factor</Synonym>
+              <Synonym lang="en">phenylpyruvate tautomerase</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249518">
+                <Source>ClinVar</Source>
+                <Reference>MIF</Reference>
+              </ExternalReference>
+              <ExternalReference id="59464">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000240972</Reference>
+              </ExternalReference>
+              <ExternalReference id="37516">
+                <Source>Genatlas</Source>
+                <Reference>MIF</Reference>
+              </ExternalReference>
+              <ExternalReference id="31129">
+                <Source>HGNC</Source>
+                <Reference>7097</Reference>
+              </ExternalReference>
+              <ExternalReference id="31128">
+                <Source>OMIM</Source>
+                <Reference>153620</Reference>
+              </ExternalReference>
+              <ExternalReference id="98066">
+                <Source>Reactome</Source>
+                <Reference>P14174</Reference>
+              </ExternalReference>
+              <ExternalReference id="33463">
+                <Source>SwissProt</Source>
+                <Reference>P14174</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92887">
+                <GeneLocus>22q11.23</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>30291871[PMID]</SourceOfValidation>
+          <Gene id="16446">
+            <Name lang="en">homeostatic iron regulator</Name>
+            <Symbol>HFE</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">HFE1</Synonym>
+              <Synonym lang="en">HLA-H</Synonym>
+              <Synonym lang="en">high Fe</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249553">
+                <Source>ClinVar</Source>
+                <Reference>HFE</Reference>
+              </ExternalReference>
+              <ExternalReference id="59415">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000010704</Reference>
+              </ExternalReference>
+              <ExternalReference id="34038">
+                <Source>Genatlas</Source>
+                <Reference>HFE</Reference>
+              </ExternalReference>
+              <ExternalReference id="31336">
+                <Source>HGNC</Source>
+                <Reference>4886</Reference>
+              </ExternalReference>
+              <ExternalReference id="48348">
+                <Source>OMIM</Source>
+                <Reference>613609</Reference>
+              </ExternalReference>
+              <ExternalReference id="143455">
+                <Source>Reactome</Source>
+                <Reference>Q30201</Reference>
+              </ExternalReference>
+              <ExternalReference id="33508">
+                <Source>SwissProt</Source>
+                <Reference>Q30201</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92957">
+                <GeneLocus>6p22.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28756021[PMID]</SourceOfValidation>
+          <Gene id="17203">
+            <Name lang="en">solute carrier family 11 member 1</Name>
+            <Symbol>SLC11A1</Symbol>
+            <SynonymList count="0">
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="249860">
+                <Source>ClinVar</Source>
+                <Reference>SLC11A1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57737">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000018280</Reference>
+              </ExternalReference>
+              <ExternalReference id="36293">
+                <Source>Genatlas</Source>
+                <Reference>SLC11A1</Reference>
+              </ExternalReference>
+              <ExternalReference id="36292">
+                <Source>HGNC</Source>
+                <Reference>10907</Reference>
+              </ExternalReference>
+              <ExternalReference id="190429">
+                <Source>IUPHAR</Source>
+                <Reference>966</Reference>
+              </ExternalReference>
+              <ExternalReference id="36294">
+                <Source>OMIM</Source>
+                <Reference>600266</Reference>
+              </ExternalReference>
+              <ExternalReference id="57738">
+                <Source>Reactome</Source>
+                <Reference>P49279</Reference>
+              </ExternalReference>
+              <ExternalReference id="36295">
+                <Source>SwissProt</Source>
+                <Reference>P49279</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="93571">
+                <GeneLocus>2q35</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22772370[PMID]</SourceOfValidation>
+          <Gene id="21303">
+            <Name lang="en">dynactin subunit 4</Name>
+            <Symbol>DCTN4</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">Dyn4</Synonym>
+              <Synonym lang="en">p62</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250889">
+                <Source>ClinVar</Source>
+                <Reference>DCTN4</Reference>
+              </ExternalReference>
+              <ExternalReference id="83464">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000132912</Reference>
+              </ExternalReference>
+              <ExternalReference id="70663">
+                <Source>Genatlas</Source>
+                <Reference>DCTN4</Reference>
+              </ExternalReference>
+              <ExternalReference id="70661">
+                <Source>HGNC</Source>
+                <Reference>15518</Reference>
+              </ExternalReference>
+              <ExternalReference id="70662">
+                <Source>OMIM</Source>
+                <Reference>614758</Reference>
+              </ExternalReference>
+              <ExternalReference id="83463">
+                <Source>Reactome</Source>
+                <Reference>Q9UJW0</Reference>
+              </ExternalReference>
+              <ExternalReference id="70664">
+                <Source>SwissProt</Source>
+                <Reference>Q9UJW0</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="95629">
+                <GeneLocus>5q33.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>23073314[PMID]</SourceOfValidation>
+          <Gene id="22162">
+            <Name lang="en">chloride channel accessory 4</Name>
+            <Symbol>CLCA4</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">CaCC2</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="251142">
+                <Source>ClinVar</Source>
+                <Reference>CLCA4</Reference>
+              </ExternalReference>
+              <ExternalReference id="83851">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000016602</Reference>
+              </ExternalReference>
+              <ExternalReference id="79686">
+                <Source>Genatlas</Source>
+                <Reference>CLCA4</Reference>
+              </ExternalReference>
+              <ExternalReference id="79685">
+                <Source>HGNC</Source>
+                <Reference>2018</Reference>
+              </ExternalReference>
+              <ExternalReference id="100087">
+                <Source>OMIM</Source>
+                <Reference>616857</Reference>
+              </ExternalReference>
+              <ExternalReference id="97347">
+                <Source>Reactome</Source>
+                <Reference>Q14CN2</Reference>
+              </ExternalReference>
+              <ExternalReference id="79687">
+                <Source>SwissProt</Source>
+                <Reference>Q14CN2</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="96135">
+                <GeneLocus>1p22.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>23572023[PMID]</SourceOfValidation>
+          <Gene id="22536">
+            <Name lang="en">syntaxin 1A</Name>
+            <Symbol>STX1A</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">HPC-1</Synonym>
+              <Synonym lang="en">p35-1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="251281">
+                <Source>ClinVar</Source>
+                <Reference>STX1A</Reference>
+              </ExternalReference>
+              <ExternalReference id="84092">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000106089</Reference>
+              </ExternalReference>
+              <ExternalReference id="82548">
+                <Source>Genatlas</Source>
+                <Reference>STX1A</Reference>
+              </ExternalReference>
+              <ExternalReference id="82546">
+                <Source>HGNC</Source>
+                <Reference>11433</Reference>
+              </ExternalReference>
+              <ExternalReference id="82547">
+                <Source>OMIM</Source>
+                <Reference>186590</Reference>
+              </ExternalReference>
+              <ExternalReference id="84091">
+                <Source>Reactome</Source>
+                <Reference>Q16623</Reference>
+              </ExternalReference>
+              <ExternalReference id="82549">
+                <Source>SwissProt</Source>
+                <Reference>Q16623</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="96413">
+                <GeneLocus>7q11.23</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>29915289[PMID]</SourceOfValidation>
+          <Gene id="23430">
+            <Name lang="en">potassium calcium-activated channel subfamily N member 4</Name>
+            <Symbol>KCNN4</Symbol>
+            <SynonymList count="7">
+              <Synonym lang="en">IK</Synonym>
+              <Synonym lang="en">KCa3.1</Synonym>
+              <Synonym lang="en">hIKCa1</Synonym>
+              <Synonym lang="en">hKCa4</Synonym>
+              <Synonym lang="en">hSK4</Synonym>
+              <Synonym lang="en">intermediate conductance calcium-activated potassium channel</Synonym>
+              <Synonym lang="en">small conductance calcium-activated potassium channel 4</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="251647">
+                <Source>ClinVar</Source>
+                <Reference>KCNN4</Reference>
+              </ExternalReference>
+              <ExternalReference id="96866">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000104783</Reference>
+              </ExternalReference>
+              <ExternalReference id="96863">
+                <Source>Genatlas</Source>
+                <Reference>KCNN4</Reference>
+              </ExternalReference>
+              <ExternalReference id="96861">
+                <Source>HGNC</Source>
+                <Reference>6293</Reference>
+              </ExternalReference>
+              <ExternalReference id="96867">
+                <Source>IUPHAR</Source>
+                <Reference>384</Reference>
+              </ExternalReference>
+              <ExternalReference id="96862">
+                <Source>OMIM</Source>
+                <Reference>602754</Reference>
+              </ExternalReference>
+              <ExternalReference id="96865">
+                <Source>Reactome</Source>
+                <Reference>O15554</Reference>
+              </ExternalReference>
+              <ExternalReference id="96864">
+                <Source>SwissProt</Source>
+                <Reference>O15554</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97145">
+                <GeneLocus>19q13.31</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20028935[PMID]</SourceOfValidation>
+          <Gene id="23587">
+            <Name lang="en">endothelin receptor type A</Name>
+            <Symbol>EDNRA</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">ET-A</Synonym>
+              <Synonym lang="en">ETA-R</Synonym>
+              <Synonym lang="en">hET-AR</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="251697">
+                <Source>ClinVar</Source>
+                <Reference>EDNRA</Reference>
+              </ExternalReference>
+              <ExternalReference id="98457">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000151617</Reference>
+              </ExternalReference>
+              <ExternalReference id="98454">
+                <Source>Genatlas</Source>
+                <Reference>EDNRA</Reference>
+              </ExternalReference>
+              <ExternalReference id="98452">
+                <Source>HGNC</Source>
+                <Reference>3179</Reference>
+              </ExternalReference>
+              <ExternalReference id="98458">
+                <Source>IUPHAR</Source>
+                <Reference>219</Reference>
+              </ExternalReference>
+              <ExternalReference id="98453">
+                <Source>OMIM</Source>
+                <Reference>131243</Reference>
+              </ExternalReference>
+              <ExternalReference id="98456">
+                <Source>Reactome</Source>
+                <Reference>P25101</Reference>
+              </ExternalReference>
+              <ExternalReference id="98455">
+                <Source>SwissProt</Source>
+                <Reference>P25101</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97245">
+                <GeneLocus>4q31.22-q31.23</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28756021[PMID]</SourceOfValidation>
+          <Gene id="23673">
+            <Name lang="en">solute carrier family 9 member A3</Name>
+            <Symbol>SLC9A3</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">Sodium/hydrogen exchanger 3</Synonym>
+              <Synonym lang="en">NHE-3</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="251738">
+                <Source>ClinVar</Source>
+                <Reference>SLC9A3</Reference>
+              </ExternalReference>
+              <ExternalReference id="100262">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000066230</Reference>
+              </ExternalReference>
+              <ExternalReference id="100259">
+                <Source>Genatlas</Source>
+                <Reference>SLC9A3</Reference>
+              </ExternalReference>
+              <ExternalReference id="100257">
+                <Source>HGNC</Source>
+                <Reference>11073</Reference>
+              </ExternalReference>
+              <ExternalReference id="100263">
+                <Source>IUPHAR</Source>
+                <Reference>950</Reference>
+              </ExternalReference>
+              <ExternalReference id="100258">
+                <Source>OMIM</Source>
+                <Reference>182307</Reference>
+              </ExternalReference>
+              <ExternalReference id="100261">
+                <Source>Reactome</Source>
+                <Reference>P48764</Reference>
+              </ExternalReference>
+              <ExternalReference id="100260">
+                <Source>SwissProt</Source>
+                <Reference>P48764</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97327">
+                <GeneLocus>5p15.33</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28289476[PMID]</SourceOfValidation>
+          <Gene id="24601">
+            <Name lang="en">heme oxygenase 1</Name>
+            <Symbol>HMOX1</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">HO-1</Synonym>
+              <Synonym lang="en">bK286B10</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="251903">
+                <Source>ClinVar</Source>
+                <Reference>HMOX1</Reference>
+              </ExternalReference>
+              <ExternalReference id="133943">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000100292</Reference>
+              </ExternalReference>
+              <ExternalReference id="144262">
+                <Source>Genatlas</Source>
+                <Reference>HMOX1</Reference>
+              </ExternalReference>
+              <ExternalReference id="131418">
+                <Source>HGNC</Source>
+                <Reference>5013</Reference>
+              </ExternalReference>
+              <ExternalReference id="190763">
+                <Source>IUPHAR</Source>
+                <Reference>1441</Reference>
+              </ExternalReference>
+              <ExternalReference id="132153">
+                <Source>OMIM</Source>
+                <Reference>141250</Reference>
+              </ExternalReference>
+              <ExternalReference id="134339">
+                <Source>Reactome</Source>
+                <Reference>P09601</Reference>
+              </ExternalReference>
+              <ExternalReference id="132876">
+                <Source>SwissProt</Source>
+                <Reference>P09601</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97657">
+                <GeneLocus>22q12.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28756021[PMID]</SourceOfValidation>
+          <Gene id="24919">
+            <Name lang="en">solute carrier family 6 member 14</Name>
+            <Symbol>SLC6A14</Symbol>
+            <SynonymList count="0">
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="251974">
+                <Source>ClinVar</Source>
+                <Reference>SLC6A14</Reference>
+              </ExternalReference>
+              <ExternalReference id="133600">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000268104</Reference>
+              </ExternalReference>
+              <ExternalReference id="144125">
+                <Source>Genatlas</Source>
+                <Reference>SLC6A14</Reference>
+              </ExternalReference>
+              <ExternalReference id="131736">
+                <Source>HGNC</Source>
+                <Reference>11047</Reference>
+              </ExternalReference>
+              <ExternalReference id="190780">
+                <Source>IUPHAR</Source>
+                <Reference>937</Reference>
+              </ExternalReference>
+              <ExternalReference id="132459">
+                <Source>OMIM</Source>
+                <Reference>300444</Reference>
+              </ExternalReference>
+              <ExternalReference id="134544">
+                <Source>Reactome</Source>
+                <Reference>Q9UN76</Reference>
+              </ExternalReference>
+              <ExternalReference id="133183">
+                <Source>SwissProt</Source>
+                <Reference>Q9UN76</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97799">
+                <GeneLocus>Xq23</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28756021[PMID]</SourceOfValidation>
+          <Gene id="30102">
+            <Name lang="en">solute carrier family 26 member 9</Name>
+            <Symbol>SLC26A9</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">anion transporter/exchanger-9</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="5">
+              <ExternalReference id="192706">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000174502</Reference>
+              </ExternalReference>
+              <ExternalReference id="189666">
+                <Source>HGNC</Source>
+                <Reference>14469</Reference>
+              </ExternalReference>
+              <ExternalReference id="192708">
+                <Source>IUPHAR</Source>
+                <Reference>1103</Reference>
+              </ExternalReference>
+              <ExternalReference id="192707">
+                <Source>OMIM</Source>
+                <Reference>608481</Reference>
+              </ExternalReference>
+              <ExternalReference id="201327">
+                <Source>SwissProt</Source>
+                <Reference>Q7LBE3</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="81629">
+                <GeneLocus>1q32.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20047061[PMID]</SourceOfValidation>
+          <Gene id="30609">
+            <Name lang="en">CEA cell adhesion molecule 3</Name>
+            <Symbol>CEACAM3</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">CD66d</Synonym>
+              <Synonym lang="en">CGM1a</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="4">
+              <ExternalReference id="194794">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000170956</Reference>
+              </ExternalReference>
+              <ExternalReference id="194197">
+                <Source>HGNC</Source>
+                <Reference>1815</Reference>
+              </ExternalReference>
+              <ExternalReference id="194795">
+                <Source>OMIM</Source>
+                <Reference>609142</Reference>
+              </ExternalReference>
+              <ExternalReference id="200896">
+                <Source>SwissProt</Source>
+                <Reference>P40198</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="80767">
+                <GeneLocus>19q13.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20047061[PMID]</SourceOfValidation>
+          <Gene id="30610">
+            <Name lang="en">CEA cell adhesion molecule 6</Name>
+            <Symbol>CEACAM6</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">CD66c</Synonym>
+              <Synonym lang="en">NCA-50/90</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="4">
+              <ExternalReference id="194800">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000086548</Reference>
+              </ExternalReference>
+              <ExternalReference id="194198">
+                <Source>HGNC</Source>
+                <Reference>1818</Reference>
+              </ExternalReference>
+              <ExternalReference id="194801">
+                <Source>OMIM</Source>
+                <Reference>163980</Reference>
+              </ExternalReference>
+              <ExternalReference id="200899">
+                <Source>SwissProt</Source>
+                <Reference>P40199</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="80773">
+                <GeneLocus>19q13.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28289476[PMID]</SourceOfValidation>
+          <Gene id="30611">
+            <Name lang="en">glutathione S-transferase mu 3</Name>
+            <Symbol>GSTM3</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">GST5</Synonym>
+              <Synonym lang="en">GSTM3TV2</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="4">
+              <ExternalReference id="194797">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000134202</Reference>
+              </ExternalReference>
+              <ExternalReference id="194199">
+                <Source>HGNC</Source>
+                <Reference>4635</Reference>
+              </ExternalReference>
+              <ExternalReference id="194798">
+                <Source>OMIM</Source>
+                <Reference>138390</Reference>
+              </ExternalReference>
+              <ExternalReference id="200898">
+                <Source>SwissProt</Source>
+                <Reference>P21266</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="80771">
+                <GeneLocus>1p13.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17967">
+            <Name lang="en">Modifying germline mutation in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+      </DisorderGeneAssociationList>
+    </Disorder>
+    <Disorder id="634">
+      <OrphaCode>84</OrphaCode>
+      <ExpertLink lang="en">http://www.orpha.net/consor/cgi-bin/OC_Exp.php?lng=en&amp;Expert=84</ExpertLink>
+      <Name lang="en">Fanconi anemia</Name>
+      <DisorderType id="21401">
+        <Name lang="en">Malformation syndrome</Name>
+      </DisorderType>
+      <DisorderGroup id="36547">
+        <Name lang="en">Disorder</Name>
+      </DisorderGroup>
+      <DisorderGeneAssociationList count="23">
+        <DisorderGeneAssociation>
+          <SourceOfValidation>26681308[PMID]</SourceOfValidation>
+          <Gene id="15183">
+            <Name lang="en">RAD51 recombinase</Name>
+            <Symbol>RAD51</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">BRCC5</Synonym>
+              <Synonym lang="en">FANCR</Synonym>
+              <Synonym lang="en">HsRad51</Synonym>
+              <Synonym lang="en">HsT16930</Synonym>
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 5</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248404">
+                <Source>ClinVar</Source>
+                <Reference>RAD51</Reference>
+              </ExternalReference>
+              <ExternalReference id="58596">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000051180</Reference>
+              </ExternalReference>
+              <ExternalReference id="37325">
+                <Source>Genatlas</Source>
+                <Reference>RAD51</Reference>
+              </ExternalReference>
+              <ExternalReference id="25305">
+                <Source>HGNC</Source>
+                <Reference>9817</Reference>
+              </ExternalReference>
+              <ExternalReference id="25304">
+                <Source>OMIM</Source>
+                <Reference>179617</Reference>
+              </ExternalReference>
+              <ExternalReference id="58597">
+                <Source>Reactome</Source>
+                <Reference>Q06609</Reference>
+              </ExternalReference>
+              <ExternalReference id="33707">
+                <Source>SwissProt</Source>
+                <Reference>Q06609</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="90659">
+                <GeneLocus>15q15.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>29133208[PMID]</SourceOfValidation>
+          <Gene id="15377">
+            <Name lang="en">BRCA1 DNA repair associated</Name>
+            <Symbol>BRCA1</Symbol>
+            <SynonymList count="7">
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 1</Synonym>
+              <Synonym lang="en">BRCC1</Synonym>
+              <Synonym lang="en">FANCS</Synonym>
+              <Synonym lang="en">Fanconi anemia, complementation group S</Synonym>
+              <Synonym lang="en">PPP1R53</Synonym>
+              <Synonym lang="en">RNF53</Synonym>
+              <Synonym lang="en">protein phosphatase 1, regulatory subunit 53</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248584">
+                <Source>ClinVar</Source>
+                <Reference>BRCA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57779">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000012048</Reference>
+              </ExternalReference>
+              <ExternalReference id="26225">
+                <Source>Genatlas</Source>
+                <Reference>BRCA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="26227">
+                <Source>HGNC</Source>
+                <Reference>1100</Reference>
+              </ExternalReference>
+              <ExternalReference id="26226">
+                <Source>OMIM</Source>
+                <Reference>113705</Reference>
+              </ExternalReference>
+              <ExternalReference id="57780">
+                <Source>Reactome</Source>
+                <Reference>P38398</Reference>
+              </ExternalReference>
+              <ExternalReference id="33934">
+                <Source>SwissProt</Source>
+                <Reference>P38398</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91019">
+                <GeneLocus>17q21.31</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="25972">
+            <Name lang="en">Disease-causing germline mutation(s) (loss of function) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="15378">
+            <Name lang="en">BRCA2 DNA repair associated</Name>
+            <Symbol>BRCA2</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 2</Synonym>
+              <Synonym lang="en">BRCC2</Synonym>
+              <Synonym lang="en">FAD</Synonym>
+              <Synonym lang="en">FAD1</Synonym>
+              <Synonym lang="en">XRCC11</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248585">
+                <Source>ClinVar</Source>
+                <Reference>BRCA2</Reference>
+              </ExternalReference>
+              <ExternalReference id="57415">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000139618</Reference>
+              </ExternalReference>
+              <ExternalReference id="26233">
+                <Source>Genatlas</Source>
+                <Reference>BRCA2</Reference>
+              </ExternalReference>
+              <ExternalReference id="26231">
+                <Source>HGNC</Source>
+                <Reference>1101</Reference>
+              </ExternalReference>
+              <ExternalReference id="26230">
+                <Source>OMIM</Source>
+                <Reference>600185</Reference>
+              </ExternalReference>
+              <ExternalReference id="57416">
+                <Source>Reactome</Source>
+                <Reference>P51587</Reference>
+              </ExternalReference>
+              <ExternalReference id="33935">
+                <Source>SwissProt</Source>
+                <Reference>P51587</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91021">
+                <GeneLocus>13q13.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="15379">
+            <Name lang="en">BRCA1 interacting DNA helicase 1</Name>
+            <Symbol>BRIP1</Symbol>
+            <SynonymList count="7">
+              <Synonym lang="en">BACH1</Synonym>
+              <Synonym lang="en">BRCA1 interacting protein 1</Synonym>
+              <Synonym lang="en">BRCA1-associated C-terminal helicase</Synonym>
+              <Synonym lang="en">BRCA1/BRCA2-associated helicase 1</Synonym>
+              <Synonym lang="en">FANCJ</Synonym>
+              <Synonym lang="en">FANCJ helicase</Synonym>
+              <Synonym lang="en">OF</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248586">
+                <Source>ClinVar</Source>
+                <Reference>BRIP1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57413">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000136492</Reference>
+              </ExternalReference>
+              <ExternalReference id="26235">
+                <Source>Genatlas</Source>
+                <Reference>BRIP1</Reference>
+              </ExternalReference>
+              <ExternalReference id="26237">
+                <Source>HGNC</Source>
+                <Reference>20473</Reference>
+              </ExternalReference>
+              <ExternalReference id="26236">
+                <Source>OMIM</Source>
+                <Reference>605882</Reference>
+              </ExternalReference>
+              <ExternalReference id="57414">
+                <Source>Reactome</Source>
+                <Reference>Q9BX63</Reference>
+              </ExternalReference>
+              <ExternalReference id="33936">
+                <Source>SwissProt</Source>
+                <Reference>Q9BX63</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91023">
+                <GeneLocus>17q23.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>23623386[PMID]</SourceOfValidation>
+          <Gene id="15990">
+            <Name lang="en">ERCC excision repair 4, endonuclease catalytic subunit</Name>
+            <Symbol>ERCC4</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FANCQ</Synonym>
+              <Synonym lang="en">RAD1</Synonym>
+              <Synonym lang="en">xeroderma pigmentosum, complementation group F</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249135">
+                <Source>ClinVar</Source>
+                <Reference>ERCC4</Reference>
+              </ExternalReference>
+              <ExternalReference id="60537">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000175595</Reference>
+              </ExternalReference>
+              <ExternalReference id="29156">
+                <Source>Genatlas</Source>
+                <Reference>ERCC4</Reference>
+              </ExternalReference>
+              <ExternalReference id="29154">
+                <Source>HGNC</Source>
+                <Reference>3436</Reference>
+              </ExternalReference>
+              <ExternalReference id="29153">
+                <Source>OMIM</Source>
+                <Reference>133520</Reference>
+              </ExternalReference>
+              <ExternalReference id="60538">
+                <Source>Reactome</Source>
+                <Reference>Q92889</Reference>
+              </ExternalReference>
+              <ExternalReference id="33003">
+                <Source>SwissProt</Source>
+                <Reference>Q92889</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92121">
+                <GeneLocus>16p13.12</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16020">
+            <Name lang="en">FA complementation group A</Name>
+            <Symbol>FANCA</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FA-H</Synonym>
+              <Synonym lang="en">FAA</Synonym>
+              <Synonym lang="en">FAH</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249165">
+                <Source>ClinVar</Source>
+                <Reference>FANCA</Reference>
+              </ExternalReference>
+              <ExternalReference id="57417">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000187741</Reference>
+              </ExternalReference>
+              <ExternalReference id="29307">
+                <Source>Genatlas</Source>
+                <Reference>FANCA</Reference>
+              </ExternalReference>
+              <ExternalReference id="29305">
+                <Source>HGNC</Source>
+                <Reference>3582</Reference>
+              </ExternalReference>
+              <ExternalReference id="29304">
+                <Source>OMIM</Source>
+                <Reference>607139</Reference>
+              </ExternalReference>
+              <ExternalReference id="57418">
+                <Source>Reactome</Source>
+                <Reference>O15360</Reference>
+              </ExternalReference>
+              <ExternalReference id="33034">
+                <Source>SwissProt</Source>
+                <Reference>O15360</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92181">
+                <GeneLocus>16q24.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16021">
+            <Name lang="en">FA complementation group B</Name>
+            <Symbol>FANCB</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FAAP95</Synonym>
+              <Synonym lang="en">FAB</Synonym>
+              <Synonym lang="en">FLJ34064</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249166">
+                <Source>ClinVar</Source>
+                <Reference>FANCB</Reference>
+              </ExternalReference>
+              <ExternalReference id="57419">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000181544</Reference>
+              </ExternalReference>
+              <ExternalReference id="29309">
+                <Source>Genatlas</Source>
+                <Reference>FANCB</Reference>
+              </ExternalReference>
+              <ExternalReference id="29311">
+                <Source>HGNC</Source>
+                <Reference>3583</Reference>
+              </ExternalReference>
+              <ExternalReference id="29310">
+                <Source>OMIM</Source>
+                <Reference>300515</Reference>
+              </ExternalReference>
+              <ExternalReference id="57420">
+                <Source>Reactome</Source>
+                <Reference>Q8NB91</Reference>
+              </ExternalReference>
+              <ExternalReference id="33035">
+                <Source>SwissProt</Source>
+                <Reference>Q8NB91</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92183">
+                <GeneLocus>Xp22.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16022">
+            <Name lang="en">FA complementation group C</Name>
+            <Symbol>FANCC</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FA3</Synonym>
+              <Synonym lang="en">FAC</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249167">
+                <Source>ClinVar</Source>
+                <Reference>FANCC</Reference>
+              </ExternalReference>
+              <ExternalReference id="57421">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000158169</Reference>
+              </ExternalReference>
+              <ExternalReference id="29317">
+                <Source>Genatlas</Source>
+                <Reference>FANCC</Reference>
+              </ExternalReference>
+              <ExternalReference id="29315">
+                <Source>HGNC</Source>
+                <Reference>3584</Reference>
+              </ExternalReference>
+              <ExternalReference id="51401">
+                <Source>OMIM</Source>
+                <Reference>613899</Reference>
+              </ExternalReference>
+              <ExternalReference id="57422">
+                <Source>Reactome</Source>
+                <Reference>Q00597</Reference>
+              </ExternalReference>
+              <ExternalReference id="33036">
+                <Source>SwissProt</Source>
+                <Reference>Q00597</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92185">
+                <GeneLocus>9q22.32</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16023">
+            <Name lang="en">FA complementation group D2</Name>
+            <Symbol>FANCD2</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FA-D2</Synonym>
+              <Synonym lang="en">FAD</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249168">
+                <Source>ClinVar</Source>
+                <Reference>FANCD2</Reference>
+              </ExternalReference>
+              <ExternalReference id="57423">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000144554</Reference>
+              </ExternalReference>
+              <ExternalReference id="29319">
+                <Source>Genatlas</Source>
+                <Reference>FANCD2</Reference>
+              </ExternalReference>
+              <ExternalReference id="29321">
+                <Source>HGNC</Source>
+                <Reference>3585</Reference>
+              </ExternalReference>
+              <ExternalReference id="51543">
+                <Source>OMIM</Source>
+                <Reference>613984</Reference>
+              </ExternalReference>
+              <ExternalReference id="57424">
+                <Source>Reactome</Source>
+                <Reference>Q9BXW9</Reference>
+              </ExternalReference>
+              <ExternalReference id="33037">
+                <Source>SwissProt</Source>
+                <Reference>Q9BXW9</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92187">
+                <GeneLocus>3p25.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16024">
+            <Name lang="en">FA complementation group E</Name>
+            <Symbol>FANCE</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">FAE</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249169">
+                <Source>ClinVar</Source>
+                <Reference>FANCE</Reference>
+              </ExternalReference>
+              <ExternalReference id="57425">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000112039</Reference>
+              </ExternalReference>
+              <ExternalReference id="29327">
+                <Source>Genatlas</Source>
+                <Reference>FANCE</Reference>
+              </ExternalReference>
+              <ExternalReference id="29325">
+                <Source>HGNC</Source>
+                <Reference>3586</Reference>
+              </ExternalReference>
+              <ExternalReference id="52269">
+                <Source>OMIM</Source>
+                <Reference>613976</Reference>
+              </ExternalReference>
+              <ExternalReference id="57426">
+                <Source>Reactome</Source>
+                <Reference>Q9HB96</Reference>
+              </ExternalReference>
+              <ExternalReference id="33038">
+                <Source>SwissProt</Source>
+                <Reference>Q9HB96</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92189">
+                <GeneLocus>6p21.31</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16025">
+            <Name lang="en">FA complementation group F</Name>
+            <Symbol>FANCF</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">FAF</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249170">
+                <Source>ClinVar</Source>
+                <Reference>FANCF</Reference>
+              </ExternalReference>
+              <ExternalReference id="57427">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000183161</Reference>
+              </ExternalReference>
+              <ExternalReference id="29329">
+                <Source>Genatlas</Source>
+                <Reference>FANCF</Reference>
+              </ExternalReference>
+              <ExternalReference id="29331">
+                <Source>HGNC</Source>
+                <Reference>3587</Reference>
+              </ExternalReference>
+              <ExternalReference id="51399">
+                <Source>OMIM</Source>
+                <Reference>613897</Reference>
+              </ExternalReference>
+              <ExternalReference id="57428">
+                <Source>Reactome</Source>
+                <Reference>Q9NPI8</Reference>
+              </ExternalReference>
+              <ExternalReference id="33039">
+                <Source>SwissProt</Source>
+                <Reference>Q9NPI8</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92191">
+                <GeneLocus>11p14.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16026">
+            <Name lang="en">FA complementation group G</Name>
+            <Symbol>FANCG</Symbol>
+            <SynonymList count="4">
+              <Synonym lang="en">DNA repair protein XRCC9</Synonym>
+              <Synonym lang="en">FAG</Synonym>
+              <Synonym lang="en">X-ray repair complementing defective repair in Chinese hamster cells 9</Synonym>
+              <Synonym lang="en">X-ray repair, complementing defective, in Chinese hamster, 9</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249171">
+                <Source>ClinVar</Source>
+                <Reference>FANCG</Reference>
+              </ExternalReference>
+              <ExternalReference id="57429">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000221829</Reference>
+              </ExternalReference>
+              <ExternalReference id="29337">
+                <Source>Genatlas</Source>
+                <Reference>FANCG</Reference>
+              </ExternalReference>
+              <ExternalReference id="29335">
+                <Source>HGNC</Source>
+                <Reference>3588</Reference>
+              </ExternalReference>
+              <ExternalReference id="29334">
+                <Source>OMIM</Source>
+                <Reference>602956</Reference>
+              </ExternalReference>
+              <ExternalReference id="57430">
+                <Source>Reactome</Source>
+                <Reference>O15287</Reference>
+              </ExternalReference>
+              <ExternalReference id="33040">
+                <Source>SwissProt</Source>
+                <Reference>O15287</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92193">
+                <GeneLocus>9p13.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16027">
+            <Name lang="en">FA complementation group L</Name>
+            <Symbol>FANCL</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FAAP43</Synonym>
+              <Synonym lang="en">FLJ10335</Synonym>
+              <Synonym lang="en">Pog</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249172">
+                <Source>ClinVar</Source>
+                <Reference>FANCL</Reference>
+              </ExternalReference>
+              <ExternalReference id="57433">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000115392</Reference>
+              </ExternalReference>
+              <ExternalReference id="29339">
+                <Source>Genatlas</Source>
+                <Reference>FANCL</Reference>
+              </ExternalReference>
+              <ExternalReference id="29341">
+                <Source>HGNC</Source>
+                <Reference>20748</Reference>
+              </ExternalReference>
+              <ExternalReference id="29340">
+                <Source>OMIM</Source>
+                <Reference>608111</Reference>
+              </ExternalReference>
+              <ExternalReference id="57434">
+                <Source>Reactome</Source>
+                <Reference>Q9NW38</Reference>
+              </ExternalReference>
+              <ExternalReference id="33041">
+                <Source>SwissProt</Source>
+                <Reference>Q9NW38</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92195">
+                <GeneLocus>2p16.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16028">
+            <Name lang="en">FA complementation group M</Name>
+            <Symbol>FANCM</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">FAAP250</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249173">
+                <Source>ClinVar</Source>
+                <Reference>FANCM</Reference>
+              </ExternalReference>
+              <ExternalReference id="57435">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000187790</Reference>
+              </ExternalReference>
+              <ExternalReference id="29347">
+                <Source>Genatlas</Source>
+                <Reference>FANCM</Reference>
+              </ExternalReference>
+              <ExternalReference id="29345">
+                <Source>HGNC</Source>
+                <Reference>23168</Reference>
+              </ExternalReference>
+              <ExternalReference id="29344">
+                <Source>OMIM</Source>
+                <Reference>609644</Reference>
+              </ExternalReference>
+              <ExternalReference id="57436">
+                <Source>Reactome</Source>
+                <Reference>Q8IYD8</Reference>
+              </ExternalReference>
+              <ExternalReference id="33042">
+                <Source>SwissProt</Source>
+                <Reference>Q8IYD8</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92197">
+                <GeneLocus>14q21.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16788">
+            <Name lang="en">FA complementation group I</Name>
+            <Symbol>FANCI</Symbol>
+            <SynonymList count="1">
+              <Synonym lang="en">FLJ10719</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249759">
+                <Source>ClinVar</Source>
+                <Reference>FANCI</Reference>
+              </ExternalReference>
+              <ExternalReference id="57431">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000140525</Reference>
+              </ExternalReference>
+              <ExternalReference id="34939">
+                <Source>Genatlas</Source>
+                <Reference>FANCI</Reference>
+              </ExternalReference>
+              <ExternalReference id="34938">
+                <Source>HGNC</Source>
+                <Reference>25568</Reference>
+              </ExternalReference>
+              <ExternalReference id="34941">
+                <Source>OMIM</Source>
+                <Reference>611360</Reference>
+              </ExternalReference>
+              <ExternalReference id="57432">
+                <Source>Reactome</Source>
+                <Reference>Q9NVI1</Reference>
+              </ExternalReference>
+              <ExternalReference id="34940">
+                <Source>SwissProt</Source>
+                <Reference>Q9NVI1</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="93369">
+                <GeneLocus>15q26.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="16873">
+            <Name lang="en">partner and localizer of BRCA2</Name>
+            <Symbol>PALB2</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FANCN</Synonym>
+              <Synonym lang="en">FLJ21816</Synonym>
+              <Synonym lang="en">Fanconi anemia, complementation group N</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249822">
+                <Source>ClinVar</Source>
+                <Reference>PALB2</Reference>
+              </ExternalReference>
+              <ExternalReference id="57437">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000083093</Reference>
+              </ExternalReference>
+              <ExternalReference id="35321">
+                <Source>Genatlas</Source>
+                <Reference>PALB2</Reference>
+              </ExternalReference>
+              <ExternalReference id="35322">
+                <Source>HGNC</Source>
+                <Reference>26144</Reference>
+              </ExternalReference>
+              <ExternalReference id="35323">
+                <Source>OMIM</Source>
+                <Reference>610355</Reference>
+              </ExternalReference>
+              <ExternalReference id="57438">
+                <Source>Reactome</Source>
+                <Reference>Q86YC2</Reference>
+              </ExternalReference>
+              <ExternalReference id="35324">
+                <Source>SwissProt</Source>
+                <Reference>Q86YC2</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="93495">
+                <GeneLocus>16p12.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="19136">
+            <Name lang="en">RAD51 paralog C</Name>
+            <Symbol>RAD51C</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FANCO</Synonym>
+              <Synonym lang="en">RAD51L2</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250397">
+                <Source>ClinVar</Source>
+                <Reference>RAD51C</Reference>
+              </ExternalReference>
+              <ExternalReference id="57439">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000108384</Reference>
+              </ExternalReference>
+              <ExternalReference id="45520">
+                <Source>Genatlas</Source>
+                <Reference>RAD51C</Reference>
+              </ExternalReference>
+              <ExternalReference id="45519">
+                <Source>HGNC</Source>
+                <Reference>9820</Reference>
+              </ExternalReference>
+              <ExternalReference id="45521">
+                <Source>OMIM</Source>
+                <Reference>602774</Reference>
+              </ExternalReference>
+              <ExternalReference id="57440">
+                <Source>Reactome</Source>
+                <Reference>O43502</Reference>
+              </ExternalReference>
+              <ExternalReference id="45522">
+                <Source>SwissProt</Source>
+                <Reference>O43502</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="94645">
+                <GeneLocus>17q22</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20301575[PMID]</SourceOfValidation>
+          <Gene id="19826">
+            <Name lang="en">SLX4 structure-specific endonuclease subunit</Name>
+            <Symbol>SLX4</Symbol>
+            <SynonymList count="4">
+              <Synonym lang="en">FANCP</Synonym>
+              <Synonym lang="en">Fanconi anemia, complementation group P</Synonym>
+              <Synonym lang="en">KIAA1784</Synonym>
+              <Synonym lang="en">KIAA1987</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250539">
+                <Source>ClinVar</Source>
+                <Reference>SLX4</Reference>
+              </ExternalReference>
+              <ExternalReference id="57441">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000188827</Reference>
+              </ExternalReference>
+              <ExternalReference id="126202">
+                <Source>Genatlas</Source>
+                <Reference>SLX4</Reference>
+              </ExternalReference>
+              <ExternalReference id="50662">
+                <Source>HGNC</Source>
+                <Reference>23845</Reference>
+              </ExternalReference>
+              <ExternalReference id="50665">
+                <Source>OMIM</Source>
+                <Reference>613278</Reference>
+              </ExternalReference>
+              <ExternalReference id="97299">
+                <Source>Reactome</Source>
+                <Reference>Q8IY92</Reference>
+              </ExternalReference>
+              <ExternalReference id="50666">
+                <Source>SwissProt</Source>
+                <Reference>Q8IY92</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="94929">
+                <GeneLocus>16p13.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22232082[PMID]_27208205[PMID]</SourceOfValidation>
+          <Gene id="21095">
+            <Name lang="en">X-ray repair cross complementing 2</Name>
+            <Symbol>XRCC2</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">DNA repair protein XRCC2</Synonym>
+              <Synonym lang="en">FANCU</Synonym>
+              <Synonym lang="en">RAD51-like</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250829">
+                <Source>ClinVar</Source>
+                <Reference>XRCC2</Reference>
+              </ExternalReference>
+              <ExternalReference id="83365">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000196584</Reference>
+              </ExternalReference>
+              <ExternalReference id="61885">
+                <Source>Genatlas</Source>
+                <Reference>XRCC2</Reference>
+              </ExternalReference>
+              <ExternalReference id="61883">
+                <Source>HGNC</Source>
+                <Reference>12829</Reference>
+              </ExternalReference>
+              <ExternalReference id="61884">
+                <Source>OMIM</Source>
+                <Reference>600375</Reference>
+              </ExternalReference>
+              <ExternalReference id="97323">
+                <Source>Reactome</Source>
+                <Reference>O43543</Reference>
+              </ExternalReference>
+              <ExternalReference id="61886">
+                <Source>SwissProt</Source>
+                <Reference>O43543</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="95509">
+                <GeneLocus>7q36.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>26046368[PMID]</SourceOfValidation>
+          <Gene id="23270">
+            <Name lang="en">ubiquitin conjugating enzyme E2 T</Name>
+            <Symbol>UBE2T</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FANCT</Synonym>
+              <Synonym lang="en">HSPC150</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="251596">
+                <Source>ClinVar</Source>
+                <Reference>UBE2T</Reference>
+              </ExternalReference>
+              <ExternalReference id="95908">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000077152</Reference>
+              </ExternalReference>
+              <ExternalReference id="95905">
+                <Source>Genatlas</Source>
+                <Reference>UBE2T</Reference>
+              </ExternalReference>
+              <ExternalReference id="95903">
+                <Source>HGNC</Source>
+                <Reference>25009</Reference>
+              </ExternalReference>
+              <ExternalReference id="95904">
+                <Source>OMIM</Source>
+                <Reference>610538</Reference>
+              </ExternalReference>
+              <ExternalReference id="95907">
+                <Source>Reactome</Source>
+                <Reference>Q9NPD8</Reference>
+              </ExternalReference>
+              <ExternalReference id="95906">
+                <Source>SwissProt</Source>
+                <Reference>Q9NPD8</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97043">
+                <GeneLocus>1q32.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>27500492[PMID]</SourceOfValidation>
+          <Gene id="25126">
+            <Name lang="en">mitotic arrest deficient 2 like 2</Name>
+            <Symbol>MAD2L2</Symbol>
+            <SynonymList count="6">
+              <Synonym lang="en">MAD2B</Synonym>
+              <Synonym lang="en">POLZ2</Synonym>
+              <Synonym lang="en">REV7</Synonym>
+              <Synonym lang="en">mitotic arrest deficient homolog-like 2</Synonym>
+              <Synonym lang="en">polymerase (DNA-directed), zeta 2, accessory subunit</Synonym>
+              <Synonym lang="en">FANCV</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="252039">
+                <Source>ClinVar</Source>
+                <Reference>MAD2L2</Reference>
+              </ExternalReference>
+              <ExternalReference id="135183">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000116670</Reference>
+              </ExternalReference>
+              <ExternalReference id="135180">
+                <Source>Genatlas</Source>
+                <Reference>MAD2L2</Reference>
+              </ExternalReference>
+              <ExternalReference id="135178">
+                <Source>HGNC</Source>
+                <Reference>6764</Reference>
+              </ExternalReference>
+              <ExternalReference id="135179">
+                <Source>OMIM</Source>
+                <Reference>604094</Reference>
+              </ExternalReference>
+              <ExternalReference id="135182">
+                <Source>Reactome</Source>
+                <Reference>Q9UI95</Reference>
+              </ExternalReference>
+              <ExternalReference id="135181">
+                <Source>SwissProt</Source>
+                <Reference>Q9UI95</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97929">
+                <GeneLocus>1p36.22</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>28691929[PMID]</SourceOfValidation>
+          <Gene id="25903">
+            <Name lang="en">ring finger and WD repeat domain 3</Name>
+            <Symbol>RFWD3</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FANCW</Synonym>
+              <Synonym lang="en">FLJ10520</Synonym>
+              <Synonym lang="en">RNF201</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="252186">
+                <Source>ClinVar</Source>
+                <Reference>RFWD3</Reference>
+              </ExternalReference>
+              <ExternalReference id="150492">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000168411</Reference>
+              </ExternalReference>
+              <ExternalReference id="150495">
+                <Source>Genatlas</Source>
+                <Reference>RFWD3</Reference>
+              </ExternalReference>
+              <ExternalReference id="150491">
+                <Source>HGNC</Source>
+                <Reference>25539</Reference>
+              </ExternalReference>
+              <ExternalReference id="150494">
+                <Source>OMIM</Source>
+                <Reference>614151</Reference>
+              </ExternalReference>
+              <ExternalReference id="150496">
+                <Source>Reactome</Source>
+                <Reference>Q6PCD5</Reference>
+              </ExternalReference>
+              <ExternalReference id="150493">
+                <Source>SwissProt</Source>
+                <Reference>Q6PCD5</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="98223">
+                <GeneLocus>16q23.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>40244696[PMID]</SourceOfValidation>
+          <Gene id="32598">
+            <Name lang="en">FA core complex associated protein 100</Name>
+            <Symbol>FAAP100</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FLJ22175</Synonym>
+              <Synonym lang="en">Fanconi anemia-associated protein, 100kDa</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="4">
+              <ExternalReference id="265498">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000185504</Reference>
+              </ExternalReference>
+              <ExternalReference id="264561">
+                <Source>HGNC</Source>
+                <Reference>26171</Reference>
+              </ExternalReference>
+              <ExternalReference id="265499">
+                <Source>OMIM</Source>
+                <Reference>611301</Reference>
+              </ExternalReference>
+              <ExternalReference id="265500">
+                <Source>SwissProt</Source>
+                <Reference>Q0VG06</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="100145">
+                <GeneLocus>17q25.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="25972">
+            <Name lang="en">Disease-causing germline mutation(s) (loss of function) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+      </DisorderGeneAssociationList>
+    </Disorder>
+    <Disorder id="1000">
+      <OrphaCode>48</OrphaCode>
+      <ExpertLink lang="en">http://www.orpha.net/consor/cgi-bin/OC_Exp.php?lng=en&amp;Expert=48</ExpertLink>
+      <Name lang="en">Congenital bilateral absence of vas deferens</Name>
+      <DisorderType id="21415">
+        <Name lang="en">Morphological anomaly</Name>
+      </DisorderType>
+      <DisorderGroup id="36547">
+        <Name lang="en">Disorder</Name>
+      </DisorderGroup>
+      <DisorderGeneAssociationList count="2">
+        <DisorderGeneAssociation>
+          <SourceOfValidation>7539342[PMID]_10651488[PMID]</SourceOfValidation>
+          <Gene id="15441">
+            <Name lang="en">CF transmembrane conductance regulator</Name>
+            <Symbol>CFTR</Symbol>
+            <SynonymList count="6">
+              <Synonym lang="en">ABC35</Synonym>
+              <Synonym lang="en">ATP-binding cassette sub-family C, member 7</Synonym>
+              <Synonym lang="en">CFTR/MRP</Synonym>
+              <Synonym lang="en">MRP7</Synonym>
+              <Synonym lang="en">TNR-CFTR</Synonym>
+              <Synonym lang="en">dJ760C5.1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="248640">
+                <Source>ClinVar</Source>
+                <Reference>CFTR</Reference>
+              </ExternalReference>
+              <ExternalReference id="56733">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000001626</Reference>
+              </ExternalReference>
+              <ExternalReference id="26534">
+                <Source>Genatlas</Source>
+                <Reference>CFTR</Reference>
+              </ExternalReference>
+              <ExternalReference id="26532">
+                <Source>HGNC</Source>
+                <Reference>1884</Reference>
+              </ExternalReference>
+              <ExternalReference id="82808">
+                <Source>IUPHAR</Source>
+                <Reference>707</Reference>
+              </ExternalReference>
+              <ExternalReference id="32319">
+                <Source>OMIM</Source>
+                <Reference>602421</Reference>
+              </ExternalReference>
+              <ExternalReference id="56734">
+                <Source>Reactome</Source>
+                <Reference>P13569</Reference>
+              </ExternalReference>
+              <ExternalReference id="32410">
+                <Source>SwissProt</Source>
+                <Reference>P13569</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91131">
+                <GeneLocus>7q31.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>27476656[PMID]</SourceOfValidation>
+          <Gene id="24124">
+            <Name lang="en">adhesion G protein-coupled receptor G2</Name>
+            <Symbol>ADGRG2</Symbol>
+            <SynonymList count="4">
+              <Synonym lang="en">EDDM6</Synonym>
+              <Synonym lang="en">HE6</Synonym>
+              <Synonym lang="en">TM7LN2</Synonym>
+              <Synonym lang="en">epididymal protein 6</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="251828">
+                <Source>ClinVar</Source>
+                <Reference>ADGRG2</Reference>
+              </ExternalReference>
+              <ExternalReference id="126048">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000173698</Reference>
+              </ExternalReference>
+              <ExternalReference id="126046">
+                <Source>Genatlas</Source>
+                <Reference>ADGRG2</Reference>
+              </ExternalReference>
+              <ExternalReference id="126044">
+                <Source>HGNC</Source>
+                <Reference>4516</Reference>
+              </ExternalReference>
+              <ExternalReference id="126049">
+                <Source>IUPHAR</Source>
+                <Reference>187</Reference>
+              </ExternalReference>
+              <ExternalReference id="126045">
+                <Source>OMIM</Source>
+                <Reference>300572</Reference>
+              </ExternalReference>
+              <ExternalReference id="126047">
+                <Source>SwissProt</Source>
+                <Reference>Q8IZP9</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="97507">
+                <GeneLocus>Xp22.13</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+      </DisorderGeneAssociationList>
+    </Disorder>
+    <Disorder id="3384">
+      <OrphaCode>145</OrphaCode>
+      <ExpertLink lang="en">http://www.orpha.net/consor/cgi-bin/OC_Exp.php?lng=en&amp;Expert=145</ExpertLink>
+      <Name lang="en">Hereditary breast and/or ovarian cancer syndrome</Name>
+      <DisorderType id="21394">
+        <Name lang="en">Disease</Name>
+      </DisorderType>
+      <DisorderGroup id="36547">
+        <Name lang="en">Disorder</Name>
+      </DisorderGroup>
+      <DisorderGeneAssociationList count="15">
+        <DisorderGeneAssociation>
+          <SourceOfValidation>23779253[PMID]</SourceOfValidation>
+          <Gene id="15166">
+            <Name lang="en">phosphatase and tensin homolog</Name>
+            <Symbol>PTEN</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">MMAC1</Synonym>
+              <Synonym lang="en">PTEN1</Synonym>
+              <Synonym lang="en">Phosphatidylinositol 3,4,5-trisphosphate 3-phosphatase and dual-specificity protein phosphatase PTEN</Synonym>
+              <Synonym lang="en">TEP1</Synonym>
+              <Synonym lang="en">mutated in multiple advanced cancers 1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="248387">
+                <Source>ClinVar</Source>
+                <Reference>PTEN</Reference>
+              </ExternalReference>
+              <ExternalReference id="57050">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000171862</Reference>
+              </ExternalReference>
+              <ExternalReference id="25224">
+                <Source>Genatlas</Source>
+                <Reference>PTEN</Reference>
+              </ExternalReference>
+              <ExternalReference id="25222">
+                <Source>HGNC</Source>
+                <Reference>9588</Reference>
+              </ExternalReference>
+              <ExternalReference id="193560">
+                <Source>IUPHAR</Source>
+                <Reference>2497</Reference>
+              </ExternalReference>
+              <ExternalReference id="25221">
+                <Source>OMIM</Source>
+                <Reference>601728</Reference>
+              </ExternalReference>
+              <ExternalReference id="57051">
+                <Source>Reactome</Source>
+                <Reference>P60484</Reference>
+              </ExternalReference>
+              <ExternalReference id="33690">
+                <Source>SwissProt</Source>
+                <Reference>P60484</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="90625">
+                <GeneLocus>10q23.31</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>10807537[PMID]_24114315[PMID]</SourceOfValidation>
+          <Gene id="15183">
+            <Name lang="en">RAD51 recombinase</Name>
+            <Symbol>RAD51</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">BRCC5</Synonym>
+              <Synonym lang="en">FANCR</Synonym>
+              <Synonym lang="en">HsRad51</Synonym>
+              <Synonym lang="en">HsT16930</Synonym>
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 5</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248404">
+                <Source>ClinVar</Source>
+                <Reference>RAD51</Reference>
+              </ExternalReference>
+              <ExternalReference id="58596">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000051180</Reference>
+              </ExternalReference>
+              <ExternalReference id="37325">
+                <Source>Genatlas</Source>
+                <Reference>RAD51</Reference>
+              </ExternalReference>
+              <ExternalReference id="25305">
+                <Source>HGNC</Source>
+                <Reference>9817</Reference>
+              </ExternalReference>
+              <ExternalReference id="25304">
+                <Source>OMIM</Source>
+                <Reference>179617</Reference>
+              </ExternalReference>
+              <ExternalReference id="58597">
+                <Source>Reactome</Source>
+                <Reference>Q06609</Reference>
+              </ExternalReference>
+              <ExternalReference id="33707">
+                <Source>SwissProt</Source>
+                <Reference>Q06609</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="90659">
+                <GeneLocus>15q15.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>16112002[PMID]_20301425[PMID]</SourceOfValidation>
+          <Gene id="15377">
+            <Name lang="en">BRCA1 DNA repair associated</Name>
+            <Symbol>BRCA1</Symbol>
+            <SynonymList count="7">
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 1</Synonym>
+              <Synonym lang="en">BRCC1</Synonym>
+              <Synonym lang="en">FANCS</Synonym>
+              <Synonym lang="en">Fanconi anemia, complementation group S</Synonym>
+              <Synonym lang="en">PPP1R53</Synonym>
+              <Synonym lang="en">RNF53</Synonym>
+              <Synonym lang="en">protein phosphatase 1, regulatory subunit 53</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248584">
+                <Source>ClinVar</Source>
+                <Reference>BRCA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57779">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000012048</Reference>
+              </ExternalReference>
+              <ExternalReference id="26225">
+                <Source>Genatlas</Source>
+                <Reference>BRCA1</Reference>
+              </ExternalReference>
+              <ExternalReference id="26227">
+                <Source>HGNC</Source>
+                <Reference>1100</Reference>
+              </ExternalReference>
+              <ExternalReference id="26226">
+                <Source>OMIM</Source>
+                <Reference>113705</Reference>
+              </ExternalReference>
+              <ExternalReference id="57780">
+                <Source>Reactome</Source>
+                <Reference>P38398</Reference>
+              </ExternalReference>
+              <ExternalReference id="33934">
+                <Source>SwissProt</Source>
+                <Reference>P38398</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91019">
+                <GeneLocus>17q21.31</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="25972">
+            <Name lang="en">Disease-causing germline mutation(s) (loss of function) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>16112002[PMID]_20301425[PMID]</SourceOfValidation>
+          <Gene id="15378">
+            <Name lang="en">BRCA2 DNA repair associated</Name>
+            <Symbol>BRCA2</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">BRCA1/BRCA2-containing complex, subunit 2</Synonym>
+              <Synonym lang="en">BRCC2</Synonym>
+              <Synonym lang="en">FAD</Synonym>
+              <Synonym lang="en">FAD1</Synonym>
+              <Synonym lang="en">XRCC11</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248585">
+                <Source>ClinVar</Source>
+                <Reference>BRCA2</Reference>
+              </ExternalReference>
+              <ExternalReference id="57415">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000139618</Reference>
+              </ExternalReference>
+              <ExternalReference id="26233">
+                <Source>Genatlas</Source>
+                <Reference>BRCA2</Reference>
+              </ExternalReference>
+              <ExternalReference id="26231">
+                <Source>HGNC</Source>
+                <Reference>1101</Reference>
+              </ExternalReference>
+              <ExternalReference id="26230">
+                <Source>OMIM</Source>
+                <Reference>600185</Reference>
+              </ExternalReference>
+              <ExternalReference id="57416">
+                <Source>Reactome</Source>
+                <Reference>P51587</Reference>
+              </ExternalReference>
+              <ExternalReference id="33935">
+                <Source>SwissProt</Source>
+                <Reference>P51587</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91021">
+                <GeneLocus>13q13.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="25972">
+            <Name lang="en">Disease-causing germline mutation(s) (loss of function) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>17033622[PMID]</SourceOfValidation>
+          <Gene id="15379">
+            <Name lang="en">BRCA1 interacting DNA helicase 1</Name>
+            <Symbol>BRIP1</Symbol>
+            <SynonymList count="7">
+              <Synonym lang="en">BACH1</Synonym>
+              <Synonym lang="en">BRCA1 interacting protein 1</Synonym>
+              <Synonym lang="en">BRCA1-associated C-terminal helicase</Synonym>
+              <Synonym lang="en">BRCA1/BRCA2-associated helicase 1</Synonym>
+              <Synonym lang="en">FANCJ</Synonym>
+              <Synonym lang="en">FANCJ helicase</Synonym>
+              <Synonym lang="en">OF</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248586">
+                <Source>ClinVar</Source>
+                <Reference>BRIP1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57413">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000136492</Reference>
+              </ExternalReference>
+              <ExternalReference id="26235">
+                <Source>Genatlas</Source>
+                <Reference>BRIP1</Reference>
+              </ExternalReference>
+              <ExternalReference id="26237">
+                <Source>HGNC</Source>
+                <Reference>20473</Reference>
+              </ExternalReference>
+              <ExternalReference id="26236">
+                <Source>OMIM</Source>
+                <Reference>605882</Reference>
+              </ExternalReference>
+              <ExternalReference id="57414">
+                <Source>Reactome</Source>
+                <Reference>Q9BX63</Reference>
+              </ExternalReference>
+              <ExternalReference id="33936">
+                <Source>SwissProt</Source>
+                <Reference>Q9BX63</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91023">
+                <GeneLocus>17q23.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>21562711[PMID]</SourceOfValidation>
+          <Gene id="15444">
+            <Name lang="en">checkpoint kinase 2</Name>
+            <Symbol>CHEK2</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">CDS1</Synonym>
+              <Synonym lang="en">CHK2</Synonym>
+              <Synonym lang="en">HuCds1</Synonym>
+              <Synonym lang="en">PP1425</Synonym>
+              <Synonym lang="en">bA444G7</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="248643">
+                <Source>ClinVar</Source>
+                <Reference>CHEK2</Reference>
+              </ExternalReference>
+              <ExternalReference id="56952">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000183765</Reference>
+              </ExternalReference>
+              <ExternalReference id="26546">
+                <Source>Genatlas</Source>
+                <Reference>CHEK2</Reference>
+              </ExternalReference>
+              <ExternalReference id="26548">
+                <Source>HGNC</Source>
+                <Reference>16627</Reference>
+              </ExternalReference>
+              <ExternalReference id="82809">
+                <Source>IUPHAR</Source>
+                <Reference>1988</Reference>
+              </ExternalReference>
+              <ExternalReference id="26547">
+                <Source>OMIM</Source>
+                <Reference>604373</Reference>
+              </ExternalReference>
+              <ExternalReference id="56953">
+                <Source>Reactome</Source>
+                <Reference>O96017</Reference>
+              </ExternalReference>
+              <ExternalReference id="32413">
+                <Source>SwissProt</Source>
+                <Reference>O96017</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91137">
+                <GeneLocus>22q12.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>24884479[PMID]_23779253[PMID]</SourceOfValidation>
+          <Gene id="15644">
+            <Name lang="en">tumor protein p53</Name>
+            <Symbol>TP53</Symbol>
+            <SynonymList count="4">
+              <Synonym lang="en">LFS1</Synonym>
+              <Synonym lang="en">Li-Fraumeni syndrome</Synonym>
+              <Synonym lang="en">P53</Synonym>
+              <Synonym lang="en">p53</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="248827">
+                <Source>ClinVar</Source>
+                <Reference>TP53</Reference>
+              </ExternalReference>
+              <ExternalReference id="56954">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000141510</Reference>
+              </ExternalReference>
+              <ExternalReference id="27518">
+                <Source>Genatlas</Source>
+                <Reference>TP53</Reference>
+              </ExternalReference>
+              <ExternalReference id="27516">
+                <Source>HGNC</Source>
+                <Reference>11998</Reference>
+              </ExternalReference>
+              <ExternalReference id="27515">
+                <Source>OMIM</Source>
+                <Reference>191170</Reference>
+              </ExternalReference>
+              <ExternalReference id="56955">
+                <Source>Reactome</Source>
+                <Reference>P04637</Reference>
+              </ExternalReference>
+              <ExternalReference id="32616">
+                <Source>SwissProt</Source>
+                <Reference>P04637</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="91505">
+                <GeneLocus>17p13.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>33471991[PMID]</SourceOfValidation>
+          <Gene id="15962">
+            <Name lang="en">ATM serine/threonine kinase</Name>
+            <Symbol>ATM</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">TEL1</Synonym>
+              <Synonym lang="en">TEL1, telomere maintenance 1, homolog (S. cerevisiae)</Synonym>
+              <Synonym lang="en">TELO1</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="8">
+              <ExternalReference id="249111">
+                <Source>ClinVar</Source>
+                <Reference>ATM</Reference>
+              </ExternalReference>
+              <ExternalReference id="56781">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000149311</Reference>
+              </ExternalReference>
+              <ExternalReference id="29006">
+                <Source>Genatlas</Source>
+                <Reference>ATM</Reference>
+              </ExternalReference>
+              <ExternalReference id="29008">
+                <Source>HGNC</Source>
+                <Reference>795</Reference>
+              </ExternalReference>
+              <ExternalReference id="82895">
+                <Source>IUPHAR</Source>
+                <Reference>1934</Reference>
+              </ExternalReference>
+              <ExternalReference id="29007">
+                <Source>OMIM</Source>
+                <Reference>607585</Reference>
+              </ExternalReference>
+              <ExternalReference id="56782">
+                <Source>Reactome</Source>
+                <Reference>Q13315</Reference>
+              </ExternalReference>
+              <ExternalReference id="32973">
+                <Source>SwissProt</Source>
+                <Reference>Q13315</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92073">
+                <GeneLocus>11q22.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17961">
+            <Name lang="en">Major susceptibility factor in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22006311[PMID]_14684699[PMID]</SourceOfValidation>
+          <Gene id="16465">
+            <Name lang="en">MRE11 double strand break repair nuclease</Name>
+            <Symbol>MRE11</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">AT-like disease</Synonym>
+              <Synonym lang="en">ATLD</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249571">
+                <Source>ClinVar</Source>
+                <Reference>MRE11A</Reference>
+              </ExternalReference>
+              <ExternalReference id="60474">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000020922</Reference>
+              </ExternalReference>
+              <ExternalReference id="31428">
+                <Source>Genatlas</Source>
+                <Reference>MRE11A</Reference>
+              </ExternalReference>
+              <ExternalReference id="31430">
+                <Source>HGNC</Source>
+                <Reference>7230</Reference>
+              </ExternalReference>
+              <ExternalReference id="31429">
+                <Source>OMIM</Source>
+                <Reference>600814</Reference>
+              </ExternalReference>
+              <ExternalReference id="60475">
+                <Source>Reactome</Source>
+                <Reference>P49959</Reference>
+              </ExternalReference>
+              <ExternalReference id="33530">
+                <Source>SwissProt</Source>
+                <Reference>P49959</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92993">
+                <GeneLocus>11q21</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22006311[PMID]_14684699[PMID]</SourceOfValidation>
+          <Gene id="16518">
+            <Name lang="en">nibrin</Name>
+            <Symbol>NBN</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">AT-V1</Synonym>
+              <Synonym lang="en">AT-V2</Synonym>
+              <Synonym lang="en">ATV</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249621">
+                <Source>ClinVar</Source>
+                <Reference>NBN</Reference>
+              </ExternalReference>
+              <ExternalReference id="58329">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000104320</Reference>
+              </ExternalReference>
+              <ExternalReference id="31676">
+                <Source>Genatlas</Source>
+                <Reference>NBN</Reference>
+              </ExternalReference>
+              <ExternalReference id="31674">
+                <Source>HGNC</Source>
+                <Reference>7652</Reference>
+              </ExternalReference>
+              <ExternalReference id="31673">
+                <Source>OMIM</Source>
+                <Reference>602667</Reference>
+              </ExternalReference>
+              <ExternalReference id="58330">
+                <Source>Reactome</Source>
+                <Reference>O60934</Reference>
+              </ExternalReference>
+              <ExternalReference id="33583">
+                <Source>SwissProt</Source>
+                <Reference>O60934</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="93093">
+                <GeneLocus>8q21.3</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>23779253[PMID]</SourceOfValidation>
+          <Gene id="16873">
+            <Name lang="en">partner and localizer of BRCA2</Name>
+            <Symbol>PALB2</Symbol>
+            <SynonymList count="3">
+              <Synonym lang="en">FANCN</Synonym>
+              <Synonym lang="en">FLJ21816</Synonym>
+              <Synonym lang="en">Fanconi anemia, complementation group N</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249822">
+                <Source>ClinVar</Source>
+                <Reference>PALB2</Reference>
+              </ExternalReference>
+              <ExternalReference id="57437">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000083093</Reference>
+              </ExternalReference>
+              <ExternalReference id="35321">
+                <Source>Genatlas</Source>
+                <Reference>PALB2</Reference>
+              </ExternalReference>
+              <ExternalReference id="35322">
+                <Source>HGNC</Source>
+                <Reference>26144</Reference>
+              </ExternalReference>
+              <ExternalReference id="35323">
+                <Source>OMIM</Source>
+                <Reference>610355</Reference>
+              </ExternalReference>
+              <ExternalReference id="57438">
+                <Source>Reactome</Source>
+                <Reference>Q86YC2</Reference>
+              </ExternalReference>
+              <ExternalReference id="35324">
+                <Source>SwissProt</Source>
+                <Reference>Q86YC2</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="93495">
+                <GeneLocus>16p12.2</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>15342711[PMID]</SourceOfValidation>
+          <Gene id="18430">
+            <Name lang="en">BRCA1 associated RING domain 1</Name>
+            <Symbol>BARD1</Symbol>
+            <SynonymList count="0">
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250238">
+                <Source>ClinVar</Source>
+                <Reference>BARD1</Reference>
+              </ExternalReference>
+              <ExternalReference id="58595">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000138376</Reference>
+              </ExternalReference>
+              <ExternalReference id="42171">
+                <Source>Genatlas</Source>
+                <Reference>BARD1</Reference>
+              </ExternalReference>
+              <ExternalReference id="42172">
+                <Source>HGNC</Source>
+                <Reference>952</Reference>
+              </ExternalReference>
+              <ExternalReference id="42173">
+                <Source>OMIM</Source>
+                <Reference>601593</Reference>
+              </ExternalReference>
+              <ExternalReference id="97279">
+                <Source>Reactome</Source>
+                <Reference>Q99728</Reference>
+              </ExternalReference>
+              <ExternalReference id="42174">
+                <Source>SwissProt</Source>
+                <Reference>Q99728</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="94327">
+                <GeneLocus>2q35</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>20400964[PMID]_21990120[PMID]</SourceOfValidation>
+          <Gene id="19136">
+            <Name lang="en">RAD51 paralog C</Name>
+            <Symbol>RAD51C</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">FANCO</Synonym>
+              <Synonym lang="en">RAD51L2</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250397">
+                <Source>ClinVar</Source>
+                <Reference>RAD51C</Reference>
+              </ExternalReference>
+              <ExternalReference id="57439">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000108384</Reference>
+              </ExternalReference>
+              <ExternalReference id="45520">
+                <Source>Genatlas</Source>
+                <Reference>RAD51C</Reference>
+              </ExternalReference>
+              <ExternalReference id="45519">
+                <Source>HGNC</Source>
+                <Reference>9820</Reference>
+              </ExternalReference>
+              <ExternalReference id="45521">
+                <Source>OMIM</Source>
+                <Reference>602774</Reference>
+              </ExternalReference>
+              <ExternalReference id="57440">
+                <Source>Reactome</Source>
+                <Reference>O43502</Reference>
+              </ExternalReference>
+              <ExternalReference id="45522">
+                <Source>SwissProt</Source>
+                <Reference>O43502</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="94645">
+                <GeneLocus>17q22</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>22006311[PMID]_14684699[PMID]</SourceOfValidation>
+          <Gene id="19459">
+            <Name lang="en">RAD50 double strand break repair protein</Name>
+            <Symbol>RAD50</Symbol>
+            <SynonymList count="2">
+              <Synonym lang="en">RAD50-2</Synonym>
+              <Synonym lang="en">hRad50</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250476">
+                <Source>ClinVar</Source>
+                <Reference>RAD50</Reference>
+              </ExternalReference>
+              <ExternalReference id="60427">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000113522</Reference>
+              </ExternalReference>
+              <ExternalReference id="48307">
+                <Source>Genatlas</Source>
+                <Reference>RAD50</Reference>
+              </ExternalReference>
+              <ExternalReference id="48308">
+                <Source>HGNC</Source>
+                <Reference>9816</Reference>
+              </ExternalReference>
+              <ExternalReference id="78954">
+                <Source>OMIM</Source>
+                <Reference>604040</Reference>
+              </ExternalReference>
+              <ExternalReference id="60428">
+                <Source>Reactome</Source>
+                <Reference>Q92878</Reference>
+              </ExternalReference>
+              <ExternalReference id="48309">
+                <Source>SwissProt</Source>
+                <Reference>Q92878</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="94803">
+                <GeneLocus>5q31.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="18273">
+            <Name lang="en">Candidate gene tested in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17997">
+            <Name lang="en">Not yet assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+        <DisorderGeneAssociation>
+          <SourceOfValidation>21822267[PMID]</SourceOfValidation>
+          <Gene id="21074">
+            <Name lang="en">RAD51 paralog D</Name>
+            <Symbol>RAD51D</Symbol>
+            <SynonymList count="6">
+              <Synonym lang="en">DNA repair protein RAD51 homolog 4</Synonym>
+              <Synonym lang="en">HsTRAD</Synonym>
+              <Synonym lang="en">R51H3</Synonym>
+              <Synonym lang="en">Recombination repair protein</Synonym>
+              <Synonym lang="en">Trad</Synonym>
+              <Synonym lang="en">recombination repair protein</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="250810">
+                <Source>ClinVar</Source>
+                <Reference>RAD51D</Reference>
+              </ExternalReference>
+              <ExternalReference id="83331">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000185379</Reference>
+              </ExternalReference>
+              <ExternalReference id="100005">
+                <Source>Genatlas</Source>
+                <Reference>RAD51D</Reference>
+              </ExternalReference>
+              <ExternalReference id="61551">
+                <Source>HGNC</Source>
+                <Reference>9823</Reference>
+              </ExternalReference>
+              <ExternalReference id="61552">
+                <Source>OMIM</Source>
+                <Reference>602954</Reference>
+              </ExternalReference>
+              <ExternalReference id="97321">
+                <Source>Reactome</Source>
+                <Reference>O75771</Reference>
+              </ExternalReference>
+              <ExternalReference id="61553">
+                <Source>SwissProt</Source>
+                <Reference>O75771</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="95471">
+                <GeneLocus>17q12</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+      </DisorderGeneAssociationList>
+    </Disorder>
+    <Disorder id="20628">
+      <OrphaCode>284963</OrphaCode>
+      <ExpertLink lang="en">http://www.orpha.net/consor/cgi-bin/OC_Exp.php?lng=en&amp;Expert=284963</ExpertLink>
+      <Name lang="en">Marfan syndrome type 1</Name>
+      <DisorderType id="21450">
+        <Name lang="en">Clinical subtype</Name>
+      </DisorderType>
+      <DisorderGroup id="36554">
+        <Name lang="en">Subtype of disorder</Name>
+      </DisorderGroup>
+      <DisorderGeneAssociationList count="1">
+        <DisorderGeneAssociation>
+          <SourceOfValidation />
+          <Gene id="16032">
+            <Name lang="en">fibrillin 1</Name>
+            <Symbol>FBN1</Symbol>
+            <SynonymList count="5">
+              <Synonym lang="en">MASS</Synonym>
+              <Synonym lang="en">Marfan syndrome</Synonym>
+              <Synonym lang="en">OCTD</Synonym>
+              <Synonym lang="en">SGS</Synonym>
+              <Synonym lang="en">asprosin</Synonym>
+            </SynonymList>
+            <GeneType id="25993">
+              <Name lang="en">gene with protein product</Name>
+            </GeneType>
+            <ExternalReferenceList count="7">
+              <ExternalReference id="249177">
+                <Source>ClinVar</Source>
+                <Reference>FBN1</Reference>
+              </ExternalReference>
+              <ExternalReference id="57333">
+                <Source>Ensembl</Source>
+                <Reference>ENSG00000166147</Reference>
+              </ExternalReference>
+              <ExternalReference id="29363">
+                <Source>Genatlas</Source>
+                <Reference>FBN1</Reference>
+              </ExternalReference>
+              <ExternalReference id="29365">
+                <Source>HGNC</Source>
+                <Reference>3603</Reference>
+              </ExternalReference>
+              <ExternalReference id="29364">
+                <Source>OMIM</Source>
+                <Reference>134797</Reference>
+              </ExternalReference>
+              <ExternalReference id="57334">
+                <Source>Reactome</Source>
+                <Reference>P35555</Reference>
+              </ExternalReference>
+              <ExternalReference id="33046">
+                <Source>SwissProt</Source>
+                <Reference>P35555</Reference>
+              </ExternalReference>
+            </ExternalReferenceList>
+            <LocusList count="1">
+              <Locus id="92205">
+                <GeneLocus>15q21.1</GeneLocus>
+                <LocusKey>1</LocusKey>
+              </Locus>
+            </LocusList>
+          </Gene>
+          <DisorderGeneAssociationType id="17949">
+            <Name lang="en">Disease-causing germline mutation(s) in</Name>
+          </DisorderGeneAssociationType>
+          <DisorderGeneAssociationStatus id="17991">
+            <Name lang="en">Assessed</Name>
+          </DisorderGeneAssociationStatus>
+        </DisorderGeneAssociation>
+      </DisorderGeneAssociationList>
+    </Disorder>
+  </DisorderList>
+</JDBOR>

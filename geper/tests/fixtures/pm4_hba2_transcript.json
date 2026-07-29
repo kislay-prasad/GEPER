@@ -1,0 +1,35 @@
+{
+  "_provenance": {
+    "source": "Ensembl REST lookup/id + sequence/id (GRCh38), transcript matches RefSeq NM_000517",
+    "fetched": "2026-07-29",
+    "note": "Real HBA2 canonical transcript structure + CDS, frozen for deterministic PM4 stop-loss tests."
+  },
+  "transcript": {
+    "transcript_id": "ENST00000251595",
+    "refseq_equivalent": "NM_000517",
+    "gene_symbol": "HBA2",
+    "chrom": "16",
+    "strand": 1,
+    "cds_genomic_start": 172913,
+    "cds_genomic_end": 173600,
+    "protein_length": 142,
+    "is_mane_select": true,
+    "is_canonical": true,
+    "source": "ensembl_grch38",
+    "cds_sequence": "ATGGTGCTGTCTCCTGCCGACAAGACCAACGTCAAGGCCGCCTGGGGTAAGGTCGGCGCGCACGCTGGCGAGTATGGTGCGGAGGCCCTGGAGAGGATGTTCCTGTCCTTCCCCACCACCAAGACCTACTTCCCGCACTTCGACCTGAGCCACGGCTCTGCCCAGGTTAAGGGCCACGGCAAGAAGGTGGCCGACGCGCTGACCAACGCCGTGGCGCACGTGGACGACATGCCCAACGCGCTGTCCGCCCTGAGCGACCTGCACGCGCACAAGCTTCGGGTGGACCCGGTCAACTTCAAGCTCCTAAGCCACTGCCTGCTGGTGACCCTGGCCGCCCACCTCCCCGCCGAGTTCACCCCTGCGGTGCACGCCTCCCTGGACAAGTTCCTGGCTTCTGTGAGCACCGTGCTGACCTCCAAATACCGTTAA",
+    "exons": [
+      {
+        "start": 172876,
+        "end": 173007
+      },
+      {
+        "start": 173125,
+        "end": 173329
+      },
+      {
+        "start": 173472,
+        "end": 173710
+      }
+    ]
+  }
+}

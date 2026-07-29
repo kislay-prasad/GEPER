@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geper"
+version = "12.0.0"
+description = "GEPER — Genomic Evidence Pipeline with Evidence-based Risk assessment (v8)"
+readme = "docs/INSTALL.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["genomics", "bioinformatics", "ACMG", "variant-calling", "clinical"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "python-multipart>=0.0.9",
+    "reportlab>=4.0.0",
+]
+
+[project.optional-dependencies]
+ai = [
+    "torch>=2.2.0",
+    "transformers>=4.40.0",
+    "numpy>=1.26.0",
+]
+bio = [
+    "biopython>=1.83",
+]
+pdf = [
+    "weasyprint>=61.0",  # optional secondary fallback; reportlab (core dep) is primary
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "anyio[trio]>=4.0.0",
+    "pytest-anyio>=0.0.0",
+]
+all = [
+    "geper[ai,bio,pdf,dev]",
+]
+
+[project.scripts]
+geper = "main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pipeline*", "geper*", "api*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

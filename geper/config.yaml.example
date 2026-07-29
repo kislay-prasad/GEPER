@@ -1,0 +1,81 @@
+# GEPER example configuration file.
+#
+# This file is entirely OPTIONAL. Every setting here can also be set
+# via an environment variable (see the "env var" note next to each
+# key below), and an explicit environment variable always takes
+# priority over this file if both are set. GEPER looks for this file
+# at `./config.yaml` by default; override the path with the
+# GEPER_CONFIG_FILE environment variable. If this file is absent,
+# GEPER runs exactly as it always has, using its built-in defaults.
+#
+# Requires PyYAML (`pip install pyyaml`, already listed in
+# requirements.txt). If PyYAML isn't installed, GEPER logs one
+# warning and falls back to defaults/environment variables only --
+# it never fails to start because of a missing/invalid config.yaml.
+
+# Where GEPER writes geper_results.json / geper_report.md /
+# geper_benchmark.{json,md}.
+output_dir: ./geper_output          # env: GEPER_OUTPUT_DIR
+
+# Where downloaded model weights / BLAST cache / AlphaMissense
+# catalogue are cached across runs.
+cache_dir: ./model_cache             # env: GEPER_CACHE_DIR
+
+# How often (in variants) to flush geper_results.json mid-run.
+checkpoint_interval: 25              # env: GEPER_CHECKPOINT_INTERVAL
+
+# Skip BLAST entirely and rely only on the DNA/RNA/protein foundation
+# models plus ClinVar/dbSNP/AlphaMissense.
+ai_only: false                       # env: GEPER_AI_ONLY
+
+# Per-stage wall-clock profiling -- writes geper_benchmark.json/.md
+# at the end of every run.
+enable_profiling: true               # env: GEPER_ENABLE_PROFILING
+
+blast:
+  # Persistent, cross-run on-disk cache of BLAST results.
+  disk_cache: true                   # env: GEPER_BLAST_DISK_CACHE
+  # Explicit local BLAST database path (enables the fast local path
+  # when combined with a `blastn` binary on PATH and --blast-mode auto).
+  local_db_path: ""                  # env: GEPER_BLAST_LOCAL_DB
+  # Batch/concurrent BLAST submission before the main per-variant loop.
+  enable_prefetch: true              # env: GEPER_BLAST_ENABLE_PREFETCH
+  max_concurrent_remote: 3           # env: GEPER_BLAST_MAX_CONCURRENT_REMOTE
+  max_concurrent_local: 4            # env: GEPER_BLAST_MAX_CONCURRENT_LOCAL
+
+alphamissense:
+  enabled: true                      # env: GEPER_ENABLE_ALPHAMISSENSE
+
+# Splice-effect prediction -- see README.md "12. MMSplice" for the
+# full explanation of how this is implemented without needing the
+# unbuildable cyvcf2 dependency the official `mmsplice` package pins.
+mmsplice:
+  enabled: true                      # env: GEPER_ENABLE_MMSPLICE
+  # device: auto                     # env: GEPER_MMSPLICE_DEVICE (auto/cpu/cuda)
+  # intron_window: 100               # env: GEPER_MMSPLICE_INTRON_WINDOW
+  # exon_near_splice_window: 50      # env: GEPER_MMSPLICE_EXON_WINDOW
+  # Batch every eligible variant's Keras forward pass before the main
+  # per-variant loop (mirrors blast.enable_prefetch above).
+  # enable_prefetch: true            # env: GEPER_MMSPLICE_ENABLE_PREFETCH
+  # Every other MMSplice knob (cryptic-site scan range, interpretation
+  # thresholds, ACMG evidence weight, cache size, batch size, custom
+  # model directory) is environment-variable-only for now -- see the
+  # full table in README.md "10. Environment variables" -- but follows
+  # the exact same `GEPER_MMSPLICE_*` naming convention, so adding a
+  # `key: GEPER_MMSPLICE_KEY` mapping to
+  # `config.py::_load_yaml_config_overrides`'s env_var_map is a
+  # one-line addition if/when you need one of them in config.yaml too.
+
+# Gene-level clinical evidence (gene-disease validity, dosage
+# sensitivity, actionability) -- see README.md "17. ClinGen".
+clingen:
+  enabled: true                      # env: GEPER_ENABLE_CLINGEN
+  # gene_validity_local_file: ./data/clingen_gene_validity.tsv    # env: GEPER_CLINGEN_GENE_VALIDITY_FILE
+  # dosage_sensitivity_local_file: ./data/clingen_dosage.tsv      # env: GEPER_CLINGEN_DOSAGE_FILE
+  # api_enabled: true                # env: GEPER_CLINGEN_API_ENABLED
+  # offline_mode: false               # env: GEPER_CLINGEN_OFFLINE
+  # Every other ClinGen knob (timeout/retries, cache size/TTL/disk
+  # path, max concurrent lookups, ACMG dosage-score thresholds) is
+  # environment-variable-only for now -- see the full table in
+  # README.md "10. Environment variables" -- but follows the exact
+  # same `GEPER_CLINGEN_*` naming convention as the two mapped above.

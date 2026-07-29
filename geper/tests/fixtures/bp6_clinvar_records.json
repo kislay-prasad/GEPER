@@ -1,0 +1,63 @@
+{
+  "_provenance": {
+    "source": "NCBI ClinVar E-utilities (esearch + esummary), db=clinvar, live query",
+    "fetched": "2026-07-29",
+    "note": "Real ClinVar germline-classification records, frozen so BP6 tests are deterministic and offline. Same esummary shape ClinVarClient.query_variant() returns (see database/clinvar_client.py::_esummary), trimmed to the fields BP6/_clinvar_crossref actually read."
+  },
+  "brca1_s1613g_benign_expert_panel": {
+    "query": "rs1799966[rs]",
+    "found": true,
+    "record_count": 1,
+    "records": [
+      {
+        "uid": "41827",
+        "title": "NM_007294.4(BRCA1):c.4837A>G (p.Ser1613Gly)",
+        "clinical_significance": "Benign",
+        "review_status": "reviewed by expert panel",
+        "accession": "VCV000041827"
+      }
+    ]
+  },
+  "brca1_glu23fs_pathogenic_expert_panel": {
+    "query": "rs80357914[rs]",
+    "found": true,
+    "record_count": 1,
+    "records": [
+      {
+        "uid": "17662",
+        "title": "NM_007294.4(BRCA1):c.68_69del (p.Glu23fs)",
+        "clinical_significance": "Pathogenic",
+        "review_status": "reviewed by expert panel",
+        "accession": "VCV000017662"
+      }
+    ]
+  },
+  "brca1_intronic_likely_benign_no_assertion_criteria": {
+    "query": "BRCA1[gene] AND benign[Clinical_Significance] AND \"no assertion criteria provided\"[Review_Status]",
+    "found": true,
+    "record_count": 1,
+    "records": [
+      {
+        "uid": "4856951",
+        "title": "NM_007294.4(BRCA1):c.5467+200G>A",
+        "clinical_significance": "Likely benign",
+        "review_status": "no assertion criteria provided",
+        "accession": "VCV004856951"
+      }
+    ]
+  },
+  "cftr_g551d_pathogenic_practice_guideline": {
+    "query": "CFTR[gene] AND G551D[Variant name]",
+    "found": true,
+    "record_count": 1,
+    "records": [
+      {
+        "uid": "7120",
+        "title": "NM_000492.4(CFTR):c.1652G>A (p.Gly551Asp)",
+        "clinical_significance": "Pathogenic",
+        "review_status": "practice guideline",
+        "accession": "VCV000007120"
+      }
+    ]
+  }
+}

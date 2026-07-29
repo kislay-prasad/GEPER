@@ -1,0 +1,189 @@
+# =============================================================================
+# GEPER dependency set -- ONE environment for HyenaDNA, Evo2,
+# RNA-FM, ESM2, and AlphaMissense. (DNABERT-2 has been removed from
+# GEPER entirely -- see LICENSE_AUDIT.md / the AI orchestration audit.
+# Enformer and Borzoi are optional, config-gated integrations
+# (CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI, both default off)
+# whose `enformer-pytorch` / `borzoi-pytorch` packages are
+# auto-installed at runtime only when enabled -- same pattern as
+# MMSplice/RNA-FM/HyenaDNA below -- so they are intentionally not
+# pinned as unconditional top-level requirements here.)
+# SpliceFormer (pipeline/models/spliceformer_plugin.py) is the same
+# kind of optional, config-gated integration
+# (CONFIG.splicing.ENABLE_SPLICEFORMER), but needs no new pip pin at
+# all: its vendored source's only extra dependency beyond torch/numpy/
+# requests is `einops`, which this file already pins unconditionally
+# below (Evo2's own `vtx` dependency requires it). `requests` is
+# already pinned under "External API access" below and is what
+# SpliceFormer's checkpoint download uses.
+# SpliceBERT (pipeline/models/splicebert_plugin.py) is the same kind
+# of optional, config-gated integration
+# (CONFIG.splicing.ENABLE_SPLICEBERT), and needs no new pip pin
+# either: its checkpoint is a standard HuggingFace BertForMaskedLM,
+# loaded with the `transformers` pin already below (no vendored model
+# source, unlike SpliceFormer) -- `requests` is what its checkpoint
+# archive download uses.
+#
+# Every pin below was checked against the real, current (2026) package
+# metadata on PyPI and, for Evo2, Arc Institute's own repo/issue tracker --
+# not assumed from memory. A full `pip install --dry-run` of this exact set
+# (torch/torchvision/transformers/accelerate/einops/rna-fm/biopython/
+# numpy/pandas/tqdm/pyyaml/safetensors/requests) resolves cleanly with no
+# version conflicts. See VALIDATION_REPORT.md / the dependency-migration
+# report for the full resolution trace and what could/couldn't be exercised
+# for real in this sandbox (no GPU, no huggingface.co network access).
+#
+# Python: 3.11 or 3.12 ONLY. This is not a GEPER preference -- it's forced
+# by evo2's own PyPI metadata (requires-python: >=3.11,<3.13); torch/
+# transformers/rna-fm all separately require >=3.10, so 3.11/3.12 is
+# the only range every dependency agrees on.
+# =============================================================================
+
+# --- Core deep learning / model stack ---------------------------------------
+# torch is pinned exactly, not left open, because Evo2's flash-attn
+# dependency is compiled from source against a specific torch+CUDA ABI --
+# Arc Institute's own current install docs (github.com/ArcInstitute/evo2)
+# use this exact torch/CUDA combination:
+#   pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+#   pip install flash-attn==2.8.0.post2 --no-build-isolation
+#   pip install evo2
+# CPU-only development machines (no Evo2) can instead install plain
+# `torch==2.7.1` from PyPI -- everything else in this file works identically.
+torch==2.7.1
+transformers>=5.12.1,<6.0.0
+accelerate>=1.14.0,<2.0.0
+
+# einops is pinned to exactly 0.8.1 (not left as a loose >=) because Evo2's
+# own dependency `vtx` (Vortex/StripedHyena-2, ArcInstitute's model code)
+# pins `einops==0.8.1` exactly in its published PyPI metadata -- verified
+# via `pip show vtx` / pypi.org/pypi/vtx/json, not assumed. A looser pin
+# here would still resolve today, but would silently start failing the
+# moment vtx's exact pin and some other dependency's floor diverge.
+einops==0.8.1
+
+# --- RNA-FM (official ml4bio/RNA-FM, MIT license) ---------------------------
+# Migrated from the MultiMolecule reimplementation (AGPL-3.0-or-later,
+# incompatible with commercial/hospital deployment) to the official
+# package -- see MIGRATION_RNA_FM.md for the equivalence verification.
+rna-fm>=0.2.2
+
+# --- Evo 2 (models/evo2.py) --------------------------------------------------
+# Arc Institute's DNA foundation model, replacing Nucleotide Transformer.
+# NOT a transformers.AutoModel checkpoint; loaded via the official `evo2`
+# pip package. GPU-only (no practical CPU path -- see models/evo2.py);
+# auto-installed the first time it's needed if a CUDA GPU is present, same
+# as rna-fm above.
+#
+# The default checkpoint (config.py::ModelConfig.EVO2_VARIANT =
+# "evo2_7b_base") additionally needs flash-attn, which itself needs a
+# matching CUDA-enabled torch build installed FIRST -- see
+# https://github.com/ArcInstitute/evo2 for the exact commands, reproduced
+# above. Do NOT `pip install flash-attn` as a normal requirements.txt line:
+# it has no prebuilt wheels on PyPI (source-only sdist) and compiles against
+# whatever CUDA toolkit matches the already-installed torch build, which a
+# plain `pip install -r requirements.txt` in a fresh/CPU environment cannot
+# do safely or quickly. Install it manually per the commands above, then:
+evo2>=0.6.0
+# IMPORTANT -- checkpoint choice: use GEPER_EVO2_VARIANT=evo2_7b_base (the
+# default), NOT plain 'evo2_7b'. Verified against
+# https://github.com/ArcInstitute/evo2/issues/208 (open, 2026-03-13): plain
+# 'evo2_7b' (the 1M-context release) requires Transformer Engine + FP8 +
+# Hopper-class hardware even under the documented "light install" path.
+# 'evo2_7b_base' (8K context) is the checkpoint that's genuinely usable with
+# just torch + flash-attn. See README.md "12. Hardware notes" for the
+# longer-context alternatives and how to enable them.
+
+# --- HyenaDNA -----------------------------------------------------------
+# Official repo is not on PyPI; installed from source, see README.
+# git+https://github.com/HazyResearch/hyena-dna.git
+# standalone_hyenadna.py additionally requires torchvision (StochasticDepth).
+# 0.22.1 is the release paired with torch==2.7.1 in PyTorch's own
+# version-compatibility matrix -- not an arbitrary floor.
+torchvision==0.22.1
+
+# torchaudio is NOT imported anywhere in GEPER's own code (no model here
+# does audio processing) -- it is pinned explicitly anyway, exactly like
+# torchvision above, purely as a DEFENSIVE measure: several of this
+# project's dependencies (rna-fm, evo2/vtx) can pull an unpinned
+# `torchaudio` in transitively, and some hosted environments (Colab's
+# base image in particular) ship their own pre-installed torchaudio
+# build tied to whatever torch version *they* shipped, not the
+# torch==2.7.1 this file pins. An unpinned or mismatched torchaudio
+# whose compiled extension was built against a different torch ABI
+# fails at IMPORT time with `OSError: undefined symbol:
+# torch_library_impl` (torchaudio registers custom ops via
+# TORCH_LIBRARY_IMPL against the torch C++ API at import) -- and
+# because Python import errors are not scoped to the module that
+# triggered them, this can surface while importing an unrelated model
+# (e.g. ESM2) if anything earlier in the import chain touches
+# torchaudio. 2.7.1 is the release paired with torch==2.7.1 in PyTorch's
+# own compatibility matrix, exactly the same pairing logic as
+# torchvision==0.22.1 above.
+torchaudio==2.7.1
+
+# --- Sequence / bioinformatics utilities ------------------------------------
+biopython>=1.83
+
+# --- External API access -----------------------------------------------
+requests>=2.31.0
+
+# --- Data handling -----------------------------------------------------
+numpy>=1.26.0,<3.0.0
+pandas>=2.2.0
+
+# --- CLI / progress ------------------------------------------------------
+tqdm>=4.66.0
+
+# --- Checkpoint I/O (safetensors-format weights, e.g. Enformer/Borzoi) ------
+safetensors>=0.4.0
+
+# AlphaMissense (models/alphamissense.py) requires the `tabix` CLI
+# (htslib) to query the precomputed AlphaMissense prediction catalogue.
+# This is a system binary, not a pip package, and has no torch/transformers
+# dependency at all -- it cannot conflict with anything else in this file:
+#   apt-get install tabix
+#   # or: conda install -c bioconda htslib
+# If it isn't installed, AlphaMissense is automatically skipped (never
+# a hard failure) -- see README.md section 11 and config.py::AlphaMissenseConfig.
+
+# Optional: enables config.yaml as an alternative to environment
+# variables (see config.py::_load_yaml_config_overrides). Not required
+# -- GEPER configures identically via GEPER_* environment variables
+# without it.
+pyyaml>=6.0
+
+# --- Clinical PDF report generation (report/summary.py) --------------------
+# BSD-licensed (License :: OSI Approved :: BSD License, verified against
+# PyPI's own package metadata) -- no commercial-use restriction, unlike
+# the separately-sold "ReportLab PLUS" product this open-source
+# `reportlab` package is not. Requires Python >=3.9,<4, compatible with
+# this project's 3.11/3.12 requirement.
+reportlab>=5.0.0
+
+# --- MMSplice (pipeline/models/mmsplice/) -----------------------------------
+# Splice-effect prediction. tensorflow is the only *new* runtime
+# dependency this integration adds -- MMSplice's five pretrained
+# submodels are Keras/TensorFlow models, not PyTorch.
+#
+# IMPORTANT: do NOT `pip install mmsplice` normally / do not add it to
+# this file as a plain line. The official `mmsplice` PyPI package pins
+# `cyvcf2<=0.30.15`, which has no prebuilt wheel for Python 3.12+ and
+# cannot be built from source on 3.12+ (its C extension uses a
+# CPython-internal struct field, `PyLongObject.ob_digit`, removed in
+# 3.12) -- confirmed by attempting the install directly against this
+# project's own Python 3.12 toolchain. `pip install mmsplice` therefore
+# fails outright here.
+#
+# GEPER instead auto-installs `mmsplice` with `--no-deps` at runtime
+# the first time it's needed (see
+# pipeline/models/mmsplice/loader.py::_ensure_mmsplice_package_files_available),
+# purely to obtain the package's bundled, official pretrained `.h5`
+# weight files -- it never imports the `mmsplice` package's own Python
+# code (which is what pulls in cyvcf2/kipoiseq/pyranges). If you prefer
+# to pre-provision this in a Docker image / CI step instead of relying
+# on the runtime auto-install, run exactly:
+#   pip install tensorflow "mmsplice==2.4.0" --no-deps
+# (installing plain `tensorflow` first/separately, since --no-deps on
+# the mmsplice line means pip will not pull it in automatically).
+tensorflow>=2.16.0,<3.0.0
+

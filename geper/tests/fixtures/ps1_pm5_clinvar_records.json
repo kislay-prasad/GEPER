@@ -1,0 +1,37 @@
+{
+  "_provenance": {
+    "source": "NCBI ClinVar E-utilities (esearch + esummary), live queries during development",
+    "note": "Real, verbatim ClinVar records for TP53 codons 175, 237, and 113 (GRCh38, transcript NM_000546.6 / ENST00000269305). Positions are 1-based (esummary's canonical_spdi is 0-based/interbase; pos = spdi_position + 1). Includes non-substitution records (frameshift, deletion, duplication) deliberately, to test that PS1/PM5's protein-change parser correctly rejects them rather than misreading a partial match.",
+    "queries": [
+      "17[chr] AND 7675087:7675089[chrpos38]  (codon 175, CGC=Arg)",
+      "17[chr] AND 7674252[chrpos38]          (codon 237, ATG=Met)",
+      "17[chr] AND 7676030:7676032[chrpos38]  (codon 113, TTC=Phe)"
+    ]
+  },
+  "codon175": [
+    {"uid": "12374", "accession": "VCV000012374", "title": "NM_000546.6(TP53):c.524G>A (p.Arg175His)", "pos": 7675088, "ref": "C", "alt": "T", "clinical_significance": "Pathogenic", "review_status": "reviewed by expert panel", "condition": ["Li-Fraumeni syndrome"]},
+    {"uid": "182963", "accession": "VCV000182963", "title": "NM_000546.6(TP53):c.524G>T (p.Arg175Leu)", "pos": 7675088, "ref": "C", "alt": "A", "clinical_significance": "Likely pathogenic", "review_status": "reviewed by expert panel", "condition": []},
+    {"uid": "245851", "accession": "VCV000245851", "title": "NM_000546.6(TP53):c.523C>T (p.Arg175Cys)", "pos": 7675089, "ref": "G", "alt": "A", "clinical_significance": "Uncertain significance", "review_status": "reviewed by expert panel", "condition": []},
+    {"uid": "376649", "accession": "VCV000376649", "title": "NM_000546.6(TP53):c.523C>G (p.Arg175Gly)", "pos": 7675089, "ref": "G", "alt": "C", "clinical_significance": "Pathogenic", "review_status": "reviewed by expert panel", "condition": []},
+    {"uid": "4189264", "accession": "VCV004189264", "title": "NM_000546.6(TP53):c.523C>A (p.Arg175Ser)", "pos": 7675089, "ref": "G", "alt": "T", "clinical_significance": "Conflicting classifications of pathogenicity", "review_status": "criteria provided, conflicting classifications", "condition": []},
+    {"uid": "1527986", "accession": "VCV001527986", "title": "NM_000546.6(TP53):c.525C>T (p.Arg175=)", "pos": 7675086, "ref": "G", "alt": "A", "clinical_significance": "Benign/Likely benign", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []},
+    {"uid": "2687679", "accession": "VCV002687679", "title": "NM_000546.6(TP53):c.522dup (p.Arg175fs)", "pos": 7675089, "ref": "C", "alt": "CC", "clinical_significance": "Uncertain significance", "review_status": "no assertion criteria provided", "condition": []}
+  ],
+  "codon237": [
+    {"uid": "142714", "accession": "VCV000142714", "title": "NM_000546.6(TP53):c.711G>A (p.Met237Ile)", "pos": 7674252, "ref": "C", "alt": "T", "clinical_significance": "Pathogenic", "review_status": "reviewed by expert panel", "condition": ["Li-Fraumeni syndrome"]},
+    {"uid": "634770", "accession": "VCV000634770", "title": "NM_000546.6(TP53):c.711G>T (p.Met237Ile)", "pos": 7674252, "ref": "C", "alt": "A", "clinical_significance": "Pathogenic/Likely pathogenic", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []},
+    {"uid": "1757269", "accession": "VCV001757269", "title": "NM_000546.6(TP53):c.711G>C (p.Met237Ile)", "pos": 7674252, "ref": "C", "alt": "G", "clinical_significance": "Pathogenic/Likely pathogenic", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []},
+    {"uid": "663828", "accession": "VCV000663828", "title": "NM_000546.6(TP53):c.711del (p.Met237fs)", "pos": 7674251, "ref": "CC", "alt": "C", "clinical_significance": "Pathogenic", "review_status": "criteria provided, single submitter", "condition": []}
+  ],
+  "codon113": [
+    {"uid": "3634432", "accession": "VCV003634432", "title": "NM_000546.6(TP53):c.337T>C (p.Phe113Leu)", "pos": 7676032, "ref": "A", "alt": "G", "clinical_significance": "Pathogenic", "review_status": "criteria provided, single submitter", "condition": []},
+    {"uid": "2702402", "accession": "VCV002702402", "title": "NM_000546.6(TP53):c.339C>G (p.Phe113Leu)", "pos": 7676030, "ref": "G", "alt": "C", "clinical_significance": "Pathogenic", "review_status": "criteria provided, single submitter", "condition": []},
+    {"uid": "2125367", "accession": "VCV002125367", "title": "NM_000546.6(TP53):c.339C>A (p.Phe113Leu)", "pos": 7676030, "ref": "G", "alt": "T", "clinical_significance": "Conflicting classifications of pathogenicity", "review_status": "criteria provided, conflicting classifications", "condition": []},
+    {"uid": "1469551", "accession": "VCV001469551", "title": "NM_000546.6(TP53):c.337T>A (p.Phe113Ile)", "pos": 7676032, "ref": "A", "alt": "T", "clinical_significance": "Pathogenic/Likely pathogenic", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []},
+    {"uid": "141302", "accession": "VCV000141302", "title": "NM_000546.6(TP53):c.337T>G (p.Phe113Val)", "pos": 7676032, "ref": "A", "alt": "C", "clinical_significance": "Pathogenic/Likely pathogenic", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []},
+    {"uid": "823709", "accession": "VCV000823709", "title": "NM_000546.6(TP53):c.338T>C (p.Phe113Ser)", "pos": 7676031, "ref": "A", "alt": "G", "clinical_significance": "Conflicting classifications of pathogenicity", "review_status": "criteria provided, conflicting classifications", "condition": []},
+    {"uid": "634690", "accession": "VCV000634690", "title": "NM_000546.6(TP53):c.338T>G (p.Phe113Cys)", "pos": 7676031, "ref": "A", "alt": "C", "clinical_significance": "Pathogenic", "review_status": "criteria provided, single submitter", "condition": []},
+    {"uid": "4726444", "accession": "VCV004726444", "title": "NM_000546.6(TP53):c.317_339del (p.Ser106fs)", "pos": 7676030, "ref": "GAAGCCCAGACGGAAACCGTAGC", "alt": "G", "clinical_significance": "Pathogenic", "review_status": "criteria provided, single submitter", "condition": []},
+    {"uid": "265351", "accession": "VCV000265351", "title": "NM_000546.6(TP53):c.322_339del (p.Gly108_Phe113del)", "pos": 7676030, "ref": "GAAGCCCAGACGGAAACCG", "alt": "G", "clinical_significance": "Pathogenic/Likely pathogenic", "review_status": "criteria provided, multiple submitters, no conflicts", "condition": []}
+  ]
+}

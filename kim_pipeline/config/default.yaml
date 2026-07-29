@@ -1,0 +1,180 @@
+# geper_v8/config/default.yaml
+# GEPER v8 default configuration.
+# Copy to config/production.yaml and fill in your paths.
+
+# ── Clinical databases ────────────────────────────────────────────────────────
+clinvar:
+  enabled: true
+  # Path to ClinVar variant_summary.txt.gz (download from NCBI FTP)
+  # https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz
+  tsv_gz_path: ""          # e.g. /data/clinvar/variant_summary.txt.gz
+  ncbi_api_key: ""         # Optional — set NCBI_API_KEY env var instead
+
+gnomad:
+  enabled: true
+  # Path to local gnomAD tabix VCF (optional — uses GraphQL API if absent)
+  vcf_path: ""             # e.g. /data/gnomad/gnomad.genomes.v4.1.sites.vcf.bgz
+  graphql_dataset: "gnomad_r4"
+  timeout: 20
+  max_retries: 3           # retry attempts on 429/500/502/503/504 or network errors
+  retry_backoff_secs: 1.0  # base exponential-backoff delay (with jitter); doubles each retry, capped at 30s
+  max_concurrent: 4        # bounded ThreadPoolExecutor size for lookup_batch() — kept modest to avoid re-triggering rate limits
+  # Persistent (SQLite) disk cache for PRESENT/ABSENT results — never
+  # UNAVAILABLE (see pipeline/gnomad/cache.py). Survives process restarts;
+  # point this at a Google Drive mount in Colab for cross-session persistence.
+  cache_dir: null          # default: ~/.cache/geper/gnomad
+  cache_ttl_hours: null    # null = never expire (gnomAD frequencies for a fixed release are immutable)
+
+omim:
+  enabled: true
+  # Path to OMIM genemap2.txt (download from omim.org after registration)
+  genemap_path: ""         # e.g. /data/omim/genemap2.txt
+  api_key: ""              # Optional OMIM API key for live queries
+
+# ── RNA analysis ──────────────────────────────────────────────────────────────
+rna_analysis:
+  enabled: true
+  # Path to RefSeq GFF3 annotation (GRCh38)
+  # https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/annotation/GRCh38_latest/
+  refseq_gff: ""           # e.g. /data/refseq/GRCh38_latest_genomic.gff.gz
+
+  # Bootstrap: if refseq_gff (above) is left empty, auto-fetch a small,
+  # single-contig GFF3 for the mitochondrial genome only (NC_012920.1 /
+  # the rCRS — tens of KB via NCBI eutils, NOT the ~1.5 GB whole-genome
+  # RefSeq GFF3) and use that instead of running in fully degraded
+  # (no gene/transcript/HGVS) mode. Covers MT/chrM variants ONLY —
+  # nuclear-genome variants still need refseq_gff set explicitly.
+  # Default: false (opt-in), so offline/air-gapped deployments and the
+  # existing test suite are unaffected. Can also be enabled via the
+  # GEPER_AUTO_FETCH_MT_GFF3=1 environment variable.
+  auto_fetch_mt_gff3: false
+  # Where to cache the auto-fetched GFF3 so it survives a session
+  # restart. Default (null): ~/.cache/geper/gff3 — point this at a
+  # Google Drive mount in Colab for persistence across fresh sessions,
+  # same as alignment.index_dir above.
+  gff3_cache_dir: null
+
+# ── ACMG engine ───────────────────────────────────────────────────────────────
+acmg_thresholds:
+  ba1_af: 0.05
+  bs1_af: 0.01
+  pm2_af_max: 0.0001
+  pp3_cadd_phred: 20.0
+  pp3_revel: 0.5
+  pp3_spliceai: 0.2
+  pp3_alphamissense: 0.564
+  bp4_cadd_phred: 10.0
+  bp4_revel: 0.15
+  bp4_spliceai: 0.1
+
+# ── Evidence aggregation weights ─────────────────────────────────────────────
+evidence_engine:
+  weight_acmg: 0.45
+  weight_clinvar: 0.25
+  weight_computational: 0.20
+  weight_ai: 0.10
+
+# ── Reporting ─────────────────────────────────────────────────────────────────
+reporting:
+  output_dir: ""              # Required: set to an absolute path before running. No default is used.
+  generate_pdf: true        # requires WeasyPrint or wkhtmltopdf
+
+# ── API ───────────────────────────────────────────────────────────────────────
+api:
+  host: "0.0.0.0"
+  port: 8000
+  log_level: "info"
+  cors_origins: ["*"]       # Restrict in production
+
+# ── AI models ─────────────────────────────────────────────────────────────────
+dnabert2:
+  model_name: "zhihan1996/DNABERT-2-117M"
+  device: "auto"            # auto | cpu | cuda
+  batch_size: 8
+
+esm2:
+  model_name: "facebook/esm2_t12_35M_UR50D"
+  device: "auto"
+  batch_size: 4
+
+# ── Reference genome handling ─────────────────────────────────────────────────
+reference:
+  # If the reference FASTA passed to `analyze --ref` is gzip-compressed
+  # (e.g. ref.fna.gz), it is decompressed once into this directory before
+  # any stage runs (a plain-gzip FASTA cannot be opened by `samtools faidx`,
+  # which the variant-calling stage requires — decompression is needed for
+  # correctness, not primarily for alignment speed). Reused on later runs
+  # against an unchanged source file instead of re-decompressing.
+  # Default (null): a ".ref_cache" directory next to the reference itself.
+  local_cache_dir: null
+
+# ── Alignment stage (pipeline/alignment) ─────────────────────────────────────
+alignment:
+  aligner: "auto"            # auto | bwa | minimap2  (auto prefers bwa if installed)
+  threads: 4
+  preset: "sr"                # minimap2 preset; "sr" = short accurate genomic reads
+  # Optional persistent directory for the BWA FM-index (.amb/.ann/.bwt/.pac/.sa).
+  # Point this at a Google Drive mount (or any directory that survives a
+  # session restart) to build the index once and never rebuild it again,
+  # even across ephemeral runtimes like Colab where the local disk (e.g.
+  # /content) is wiped between sessions. Example for Colab:
+  #   index_dir: "/content/drive/MyDrive/geper_bwa_index"
+  # Default (null): index is built next to the reference FASTA, same as
+  # before this option existed.
+  index_dir: null
+
+# ── Variant calling stage (pipeline/variant_calling) ─────────────────────────
+variant_calling:
+  threads: 1                  # >1 requires freebayes-parallel + fasta_generate_regions.py
+  min_base_quality: 20
+  min_mapping_quality: 20
+  min_alternate_fraction: 0.2
+  min_alternate_count: 2
+  filter_min_qual: 20.0        # PASS filter: bcftools-tagged LowQual below this QUAL
+  filter_min_depth: 10         # PASS filter: bcftools-tagged LowQual below this DP
+
+
+# ── Quality Control (pipeline/qc) ─────────────────────────────────────────────
+qc:
+  stop_on_failure: true     # halt pipeline if thresholds violated
+  max_dup_sample: 100000    # reads sampled for duplicate estimation
+  thresholds:
+    min_mean_quality: 20.0        # mean Phred across all bases
+    max_n_fraction: 0.1           # fraction of bases that are N
+    min_gc_fraction: 0.2          # overall GC lower bound
+    max_gc_fraction: 0.8          # overall GC upper bound
+    max_adapter_fraction: 0.5     # fraction of reads with adapter contamination
+    max_duplicate_fraction: 0.8   # estimated duplicate rate
+    min_total_reads: 100          # minimum reads to be useful
+    min_read_length: 25           # minimum mean read length (bp)
+
+# ── BLAST+ (pipeline/blast) ───────────────────────────────────────────────────
+blast:
+  enabled: false                    # disabled by default; set true when db_path is set
+  db_path: ""                       # local BLAST db prefix (e.g. /data/blast/nt)
+  blast_bin_dir: ""                 # path to blastn binary directory (optional)
+  evalue: 1.0e-5                    # E-value threshold
+  max_target_seqs: 10              # top hits to return per query
+  word_size: 11                    # BLASTN word size (default 11 for nt)
+  timeout: 120                     # per-run timeout in seconds
+  output_format: "xml"             # "xml" or "tabular"
+  threads: 1
+
+# ── gnomAD gene constraint (pipeline/constraint) ──────────────────────────────
+gnomad_constraint:
+  tsv_path: ""             # e.g. /data/gnomad.v4.1.constraint_metrics.tsv.bgz
+  loeuf_threshold: 0.35
+  pli_threshold: 0.9
+
+# ── Hotspot lookup (pipeline/hotspot) ─────────────────────────────────────────
+hotspot:
+  enabled: true
+  min_stars: 2             # minimum ClinVar review stars to count as hotspot
+
+# ── VEP annotation stage (pipeline/vep) ───────────────────────────────────────
+vep:
+  enabled: true
+  cache_dir: ""            # e.g. /data/vep_cache
+  fasta: ""                # reference FASTA for HGVS
+  extra_flags: ""          # any additional VEP flags
+  timeout: 600

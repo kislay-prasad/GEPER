@@ -1,0 +1,6 @@
+GENE SYMBOL	GENE ID (HGNC)	DISEASE LABEL	DISEASE ID (MONDO)	MOI	SOP	CLASSIFICATION	ONLINE REPORT	CLASSIFICATION DATE	GCEP
+BRCA1	HGNC:1100	Hereditary breast and ovarian cancer syndrome	MONDO:0003582	Autosomal dominant	SOP9	Definitive	https://search.clinicalgenome.org/kb/gene-validity/test-brca1	2024-03-01	Hereditary Cancer GCEP
+TTN	HGNC:12403	Dilated cardiomyopathy	MONDO:0005021	Autosomal dominant	SOP9	Strong	https://search.clinicalgenome.org/kb/gene-validity/test-ttn	2023-11-15	Cardiomyopathy GCEP
+SCN5A	HGNC:10593	Brugada syndrome	MONDO:0015263	Autosomal dominant	SOP8	Definitive	https://search.clinicalgenome.org/kb/gene-validity/test-scn5a	2022-06-20	Cardiac Arrhythmia GCEP
+GJB2	HGNC:4284	Autosomal recessive nonsyndromic hearing loss	MONDO:0011809	Autosomal recessive	SOP9	Definitive	https://search.clinicalgenome.org/kb/gene-validity/test-gjb2	2021-09-10	Hearing Loss GCEP
+MTHFR	HGNC:7436	Homocystinuria	MONDO:0009880	Autosomal recessive	SOP7	Disputed	https://search.clinicalgenome.org/kb/gene-validity/test-mthfr	2020-01-05	Inborn Errors of Metabolism GCEP

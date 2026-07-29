@@ -1,0 +1,7 @@
+{
+  "_comment": "GEPER example patient metadata file for --patient-meta / report/summary.py::generate_pdf(patient_meta=...). This entire file is OPTIONAL: if --patient-meta is omitted, or this file is missing/corrupt/malformed, the clinical PDF report safely falls back to a de-identified header showing only Sample ID and Run ID -- it never crashes the pipeline. India DPDP Act 2023 note (not HIPAA/GDPR -- GEPER is an India-market product): patient_name/dob/gender/physician are personal data once a real (non-de-identified) file like this is used. This file itself implements no consent/retention/access-control logic -- those must be handled by whatever system collects and stores this data upstream of GEPER. Real DPDP Act compliance sign-off must come from someone qualified to review the full data flow before production/hospital use.",
+  "patient_name": "Jane Doe",
+  "dob": "1990-01-15",
+  "gender": "Female",
+  "physician": "Dr. A. Sharma, MD"
+}

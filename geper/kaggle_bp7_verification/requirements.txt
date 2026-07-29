@@ -1,0 +1,22 @@
+# GEPER BP7 Kaggle verification -- dependencies.
+#
+# Kaggle's default GPU notebook image ("Python" environment) already
+# ships torch, numpy, and requests. transformers is usually preinstalled
+# too, but pinned here in case a minimal/older image is used.
+# einops is the one package that's genuinely NOT preinstalled and is
+# required (SpliceFormer's Attention module imports it directly).
+#
+# Install in a Kaggle cell with:
+#   !pip install -q -r requirements.txt
+# or just:
+#   !pip install -q einops "transformers>=4.30"
+
+einops>=0.6
+transformers>=4.30
+requests>=2.28
+numpy>=1.23
+torch>=2.0
+
+# Optional, only for Cell 6 (RNA-FM demo -- not required for the BP7
+# verdict itself; installed inline inside that cell already):
+# rna-fm

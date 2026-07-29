@@ -1,0 +1,170 @@
+"""
+tests/test_pdf_report.py
+──────────────────────────
+Tests for pipeline/reporting/pdf_report.py — the ReportLab-native
+clinical PDF generator (Issue 3).
+"""
+from __future__ import annotations
+
+from pipeline.reporting.pdf_report import render_clinical_pdf, ReportLabUnavailableError
+from pipeline.reporting.clinical_sections import (
+    normalize_patient_metadata, qc_status_summary, variant_dashboard,
+    clinical_interpretation, merge_variants_with_acmg,
+)
+
+
+def _minimal_kwargs():
+    patient = normalize_patient_metadata(None)
+    qc_rows = qc_status_summary({"q30_fraction": 0.9}, {"mean_depth": 30, "pct_mapped": 98})
+    dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {}, {})
+    interpretation = clinical_interpretation(dashboard)
+    merged = merge_variants_with_acmg(
+        [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "gene_name": "MT-TL1",
+          "transcript_id": "rna-TRNL1", "hgvs": "MT:g.3243A>G", "consequence": "gene_region_variant"}],
+        [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "gene": "MT-TL1",
+          "classification": "Uncertain_Significance", "gnomad_af": 0.0001}],
+    )
+    return dict(
+        patient_meta=patient, qc_rows=qc_rows, dashboard=dashboard,
+        interpretation=interpretation, merged_variants=merged,
+        reference_genome="GRCh38", pipeline_version="GEPER v8",
+    )
+
+
+class TestRenderClinicalPdf:
+    def test_produces_a_valid_pdf_file(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        result_path = render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        assert result_path == out
+        reader = PdfReader(out)
+        assert len(reader.pages) >= 1
+
+    def test_patient_metadata_appears_in_pdf_text(self, tmp_path):
+        from pypdf import PdfReader
+
+        kwargs = _minimal_kwargs()
+        kwargs["patient_meta"] = normalize_patient_metadata({"name": "Jane Doe", "physician": "Dr. Smith"})
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **kwargs)
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "Jane Doe" in text
+        assert "Dr. Smith" in text
+
+    def test_deidentified_note_appears_when_no_patient_metadata(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "de-identified" in text.lower()
+
+    def test_variant_gene_and_classification_appear(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "MT-TL1" in text
+        assert "Uncertain_Significance" in text
+
+    def test_footer_contains_reference_genome_and_pipeline_version(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "GRCh38" in text
+        assert "GEPER v8" in text
+
+    def test_lab_disclaimer_present(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        # The footer intentionally truncates a long disclaimer to fit one
+        # line — check the start of the default disclaimer, which is
+        # guaranteed to survive truncation.
+        assert "in-development bioinformatics pipeline" in text
+
+    def test_custom_disclaimer_used_when_provided(self, tmp_path):
+        from pypdf import PdfReader
+
+        kwargs = _minimal_kwargs()
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", lab_disclaimer="CUSTOM DISCLAIMER TEXT", **kwargs)
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "CUSTOM DISCLAIMER TEXT" in text
+
+    def test_signature_block_present(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "Pathologist" in text
+
+    def test_page_x_of_y_pagination(self, tmp_path):
+        """Force multiple pages via a long variant list and confirm each
+        page's footer states the correct total."""
+        from pypdf import PdfReader
+
+        kwargs = _minimal_kwargs()
+        many_variants = [
+            {"chrom": "17", "pos": i, "ref": "A", "alt": "T", "gene_name": f"GENE{i}",
+             "transcript_id": f"NM_{i}", "hgvs": f"g.{i}A>T", "consequence": "missense_variant"}
+            for i in range(200)
+        ]
+        many_acmg = [
+            {"chrom": "17", "pos": i, "ref": "A", "alt": "T", "gene": f"GENE{i}",
+             "classification": "Uncertain_Significance", "gnomad_af": 0.001}
+            for i in range(200)
+        ]
+        kwargs["merged_variants"] = merge_variants_with_acmg(many_variants, many_acmg)
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **kwargs)
+        reader = PdfReader(out)
+        n = len(reader.pages)
+        assert n > 1
+        first_text = reader.pages[0].extract_text()
+        last_text = reader.pages[-1].extract_text()
+        assert f"Page 1 of {n}" in first_text
+        assert f"Page {n} of {n}" in last_text
+
+    def test_no_variants_does_not_crash(self, tmp_path):
+        kwargs = _minimal_kwargs()
+        kwargs["merged_variants"] = []
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **kwargs)  # must not raise
+
+    def test_pgx_section_rendered_when_present(self, tmp_path):
+        from pypdf import PdfReader
+
+        kwargs = _minimal_kwargs()
+        kwargs["pgx_annotations"] = [
+            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Intermediate Metabolizer", "evidence_level": "1A"}
+        ]
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **kwargs)
+        text = "".join(p.extract_text() for p in PdfReader(out).pages)
+        assert "CYP2D6" in text
+
+    def test_reportlab_unavailable_raises_specific_error(self, tmp_path, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "reportlab.lib" or name.startswith("reportlab"):
+                raise ImportError("simulated missing reportlab")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        out = str(tmp_path / "report.pdf")
+        try:
+            render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+            assert False, "expected ReportLabUnavailableError"
+        except ReportLabUnavailableError:
+            pass

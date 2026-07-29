@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##reference=GRCh37
+##contig=<ID=1,length=249250621>
+##contig=<ID=11,length=135006516>
+##contig=<ID=12,length=133851895>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+1	169519049	.	T	C	.	.	.
+11	5248232	.	T	A	.	.	.
+12	112241766	.	G	A	.	.	.

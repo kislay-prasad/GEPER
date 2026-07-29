@@ -1,0 +1,18 @@
+{
+  "_provenance": {
+    "source": "UniProt REST API (rest.uniprot.org/uniprotkb/search, query 'gene:TTN AND organism_id:9606 AND reviewed:true'), live query during development",
+    "note": "Real UniProt Q8WZ42 (Titin) feature annotations, verbatim type/description/location. Titin's PEVK region is the field-standard example of a large, well-documented repeat region tolerating extensive in-frame length variation (including natural alternative splicing removing/adding whole PEVK repeat units) without a disease association -- see e.g. Herman et al. 2012 NEJM on TTN truncating variants in cardiomyopathy, and ClinGen's TTN-specific curation guidance on PEVK-region indel interpretation. Used here to ground PM4's repeat-region caveat test in a real, citable annotation; the specific test variant paired with it is constructed (see tests/test_pm4_ps4.py), since a ClinVar Benign/Likely benign record could not be confidently cross-referenced to these exact residue coordinates -- TTN has multiple clinically-used transcripts (e.g. the cardiac N2AB isoform, NM_001267550) with residue numbering that does not directly correspond to this canonical full-length (N2A, Q8WZ42) isoform's numbering, and no genomic-coordinate-based cross-check was performed for this fixture."
+  },
+  "accession": "Q8WZ42",
+  "gene_symbol": "TTN",
+  "sequence_length": 34350,
+  "features": [
+    {"feature_type": "Repeat", "description": "Z-repeat 1", "begin": 417, "end": 462},
+    {"feature_type": "Repeat", "description": "Z-repeat 2", "begin": 466, "end": 511},
+    {"feature_type": "Repeat", "description": "PEVK 1", "begin": 10216, "end": 10242},
+    {"feature_type": "Repeat", "description": "PEVK 2", "begin": 10244, "end": 10270},
+    {"feature_type": "Repeat", "description": "PEVK 3", "begin": 10272, "end": 10298},
+    {"feature_type": "Repeat", "description": "PEVK 4", "begin": 10300, "end": 10326},
+    {"feature_type": "Repeat", "description": "PEVK 5", "begin": 10327, "end": 10353}
+  ]
+}

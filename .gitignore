@@ -1,0 +1,62 @@
+# =============================================================================
+# GEPER / kim_pipeline / bridge — code-only repository.
+#
+# Every path excluded below is re-created automatically on first run by
+# this project's own bootstrap/download logic (verified against the
+# actual loader code, not assumed) -- see DATA_PROVENANCE.md for the
+# full file-by-file audit of what used to be committed here and where
+# each thing actually comes from.
+# =============================================================================
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- AI model weights / reference data (auto-downloaded on first use) -------
+# See geper/pipeline/models/*/loader.py (or equivalent) for each
+# plugin's real fetch source: hyena-dna clones HazyResearch/hyena-dna
+# from GitHub; SPiP downloads from its own GitHub raw + SourceForge
+# hosts; Enformer/Borzoi/SpliceBERT/SpliceFormer each have their own
+# HuggingFace/checkpoint-URL bootstrap (see DATA_PROVENANCE.md).
+geper/plugin_model_cache/
+geper/hyena-dna/
+geper/checkpoints/
+
+# --- Evidence-source local datasets / bulk downloads (auto-bootstrapped) ----
+# ClinGen, HPO, Orphanet, AlphaMissense catalogue, gnomAD, BLAST
+# databases -- all self-fetch via their own pipeline/*/bootstrap.py (or
+# equivalent) on first use; nothing here is meant to be committed.
+geper/model_cache/
+
+# --- Run output / logs --------------------------------------------------------
+geper/geper_output/
+geper/logs/
+*.log
+
+# --- Small, checked-in test fixtures are intentionally NOT excluded here ----
+# geper/testdata/, geper/testdata_bench/, test_data/ are tiny
+# (low hundreds of KB combined), purpose-built fixture files (a
+# generate_test_dataset.py script + small trimmed real-data slices),
+# not the large re-fetchable caches this file targets -- see
+# DATA_PROVENANCE.md for why these were kept.
+
+# --- OS / editor cruft ---------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Local tool state (not project content) ---------------------------------
+.claude/
+
+# --- Secrets / local overrides (none should ever exist, but never risk it) ---
+.env
+.env.*
+config.yaml
+!config.yaml.example

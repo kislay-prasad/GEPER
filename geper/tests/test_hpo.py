@@ -164,11 +164,11 @@ def _fbn1_marfan_only_evidence_dict():
 
 class TestPP4(unittest.TestCase):
     def test_no_phenotype_input_is_not_evaluated(self):
-        """The real-world path: GEPER's pipeline never populates phenotype_result (no input mechanism exists)."""
+        """The default path when --hpo-terms/--phenotype-file are not passed for a run."""
         result = ACMGRuleEngine().evaluate(hpo_result=_fbn1_evidence_dict())
         pp4 = result["all_criteria"]["PP4"]
         self.assertEqual(pp4["status"], "not_evaluated")
-        self.assertIn("no input mechanism", pp4["rationale"])
+        self.assertIn("none were supplied for this run", pp4["rationale"])
 
     def test_phenotype_input_without_hpo_result_is_not_evaluated(self):
         result = ACMGRuleEngine().evaluate(phenotype_result={"hpo_term_ids": ["HP:0001166"]})

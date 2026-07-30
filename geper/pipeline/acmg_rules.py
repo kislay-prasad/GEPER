@@ -1429,29 +1429,21 @@ class ACMGRuleEngine:
         highly specific for a disease with a single genetic etiology."
         Pathogenic, Supporting.
 
-        STRUCTURAL GAP, stated honestly rather than implied away: this
-        criterion is fundamentally about the *patient's own* clinical
-        presentation, and GEPER's pipeline has no input mechanism for
-        that at all -- `main.py`'s CLI only accepts `--vcf` (a variant
-        file) plus run-configuration flags (`--assembly`, `--species`,
-        `--blast-*`, etc.); there is no `--phenotype`/`--hpo-terms`
-        field anywhere in the 9-stage FASTQ-to-report pipeline, and
-        `phenotype_result` is never populated by
-        `pipeline/orchestrator.py` (nothing computes it -- it is only
-        ever passed through as `None` from
-        `InterpretationEngine.interpret()`'s own default). This is
-        exactly the same shape as PS4 (`_ps4`, case-frequency data) and
-        BS4 (`_bs4`, segregation data): a criterion this pipeline can
-        never *trigger* not because the logic is missing, but because
-        the input it needs was never collected in the first place.
+        INPUT MECHANISM: `main.py`'s CLI accepts `--hpo-terms` (a
+        comma-separated list of the patient's own observed HPO IDs,
+        e.g. `HP:0001250,HP:0002011`) and/or `--phenotype-file` (a
+        JSON/text file of HPO IDs); `build_phenotype_result()` in
+        `pipeline/hpo/utils.py` turns either into `phenotype_result`
+        (`{"hpo_term_ids": [...]}`), which `main.py` passes through
+        to `InterpretationEngine.interpret()`. When neither flag is
+        passed for a run, `phenotype_result` is `None`/empty and PP4
+        is reported `not_evaluated` below -- that is a per-run *data*
+        gap (no phenotype terms supplied for this sample), not a
+        pipeline *capability* gap.
 
-        The logic below is real and ready to run the moment a caller
-        supplies `phenotype_result` (expected shape:
-        `{"hpo_term_ids": ["HP:0001166", ...]}`, the patient's own
-        observed HPO terms -- e.g. from a clinician-entered phenotype
-        checklist a future pipeline stage could add): it checks the
-        overlap between those terms and this variant's gene's own
-        HPO-curated phenotype set (`hpo_result`, see `pipeline/hpo/`,
+        When phenotype terms are supplied, the logic below checks their overlap
+        against this variant's gene's own HPO-curated phenotype set
+        (`hpo_result`, see `pipeline/hpo/`,
         reusing the same gene-level annotation the orchestrator's HPO
         stage already resolves -- no second lookup here) as a proxy for
         "highly specific for this gene's disease", and the number of
@@ -1478,11 +1470,9 @@ class ACMGRuleEngine:
         if not patient_terms:
             return _not_evaluated(
                 "PP4",
-                "requires patient phenotype data (observed HPO terms), which this pipeline has no input "
-                "mechanism to collect -- GEPER's CLI/orchestrator take only a VCF and run-configuration "
-                "flags, no patient-side clinical/phenotype field exists anywhere in the pipeline. This "
-                "logic is implemented and ready to run the moment such an input is added (same structural "
-                "gap as PS4/case-frequency data and BS4/segregation data).",
+                "requires patient phenotype data (observed HPO terms); none were supplied for this run "
+                "-- pass --hpo-terms and/or --phenotype-file to activate PP4. The input mechanism exists "
+                "and this logic runs automatically once phenotype terms are provided.",
             )
 
         if not hpo_result or hpo_result.get("skipped") or hpo_result.get("error") or not hpo_result.get("found"):

@@ -195,7 +195,7 @@ class TestBuildPhenotypeResultFeedsPP4EndToEnd(unittest.TestCase):
         )
         pp4 = result["all_criteria"]["PP4"]
         self.assertEqual(pp4["status"], "not_evaluated")
-        self.assertIn("no input mechanism", pp4["rationale"])
+        self.assertIn("none were supplied for this run", pp4["rationale"])
 
     def test_matching_terms_trigger_pp4(self):
         phenotype_result = build_phenotype_result("HP:0001166,HP:0000098", None)

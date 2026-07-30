@@ -72,6 +72,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--species", default=None)
     p.add_argument("--assembly", default=None)
     p.add_argument("--max-variants", type=int, default=None)
+    p.add_argument(
+        "--hpo-terms",
+        default=None,
+        help="Comma-separated patient-observed HPO term IDs for GEPER's PP4 rule, e.g. 'HP:0001250,HP:0002011'.",
+    )
+    p.add_argument(
+        "--phenotype-file",
+        default=None,
+        help="Path to a text (one HPO ID per line) or JSON (list of HPO ID strings) file of patient-observed HPO terms for GEPER's PP4 rule.",
+    )
     return p
 
 
@@ -99,6 +109,8 @@ def main() -> int:
             species=args.species,
             assembly=args.assembly,
             max_variants=args.max_variants,
+            hpo_terms=args.hpo_terms,
+            phenotype_file=args.phenotype_file,
         )
     except BridgeError as exc:
         print(f"\nCombined pipeline FAILED: {exc}", file=sys.stderr)

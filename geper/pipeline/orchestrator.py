@@ -163,6 +163,7 @@ class GeperPipeline:
         blast_enable_prefetch: Optional[bool] = None,
         mmsplice_enable_prefetch: Optional[bool] = None,
         patient_meta_path: Optional[str] = None,
+        phenotype_result: Optional[Dict[str, Any]] = None,
     ):
         log_environment_versions()
 
@@ -262,6 +263,16 @@ class GeperPipeline:
         # never crashes the pipeline (see generate_pdf's docstring); the
         # PDF stage itself is also wrapped in try/except in run() below.
         self.patient_meta_path = patient_meta_path
+
+        # Patient-observed HPO phenotype terms (see pipeline/hpo/utils.py::
+        # build_phenotype_result), the input ACMG's PP4 rule
+        # (acmg_rules.py::ACMGRuleEngine._pp4) compares against each
+        # variant's gene-level HPO evidence. None by default -- the same
+        # "no input supplied" state every prior run was already in, so
+        # PP4 continues to report "not_evaluated" exactly as before
+        # unless a caller explicitly supplies phenotype terms (CLI:
+        # --hpo-terms / --phenotype-file).
+        self.phenotype_result = phenotype_result
 
         if self.ai_only:
             logger.info(
@@ -936,6 +947,7 @@ class GeperPipeline:
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
             hpo_result=hpo_result,
+            phenotype_result=self.phenotype_result,
             spliceformer_result=spliceformer_result,
             splicebert_result=splicebert_result,
         )

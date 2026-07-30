@@ -16,6 +16,7 @@ import argparse
 import sys
 
 from config import CONFIG
+from pipeline.hpo.utils import build_phenotype_result
 from pipeline.orchestrator import GeperPipeline
 from utils.exceptions import PipelineError
 from utils.logger import get_logger
@@ -135,6 +136,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "retention requirements; see report/summary.py::_parse_patient_meta."
         ),
     )
+    parser.add_argument(
+        "--hpo-terms",
+        default=None,
+        help=(
+            "Comma-separated patient-observed HPO phenotype term IDs, e.g. "
+            "--hpo-terms 'HP:0001250,HP:0002011', used as evidence for the "
+            "ACMG PP4 rule (compared against each variant's gene via the "
+            "already-loaded HPO gene-to-phenotype dataset). Optional -- "
+            "if omitted (the default), PP4 continues to report "
+            "'not_evaluated' exactly as before. Malformed IDs (anything "
+            "not matching 'HP:#######') are logged as a warning and "
+            "skipped, never fatal. Combines with --phenotype-file if both "
+            "are given."
+        ),
+    )
+    parser.add_argument(
+        "--phenotype-file",
+        default=None,
+        help=(
+            "Path to a file with patient-observed HPO phenotype term IDs "
+            "for the ACMG PP4 rule: either a plain text file with one "
+            "'HP:#######' ID per line, or a JSON file containing a list "
+            "of HPO ID strings. Alternative (or addition) to --hpo-terms "
+            "for real clinical use where a clinician needs to paste in "
+            "several observed phenotypes at once. A missing/unreadable/"
+            "malformed file is logged as a warning, never fatal."
+        ),
+    )
     return parser
 
 
@@ -150,6 +179,8 @@ def main() -> int:
     if args.max_variants is not None and args.max_variants <= 0:
         parser.error("--max-variants must be a positive integer.")
 
+    phenotype_result = build_phenotype_result(args.hpo_terms, args.phenotype_file, logger=logger)
+
     pipeline = GeperPipeline(
         blast_mode=args.blast_mode,
         blast_local_db=args.blast_db,
@@ -161,6 +192,7 @@ def main() -> int:
         enable_profiling=(False if args.no_profiling else None),
         blast_disk_cache=(False if args.no_blast_cache else None),
         patient_meta_path=args.patient_meta,
+        phenotype_result=phenotype_result,
     )
 
     try:

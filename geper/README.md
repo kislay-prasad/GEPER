@@ -182,6 +182,18 @@ python main.py --vcf sample.vcf.gz --max-variants 20
 
 # Full run
 python main.py --vcf sample.vcf --output-dir ./geper_output
+
+# Full run with patient-observed phenotypes, so ACMG's PP4 rule can
+# actually evaluate (see "--hpo-terms" / "--phenotype-file" below) --
+# real Marfan-syndrome-associated HPO terms (Arachnodactyly, Tall
+# stature) supplied directly on the command line:
+python main.py --vcf sample.vcf --output-dir ./geper_output \
+    --hpo-terms "HP:0001166,HP:0000098"
+
+# Same, but from a file (more practical when a clinician has several
+# observed phenotypes to enter):
+python main.py --vcf sample.vcf --output-dir ./geper_output \
+    --phenotype-file patient_phenotypes.txt
 ```
 
 Options:
@@ -200,6 +212,8 @@ Options:
 | `--assembly` | Genome assembly / coord system version, e.g. `GRCh38`. If omitted, GEPER auto-detects the build from the VCF header; if supplied *and* it definitely disagrees with what the header declares, the run stops with an explanatory error rather than silently fetching reference sequence from the wrong build. | Ensembl default / auto-detected |
 | `--max-variants` | Stop after processing this many variant records. Uses the streaming parser, so the rest of the file is never even read. Intended for debugging against large VCFs. | unlimited |
 | `--no-resume` | By default, if `geper_results.json` already exists in `--output-dir`, GEPER skips variants already recorded there and continues where a previous run (e.g. before a Colab disconnect) left off. Pass this to force a from-scratch run instead. | resume enabled |
+| `--hpo-terms` | Comma-separated patient-observed HPO phenotype term IDs, e.g. `"HP:0001166,HP:0002011"`, evaluated against each variant's gene via the HPO gene-to-phenotype dataset for ACMG's PP4 rule (see "21. HPO" below). Malformed IDs (anything not matching `HP:#######`) are logged as a warning and skipped, never fatal. Combines with `--phenotype-file` if both are given. | — (PP4 stays `not_evaluated`) |
+| `--phenotype-file` | Path to a file with patient-observed HPO terms for PP4: either a plain text file with one `HP:#######` ID per line, or a JSON file containing a list of HPO ID strings. Alternative/addition to `--hpo-terms` for real clinical use where several observed phenotypes need to be entered at once. A missing/unreadable/malformed file is logged as a warning, never fatal. | — (PP4 stays `not_evaluated`) |
 
 Every run ends with a summary in the log:
 
@@ -1279,20 +1293,22 @@ gene symbol ClinGen's stage already resolved for the variant and calls
 `hpo_client.query_variant(gene_symbol)`, catching all exceptions
 defensively so an HPO lookup failure never fails the variant.
 
-**ACMG contribution — PP4, and a known gap.** The evidence this stage
-retrieves feeds ACMG's PP4 rule
-(`pipeline/acmg_rules.py::ACMGRuleEngine._pp4`), and that rule's logic
-is fully implemented. **However, PP4 always evaluates to
-`not_evaluated` in every GEPER run today**, because PP4 requires
-comparing a *specific patient's* observed phenotype/HPO terms against
-a gene's known phenotype associations — and GEPER has no
-patient-phenotype input anywhere in its pipeline (only `--vcf` and
-run-config flags are accepted; there is no `--hpo-terms`/patient
-phenotype CLI option or field). This isn't a bug to fix silently — it
-reflects a real, currently-missing integration point, not a defect in
-the HPO or ACMG-rule code themselves. Providing a way to pass
-patient-specific HPO terms into a run is a prerequisite for PP4 ever
-firing.
+**ACMG contribution — PP4.** The evidence this stage retrieves feeds
+ACMG's PP4 rule (`pipeline/acmg_rules.py::ACMGRuleEngine._pp4`): it
+compares the patient's observed HPO terms (supplied via `--hpo-terms`
+/ `--phenotype-file`, see "6. Usage" above) against this variant's
+gene's own HPO-curated phenotype set, using overlap ratio
+(`GEPER_HPO_PP4_OVERLAP_THRESHOLD`, default `0.5`) and distinct-disease
+count (`GEPER_HPO_PP4_MAX_DISTINCT_DISEASES`, default `3`, a heuristic
+proxy for "single genetic etiology") as its two triggering conditions.
+**If no patient phenotype terms are supplied for a run (the default),
+PP4 reports `not_evaluated` exactly as before** — there's simply
+nothing to compare the gene's phenotype set against. Supplying
+`--hpo-terms`/`--phenotype-file` is what turns PP4 from structurally
+unable to fire into an active, evaluated criterion; see
+`tests/test_hpo.py` (rule logic against real FBN1/CFTR data) and
+`tests/test_phenotype_input.py` (the CLI input path itself) for full
+coverage of both states.
 
 ## 22. Orphanet (rare-disease context)
 

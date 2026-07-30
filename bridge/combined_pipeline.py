@@ -202,6 +202,8 @@ def run_geper_vcf_to_report(
     assembly: Optional[str] = None,
     max_variants: Optional[int] = None,
     no_resume: bool = False,
+    hpo_terms: Optional[str] = None,
+    phenotype_file: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     """Run GEPER's own `main.py --vcf ...` entry point in a subprocess.
@@ -225,6 +227,7 @@ def run_geper_vcf_to_report(
     output_dir = _abs(output_dir)
     blast_db = _abs(blast_db)
     blast_reference_fasta = _abs(blast_reference_fasta)
+    phenotype_file = _abs(phenotype_file)
 
     python_bin = geper_python or sys.executable
     cmd = [python_bin, "main.py", "--vcf", vcf_path, "--output-dir", output_dir]
@@ -244,6 +247,10 @@ def run_geper_vcf_to_report(
         cmd += ["--max-variants", str(max_variants)]
     if no_resume:
         cmd += ["--no-resume"]
+    if hpo_terms:
+        cmd += ["--hpo-terms", hpo_terms]
+    if phenotype_file:
+        cmd += ["--phenotype-file", phenotype_file]
     if extra_args:
         cmd += list(extra_args)
 
@@ -283,6 +290,8 @@ def run_combined(
     species: Optional[str] = None,
     assembly: Optional[str] = None,
     max_variants: Optional[int] = None,
+    hpo_terms: Optional[str] = None,
+    phenotype_file: Optional[str] = None,
 ) -> CombinedPipelineResult:
     """Run the complete FASTQ -> Clinical Report workflow:
 
@@ -319,6 +328,8 @@ def run_combined(
             assembly=assembly,
             max_variants=max_variants,
             no_resume=no_resume,
+            hpo_terms=hpo_terms,
+            phenotype_file=phenotype_file,
         )
         result.geper_results_json = geper_out["geper_results_json"]
         result.geper_report_md = geper_out["geper_report_md"]

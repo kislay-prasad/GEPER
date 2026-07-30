@@ -479,13 +479,24 @@ itself is on `sys.path` (e.g. `sys.path.append('/content/geper')` as
 the Colab notebook's setup cell does) and that you're running scripts
 from within it.
 
-Nothing else is required by default: `_load_impl()` resolves the
-public Google Cloud Storage catalogue URLs (`GEPER_ALPHAMISSENSE_HG38_URL`
-/ `_HG19_URL`, both pre-set to the official bucket) and `tabix` queries
-them via indexed HTTP range requests — GEPER never downloads the
-multi-GB file wholesale. For air-gapped deployments or very
-high-throughput runs, pre-download both `AlphaMissense_hg38.tsv.gz` /
-`AlphaMissense_hg19.tsv.gz` and their `.tbi` indexes yourself and point
+Nothing else is required by default, but note what "default" actually
+does: Google's GCS bucket has no `.tbi` sidecar index next to the
+catalogue file, so indexed HTTP range queries against the remote file
+aren't possible. `_load_impl()` resolves the public GCS catalogue URLs
+(`GEPER_ALPHAMISSENSE_HG38_URL` / `_HG19_URL`, both pre-set to the
+official bucket) and, the first time each genome build is needed,
+**streams the full ~9GB `AlphaMissense_<build>.tsv.gz` down once**,
+caching it under `GEPER_ALPHAMISSENSE_CACHE_SUBDIR` inside GEPER's
+cache directory, then builds a local `tabix` index over that cached
+copy. Every subsequent run reuses the cached file + index without
+re-downloading, but the first run for a given genome build does pay a
+one-time multi-GB download and index-build cost — plan disk space and
+first-run time accordingly. Set `GEPER_ALPHAMISSENSE_AUTO_DOWNLOAD=false`
+to disable this and require a local file instead (fails fast rather
+than downloading if none is configured). For air-gapped deployments,
+very high-throughput runs, or to avoid the first-run download
+entirely, pre-download `AlphaMissense_hg38.tsv.gz` / `_hg19.tsv.gz`
+yourself, build (or fetch) a `.tbi` index for each, and point
 `GEPER_ALPHAMISSENSE_HG38_LOCAL` / `_HG19_LOCAL` at them; GEPER then
 never touches the network for AlphaMissense at all.
 
@@ -882,12 +893,20 @@ local-first/API-fallback shape:
   `LocalDatasetClinGenProvider`): ClinGen's own published, versioned
   Gene-Disease Validity and Dosage Sensitivity flat-file downloads
   (https://search.clinicalgenome.org/kb/gene-validity and
-  .../kb/dosage/download), provisioned locally via
-  `GEPER_CLINGEN_GENE_VALIDITY_FILE` / `GEPER_CLINGEN_DOSAGE_FILE`.
+  ftp.clinicalgenome.org's dosage TSV). By default GEPER **auto-fetches
+  both files for you** (`pipeline/clingen/bootstrap.py`, same
+  auto-bootstrap pattern as HPO/Orphanet below) — gated by
+  `GEPER_CLINGEN_AUTO_FETCH` (default `true`), cached under
+  `GEPER_CLINGEN_AUTO_FETCH_DIR`, and refreshed on a
+  `GEPER_CLINGEN_AUTO_FETCH_TTL_HOURS`-hour TTL (default 24h; a failed
+  refresh falls back to the last good cached copy rather than nothing).
   This is the primary, most reliable source — gene curation changes on
   the order of weeks/months, so a periodically-refreshed local copy is
   both faster and more robust than a live call for routine annotation.
-  Either file is optional and independent.
+  `GEPER_CLINGEN_GENE_VALIDITY_FILE` / `GEPER_CLINGEN_DOSAGE_FILE`
+  remain available as a separate, higher-priority manual override —
+  set either to point at your own file and auto-fetch is skipped for
+  that file — for air-gapped deployments or a pinned/vetted snapshot.
 - **Live API fallback** (`LiveAPIClinGenProvider`): used automatically
   for a gene not present in the local dataset (or when no local
   dataset is configured), querying `GEPER_CLINGEN_API_ENDPOINT`
@@ -1237,4 +1256,94 @@ comparison using the actual `blastn`/`makeblastdb` binaries.
   feature -- BLAST results are consumed by the interpretation engine
   the same way regardless of which backend produced them.
 | `GEPER_UNIPROT_CACHE_TTL_HOURS` / `_INTERPRO_..._TTL_HOURS` / `_ALPHAFOLD_..._TTL_HOURS` | `24` | Cache TTL |
+
+## 21. HPO (phenotype evidence)
+
+Gene-phenotype evidence from the Human Phenotype Ontology
+(https://hpo.jax.org), implemented in `pipeline/hpo/`. Same
+never-blocks-the-pipeline philosophy as every other evidence source
+here.
+
+**Bootstrap:** by default GEPER auto-fetches HPO's official
+`genes_to_phenotype.txt` annotation file
+(`purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt`) the first
+time it's needed — gated by `GEPER_HPO_AUTO_FETCH` (default `true`),
+cached under `GEPER_HPO_AUTO_FETCH_DIR`, refreshed on a
+`GEPER_HPO_AUTO_FETCH_TTL_HOURS`-hour TTL (default 24h), with a live
+API fallback and stale-cache fallback on a failed refresh — the same
+pattern as ClinGen (see "17. ClinGen") and Orphanet (see "22.
+Orphanet") below.
+
+**Wiring:** `_run_hpo_stage()` (`pipeline/orchestrator.py`) reuses the
+gene symbol ClinGen's stage already resolved for the variant and calls
+`hpo_client.query_variant(gene_symbol)`, catching all exceptions
+defensively so an HPO lookup failure never fails the variant.
+
+**ACMG contribution — PP4, and a known gap.** The evidence this stage
+retrieves feeds ACMG's PP4 rule
+(`pipeline/acmg_rules.py::ACMGRuleEngine._pp4`), and that rule's logic
+is fully implemented. **However, PP4 always evaluates to
+`not_evaluated` in every GEPER run today**, because PP4 requires
+comparing a *specific patient's* observed phenotype/HPO terms against
+a gene's known phenotype associations — and GEPER has no
+patient-phenotype input anywhere in its pipeline (only `--vcf` and
+run-config flags are accepted; there is no `--hpo-terms`/patient
+phenotype CLI option or field). This isn't a bug to fix silently — it
+reflects a real, currently-missing integration point, not a defect in
+the HPO or ACMG-rule code themselves. Providing a way to pass
+patient-specific HPO terms into a run is a prerequisite for PP4 ever
+firing.
+
+## 22. Orphanet (rare-disease context)
+
+Gene-disorder associations from Orphanet (https://www.orphadata.com),
+implemented in `pipeline/orphanet/`. Same graceful-degradation
+philosophy as every other evidence source here.
+
+**Bootstrap:** by default GEPER auto-fetches Orphanet's
+`en_product6.xml` gene-disorder association file (CC BY 4.0,
+`orphadata.com/data/xml/en_product6.xml`) — gated by
+`GEPER_ORPHANET_AUTO_FETCH` (default `true`), cached under
+`GEPER_ORPHANET_AUTO_FETCH_DIR`, refreshed on a
+`GEPER_ORPHANET_AUTO_FETCH_TTL_HOURS`-hour TTL (default 24h). Unlike
+HPO/ClinGen, Orphanet has **no live-API fallback** (Orphanet's REST
+API requires a paid Data Transfer Agreement), so a failed fetch simply
+reports Orphanet evidence as unavailable for that run rather than
+retrying live.
+
+**Wiring:** `_run_orphanet_stage()` (`pipeline/orchestrator.py`) reuses
+the gene symbol ClinGen's stage already resolved.
+
+**Role:** annotation/report context only — Orphanet's disorder
+associations are surfaced in the report alongside the other evidence
+sources, but (unlike ClinGen's graded gene-disease validity scale used
+by PVS1/PP5/BP6-style evidence — see "17. ClinGen") they are not
+themselves mapped to an ACMG criterion, so Orphanet does not
+independently move a variant's classification.
+
+## 23. SPiP (splicing prediction, standalone)
+
+The official, MIT-licensed SPiP R implementation
+(https://github.com/LBGC-CFB/SPiP), vendored and run via an `Rscript`
+subprocess (`pipeline/models/spip_plugin.py`,
+`pipeline/models/spip/loader.py` + `vendor/`) against a one-variant VCF.
+
+**Bootstrap:** reference data (`model.RData`, a `dataRefSeq<genome>.RData`
+file, and a large `transcriptome_<genome>.RData` file) auto-bootstraps
+at load time from the upstream GitHub repository plus a SourceForge
+mirror, gated by `CONFIG.splicing.ENABLE_SPIP` and by whether `Rscript`
+is available on `PATH`.
+
+**Not currently wired into the pipeline or ACMG evidence.** Unlike
+SpliceFormer/SpliceBERT (`pipeline/orchestrator.py`'s
+`_run_standalone_splice_plugin_stage`, which *are* invoked per-variant
+and feed BP7 — see `ACMGRuleEngine._bp7`), SPiP is deliberately
+excluded from `pipeline/models/ensemble.py`'s consensus, is never
+passed to `InterpretationEngine` (no PP3/PP4/BP7 contribution), does
+not appear in the AI Models startup/status table, and is not called
+from any per-variant stage in `orchestrator.py`. It's reachable today
+only via direct/programmatic use (`ModelManager`, `pending_plugins.py`)
+and its own tests — wiring it into a per-variant orchestrator stage
+and an ACMG rule is future work, not something a current run already
+does.
 

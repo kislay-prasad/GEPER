@@ -73,6 +73,8 @@ last-resort fallback for backward compatibility, so:
 --------------------------------------------------------------------
 """
 
+import contextlib
+import pickle
 import shutil
 import socket
 import time
@@ -235,6 +237,69 @@ def _is_permanent_download_error(exc: Exception) -> bool:
     return isinstance(exc, urllib.error.HTTPError)
 
 
+def _is_unpickling_error(exc: Exception) -> bool:
+    """True for the failure PyTorch >=2.6 raises against this exact
+    checkpoint now that `torch.load`'s `weights_only` default flipped
+    from `False` to `True` -- the file itself isn't corrupt, it's just
+    a plain, trusted first-party checkpoint (same trust level as
+    HyenaDNA's, which already loads with `weights_only=False`
+    explicitly -- see hyenadna.py) that predates PyTorch's newer,
+    stricter unpickling allowlist."""
+    if isinstance(exc, pickle.UnpicklingError):
+        return True
+    return "weights_only" in str(exc)
+
+
+@contextlib.contextmanager
+def _force_weights_only_false():
+    """
+    `fm.pretrained.<variant>(model_location=...)` calls `torch.load(...)`
+    internally with no `weights_only` argument, so there's no way to
+    pass it through the official package's API. This temporarily
+    patches `torch.load`'s default back to `weights_only=False` for the
+    duration of the call instead, so a checkpoint that only fails
+    because of PyTorch 2.6's new default can be loaded from the exact
+    same local file it already has -- instead of discarding a perfectly
+    good file and wastefully re-downloading (or re-hitting the flaky
+    upstream endpoint) for a problem re-downloading can't fix anyway.
+    """
+    original_load = torch.load
+
+    def _patched_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return original_load(*args, **kwargs)
+
+    torch.load = _patched_load
+    try:
+        yield
+    finally:
+        torch.load = original_load
+
+
+def _load_local_checkpoint(loader, path: str, logger):
+    """
+    Loads an already-on-disk RNA-FM checkpoint via the official
+    `fm.pretrained` loader, retrying once with `weights_only` forced to
+    `False` (see `_force_weights_only_false`) if the first attempt
+    fails with an unpickling error. Any other failure (a genuinely
+    truncated/corrupt file, an unexpected format, ...) is re-raised
+    immediately for the caller's existing fallback chain to handle.
+    """
+    try:
+        return loader(model_location=path)
+    except Exception as exc:  # noqa: BLE001 - re-raised below unless recognized
+        if not _is_unpickling_error(exc):
+            raise
+        logger.info(
+            f"RNA-FM checkpoint at '{path}' failed to load under "
+            f"PyTorch's newer weights_only=True default "
+            f"({exc.__class__.__name__}); retrying the same local file "
+            "with weights_only=False instead of re-downloading."
+        )
+        with _force_weights_only_false():
+            return loader(model_location=path)
+
+
 class RNAFMModel(BaseGenomicModel):
     """Embeds RNA sequences using the official RNA-FM (ml4bio/RNA-FM)."""
 
@@ -296,13 +361,16 @@ class RNAFMModel(BaseGenomicModel):
                 f"'{cached_path}' -- skipping network download."
             )
             try:
-                return loader(model_location=str(cached_path))
+                return _load_local_checkpoint(loader, str(cached_path), self.logger)
             except Exception as exc:  # noqa: BLE001
                 # A cached file that fails to load (corrupted partial
                 # download, wrong format) shouldn't be trusted silently
                 # -- fall through to a fresh network attempt instead,
                 # which is more likely to succeed than reusing bad
-                # local bytes.
+                # local bytes. (An UnpicklingError caused only by
+                # PyTorch 2.6's weights_only default was already
+                # retried in-place by _load_local_checkpoint above, so
+                # reaching this branch means it genuinely didn't help.)
                 self.logger.warning(
                     f"Cached RNA-FM checkpoint at '{cached_path}' failed "
                     f"to load ({exc.__class__.__name__}); ignoring cache "
@@ -325,7 +393,7 @@ class RNAFMModel(BaseGenomicModel):
                         f"'{_HF_MIRROR_REPO_ID}' -- skipping the "
                         "unreliable upstream endpoint."
                     )
-                    return loader(model_location=str(mirror_path))
+                    return _load_local_checkpoint(loader, str(mirror_path), self.logger)
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning(
                         f"HF-mirrored RNA-FM checkpoint at '{mirror_path}' "
@@ -356,6 +424,19 @@ class RNAFMModel(BaseGenomicModel):
             try:
                 return loader()
             except Exception as exc:  # noqa: BLE001 - translate + sanitize below
+                if _is_unpickling_error(exc):
+                    # The download itself succeeded (torch.hub already
+                    # cached the file); only the unpickling step failed,
+                    # under PyTorch 2.6's new weights_only=True default.
+                    # Retry the load in place instead of letting this
+                    # be treated as a corrupt/permanent failure below,
+                    # which would otherwise skip RNA-FM for the whole
+                    # run over a problem that was never about the file.
+                    try:
+                        with _force_weights_only_false():
+                            return loader()
+                    except Exception as retry_exc:  # noqa: BLE001
+                        exc = retry_exc
                 last_exc = exc
                 permanent = _is_permanent_download_error(exc)
                 self.logger.debug(

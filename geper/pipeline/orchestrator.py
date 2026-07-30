@@ -790,14 +790,25 @@ class GeperPipeline:
         """
         Buckets one variant's result into success/skipped/failed for the
         run summary. A variant with no sequence context could never
-        have been analyzed by any model, so it's "skipped"; a variant
-        with any recorded stage error is "failed"; anything else that
-        completed with no errors is a "success".
+        have been analyzed by any model, so it's "skipped". A variant
+        is "failed" only when it has no usable ACMG interpretation to
+        show for it (`interpretation_result` missing or itself an
+        `{"error": ...}` record -- the same check `_apply_priority_ranks`
+        already uses) -- NOT merely because `errors` is non-empty.
+        `errors` accumulates every independently-caught, non-fatal
+        per-stage failure (a single BLAST/ClinVar/gnomAD/etc. lookup
+        hiccup, one AI model failing to load, ...), any one of which
+        used to flip an otherwise fully-interpreted variant to "failed"
+        in the summary even though a complete, valid ACMG report was
+        produced. Best-effort partial evidence is still a "success"
+        here; per-stage detail remains visible in `errors` on the
+        variant itself for anyone who wants it.
         """
         context = variant_result.get("sequence_context", {})
         if context.get("error"):
             return "skipped"
-        if variant_result.get("errors"):
+        interpretation_result = variant_result.get("interpretation_result")
+        if not isinstance(interpretation_result, dict) or "error" in interpretation_result:
             return "failed"
         return "success"
 

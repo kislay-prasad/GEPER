@@ -1,5 +1,12 @@
 # nuclear_test.vcf — ground-truth test dataset for PP4 / PS3 / BS3 / PM1
 
+**UPDATE (2026-07-31, later same day):** the "Major finding" below (PM1's
+protein-position estimate) has been **fixed**, not just diagnosed. The
+sections describing it are kept as the historical record of how the bug was
+found, but the *predicted outcome* they state for the PRNP record is now
+stale -- see the correction note right after that section for the current,
+verified-correct expectation.
+
 **Purpose.** Every smoke test to date used MT-RNR2 (mitochondrial), which has
 zero HPO entries, zero ClinGen ERepo/MaveDB functional evidence, and no
 InterPro domain annotations. PP4, PS3, BS3, and PM1 have therefore never
@@ -52,6 +59,16 @@ for the Colab run.
 - **Source:** ClinVar Variation ID 3690, `esummary` queried live 2026-07-31 — **Pathogenic**, review status "criteria provided, multiple submitters, no conflicts"; associated with Gerstmann-Sträussler-Scheinker syndrome, inherited Creutzfeldt-Jakob disease, Huntington disease-like 1 (OMIM 137440/123400/603218)
 - **Domain evidence:** live InterPro query on UniProt P04156 (PRNP) confirms residue 102 falls inside `IPR036924` ("Prion/Doppel beta-ribbon domain superfamily", residues 90–231, InterPro type `homologous_superfamily` — **not** filtered out by GEPER's own `_NON_DOMAIN_ENTRY_TYPES = {"family"}` exclusion in `pipeline/interpro/lookup.py`). This is real, true, canonical-numbering domain overlap — P102L is THE textbook GSS mutation and is inside a genuine structural domain, not a `family`-type whole-protein span.
 - **Why PRNP and not BRCA1/TP53 for PM1** — see "Major finding" below.
+- **CORRECTED expected result (2026-07-31, later same day):** the position-estimate bug
+  described in "Major finding" has been fixed (`pipeline/pvs1/utils.py::canonical_protein_position`
+  replaces the old local-window heuristic). Re-verified live end-to-end after the fix (no
+  orchestrator import, no model weights): `canonical_protein_position` now correctly returns
+  **102** for this variant, and `InterProLookup.query_variant(uniprot_result={"accession":
+  "P04156"}, protein_position=102)` returns `IPR036924` overlapping (plus `IPR000817`, a
+  `domain`-type SMART entry not noticed during the original diagnosis). **`PM1` now correctly
+  resolves to `triggered`**, not the `not_triggered` false negative predicted below. If the
+  Colab run shows anything other than `triggered` for this record, that's a real regression
+  worth investigating, not the previously-expected limitation.
 
 ---
 
@@ -112,6 +129,17 @@ default/realistic behavior), override the threshold for the run:
 ---
 
 ## Major finding: PM1's protein-position estimate is unreliable for essentially all realistic variants
+
+**FIXED 2026-07-31 (later same day this was diagnosed).** `orchestrator._estimate_protein_position`
+was deleted and replaced by `pipeline/pvs1/utils.py::canonical_protein_position`, which reuses
+PVS1's own already-fetched, already-tested `TranscriptContext` (splice-aware, strand-aware
+`codon_at`) instead of the flat, unspliced, non-strand-aware translation window described below.
+Also fixed: `InterProLookup.query_variant` used to collapse "position unknown" and "checked, no
+overlap" into the same `affected_domains = []`, so a failed position lookup produced a confident
+`not_triggered` instead of `not_evaluated` — `_pm1` now checks for an unknown position explicitly
+and reports `not_evaluated` with a named reason when it can't determine one, rather than guessing.
+The section below is kept as the (still-accurate) historical record of how the bug was found; the
+PRNP record's corrected expected result is noted above in variant #5.
 
 This surfaced while trying to pick a BRCA1/TP53 missense variant that would
 double as a PM1 domain-overlap positive control (there are excellent
@@ -192,6 +220,16 @@ don't run the pipeline."
 ---
 
 ## Rejected candidates
+
+**Note (2026-07-31):** the BRCA1/LDLR entries below were rejected as PM1
+candidates specifically because of the position-estimate bug fixed above --
+now that `canonical_protein_position` is transcript-verified, all three
+(`C64Y`, `C1697Y`, LDLR `D227E`) were re-checked live end-to-end and now
+correctly resolve `PM1: triggered` too (RING/BRCT/LA5-repeat domains
+respectively). They're left out of `nuclear_test.vcf` itself only because
+this dataset wasn't revised for the fix, not because they're bad
+candidates -- PRNP P102L (variant #5 above) remains the primary PM1 case,
+now genuinely triggering as originally intended.
 
 - **CFTR** — excluded per prior PS3/BS3 feasibility research: ClinGen
   ERepo and MaveDB both return zero coverage for CFTR (confirmed again

@@ -330,13 +330,28 @@ class ConfidenceEngine:
         if interpro_result and not interpro_result.get("skipped") and not interpro_result.get("error") and interpro_result.get("found"):
             sources.append("InterPro")
             presence_parts.append(1.0)
-            affected = interpro_result.get("affected_domains") or []
+            # `affected_domains` is three-valued (see
+            # `pipeline/interpro/lookup.py::query_variant`'s
+            # docstring): None means domain overlap was never checked
+            # (no transcript-verified residue position was available),
+            # [] means it was checked and genuinely didn't overlap, and
+            # a non-empty list means it did. Collapsing None and [] via
+            # `or []` here would silently score "we don't know" the
+            # same as "we checked and it's negative" -- a real
+            # confirmed negative is more informative evidence than an
+            # unchecked gap, so they get different quality weights.
+            affected = interpro_result.get("affected_domains")
+            position = interpro_result.get("protein_position")
             if affected:
                 quality_parts.append(0.9)
-                notes.append(f"InterPro/Pfam annotates {len(affected)} domain(s) overlapping the estimated variant residue.")
+                notes.append(f"InterPro/Pfam annotates {len(affected)} domain(s) overlapping residue {position} (transcript-verified).")
+            elif affected is None:
+                quality_parts.append(0.3)
+                notes.append("InterPro/Pfam annotation available for this protein, but this variant's residue position could not be "
+                              "determined from the transcript structure, so domain overlap could not be checked.")
             else:
-                quality_parts.append(0.5)
-                notes.append("InterPro/Pfam annotation available for this protein, but no domain overlaps the estimated variant residue.")
+                quality_parts.append(0.6)
+                notes.append(f"InterPro/Pfam annotation available; no domain overlaps residue {position} (transcript-verified).")
         else:
             notes.append("No InterPro/Pfam annotation available for this protein.")
 

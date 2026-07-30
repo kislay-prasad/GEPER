@@ -77,6 +77,25 @@ class TestPM1WithRealBRCA1Domains(unittest.TestCase):
         criterion = ACMGRuleEngine._pm1(result)
         self.assertEqual(criterion.status, "not_evaluated")
 
+    def test_unknown_position_is_not_evaluated_not_a_false_negative(self):
+        # Regression test for the PM1 false-negative fix (2026-07-31):
+        # when the transcript-verified protein position could not be
+        # determined (protein_position=None), this must be
+        # `not_evaluated` -- a confident `not_triggered` ("does not
+        # overlap any domain") would be a wrong claim, since domain
+        # overlap was never actually checked. Real accession, real
+        # domain data (BRCA1 P38398 genuinely has domains), but no
+        # position -- isolates the missing-position case from a
+        # "found=False" case, which test_no_accession_is_not_evaluated
+        # already covers separately.
+        result = _skip_if_unreachable(
+            self, lambda: self.lookup.query_variant(uniprot_result={"accession": "P38398"}, protein_position=None)
+        )
+        self.assertIsNone(result["affected_domains"])
+        criterion = ACMGRuleEngine._pm1(result)
+        self.assertEqual(criterion.status, "not_evaluated")
+        self.assertIn("could not be determined", criterion.rationale)
+
 
 class TestPM1WithRealTP53Domains(unittest.TestCase):
     """TP53 (P04637): DNA-binding domain ~94-312 -- second independent real-data cross-check gene."""

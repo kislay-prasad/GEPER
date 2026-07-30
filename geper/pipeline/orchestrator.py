@@ -58,7 +58,7 @@ from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
 from pipeline.ps1_pm5.lookup import ClinVarCodonLookup
 from pipeline.pvs1.lookup import TranscriptLookup
-from pipeline.pvs1.utils import transcript_from_result
+from pipeline.pvs1.utils import canonical_protein_position, transcript_from_result
 from pipeline.hgvs_utils import to_hgvs_c, to_hgvs_g
 from pipeline.variant_normalization import normalize_variant
 from pipeline.rna_generator import RNAGenerator
@@ -930,9 +930,11 @@ class GeperPipeline:
         # Biological evidence layer: UniProt -> InterPro/Pfam -> AlphaFold
         # DB, in that order -- InterPro and AlphaFold are both keyed by
         # the UniProt accession the first stage resolves, and both take
-        # the same best-effort protein-position estimate (see
-        # `_estimate_protein_position`'s docstring for its caveats).
-        protein_position = self._estimate_protein_position(protein_result)
+        # the same transcript-verified canonical protein position (see
+        # `canonical_protein_position`'s docstring in pipeline/pvs1/utils.py
+        # for exactly what it guarantees and when it is honestly `None`
+        # instead of a guess).
+        protein_position = canonical_protein_position(transcript_result, variant.pos)
         uniprot_result = self._run_uniprot_stage(variant, clingen_result, errors)
         interpro_result = self._run_interpro_stage(uniprot_result, protein_position, errors)
         alphafold_result = self._run_alphafold_stage(uniprot_result, protein_position, errors)
@@ -1852,44 +1854,6 @@ class GeperPipeline:
     # ------------------------------------------------------------------
     # Biological evidence layer: UniProt -> InterPro/Pfam -> AlphaFold DB
     # ------------------------------------------------------------------
-    @staticmethod
-    def _estimate_protein_position(protein_result: Dict[str, Any]) -> Optional[int]:
-        """
-        Best-effort 1-based amino acid position of this variant's
-        effect within the *locally translated* window
-        (`protein_result['translation']['ref_protein'/'alt_protein']`,
-        produced by `pipeline/protein_translator.py` from a short
-        flanking sequence window -- see that module's docstring).
-
-        IMPORTANT CAVEAT, surfaced everywhere this position is used
-        (`protein_position_basis` in the InterPro/AlphaFold results):
-        this is the first differing residue index *within that local
-        window*, not a canonical, transcript-verified HGVS.p protein
-        position. The window does not necessarily begin at the
-        transcript's annotated CDS start, so this index cannot be
-        assumed to line up with UniProt's/AlphaFold's own canonical
-        residue numbering for the full-length protein. It is reported
-        as an approximate estimate (never silently presented as
-        authoritative) -- consistent with this codebase's existing
-        policy of flagging unresolved/approximate mappings rather than
-        fabricating precision (see the tri-state ACMG `CriteriaResult`
-        pattern and `data_availability` reporting elsewhere in GEPER).
-        Returns None when no protein translation is available or the
-        reference/alternate proteins are identical (no residue changed).
-        """
-        if not protein_result or protein_result.get("skipped"):
-            return None
-        translation = protein_result.get("translation", {})
-        ref_p, alt_p = translation.get("ref_protein"), translation.get("alt_protein")
-        if not ref_p or not alt_p or ref_p == alt_p:
-            return None
-        for idx, (r, a) in enumerate(zip(ref_p, alt_p)):
-            if r != a:
-                return idx + 1  # 1-based residue position
-        if len(ref_p) != len(alt_p):
-            return min(len(ref_p), len(alt_p)) + 1
-        return None
-
     def _run_uniprot_stage(self, variant: Variant, clingen_result: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
         """
         UniProt reviewed-protein annotation (function, disease

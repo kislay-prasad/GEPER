@@ -272,12 +272,16 @@ class ReportGenerator:
         else:
             lines.append("- **UniProt:** no entry resolved.")
         if prot.get("interpro_available"):
-            domains = prot["interpro"].get("affected_domains") or []
+            domains = prot["interpro"].get("affected_domains")
+            position = prot["interpro"].get("protein_position")
             if domains:
                 names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed" for d in domains)
-                lines.append(f"- **InterPro/Pfam:** overlaps {len(domains)} domain(s): {names}")
+                lines.append(f"- **InterPro/Pfam:** residue {position} (transcript-verified) overlaps {len(domains)} domain(s): {names}")
+            elif domains is None:
+                lines.append("- **InterPro/Pfam:** annotation available, but this variant's residue position could not be determined "
+                              "from the transcript structure -- domain overlap was not checked.")
             else:
-                lines.append("- **InterPro/Pfam:** annotation available; no domain overlap at the estimated variant residue.")
+                lines.append(f"- **InterPro/Pfam:** annotation available; no domain overlap at residue {position} (transcript-verified).")
         elif prot.get("interpro_error"):
             lines.append(f"- **InterPro/Pfam:** _lookup failed (external service issue: {prot['interpro_error']}) -- not evidence of an absent domain, see Annotation Detail below._")
         else:
@@ -288,7 +292,12 @@ class ReportGenerator:
         lines.append("### 9. Structural Knowledge")
         lines.append("")
         if struct.get("available"):
-            lines.append(f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' (mean pLDDT={struct.get('mean_plddt')}, model {struct.get('model_version') or 'n/a'})")
+            band_label = (
+                f"at residue {struct.get('protein_position')} (transcript-verified)"
+                if struct.get("confidence_band_is_residue_specific")
+                else "whole-protein mean (variant residue position unknown)"
+            )
+            lines.append(f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' {band_label} (model {struct.get('model_version') or 'n/a'})")
             if struct.get("pdb_url"):
                 lines.append(f"  - Structure: {struct['pdb_url']}")
         elif struct.get("error"):
@@ -948,7 +957,7 @@ class ReportGenerator:
 
     @staticmethod
     def _render_interpro(interpro_result: Dict[str, Any]) -> List[str]:
-        """InterPro/Pfam conserved-domain panel, including which domains (if any) the estimated variant residue affects."""
+        """InterPro/Pfam conserved-domain panel, including which domains (if any) the variant's transcript-verified residue affects."""
         if not interpro_result:
             return []
         lines = ["### InterPro / Pfam (Conserved Domains)", ""]
@@ -986,14 +995,20 @@ class ReportGenerator:
                 )
             lines.append("")
 
-        affected = interpro_result.get("affected_domains") or []
+        affected = interpro_result.get("affected_domains")
+        position = interpro_result.get("protein_position")
         if affected:
             lines.append(
-                f"- **Affected domain(s) at the estimated variant residue** "
-                f"(_{interpro_result.get('protein_position_basis', 'approximate')}_):"
+                f"- **Affected domain(s) at residue {position}** "
+                f"(_{interpro_result.get('protein_position_basis', 'n/a')}_):"
             )
             for d in affected:
                 lines.append(f"  - {d.get('name') or d.get('member_accession') or 'unnamed domain'}")
+        elif affected is None:
+            lines.append(
+                "- **Affected domain(s):** not checked -- this variant's residue position could not be "
+                "determined from the transcript structure."
+            )
         lines.append("")
 
         return lines
@@ -1036,9 +1051,15 @@ class ReportGenerator:
 
         if alphafold_result.get("affected_residue_plddt") is not None:
             lines.append(
-                f"- **pLDDT at estimated variant residue:** {alphafold_result['affected_residue_plddt']:.1f} "
+                f"- **pLDDT at residue {alphafold_result.get('protein_position')}:** "
+                f"{alphafold_result['affected_residue_plddt']:.1f} "
                 f"({alphafold_result.get('affected_residue_band', 'n/a')}) "
-                f"(_{alphafold_result.get('protein_position_basis', 'approximate')}_)"
+                f"(_{alphafold_result.get('protein_position_basis', 'n/a')}_)"
+            )
+        elif alphafold_result.get("mean_plddt") is not None:
+            lines.append(
+                "- **pLDDT at variant residue:** not checked -- this variant's residue position could not "
+                "be determined from the transcript structure."
             )
         lines.append("")
 

@@ -56,12 +56,24 @@ class InterProAnnotation:
 
     def affected_domains(self, position: Optional[int]) -> List[Dict[str, Any]]:
         """
-        Domains whose matched span overlaps `position` (a best-effort
-        protein residue index -- see the orchestrator's
-        `_estimate_protein_position` docstring for exactly what this
-        position does and does not guarantee). Returns an empty list
-        (never None) when `position` is None, matching this codebase's
-        convention of an empty/absent result over a fabricated one.
+        Domains whose matched span overlaps `position` (a
+        transcript-verified canonical protein residue index -- see
+        `pipeline/pvs1/utils.py::canonical_protein_position`'s
+        docstring for exactly what this position does and does not
+        guarantee). Returns an empty list (never None) when `position`
+        is None.
+
+        NOTE: unlike `InterProLookup.query_variant`'s own
+        `affected_domains` field (see that module's docstring), this
+        method is not on the code path the orchestrator actually
+        calls -- `query_variant` filters `_NON_DOMAIN_ENTRY_TYPES`
+        inline and returns `None`, not `[]`, when `position` is None,
+        specifically so a caller can distinguish "not checked" from
+        "checked, no overlap" (see the PM1 false-negative fix,
+        2026-07-31). This method predates that distinction and
+        currently has no caller; if it gains one, it should adopt the
+        same three-valued convention rather than reintroducing the
+        collapse.
         """
         if position is None:
             return []

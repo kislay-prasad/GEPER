@@ -120,7 +120,8 @@ class TestInterProLookupQueryVariant(unittest.TestCase):
 
         self.assertEqual(len(result["affected_domains"]), 1)
         self.assertEqual(result["affected_domains"][0]["name"], "p53 family")
-        self.assertEqual(result["protein_position_basis"], "local_translation_window_estimate")
+        self.assertEqual(result["protein_position_basis"], "transcript_cds")
+        self.assertEqual(result["protein_position"], 150)
 
     def test_affected_domains_excludes_family_type_entries(self):
         # Regression test for the PM1-accuracy fix in
@@ -150,7 +151,13 @@ class TestInterProLookupQueryVariant(unittest.TestCase):
         self.assertEqual(len(result["affected_domains"]), 1)
         self.assertEqual(result["affected_domains"][0]["name"], "real domain")
 
-    def test_no_position_leaves_affected_domains_empty(self):
+    def test_no_position_leaves_affected_domains_unknown_not_empty(self):
+        # Regression test for the PM1 false-negative fix: a missing
+        # protein_position (domain overlap never checked) must be
+        # reported as None, not silently coerced to an empty list --
+        # `[]` means "checked, no overlap", which is a different,
+        # stronger claim than "position unknown". See
+        # pipeline/interpro/lookup.py::query_variant's docstring.
         provider = mock.Mock()
         annotation = mock.Mock()
         annotation.to_dict.return_value = {"found": True, "error": None, "domains": [{"name": "x", "start": 1, "end": 10}]}
@@ -162,7 +169,9 @@ class TestInterProLookupQueryVariant(unittest.TestCase):
             fake_config.interpro.ENABLED = True
             result = lookup.query_variant(uniprot_result={"accession": "P04637"}, protein_position=None)
 
-        self.assertEqual(result["affected_domains"], [])
+        self.assertIsNone(result["affected_domains"])
+        self.assertIsNone(result["protein_position_basis"])
+        self.assertIsNone(result["protein_position"])
 
 
 if __name__ == "__main__":

@@ -243,6 +243,14 @@ def _protein_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
     if interpro.get("found"):
         out["interpro_available"] = True
         out["interpro"] = {
+            "protein_position": interpro.get("protein_position"),
+            # `affected_domains` stays three-valued here too (None =
+            # position unknown, domain overlap never checked; [] =
+            # checked, no overlap; non-empty = overlap found) -- see
+            # `pipeline/interpro/lookup.py::query_variant`'s
+            # docstring. `.get(..., [])`'s default only applies when
+            # the key is absent, so an explicit `None` value passes
+            # through unchanged rather than being silently coerced.
             "affected_domains": interpro.get("affected_domains", []),
             "domain_overlap": bool(interpro.get("affected_domains")),
         }
@@ -256,9 +264,18 @@ def _structural_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
     alphafold = raw.get("alphafold") or {}
     if not alphafold.get("found"):
         return {"available": False, "error": alphafold.get("error")}
+    # `confidence_band`/`confidence_band_is_residue_specific` distinguish
+    # "pLDDT at this variant's own residue" from a silent fallback to
+    # the whole-protein mean when the residue position is unknown --
+    # both are legitimate numbers, but reporting one under a label that
+    # doesn't say which would let a reader assume residue-specificity
+    # that isn't there.
+    residue_band = alphafold.get("affected_residue_band")
     return {
         "available": True,
-        "confidence_band": alphafold.get("affected_residue_band") or alphafold.get("mean_plddt_band"),
+        "confidence_band": residue_band or alphafold.get("mean_plddt_band"),
+        "confidence_band_is_residue_specific": residue_band is not None,
+        "protein_position": alphafold.get("protein_position"),
         "mean_plddt": alphafold.get("mean_plddt"),
         "affected_residue_plddt": alphafold.get("affected_residue_plddt"),
         "model_version": alphafold.get("model_version"),

@@ -49,12 +49,13 @@ class AlphaFoldAnnotation:
     mean_plddt: Optional[float] = None
     mean_plddt_band: Optional[str] = None
 
-    # Only populated when a residue position estimate is available AND
+    # Only populated when a residue position was available AND
     # `CONFIG.alphafold.FETCH_STRUCTURE_FILE` is on (see
     # `provider.py::LiveAPIAlphaFoldProvider`) -- the full per-residue
     # pLDDT array is never surfaced in the per-variant result (it can
     # be thousands of entries long for a large protein); only the
-    # value at the estimated affected residue is.
+    # value at the affected residue is.
+    protein_position: Optional[int] = None
     affected_residue_plddt: Optional[float] = None
     affected_residue_band: Optional[str] = None
     protein_position_basis: Optional[str] = None
@@ -74,6 +75,7 @@ class AlphaFoldAnnotation:
             "uniprot_end": self.uniprot_end,
             "mean_plddt": self.mean_plddt,
             "mean_plddt_band": self.mean_plddt_band,
+            "protein_position": self.protein_position,
             "affected_residue_plddt": self.affected_residue_plddt,
             "affected_residue_band": self.affected_residue_band,
             "protein_position_basis": self.protein_position_basis,

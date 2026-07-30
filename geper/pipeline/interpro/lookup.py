@@ -101,8 +101,21 @@ class InterProLookup:
         `protein_position`, when provided, is used to annotate which
         returned domains overlap the variant (`affected_domains` in
         the result) -- see the orchestrator's
-        `_estimate_protein_position` for the important caveat about
-        what this position does and does not represent.
+        `_canonical_protein_position` for how it's derived (a
+        transcript-verified canonical residue number, or `None` when
+        it genuinely could not be determined).
+
+        `affected_domains` is deliberately three-valued, not just
+        list-or-empty: `None` means "domain overlap was never checked"
+        (no position was available -- `protein_position` is also
+        `None` in the result), `[]` means "checked, no annotated
+        domain overlaps this exact residue", and a non-empty list
+        means a real overlap. Collapsing the first two into the same
+        `[]` (as this used to do) made a missing position
+        indistinguishable from a genuine negative -- `_pm1` in
+        `acmg_rules.py` depends on being able to tell them apart to
+        report `not_evaluated` instead of a confident-but-wrong
+        `not_triggered`.
         """
         if not CONFIG.interpro.ENABLED:
             return dict(_SKIPPED_RESULT)
@@ -119,6 +132,7 @@ class InterProLookup:
 
         result = self.query_accession(accession)
         result.setdefault("accession", accession)
+        result["protein_position"] = protein_position
 
         if protein_position is not None and result.get("found") and not result.get("error"):
             domains = result.get("domains") or []
@@ -129,9 +143,10 @@ class InterProLookup:
                 and d.get("type") not in _NON_DOMAIN_ENTRY_TYPES
             ]
             result["affected_domains"] = affected
-            result["protein_position_basis"] = "local_translation_window_estimate"
+            result["protein_position_basis"] = "transcript_cds"
         else:
-            result["affected_domains"] = []
+            result["affected_domains"] = None
+            result["protein_position_basis"] = None
 
         return result
 

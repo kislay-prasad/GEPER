@@ -246,9 +246,10 @@ def _build_annotation(
         uniprot_end=summary.get("uniprotEnd"),
         mean_plddt=mean_plddt,
         mean_plddt_band=confidence_band(mean_plddt, **thresholds),
+        protein_position=protein_position,
         affected_residue_plddt=affected_plddt,
         affected_residue_band=confidence_band(affected_plddt, **thresholds),
-        protein_position_basis="local_translation_window_estimate" if protein_position is not None else None,
+        protein_position_basis="transcript_cds" if protein_position is not None else None,
         structure_fetched=structure_fetched,
     )
 

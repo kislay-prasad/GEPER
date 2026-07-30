@@ -202,16 +202,18 @@ class InterpretationEngine:
         # relevance, InterPro/Pfam domain context, AlphaFold DB
         # structural confidence). Unlike the gnomAD/ClinGen blocks
         # above, these are surfaced as purely informational context
-        # (weight 0.0) rather than scored ACMG-style evidence: none of
-        # UniProt/InterPro/AlphaFold map onto a specific ACMG/AMP
-        # criterion the way population frequency (PM2/BA1/BS1) or gene
-        # curation (PVS1/PP5/BP6) do, and the protein position they're
-        # keyed to is only a best-effort estimate (see the
-        # orchestrator's `_estimate_protein_position`), not a
-        # canonical transcript-verified coordinate -- so this only adds
-        # descriptive context for a reviewer, never a score change.
-        # Matches requirement #5's "never overwrite existing ACMG
-        # evidence, only add evidence" for every other evidence source.
+        # (weight 0.0) rather than scored ACMG-style evidence: this
+        # engine (unlike `ACMGRuleEngine._pm1`, which does score
+        # InterPro domain overlap as PM1) has no per-criterion slot for
+        # them, so they only add descriptive context for a reviewer,
+        # never a score change. The protein position they're keyed to
+        # (when present) is a transcript-verified canonical residue
+        # number -- see the orchestrator's
+        # `_canonical_protein_position` -- and is simply absent
+        # (`None`) rather than a fabricated guess when it could not be
+        # determined. Matches requirement #5's "never overwrite
+        # existing ACMG evidence, only add evidence" for every other
+        # evidence source.
         for text in self._biological_context_evidence(uniprot_result, interpro_result, alphafold_result):
             evidence.append(text)
         biological_evidence_lines = self._biological_context_evidence(uniprot_result, interpro_result, alphafold_result)
@@ -651,13 +653,13 @@ class InterpretationEngine:
                 )
 
         if interpro_result and not interpro_result.get("skipped") and not interpro_result.get("error") and interpro_result.get("found"):
-            affected = interpro_result.get("affected_domains") or []
+            affected = interpro_result.get("affected_domains")
             if affected:
                 names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
+                position = interpro_result.get("protein_position")
                 lines.append(
-                    f"InterPro/Pfam: the estimated variant residue falls within {len(affected)} annotated "
-                    f"domain/family region(s): {names} (position estimate is approximate; see "
-                    f"'protein_position_basis' in the full result)."
+                    f"InterPro/Pfam: residue {position} (transcript-verified) falls within {len(affected)} "
+                    f"annotated domain/family region(s): {names}."
                 )
             elif interpro_result.get("domains"):
                 lines.append(
@@ -668,9 +670,10 @@ class InterpretationEngine:
         if alphafold_result and not alphafold_result.get("skipped") and not alphafold_result.get("error") and alphafold_result.get("found"):
             band = alphafold_result.get("affected_residue_band")
             if band:
+                position = alphafold_result.get("protein_position")
                 lines.append(
-                    f"AlphaFold DB: predicted structural confidence (pLDDT) at the estimated variant "
-                    f"residue is '{band}' (position estimate is approximate)."
+                    f"AlphaFold DB: predicted structural confidence (pLDDT) at residue {position} "
+                    f"(transcript-verified) is '{band}'."
                 )
             elif alphafold_result.get("mean_plddt_band"):
                 lines.append(

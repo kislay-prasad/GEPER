@@ -446,25 +446,68 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _pm1(interpro_result: Dict[str, Any]) -> CriterionResult:
+        """
+        PM1 (ACMG/AMP 2015): variant is located in a mutational hot
+        spot and/or critical, well-established functional domain
+        without benign variation.
+
+        The domain-overlap check below needs an actual protein residue
+        number to compare against InterPro/Pfam's own (UniProt
+        canonical-isoform) domain boundaries. That number comes from
+        `orchestrator._canonical_protein_position` -- a transcript-
+        verified mapping (via `TranscriptContext.codon_at`, the same
+        exon-aware, strand-aware coordinate arithmetic PM4/PS1/PM5
+        already rely on), computed only against this gene's MANE
+        Select / Ensembl-canonical transcript so the numbering is
+        guaranteed to line up with InterPro's own coordinates.
+
+        `protein_position is None` (checked explicitly, separately
+        from `affected_domains` being empty) covers every case that
+        number could not be determined: no transcript structure was
+        fetched, the resolved transcript isn't the canonical one, or
+        the variant falls outside the CDS (intronic/UTR/no residue
+        here). That is reported `not_evaluated` -- a gap, not a
+        negative. Reporting `not_triggered` instead would be a
+        confident wrong claim: "checked, no domain" is not the same
+        statement as "couldn't check", and this pipeline used to
+        conflate the two (see `InterProLookup.query_variant`'s
+        docstring for the history -- the old position source was a
+        local, unspliced, non-strand-aware translation-window guess
+        that was wrong for almost every real variant).
+        """
         direction, strength = _STRENGTH["PM1"]
         if not interpro_result or interpro_result.get("skipped") or interpro_result.get("error") or not interpro_result.get("found"):
             return _not_evaluated("PM1", "InterPro domain annotation was unavailable for this gene/residue.")
+
+        protein_position = interpro_result.get("protein_position")
+        if protein_position is None:
+            return _not_evaluated(
+                "PM1",
+                "InterPro domain annotation was available for this gene, but this variant's protein "
+                "residue could not be determined from the transcript structure (no transcript structure "
+                "was fetched, the resolved transcript is not this gene's MANE Select/canonical one, or "
+                "the position falls outside the coding sequence) -- domain overlap cannot be checked "
+                "without a residue number, so this is a gap, not a negative finding.",
+            )
+
         affected = interpro_result.get("affected_domains") or []
         if affected:
             names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
             return CriterionResult(
                 "PM1", direction, strength, "triggered",
-                f"The estimated variant residue falls within an annotated functional domain/family "
-                f"region ({names}), a location InterPro/Pfam curation flags as structurally/"
-                f"functionally significant.",
-                supporting_evidence=[f"InterPro/Pfam: residue overlaps {len(affected)} domain/family region(s): {names}."],
-                conflicting_evidence=["Protein-position mapping is an estimate, not a transcript-verified coordinate (see 'protein_position_basis')."],
+                f"Residue {protein_position} (transcript-verified against this gene's MANE Select/"
+                f"canonical transcript) falls within an annotated functional domain/family region "
+                f"({names}), a location InterPro/Pfam curation flags as structurally/functionally "
+                f"significant.",
+                supporting_evidence=[f"InterPro/Pfam: residue {protein_position} overlaps {len(affected)} domain/family region(s): {names}."],
+                conflicting_evidence=["Checked only against this gene's MANE Select/Ensembl-canonical transcript; a different disease-relevant transcript could number this residue differently."],
                 evidence_sources=["InterPro"],
                 confidence="Moderate",
             )
         return CriterionResult(
             "PM1", direction, strength, "not_triggered",
-            "The estimated variant residue does not overlap any annotated InterPro/Pfam domain region.",
+            f"Residue {protein_position} (transcript-verified against this gene's MANE Select/canonical "
+            f"transcript) does not overlap any annotated InterPro/Pfam domain region.",
             evidence_sources=["InterPro"],
             confidence="Moderate",
         )

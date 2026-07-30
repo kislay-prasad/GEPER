@@ -605,6 +605,54 @@ def transcript_from_result(transcript_result: Optional[Dict[str, Any]]) -> Optio
     return transcript_context_from_dict(transcript_result.get("transcript") or {})
 
 
+def canonical_protein_position(transcript_result: Optional[Dict[str, Any]], pos: int) -> Optional[int]:
+    """
+    1-based, transcript-verified canonical protein residue number for
+    a genomic position -- what InterPro/Pfam's domain-overlap check
+    (PM1, `ACMGRuleEngine._pm1`) and AlphaFold's per-residue pLDDT
+    lookup need to compare against UniProt's own canonical-isoform
+    coordinates.
+
+    Reuses the same `TranscriptContext` PVS1/PM4/PS1/PM5 already build
+    from `_run_transcript_stage` (`transcript_from_result`, above)
+    rather than a second lookup. `TranscriptContext.codon_at` maps a
+    genomic coordinate straight from the transcript's real, per-exon
+    `coding_spans` -- correctly strand-aware (it complements the
+    offset direction for minus-strand transcripts) and splice-aware
+    (each exon contributes its own CDS span; an intron between them is
+    never treated as coding) -- unlike the
+    `pipeline/protein_translator.py` window this replaced (as PM1's
+    position source; that translator is still used as-is for ESM-2's
+    ref/alt protein sequences, which don't need canonical numbering),
+    which translated a flat, unspliced +-500bp genomic window starting
+    at the first "AUG" substring it happened to find. That approach
+    was verified (2026-07-31, see test_data/README.md in the repo
+    root's `geper/` package) to produce a position matching neither
+    strand nor frame for real variants: BRCA1/TP53 are both
+    minus-strand genes it never reverse-complemented, and any variant
+    not in the same exon as the annotated CDS start had its window
+    cross an unspliced intron.
+
+    Returns `None` -- never a guess -- when: no transcript structure
+    was fetched (`transcript_from_result` is None: lookup
+    skipped/errored/not-found, or the variant falls outside the
+    fetched transcript's span); the resolved transcript is neither
+    MANE Select nor Ensembl-canonical (matching
+    `functional_regions_from_interpro`'s identical guard, above --
+    InterPro/UniProt coordinates are only meaningful against the
+    canonical isoform, so a position from any other transcript would
+    silently mis-locate every domain); or the position is
+    intronic/UTR (outside the CDS entirely -- `codon_at` itself
+    returns None in that case).
+    """
+    transcript = transcript_from_result(transcript_result)
+    if transcript is None:
+        return None
+    if not (transcript.is_mane_select or transcript.is_canonical):
+        return None
+    return transcript.codon_at(pos)
+
+
 def build_pvs1_input(
     variant_dict: Optional[Dict[str, Any]] = None,
     protein_result: Optional[Dict[str, Any]] = None,

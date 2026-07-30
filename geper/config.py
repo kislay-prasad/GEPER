@@ -1815,6 +1815,19 @@ class SplicingConfig:
     SPLICEBERT_CHECKPOINT: str = os.environ.get(
         "GEPER_SPLICEBERT_CHECKPOINT", "SpliceBERT.1024nt"
     )
+    # Bounds `AutoModelForMaskedLM.from_pretrained`/`AutoTokenizer
+    # .from_pretrained` (pipeline/models/splicebert/loader.py::
+    # build_model_and_tokenizer) so a pathological `transformers`
+    # TensorFlow-backend-detection path (see that function's docstring
+    # -- confirmed via a real hang report to trigger whenever ANY
+    # transformers-based model loads before SpliceBERT in the same
+    # process, e.g. ESM2 at startup validation, which permanently caches
+    # TF as "available" since tensorflow is a required MMSplice
+    # dependency) fails loudly with a clear, actionable error instead of
+    # hanging silently -- observed as long as 2+ hours in one real run.
+    SPLICEBERT_LOAD_TIMEOUT_SECS: float = float(
+        os.environ.get("GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS", "180")
+    )
 
     # -- SPiP --
     # Genome build SPiP resolves variants/transcripts against --

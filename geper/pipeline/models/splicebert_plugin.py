@@ -224,7 +224,17 @@ class SpliceBERTPlugin(PluginModel):
                 raise RuntimeError("SpliceBERT model unavailable") from exc
 
         checkpoint_dir = splicebert_loader.checkpoint_dir_for(cache_dir, checkpoint)
-        model, tokenizer = splicebert_loader.build_model_and_tokenizer(checkpoint_dir)
+        try:
+            model, tokenizer = splicebert_loader.build_model_and_tokenizer(checkpoint_dir)
+        except TimeoutError as exc:
+            # `build_model_and_tokenizer` bounds the load itself (see
+            # its own docstring for the multi-hour hang this replaces)
+            # -- caught here, same as the download failure above, so a
+            # load that times out demotes this model to unavailable
+            # for the rest of the run instead of propagating a raw
+            # timeout message.
+            self.logger.debug(f"SpliceBERT checkpoint load for '{checkpoint}' timed out: {exc}", exc_info=True)
+            raise RuntimeError("SpliceBERT model unavailable") from exc
 
         model.to(self.device)
         model.eval()

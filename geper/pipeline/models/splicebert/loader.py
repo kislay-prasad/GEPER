@@ -156,7 +156,30 @@ def build_model_and_tokenizer(checkpoint_dir: Path):
     `splicebert_plugin.py` never itself requires `transformers` to be
     importable, mirroring `pipeline/models/spliceformer/loader.py
     ::build_model`'s deferred-import rationale.
+
+    BUG FIX (found via a real Colab run that hung indefinitely right
+    after "extracting SpliceBERT.1024nt", confirmed reproducible on
+    plain CPU in this repo's own dev sandbox with no GPU involved):
+    `AutoModelForMaskedLM.from_pretrained` never returns when
+    TensorFlow is also importable in the same environment -- which it
+    always is here, since `pipeline/models/mmsplice/` requires
+    `tensorflow` unconditionally (requirements.txt). `transformers`
+    auto-detects every installed backend (PyTorch/TensorFlow/Flax) and,
+    for this specific checkpoint (`BertForMaskedLM`, a plain
+    `pytorch_model.bin`, not `.safetensors`), that detection pathologically
+    hangs rather than completing quickly. Verified fix: setting
+    `USE_TF=0` before the `transformers` import skips TensorFlow-backend
+    detection entirely -- confirmed to turn "never returns" into a
+    fast, successful load (tokenizer ~0s, model ~1.3s once the one-time
+    `transformers` import cost, ~20s, is paid). `os.environ.setdefault`
+    (not a plain assignment) so an environment that has deliberately
+    set `USE_TF` to something else for its own reasons is not silently
+    overridden.
     """
+    import os
+
+    os.environ.setdefault("USE_TF", "0")
+
     from transformers import AutoModelForMaskedLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(str(checkpoint_dir))

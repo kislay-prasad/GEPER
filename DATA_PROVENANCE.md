@@ -23,7 +23,7 @@ override `GEPER_PLUGIN_CACHE_DIR`).
 | **enformer/** | 1.9GB | HuggingFace `EleutherAI/enformer-official-rough` (`CONFIG.splicing.ENFORMER_HF_REPO`) | `enformer_pytorch.from_pretrained(repo_id, cache_dir=...)` — standard `transformers`/`huggingface_hub` cache layout. Automatic, gated by `CONFIG.splicing.ENABLE_ENFORMER` (default on). | Code-read (loader + config), not re-downloaded live (multi-GB; not in the user's named integration list). One benign redundancy noted: two snapshot revisions cached from being called at different times against a repo whose default weight format changed upstream — harmless, fully reproducible. |
 | **borzoi/** | 710MB | HuggingFace `johahi/borzoi-replicate-0` (`CONFIG.splicing.BORZOI_HF_REPO`) | `borzoi_pytorch.Borzoi.from_pretrained(...)`. Code actively refuses any repo ID not starting with `johahi/` (`BorzoiLicenseGuardError`) — deliberately excludes Calico's original checkpoint, which has no confirmed commercial license. Automatic, gated by `CONFIG.splicing.ENABLE_BORZOI`. | Code-read only, same reasoning as enformer. |
 | **spip/** | 390MB | Small `.RData` files + `dataRefSeq<genome>.RData` from `raw.githubusercontent.com/LBGC-CFB/SPiP/master/`; the large `transcriptome_<genome>.RData` (~370-400MB) from a SourceForge mirror (`splicing-prediction-pipeline` project) | `pipeline/models/spip/loader.py::prepare_runtime_dir()` — idempotent, automatic, gated by `CONFIG.splicing.ENABLE_SPIP` and Rscript availability. | Live-verified: `getRefSeqDatabase.r` (the upstream script this data ultimately derives from) confirmed to pull from UCSC's public goldenPath server. Live download not re-run here (large; not user-named), but the loader's own idempotent-download logic was read in full. |
-| **splicebert/** | 76MB | Zenodo record `10.5281/zenodo.7995778` (`models.tar.gz`, ~208MB archive; only `SpliceBERT.1024nt/` is extracted) | `pipeline/models/splicebert/loader.py::download_and_extract_checkpoint()`. Automatic, gated by `CONFIG.splicing.ENABLE_SPLICEBERT`. | Code-read; live re-download attempted but not completed in this session (208MB archive — see "Known gaps" below). |
+| **splicebert/** | 76MB | Zenodo record `10.5281/zenodo.7995778` (`models.tar.gz`, ~208MB archive; only `SpliceBERT.1024nt/` is extracted) | `pipeline/models/splicebert/loader.py::download_and_extract_checkpoint()`. Automatic, gated by `CONFIG.splicing.ENABLE_SPLICEBERT`. | **Live-verified end-to-end, and a real bug was found and fixed in the process** — see "Bugs found and fixed during this pass" below. The download/extract step itself was already correct; the *model-loading* step that runs immediately after (`build_model_and_tokenizer`) hung indefinitely on a real Colab run. |
 | **spliceformer/** | 4.5MB | Pinned GitHub tag `v1.0.0` of `benniatli/Spliceformer`, file `Results/PyTorch_Models/transformer_encoder_40k_171022_0` via `raw.githubusercontent.com` | `pipeline/models/spliceformer/loader.py::download_checkpoint()`. Automatic, gated by `CONFIG.splicing.ENABLE_SPLICEFORMER`. | **Live-verified in this session**: existing checkpoint deleted, `download_checkpoint()` re-run from a genuinely empty cache, confirmed a fresh 4,677,821-byte file was written matching the expected checkpoint. |
 
 **One file worth flagging explicitly, not hidden**: `plugin_model_cache/spip/runtime/geper_spip_driver.r` is
@@ -99,14 +99,50 @@ These remain version-controlled so a fresh clone's test suite runs
 without any network access for the fixtures it doesn't itself need to
 verify live-fetch behavior.
 
+## Bugs found and fixed during this pass
+
+**SpliceBERT model loading hung indefinitely** (found via a real, live
+Colab end-to-end run — not this audit's own testing). The log showed
+every stage succeeding (BWA alignment, FreeBayes calling, bcftools
+norm, HyenaDNA/Enformer/Borzoi/SpliceFormer/AlphaMissense all
+downloading and loading correctly) right up through "SpliceBERT
+checkpoint extracted," then a `transformers` warning ("You are using a
+model of type `bert` to instantiate a model of type ``") and no
+further progress.
+
+Root-caused by reproducing on plain CPU in this dev sandbox (ruling out
+GPU/CUDA/Colab-specific causes) with unbuffered, step-by-step logging:
+`transformers.AutoModelForMaskedLM.from_pretrained()` never returns
+when loading this specific checkpoint (`BertForMaskedLM`, a plain
+`pytorch_model.bin`, not `.safetensors`) in a process where TensorFlow
+is also importable — which it always is here, since
+`pipeline/models/mmsplice/` requires `tensorflow` unconditionally.
+`transformers` auto-probes every installed backend, and that probe
+pathologically hangs for this checkpoint shape.
+
+**Fix** (`pipeline/models/splicebert/loader.py::build_model_and_tokenizer`):
+`os.environ.setdefault("USE_TF", "0")` before the `transformers`
+import, skipping TensorFlow-backend detection entirely. Verified fixed
+in two scenarios: (1) a cold process importing `transformers` for the
+first time, and (2) the more realistic case matching the actual
+pipeline's own model-loading order — `transformers` already imported
+earlier by ESM2/RNA-FM before SpliceBERT loads — confirmed the fix
+still works there too (loads in ~8s instead of hanging). A regression
+test (`tests/test_splicebert_loader_live.py`) now runs the real
+checkpoint loading step in a subprocess with a hard 60s timeout, so any
+future regression of this exact bug fails fast and loud in the test
+suite instead of hanging silently.
+
 ## Known gaps / not independently re-verified in this pass
 
-- **Enformer, Borzoi, SPiP's transcriptome file, SpliceBERT**: bootstrap
-  code was read in full and is real/automatic, but a live re-download
-  was not performed in this session (multi-hundred-MB to multi-GB
-  downloads, and none of these four are in the specifically-named
-  integration list for this task). Recommend a one-time live smoke test
-  of each before depending on this in a customer-facing Colab demo.
+- **Enformer, Borzoi, SPiP's transcriptome file**: bootstrap code was
+  read in full and is real/automatic, but a live re-download was not
+  performed in this session (multi-hundred-MB to multi-GB downloads,
+  and neither is in the specifically-named integration list for this
+  task). Recommend a one-time live smoke test of each before depending
+  on this in a customer-facing Colab demo. (SpliceBERT, originally in
+  this same "not re-verified" bucket, *was* live-verified — see "Bugs
+  found and fixed" above; it uncovered and fixed a real hang.)
 - **README.md documentation debt** (found, not yet fixed): HPO, Orphanet,
   and SPiP integrations are not mentioned anywhere in `README.md` despite
   having real, working, automatic bootstrap code — the only place this is

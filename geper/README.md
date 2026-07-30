@@ -1363,3 +1363,86 @@ and its own tests — wiring it into a per-variant orchestrator stage
 and an ACMG rule is future work, not something a current run already
 does.
 
+## 24. PS3/BS3 (functional evidence)
+
+Published functional-assay evidence — saturation genome editing, deep
+mutational scans, MAVE reporter assays — for the ACMG/AMP PS3
+("well-established functional studies show a damaging effect") and BS3
+("...show no damaging effect") criteria, implemented in
+`pipeline/functional_evidence/`. Unlike ClinGen/HPO/Orphanet above,
+this is **variant-level**, not gene-level: it answers "does this exact
+substitution behave abnormally in a published assay?", so it needs
+this variant's own genomic (g.) and coding (c.) HGVS notation
+(generated via `pipeline/hgvs_utils.py`, reusing the gene symbol
+ClinGen's stage already resolved and the transcript structure the
+transcript stage already fetched — no separate lookup).
+
+**Two sources, primary/secondary** (not local/API-fallback — both are
+live APIs; there is no bulk-download tier for either today), following
+the ClinGen SVI Working Group's PS3/BS3 recommendation (Brnich et al.
+2019, *Genome Medicine*, PMID 31892348) for strength-tier logic:
+
+- **ClinGen Evidence Repository** (primary,
+  `pipeline/functional_evidence/erepo_provider.py`,
+  `erepo.clinicalgenome.org`): expert-panel (VCEP)-curated PS3/BS3
+  "Met"/"Not Met" calls, already assigned a strength (honoring a VCEP's
+  own explicit override, e.g. an evidence code literally labeled
+  `PS3_Moderate`, over the default `strong`) and traceable to that
+  panel's published specification. CC0-licensed, same as every other
+  ClinGen curated resource GEPER already integrates. **Verified live**
+  during development — unlike `ClinGenConfig.API_ENDPOINT` (see "17.
+  ClinGen"), this environment *can* reach `erepo.clinicalgenome.org`:
+  a real `GET .../classifications?gene=BRCA1` request returned a real
+  ENIGMA BRCA1/BRCA2 VCEP curation of `NM_007294.4:c.135-1G>T`
+  (`NC_000017.11:g.43106534C>A`) with evidence code `PS3: Met`,
+  classified Pathogenic. The same query for `gene=CFTR` returned zero
+  results — a genuine coverage gap, not a request-shape bug.
+- **MaveDB** (secondary, `pipeline/functional_evidence/mavedb_provider.py`,
+  `api.mavedb.org`), consulted only for a variant ERepo has no
+  curation for: a raw multiplexed-assay score, bucketed into
+  functional/intermediate/non-functional using that score set's own
+  investigator-provided `scoreCalibrations` thresholds — GEPER never
+  invents a threshold here. Verified live: every BRCA1/TP53 score set
+  checked during development was `CC0` or `CC BY 4.0` licensed (both
+  commercial-use-compatible — MaveDB relicensed its whole corpus from
+  the earlier non-commercial CC-BY-NC-SA specifically to remove that
+  restriction), and a real BRCA1 saturation-genome-editing row
+  (`NM_007294.3:c.5565A>T`, score `-0.0153`) was confirmed to bucket
+  into MaveDB's own "normal" (BS3-relevant) range. CFTR returned zero
+  score sets — the same gap ERepo has.
+
+**Strength/confidence defaults** (`CONFIG.functional_evidence.*`, all
+overridden by a source's own explicit strength when it gives one): an
+ERepo call is used at **Strong/High confidence** (an expert panel has
+already completed the SVI framework's four steps); a MaveDB call is
+**Moderate confidence** by default, or **Supporting/Low confidence**
+when the score set's own calibration is flagged research-use-only
+(`scoreCalibrations[].researchUseOnly`) — one step below an
+already-adjudicated VCEP call in the SVI framework's validation
+hierarchy, since GEPER performed the bucketing itself rather than
+consuming an expert panel's own conclusion.
+
+**Performance:** both sources are queried once per *gene*, not per
+variant — each provider's `fetch_gene_index()` call returns every
+curated/assayed variant for that gene in one pass (MaveDB additionally
+sorts a gene's score sets by variant count and caps the number fetched
+via `GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_MAX_SCORE_SETS`, default 10,
+since a gene like BRCA1 can have 60+ score sets), cached
+(`GEPER_FUNCTIONAL_EVIDENCE_CACHE_TTL_HOURS`, default 24h) so every
+subsequent variant in an already-seen gene costs zero additional
+network calls for the rest of the run.
+
+**Honest gap reporting:** when neither source has anything for a
+gene/variant (confirmed live for CFTR during development), both PS3
+and BS3 report `not_evaluated` with a clear rationale — the same
+pattern already used for PS4/BS4/PP4-before-patient-input, never a
+fabricated call.
+
+**Testing:** `tests/test_ps3_bs3.py` (41 tests) uses frozen, real
+ClinGen ERepo/MaveDB fixture data (`tests/fixtures/ps3_bs3_*`) —
+including the exact BRCA1/TP53/CFTR examples above — for deterministic,
+network-free coverage; `verify_ps3_bs3_integration.py` is the live
+counterpart, exercising the real, unmocked provider code against
+`erepo.clinicalgenome.org`/`api.mavedb.org` directly (15/15 checks
+passing as of this integration).
+

@@ -156,6 +156,7 @@ class ACMGRuleEngine:
         splicebert_result: Dict[str, Any] = None,
         hpo_result: Dict[str, Any] = None,
         phenotype_result: Dict[str, Any] = None,
+        functional_evidence_result: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         criteria: Dict[str, CriterionResult] = {}
 
@@ -194,6 +195,8 @@ class ACMGRuleEngine:
         )
         criteria["BP6"] = self._bp6(clinvar_result)
         criteria["PP4"] = self._pp4(phenotype_result, hpo_result)
+        criteria["PS3"] = self._ps3(functional_evidence_result)
+        criteria["BS3"] = self._bs3(functional_evidence_result)
 
         # Criteria GEPER has no integrated evidence source for. Listed
         # explicitly (rather than silently omitted) so every one of the 28
@@ -201,13 +204,11 @@ class ACMGRuleEngine:
         # "never fabricate evidence" requirement -- each of these would
         # require a data source this pipeline does not yet integrate.
         criteria["PS2"] = _not_evaluated("PS2", "requires confirmed de novo trio (parental) sequencing data; not integrated.")
-        criteria["PS3"] = _not_evaluated("PS3", "requires published functional/experimental assay results; not integrated.")
         criteria["PM3"] = _not_evaluated("PM3", "requires trans-phase data for a recessive disorder; not integrated.")
         criteria["PM6"] = _not_evaluated("PM6", "requires confirmed (non-parentally-tested) de novo status; not integrated.")
         criteria["PP2"] = _not_evaluated("PP2", "requires a gene-level missense-constraint metric (e.g. gnomAD missense Z-score); not integrated.")
         criteria["PP5"] = _not_evaluated("PP5", "deprecated in the 2015 ACMG/AMP guideline update; not applied.")
         criteria["BS2"] = _not_evaluated("BS2", "requires observation in unaffected individuals at the expected penetrance age; not integrated.")
-        criteria["BS3"] = _not_evaluated("BS3", "requires published functional/experimental assay results; not integrated.")
         criteria["BP2"] = _not_evaluated("BP2", "requires trans/cis phase data; not integrated.")
         criteria["BP5"] = _not_evaluated("BP5", "requires case-level data on an alternate molecular cause; not integrated.")
 
@@ -1531,6 +1532,163 @@ class ACMGRuleEngine:
             "PP4", direction, strength, "not_triggered",
             f"Patient phenotype was compared against {gene}'s HPO-curated phenotype set: " + "; ".join(reasons) + ".",
             evidence_sources=["HPO"], confidence="Low", details=details,
+        )
+
+    @staticmethod
+    def _ps3(functional_evidence_result: Dict[str, Any]) -> CriterionResult:
+        """
+        PS3 (ACMG/AMP 2015): "Well-established in vitro or in vivo
+        functional studies supportive of a damaging effect on the gene
+        or gene product." Pathogenic, Strong by default -- overridden
+        by a source's own explicit strength assignment when it gives
+        one (see below).
+
+        Evidence source (see `pipeline/functional_evidence/`), per the
+        ClinGen SVI's PS3/BS3 recommendation (Brnich et al. 2019,
+        Genome Medicine):
+          - **ClinGen Evidence Repository** (primary): an
+            already-adjudicated VCEP "PS3: Met" call for this exact
+            variant, at whatever strength that VCEP's own published
+            specification assigned (e.g. a literal "PS3_Moderate"
+            evidence code) -- the panel has already completed the
+            SVI framework's four steps (disease mechanism, assay-class
+            validity, specific-instance validity, application to this
+            variant), so this is used as-is, at High confidence.
+          - **MaveDB** (secondary, only consulted when ERepo had
+            nothing for this variant): a raw multiplexed-assay score,
+            bucketed into "abnormal" using that score set's own
+            investigator-provided calibration thresholds -- never a
+            threshold GEPER invents. This is one step below an
+            already-adjudicated VCEP call in the SVI framework's
+            validation hierarchy, so it defaults to Moderate strength
+            (Supporting if the calibration itself is flagged
+            research-use-only), at Moderate/Low confidence
+            respectively -- configurable via
+            `CONFIG.functional_evidence.MAVEDB_CLINICAL_GRADE_STRENGTH`
+            / `MAVEDB_RESEARCH_USE_ONLY_STRENGTH`.
+
+        Reported "not_evaluated" (not a fabricated "not_triggered")
+        when neither source has any result at all for this variant --
+        e.g. CFTR, confirmed live during development to have zero
+        curated/assayed results in either source as of this
+        integration; see both providers' module docstrings.
+        """
+        direction, strength = _STRENGTH["PS3"]
+        if (
+            not functional_evidence_result
+            or functional_evidence_result.get("skipped")
+            or functional_evidence_result.get("error")
+            or not functional_evidence_result.get("found")
+        ):
+            return _not_evaluated(
+                "PS3",
+                "requires published functional/experimental assay results for this exact variant; the "
+                "ClinGen Evidence Repository and MaveDB were both checked (see pipeline/functional_evidence/) "
+                "but neither had a curated/calibrated result for it.",
+            )
+
+        records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "PS3"]
+        if not records:
+            return _not_evaluated(
+                "PS3",
+                "functional-evidence sources had a result for this variant, but none of it supported a "
+                "damaging (PS3) call -- see BS3 for whether it instead supports a benign call.",
+            )
+
+        return ACMGRuleEngine._functional_evidence_criterion("PS3", direction, strength, records[0])
+
+    @staticmethod
+    def _bs3(functional_evidence_result: Dict[str, Any]) -> CriterionResult:
+        """
+        BS3 (ACMG/AMP 2015): "Well-established in vitro or in vivo
+        functional studies show no damaging effect on protein function
+        or splicing." Benign, Strong by default -- PS3's exact
+        benign-direction mirror; see `_ps3`'s docstring for the full
+        rationale on source priority, strength defaults, and the
+        honest "not_evaluated" fallback (both draw from the same
+        `functional_evidence_result` dict, just filtering for BS3
+        "Met"/"normal" calls instead of PS3 "Met"/"abnormal" ones).
+        """
+        direction, strength = _STRENGTH["BS3"]
+        if (
+            not functional_evidence_result
+            or functional_evidence_result.get("skipped")
+            or functional_evidence_result.get("error")
+            or not functional_evidence_result.get("found")
+        ):
+            return _not_evaluated(
+                "BS3",
+                "requires published functional/experimental assay results for this exact variant; the "
+                "ClinGen Evidence Repository and MaveDB were both checked (see pipeline/functional_evidence/) "
+                "but neither had a curated/calibrated result for it.",
+            )
+
+        records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "BS3"]
+        if not records:
+            return _not_evaluated(
+                "BS3",
+                "functional-evidence sources had a result for this variant, but none of it supported a "
+                "benign (BS3) call -- see PS3 for whether it instead supports a damaging call.",
+            )
+
+        return ACMGRuleEngine._functional_evidence_criterion("BS3", direction, strength, records[0])
+
+    @staticmethod
+    def _functional_evidence_criterion(
+        code: str, direction: str, default_strength: str, record: Dict[str, Any],
+    ) -> CriterionResult:
+        """Shared `CriterionResult` construction for `_ps3`/`_bs3` -- both
+        just filter `functional_evidence_result["records"]` for their own
+        call direction and hand the winning record here."""
+        strength = record.get("strength") or default_strength
+        source = record.get("source")
+
+        if source == "clingen_erepo":
+            gene_clause = f" ({record['expert_panel']})" if record.get("expert_panel") else ""
+            rationale = (
+                f"ClinGen Evidence Repository: an expert panel{gene_clause} curated this variant "
+                f"({record.get('matched_hgvs')}) with '{code}: Met'"
+                + (f", classifying it as {record['classification_outcome']}" if record.get("classification_outcome") else "")
+                + (f" for {record['condition']}" if record.get("condition") else "")
+                + "."
+            )
+            supporting = [f"ClinGen ERepo {code}: Met" + (f" ({record['expert_panel']})" if record.get("expert_panel") else "") + "."]
+            evidence_sources = ["ClinGen Evidence Repository"]
+            confidence = "High"
+            details = {
+                "matched_hgvs": record.get("matched_hgvs"),
+                "expert_panel": record.get("expert_panel"),
+                "specification_url": record.get("specification_url"),
+                "classification_outcome": record.get("classification_outcome"),
+                "condition": record.get("condition"),
+            }
+        else:  # "mavedb"
+            ruo_clause = " (research-use-only calibration)" if record.get("research_use_only") else ""
+            rationale = (
+                f"MaveDB: a calibrated functional-assay score of {record.get('raw_score'):.3g} for this variant "
+                f"({record.get('matched_hgvs')}) falls in the '{record.get('functional_classification')}' range "
+                f"of score set {record.get('score_set_urn')}'s own investigator-provided calibration{ruo_clause}, "
+                "consistent with " + ("a damaging" if code == "PS3" else "no damaging") + " effect."
+            )
+            supporting = [
+                f"MaveDB {record.get('score_set_urn')}: score {record.get('raw_score'):.3g} "
+                f"-> '{record.get('functional_classification')}'{ruo_clause}."
+            ]
+            evidence_sources = ["MaveDB"]
+            confidence = "Low" if record.get("research_use_only") else "Moderate"
+            details = {
+                "matched_hgvs": record.get("matched_hgvs"),
+                "raw_score": record.get("raw_score"),
+                "score_set_urn": record.get("score_set_urn"),
+                "functional_classification": record.get("functional_classification"),
+                "research_use_only": record.get("research_use_only"),
+                "publication": record.get("publication"),
+            }
+
+        return CriterionResult(
+            code, direction, strength, "triggered", rationale,
+            supporting_evidence=supporting, evidence_sources=evidence_sources,
+            confidence=confidence, details=details,
         )
 
     @staticmethod

@@ -65,6 +65,7 @@ class InterpretationEngine:
         splicebert_result: Dict[str, Any] = None,
         hpo_result: Dict[str, Any] = None,
         phenotype_result: Dict[str, Any] = None,
+        functional_evidence_result: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         evidence: List[str] = []
         significance_score = 0
@@ -259,6 +260,7 @@ class InterpretationEngine:
                 splicebert_result=splicebert_result,
                 hpo_result=hpo_result,
                 phenotype_result=phenotype_result,
+                functional_evidence_result=functional_evidence_result,
             )
         except Exception:
             logger.exception("ACMG rule engine failed; falling back to legacy summary only.")

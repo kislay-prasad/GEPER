@@ -41,6 +41,7 @@ from models import MODEL_REGISTRY as _BASE_MODEL_REGISTRY
 from pipeline.assembly_validator import validate_assembly
 from pipeline.alphafold.lookup import AlphaFoldLookup
 from pipeline.clingen.lookup import ClinGenLookup
+from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.hpo.lookup import HPOLookup
 from pipeline.orphanet.lookup import OrphanetLookup
 from pipeline.conservation.lookup import ConservationLookup
@@ -215,6 +216,12 @@ class GeperPipeline:
         # the transcript stage since it needs that stage's structure to
         # compute the codon's genomic span.
         self.clinvar_codon_client = ClinVarCodonLookup()
+        # PS3/BS3's evidence source (see pipeline/functional_evidence/):
+        # ClinGen Evidence Repository (primary) + MaveDB (secondary)
+        # functional-assay evidence for this exact variant. Runs after
+        # the transcript stage since MaveDB matching needs the coding
+        # HGVS notation that stage's structure makes possible.
+        self.functional_evidence_client = FunctionalEvidenceLookup()
         # Biological evidence layer (UniProt -> InterPro/Pfam -> AlphaFold
         # DB), run in that order since InterPro/AlphaFold are both keyed
         # by the UniProt accession the UniProt stage resolves.
@@ -916,6 +923,9 @@ class GeperPipeline:
         transcript_result = self._run_transcript_stage(variant, clingen_result, errors)
         self._attach_hgvs_c(normalization_result, transcript_result)
         clinvar_codon_result = self._run_clinvar_codon_stage(variant, transcript_result, errors)
+        functional_evidence_result = self._run_functional_evidence_stage(
+            variant, clingen_result, transcript_result, errors
+        )
 
         # Biological evidence layer: UniProt -> InterPro/Pfam -> AlphaFold
         # DB, in that order -- InterPro and AlphaFold are both keyed by
@@ -948,6 +958,7 @@ class GeperPipeline:
             clinvar_codon_result=clinvar_codon_result,
             hpo_result=hpo_result,
             phenotype_result=self.phenotype_result,
+            functional_evidence_result=functional_evidence_result,
             spliceformer_result=spliceformer_result,
             splicebert_result=splicebert_result,
         )
@@ -997,6 +1008,7 @@ class GeperPipeline:
             clinvar_codon_result=clinvar_codon_result,
             hpo_result=hpo_result,
             orphanet_result=orphanet_result,
+            functional_evidence_result=functional_evidence_result,
             normalization_result=normalization_result,
             spliceformer_result=spliceformer_result,
             splicebert_result=splicebert_result,
@@ -1791,6 +1803,51 @@ class GeperPipeline:
             errors.append(f"PS1/PM5 ClinVar codon stage failed: {exc}")
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc), "matches": []}
+
+    def _run_functional_evidence_stage(
+        self,
+        variant: Variant,
+        clingen_result: Dict[str, Any],
+        transcript_result: Dict[str, Any],
+        errors: List[str],
+    ) -> Dict[str, Any]:
+        """
+        PS3/BS3 functional-assay evidence for this exact variant (see
+        `pipeline/functional_evidence/`) -- ClinGen Evidence Repository
+        primary, MaveDB secondary. Unlike the gene-level stages above,
+        this is variant-level: it needs this variant's own genomic
+        (g.) HGVS string, to match against ClinGen ERepo's curated
+        variants, and coding (c.) HGVS string, to match against
+        MaveDB's transcript-relative variant scores -- both generated
+        here via `pipeline/hgvs_utils.py`, reusing the gene symbol the
+        ClinGen stage already resolved and the transcript structure
+        the transcript stage already fetched, rather than re-deriving
+        either. `FunctionalEvidenceLookup` already never raises (see
+        its docstring) -- this wrapper only guards against a genuinely
+        unexpected bug in the module itself, matching every other
+        stage helper here.
+        """
+        gene_symbol = (clingen_result or {}).get("gene_symbol")
+        assembly = self.sequence_context_gen.assembly or "GRCh38"
+        hgvs_g = to_hgvs_g(variant.chrom, variant.pos, variant.ref, variant.alt, assembly=assembly)
+        transcript_context = transcript_from_result(transcript_result)
+        hgvs_c = (
+            to_hgvs_c(transcript_context, variant.pos, variant.ref, variant.alt)
+            if transcript_context is not None
+            else None
+        )
+        try:
+            with self._timer("functional_evidence"):
+                result = self.functional_evidence_client.query_variant(
+                    gene_symbol=gene_symbol, hgvs_g=hgvs_g, hgvs_c=hgvs_c,
+                )
+            if result.get("error"):
+                errors.append(f"Functional-evidence (PS3/BS3) stage: {result['error']}")
+            return result
+        except Exception as exc:  # noqa: BLE001 - final defense-in-depth
+            errors.append(f"Functional-evidence (PS3/BS3) stage failed: {exc}")
+            logger.error(errors[-1])
+            return {"found": False, "skipped": False, "error": str(exc), "records": []}
 
     # ------------------------------------------------------------------
     # Biological evidence layer: UniProt -> InterPro/Pfam -> AlphaFold DB

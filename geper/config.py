@@ -960,6 +960,109 @@ class OrphanetConfig:
 
 
 @dataclass(frozen=True)
+class FunctionalEvidenceConfig:
+    """
+    Configuration for the PS3/BS3 functional-evidence sources (see
+    `pipeline/functional_evidence/`): published functional assay
+    results (saturation genome editing, deep mutational scans, MAVE
+    reporter assays, ...) supporting or refuting a damaging effect for
+    a specific variant.
+
+    Two sources, primary/secondary rather than local/API-fallback
+    (both are live APIs; there is no bulk-download tier for either
+    today):
+      - **ClinGen Evidence Repository** (erepo.clinicalgenome.org) --
+        primary source. Expert-panel (VCEP)-curated PS3/BS3
+        Met/Not-Met calls, already assigned a strength and traceable
+        to the panel's own published specification. Verified live
+        against real BRCA1/TP53 data during development (unlike
+        `ClinGenConfig.API_ENDPOINT` above, this endpoint *was*
+        reachable and exercised from this environment). CC0 licensed,
+        same as every other ClinGen curated resource.
+      - **MaveDB** (api.mavedb.org) -- secondary source, used only for
+        a variant ClinGen ERepo has no curation for. Raw multiplexed
+        functional-assay scores, bucketed into
+        functional/intermediate/non-functional using each score-set's
+        own investigator-provided `scoreCalibrations` thresholds
+        (never a threshold GEPER invents itself). CC0/CC-BY licensed
+        per score-set (verified live: every BRCA1/TP53 score-set
+        checked during development was CC0 or CC BY 4.0).
+
+    Neither source covers every gene -- e.g. CFTR has no BRCA1/TP53-
+    style saturation-genome-editing coverage in either source as of
+    this integration (confirmed live: both a ClinGen ERepo `gene=CFTR`
+    query and a MaveDB `CFTR` search returned zero results). PS3/BS3
+    report "not_evaluated" for such a gene, the same honest-gap pattern
+    already used for PS4/BS4/PP4-before-patient-input.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_FUNCTIONAL_EVIDENCE", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+    # -- ClinGen Evidence Repository (primary) ------------------------
+    EREPO_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_EREPO_ENABLED", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+    EREPO_API_ENDPOINT: str = os.environ.get(
+        "GEPER_FUNCTIONAL_EVIDENCE_EREPO_ENDPOINT", "https://erepo.clinicalgenome.org/evrepo/api",
+    )
+
+    # -- MaveDB (secondary) --------------------------------------------
+    MAVEDB_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_ENABLED", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+    MAVEDB_API_ENDPOINT: str = os.environ.get(
+        "GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_ENDPOINT", "https://api.mavedb.org/api/v1",
+    )
+    # A gene like BRCA1 can have 60+ score sets (many are per-exon
+    # replicate splits of the same underlying assay); fetching every
+    # one's full variant-data CSV per gene would be a lot of network
+    # calls for one secondary, best-effort source. Capped and sorted by
+    # `numVariants` descending (largest, most-complete assays first) --
+    # a deliberate coverage/performance tradeoff, disclosed rather than
+    # silent.
+    MAVEDB_MAX_SCORE_SETS_PER_GENE: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_MAX_SCORE_SETS", "10"))
+
+    OFFLINE_MODE: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_OFFLINE", "false").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+    QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_TIMEOUT", "30"))
+    MAX_RETRIES: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAX_RETRIES", "3"))
+    RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_RETRY_BACKOFF", "1.5"))
+
+    # Gene-level cache: both sources are queried once per *gene* (not
+    # per variant -- see `pipeline/functional_evidence/lookup.py`), so
+    # every subsequent variant in an already-seen gene costs zero
+    # additional network calls for the rest of the run. Same long TTL
+    # rationale as ClinGen/HPO/Orphanet: published functional-assay
+    # curation changes on the order of weeks/months, not per-request.
+    CACHE_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_ENABLED", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+    CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_MAX_SIZE", "5000"))
+    CACHE_TTL_SECS: float = float(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_TTL_HOURS", "24")) * 3600
+    CACHE_DISK_PATH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_DISK_PATH", "")
+
+    # -- ACMG/SVI (Brnich et al. 2019) integration thresholds ---------
+    # A VCEP-assigned strength (e.g. an ERepo evidence code literally
+    # labeled "PS3_Moderate") is always honored verbatim over this
+    # default -- these only apply when a source gives us a bare
+    # PS3/BS3 Met call with no explicit strength of its own.
+    EREPO_DEFAULT_STRENGTH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_EREPO_DEFAULT_STRENGTH", "strong")
+    # A raw MaveDB score, bucketed only against a score-set's own
+    # calibration (never a GEPER-invented threshold), is one step
+    # below an already-adjudicated VCEP call in the Brnich et al.
+    # framework's validation hierarchy -- default one strength tier
+    # down from ERepo's, capped further to "supporting" when the
+    # calibration is itself flagged research-use-only (MaveDB's own
+    # `scoreCalibrations[].researchUseOnly` field).
+    MAVEDB_CLINICAL_GRADE_STRENGTH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_CLINICAL_STRENGTH", "moderate")
+    MAVEDB_RESEARCH_USE_ONLY_STRENGTH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_RUO_STRENGTH", "supporting")
+
+
+@dataclass(frozen=True)
 class PVS1Config:
     """
     Configuration for the PVS1 (null variant) ACMG/AMP rule -- see
@@ -1750,6 +1853,7 @@ class GeperConfig:
     clingen: ClinGenConfig = field(default_factory=ClinGenConfig)
     hpo: HPOConfig = field(default_factory=HPOConfig)
     orphanet: OrphanetConfig = field(default_factory=OrphanetConfig)
+    functional_evidence: FunctionalEvidenceConfig = field(default_factory=FunctionalEvidenceConfig)
     pvs1: PVS1Config = field(default_factory=PVS1Config)
     ps1_pm5: PS1PM5Config = field(default_factory=PS1PM5Config)
     uniprot: UniProtConfig = field(default_factory=UniProtConfig)

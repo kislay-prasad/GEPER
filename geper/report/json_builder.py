@@ -91,6 +91,7 @@ def build_variant_result(
     clinvar_codon_result: Dict[str, Any] = None,
     hpo_result: Dict[str, Any] = None,
     orphanet_result: Dict[str, Any] = None,
+    functional_evidence_result: Dict[str, Any] = None,
     normalization_result: Dict[str, Any] = None,
     spliceformer_result: Dict[str, Any] = None,
     splicebert_result: Dict[str, Any] = None,
@@ -170,6 +171,12 @@ def build_variant_result(
         # doesn't pass this kwarg still gets a fully backward-
         # compatible result dict.
         "orphanet": orphanet_result if orphanet_result is not None else {"skipped": True, "found": False},
+        # New, additive key (PS3/BS3 functional-evidence integration --
+        # see pipeline/functional_evidence/). Defaults to None exactly
+        # like `orphanet_result` above, so any existing caller that
+        # doesn't pass this kwarg still gets a fully backward-
+        # compatible result dict.
+        "functional_evidence": functional_evidence_result if functional_evidence_result is not None else {"skipped": True, "found": False},
         # New, additive key (variant normalization + HGVS notation --
         # see pipeline/variant_normalization.py, pipeline/hgvs_utils.py).
         # Defaults to None exactly like `orphanet_result` above, so any

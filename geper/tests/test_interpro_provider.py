@@ -48,6 +48,57 @@ class TestLiveAPIInterProProvider(unittest.TestCase):
         self.assertFalse(result.found)
         self.assertIsNone(result.error)
 
+    def test_204_no_content_treated_as_not_found_not_error_and_not_retried(self):
+        """
+        Regression test: confirmed live against the real API
+        (2026-07-30, accession A0A3G1DJQ2 from a real Colab run) that
+        InterPro returns HTTP 204 No Content -- not 404 -- for a
+        syntactically valid accession with zero domain matches. The
+        response has `Content-Type: application/json` but an empty
+        body, so `response.json()` used to raise `JSONDecodeError`
+        (caught by the retry loop's `except ValueError`), burning all
+        `MAX_RETRIES` attempts on a deterministic response and then
+        reporting a false "lookup failed" for what was actually a
+        successful, informative answer.
+        """
+        provider = LiveAPIInterProProvider()
+        fake_response = mock.Mock(status_code=204, content=b"")
+        fake_response.raise_for_status.return_value = None
+        fake_response.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        with mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response) as fake_get, \
+             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config:
+            _cfg(fake_config)
+            result = provider.query("A0A3G1DJQ2")
+
+        fake_get.assert_called_once()  # must not retry a deterministic 204
+        self.assertFalse(result.found)
+        self.assertIsNone(result.error)
+        self.assertEqual(result.domains, [])
+
+    def test_repeated_real_failure_still_retries_and_reports_error(self):
+        """Regression guard alongside the 204 fix above: a genuinely
+        transient/repeated failure must still retry MAX_RETRIES times
+        and end up as an error, not silently swallowed."""
+        provider = LiveAPIInterProProvider()
+        fake_response = mock.Mock(status_code=500)
+        fake_response.raise_for_status.side_effect = Exception("boom")
+
+        import requests as real_requests
+
+        with mock.patch(
+            "pipeline.interpro.provider.requests.get",
+            side_effect=real_requests.exceptions.ConnectionError("connection reset"),
+        ) as fake_get, \
+             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config, \
+             mock.patch("pipeline.interpro.provider.time.sleep"):
+            _cfg(fake_config)
+            result = provider.query("P04637")
+
+        self.assertEqual(fake_get.call_count, 3)  # MAX_RETRIES
+        self.assertFalse(result.found)
+        self.assertIsNotNone(result.error)
+
     def test_network_failure_returns_error_annotation_not_raise(self):
         import requests as real_requests
 

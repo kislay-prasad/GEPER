@@ -136,6 +136,21 @@ class LiveAPIInterProProvider(InterProProviderBase):
                     # (rather than a 200 with an empty results list) -- treat as "not found", not an error.
                     return {"results": []}
                 response.raise_for_status()
+                # Confirmed live against the real API (2026-07-30): a
+                # syntactically valid UniProt accession with zero
+                # domain/family/site matches returns HTTP 204 No
+                # Content -- a definitive, deterministic "no matches"
+                # answer, not a transient failure. `response.json()`
+                # raises `json.JSONDecodeError` (a `ValueError`
+                # subclass) on the empty body, which the `except`
+                # clause below previously treated as retryable --
+                # retrying a 204 just gets another 204, so this
+                # silently burned all `MAX_RETRIES` attempts and then
+                # reported a false "lookup failed" for what was
+                # actually a successful, informative response. Handled
+                # here, before `.json()` is ever called on it.
+                if response.status_code == 204 or not response.content:
+                    return {"results": []}
                 return response.json()
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc

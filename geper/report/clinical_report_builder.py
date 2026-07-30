@@ -58,17 +58,46 @@ _TOOL_LIMITATIONS = (
 def build_clinical_report(
     interpretation_result: Optional[Dict[str, Any]],
     variant_dict: Dict[str, Any] = None,
+    raw_evidence: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Returns the 16-section clinical report dict, or `None` if
     `interpretation_result` is missing/errored (e.g. the aggregation
     engine failed for this variant) -- callers must not fabricate a
     report when the underlying data isn't there.
+
+    `raw_evidence`: the raw per-stage provider dicts (uniprot, interpro,
+    alphafold, gnomad, dbsnp, clinvar, clingen, blast, ...) this
+    variant's evidence-dependent sections (protein/structural/
+    population/clinical knowledge, sequence context) are built from.
+
+    Pass this explicitly whenever the caller has the live provider
+    dicts in hand (as `report/json_builder.py::build_variant_result`
+    now does -- see that module) rather than relying on
+    `interpretation_result["raw_evidence"]`: `InterpretationResult
+    .to_dict()` (`pipeline/interpretation_result.py`) deliberately
+    OMITS `raw_evidence` from its serialized output (to avoid
+    duplicating data already emitted under the top-level `uniprot`/
+    `interpro`/`gnomad`/etc. keys), so `interpretation_result` here --
+    which is that *serialized* dict, not the live dataclass instance --
+    never actually carries it. Before this parameter existed, every
+    caller silently fell through to `ir.get("raw_evidence") or {}`,
+    which was *always* an empty dict, so every one of this function's
+    raw-evidence-derived sections (protein/structural/population/
+    clinical knowledge, sequence context) unconditionally reported
+    "not found"/"no annotation available" regardless of what the
+    corresponding stage had actually returned -- a real bug (found via
+    a live Colab run where the report claimed "UniProt: no entry
+    resolved" in this section while the same report's own Annotation
+    Detail trail, built from the actual stage output, showed a
+    resolved accession two sections later). Kept optional and
+    falling back to the old (broken-if-empty) behavior only so this
+    isn't a breaking API change for any other future caller.
     """
     if not interpretation_result or "error" in interpretation_result:
         return None
     ir = interpretation_result
-    raw = ir.get("raw_evidence") or {}
+    raw = raw_evidence if raw_evidence is not None else (ir.get("raw_evidence") or {})
 
     return {
         "executive_summary": _executive_summary(ir, variant_dict),
@@ -184,9 +213,26 @@ def _ai_consensus_section(ir: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _protein_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    `uniprot_error`/`interpro_error` are surfaced as their own field,
+    distinct from `*_available` -- a failed external lookup (e.g. the
+    EBI InterPro API returning an error after retries) is not the same
+    statement as "this protein genuinely has no annotation", and
+    conflating the two would misreport an external-service outage as a
+    negative biological finding. Matches the distinction
+    `report/report_generator.py::_render_uniprot`/`_render_interpro`
+    (the Annotation Detail audit trail) already make for the same
+    provider dicts -- this brings the Clinical Interpretation Report's
+    summary section into agreement with it.
+    """
     uniprot = raw.get("uniprot") or {}
     interpro = raw.get("interpro") or {}
-    out: Dict[str, Any] = {"uniprot_available": False, "interpro_available": False}
+    out: Dict[str, Any] = {
+        "uniprot_available": False,
+        "uniprot_error": uniprot.get("error"),
+        "interpro_available": False,
+        "interpro_error": interpro.get("error"),
+    }
     if uniprot.get("found"):
         out["uniprot_available"] = True
         out["uniprot"] = {
@@ -204,9 +250,12 @@ def _protein_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _structural_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """`error` distinguishes a failed AlphaFold DB lookup from a
+    genuine "no structure resolved" result -- see `_protein_knowledge`'s
+    docstring for the same distinction and why it matters."""
     alphafold = raw.get("alphafold") or {}
     if not alphafold.get("found"):
-        return {"available": False}
+        return {"available": False, "error": alphafold.get("error")}
     return {
         "available": True,
         "confidence_band": alphafold.get("affected_residue_band") or alphafold.get("mean_plddt_band"),
@@ -236,9 +285,17 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _clinical_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """`clinvar_error`/`clingen_error` distinguish a failed lookup from
+    a genuine "no record"/"no curation" result -- see `_protein_knowledge`'s
+    docstring for the same distinction and why it matters."""
     clinvar = raw.get("clinvar") or {}
     clingen = raw.get("clingen") or {}
-    out: Dict[str, Any] = {"clinvar_available": False, "clingen_available": False}
+    out: Dict[str, Any] = {
+        "clinvar_available": False,
+        "clinvar_error": clinvar.get("error"),
+        "clingen_available": False,
+        "clingen_error": clingen.get("error"),
+    }
     records = clinvar.get("records") or []
     if records:
         out["clinvar_available"] = True

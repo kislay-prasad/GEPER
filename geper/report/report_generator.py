@@ -267,6 +267,8 @@ class ReportGenerator:
         if prot.get("uniprot_available"):
             u = prot["uniprot"]
             lines.append(f"- **UniProt:** {u.get('protein_name') or 'n/a'} ({u.get('accession') or 'n/a'}, {'reviewed' if u.get('reviewed') else 'unreviewed'})")
+        elif prot.get("uniprot_error"):
+            lines.append(f"- **UniProt:** _lookup failed (external service issue: {prot['uniprot_error']}) -- not evidence of a missing entry, see Annotation Detail below._")
         else:
             lines.append("- **UniProt:** no entry resolved.")
         if prot.get("interpro_available"):
@@ -276,6 +278,8 @@ class ReportGenerator:
                 lines.append(f"- **InterPro/Pfam:** overlaps {len(domains)} domain(s): {names}")
             else:
                 lines.append("- **InterPro/Pfam:** annotation available; no domain overlap at the estimated variant residue.")
+        elif prot.get("interpro_error"):
+            lines.append(f"- **InterPro/Pfam:** _lookup failed (external service issue: {prot['interpro_error']}) -- not evidence of an absent domain, see Annotation Detail below._")
         else:
             lines.append("- **InterPro/Pfam:** no annotation available.")
         lines.append("")
@@ -287,6 +291,8 @@ class ReportGenerator:
             lines.append(f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' (mean pLDDT={struct.get('mean_plddt')}, model {struct.get('model_version') or 'n/a'})")
             if struct.get("pdb_url"):
                 lines.append(f"  - Structure: {struct['pdb_url']}")
+        elif struct.get("error"):
+            lines.append(f"*AlphaFold DB lookup failed (external service issue: {struct['error']}) -- not evidence of an unresolved structure, see Annotation Detail below.*")
         else:
             lines.append("*No AlphaFold DB structure resolved for this protein.*")
         lines.append("")
@@ -309,11 +315,15 @@ class ReportGenerator:
         if clin.get("clinvar_available"):
             cv = clin["clinvar"]
             lines.append(f"- **ClinVar:** {cv.get('clinical_significance') or 'n/a'} ({cv.get('review_status') or 'n/a'})")
+        elif clin.get("clinvar_error"):
+            lines.append(f"- **ClinVar:** _lookup failed (external service issue: {clin['clinvar_error']}) -- not evidence of an absent record, see Annotation Detail below._")
         else:
             lines.append("- **ClinVar:** no record found.")
         if clin.get("clingen_available"):
             cg = clin["clingen"]
             lines.append(f"- **ClinGen:** {cg.get('gene_symbol') or 'n/a'} -- gene-disease validity: {cg.get('clinical_validity_summary') or 'n/a'}")
+        elif clin.get("clingen_error"):
+            lines.append(f"- **ClinGen:** _lookup failed (external service issue: {clin['clingen_error']}) -- not evidence of an absent curation, see Annotation Detail below._")
         else:
             lines.append("- **ClinGen:** no curation found for this gene.")
         lines.append("")

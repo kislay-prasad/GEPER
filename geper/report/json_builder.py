@@ -105,6 +105,37 @@ def build_variant_result(
         if interpretation_result is not None
         else (interpretation or {}).get("interpretation_result")
     )
+    # Built from the same raw provider dicts this function already
+    # received (and is about to emit verbatim under the top-level
+    # `uniprot`/`interpro`/`gnomad`/etc. keys below) so that
+    # `build_clinical_report`'s evidence-dependent sections (protein/
+    # structural/population/clinical knowledge, sequence context) can
+    # never drift from what those top-level keys actually say --
+    # passed explicitly rather than left to fall back to
+    # `resolved_interpretation_result.get("raw_evidence")`, which is
+    # always empty: `InterpretationResult.to_dict()`
+    # (pipeline/interpretation_result.py) deliberately omits
+    # `raw_evidence` from its serialized form. Before this fix, that
+    # meant `build_clinical_report` always saw an empty `raw` dict, so
+    # its protein/structural/population/clinical-evidence sections
+    # unconditionally reported "not found" regardless of what the
+    # corresponding stage actually returned -- see
+    # `build_clinical_report`'s docstring for the real Colab report
+    # this was caught from (a resolved UniProt entry contradicted two
+    # sections later by "no entry resolved" here).
+    raw_evidence_for_report = {
+        "clinvar": clinvar_result,
+        "dbsnp": dbsnp_result,
+        "protein": protein_result,
+        "blast": blast_result,
+        "alphamissense": alphamissense_result,
+        "mmsplice": mmsplice_result,
+        "gnomad": gnomad_result,
+        "clingen": clingen_result,
+        "uniprot": uniprot_result,
+        "interpro": interpro_result,
+        "alphafold": alphafold_result,
+    }
     result = {
         "variant": variant_dict,
         "sequence_context": sequence_context,
@@ -214,7 +245,7 @@ def build_variant_result(
         # anything from the raw provider dicts a second time. `None`
         # when interpretation_result itself is missing/errored, never
         # fabricated.
-        "clinical_report": build_clinical_report(resolved_interpretation_result, variant_dict),
+        "clinical_report": build_clinical_report(resolved_interpretation_result, variant_dict, raw_evidence=raw_evidence_for_report),
         # New, additive key (Objective 6: AI model status reporting).
         # Unlike `ai_splicing_ensemble` below, this key is ALWAYS
         # present -- never conditionally omitted -- because the whole

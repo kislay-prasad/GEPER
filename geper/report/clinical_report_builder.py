@@ -326,13 +326,24 @@ def _clinical_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
         "clingen_available": False,
         "clingen_error": clingen.get("error"),
     }
-    records = clinvar.get("records") or []
-    if records:
+    # `primary_record`, never `records[0]` -- ClinVar's positional
+    # search can return several distinct co-located variants at one
+    # locus, and a bare first-record read used to attribute whichever
+    # one sorted first to this variant regardless of whether it was
+    # actually the same allele (see `database/clinvar_client.py`'s
+    # module docstring for the real case this fixes). `match_status ==
+    # "position_only"` means other, non-matching variants exist at
+    # this position -- surfaced as count-only context, distinct from
+    # "no record found" (`not_found`).
+    if clinvar.get("match_status") == "matched" and clinvar.get("primary_record"):
+        primary = clinvar["primary_record"]
         out["clinvar_available"] = True
         out["clinvar"] = {
-            "clinical_significance": records[0].get("clinical_significance"),
-            "review_status": records[0].get("review_status"),
+            "clinical_significance": primary.get("clinical_significance"),
+            "review_status": primary.get("review_status"),
         }
+    elif clinvar.get("match_status") == "position_only":
+        out["clinvar_co_located_count"] = len(clinvar.get("records") or [])
     if clingen.get("found"):
         out["clingen_available"] = True
         out["clingen"] = {

@@ -4,11 +4,41 @@ ClinVar client.
 Queries NCBI ClinVar via the public E-utilities API (esearch +
 esummary) for clinical significance annotations on a variant,
 identified either by rsID or by a chrom/pos/ref/alt HGVS-style query.
+
+Allele-aware record selection
+------------------------------
+`_esearch`'s query term is genomic-position-based (`{chrom}[chr] AND
+{pos}[chrpos38/37]`), not allele-based -- ClinVar has no Entrez field
+for "this exact REF/ALT". A single position frequently hosts *several*
+distinct ClinVar-catalogued variants (a SNV, a different SNV, an
+overlapping indel, ...), each its own accession with its own,
+independent classification. Confirmed live: 17:43094298 (GRCh38)
+returns three -- the queried `c.1233T>G` (Benign, expert panel), a
+different substitution `c.1233T>C` (Conflicting), and an unrelated
+2bp deletion `c.1232_1233del` (Pathogenic, expert panel) that merely
+overlaps the same anchor position. Earlier versions of this client
+took `records[0]` unconditionally, which -- since NCBI's esearch
+relevance ordering is not guaranteed stable across queries -- could
+(and, for the case above, did) attribute a completely different
+variant's classification to the one actually being analyzed.
+
+`query_variant` now classifies every returned record with
+`variant_match: Optional[bool]` (see `_variant_match`) and reports one
+of `ClinVarMatchStatus`'s three states, so "no record was found for
+this exact variant" (`POSITION_ONLY` -- other, non-matching variants
+exist here) is never conflated with "ClinVar has never heard of this
+position" (`NOT_FOUND`), and neither is silently treated as "here's a
+classification for this variant" the way a bare `records[0]` was.
+Callers should read `primary_record`/`matched_records`, not `records`
+(which stays the full, unfiltered, position-based list -- kept for
+context/audit display, e.g. "other variants catalogued at this
+position", never for attributing a classification).
 """
 
+import enum
 import time
-import xml.etree.ElementTree as ET
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -19,6 +49,23 @@ from utils.logger import get_logger
 from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
 
 logger = get_logger(__name__)
+
+
+class ClinVarMatchStatus(str, enum.Enum):
+    """
+    Three distinct outcomes of a ClinVar lookup -- deliberately not
+    collapsed into a single boolean, for the same reason
+    `pipeline/stage_schemas.py::StageStatus` and
+    `pipeline/provenance.py::VersionStatus` each keep their own
+    "checked, found nothing" state distinct from "didn't check"/
+    "checked, found the wrong thing": conflating any of these is
+    exactly the bug class this enum exists to prevent (see this
+    module's docstring for the real BRCA1 case that motivated it).
+    """
+
+    NOT_FOUND = "not_found"        # esearch returned nothing at this position at all
+    POSITION_ONLY = "position_only"  # record(s) exist at this position, but none match this allele
+    MATCHED = "matched"            # at least one record's allele (and position) matches the query variant
 
 
 class ClinVarClient:
@@ -43,6 +90,14 @@ class ClinVarClient:
         build is not something client code should rely on, so the
         build-qualified field is always used explicitly once the
         pipeline has resolved a build.
+
+        Returns `found=True` (and a non-None `primary_record`) only
+        when at least one returned record's own allele/position match
+        the *queried* variant -- never merely because the position
+        search returned something (see this module's docstring for why
+        that distinction matters). `records` is still the full,
+        unfiltered, position-based list, for callers that want to show
+        other variants catalogued at this position as context.
         """
         search_term = self._build_search_term(variant, rsid, assembly)
         uids = self._esearch(search_term)
@@ -52,16 +107,68 @@ class ClinVarClient:
             return {
                 "query": search_term,
                 "found": False,
+                "match_status": ClinVarMatchStatus.NOT_FOUND.value,
+                "record_count": 0,
+                "matched_record_count": 0,
                 "records": [],
+                "matched_records": [],
+                "primary_record": None,
             }
 
-        records = self._esummary(uids, variant)
+        records = self._esummary(uids, variant, assembly)
+        matched_records = [r for r in records if r.get("variant_match") is True]
+
+        if matched_records:
+            match_status = ClinVarMatchStatus.MATCHED
+            primary_record = self._select_primary(matched_records)
+        else:
+            match_status = ClinVarMatchStatus.POSITION_ONLY
+            primary_record = None
+            logger.info(
+                f"ClinVar returned {len(records)} record(s) at '{search_term}' but none match "
+                f"{variant.chrom}:{variant.pos} {variant.ref}>{variant.alt} by allele -- reporting "
+                "POSITION_ONLY, not attributing any of their classifications to this variant."
+            )
+
         return {
             "query": search_term,
-            "found": True,
+            "found": match_status == ClinVarMatchStatus.MATCHED,
+            "match_status": match_status.value,
             "record_count": len(records),
+            "matched_record_count": len(matched_records),
             "records": records,
+            "matched_records": matched_records,
+            "primary_record": primary_record,
         }
+
+    @staticmethod
+    def _select_primary(matched_records: "List[Dict[str, Any]]") -> Dict[str, Any]:
+        """
+        Picks one record when more than one allele-matched record
+        exists for the query variant. In practice this should be rare
+        to never -- ClinVar consolidates one allele into one Variation
+        ID/accession, so two independently-matching records for the
+        exact same (position, ref, alt) would mean ClinVar itself has
+        a duplicate/merged-record situation, not a genuine second
+        variant. Handled defensively anyway: sorts by `last_evaluated`
+        descending (a record's classification can be revised over
+        time -- e.g. this exact BRCA1 case moved from an older,
+        weaker classification to today's ENIGMA expert-panel "Benign"
+        as of 2024-06-11 -- so the most recently evaluated record is
+        the current clinical consensus, which is what a report should
+        show). Records with an unparseable/missing date sort last
+        rather than raising or silently winning a tie.
+        """
+        def sort_key(record: Dict[str, Any]) -> datetime:
+            raw = record.get("last_evaluated")
+            if not raw:
+                return datetime.min
+            try:
+                return datetime.strptime(raw.strip(), "%Y/%m/%d %H:%M")
+            except ValueError:
+                return datetime.min
+
+        return max(matched_records, key=sort_key)
 
     def _build_search_term(
         self, variant: Variant, rsid: Optional[str], assembly: Optional[str]
@@ -80,7 +187,7 @@ class ClinVarClient:
         # dropped real matches, indistinguishable from "not in ClinVar".
         # Chrom+build-qualified position is normally sufficient to
         # locate the record; ref/alt agreement is instead checked
-        # after the fact in `_esummary` (see `ref_alt_match`) so
+        # after the fact in `_esummary` (see `_variant_match`) so
         # multi-allelic sites can still be flagged without the risk of
         # a bad text filter discarding a true hit.
         return f"{chrom}[chr] AND {variant.pos}[{position_field}]"
@@ -118,7 +225,7 @@ class ClinVarClient:
         payload = self._request_json(f"{self.base_url}/esearch.fcgi", params)
         return payload.get("esearchresult", {}).get("idlist", [])
 
-    def _esummary(self, uids: list, variant: Optional[Variant] = None) -> list:
+    def _esummary(self, uids: list, variant: Optional[Variant] = None, assembly: Optional[str] = None) -> list:
         params = {
             "db": self.db,
             "id": ",".join(uids),
@@ -148,36 +255,100 @@ class ClinVarClient:
                         if isinstance(trait, dict)
                     ],
                     "accession": entry.get("accession"),
-                    "ref_alt_match": self._check_ref_alt(entry, variant),
+                    "variant_match": self._variant_match(entry, variant, assembly),
                 }
             )
         return records
 
     @staticmethod
-    def _check_ref_alt(entry: Dict[str, Any], variant: Optional[Variant]) -> Optional[bool]:
+    def _variant_match(
+        entry: Dict[str, Any], variant: Optional[Variant], assembly: Optional[str]
+    ) -> Optional[bool]:
         """
-        Best-effort agreement check between the queried variant's
-        ref/alt and the allele ClinVar actually returned, using the
-        `variation_set[].canonical_spdi` field esummary provides (SPDI
-        format: `seq:pos:ref:alt`). Only meaningful for a positional
-        (non-rsID) lookup where more than one allele can share a
-        position; returns None (not applicable/undetermined) rather
-        than False when the data needed to compare isn't present, so
-        callers never treat "couldn't check" as "definitely wrong".
+        Whether this ClinVar record's allele is actually the queried
+        variant -- checked on BOTH ref/alt and genomic position, not
+        ref/alt alone (an earlier version of this method, `_check_ref_alt`,
+        only compared ref/alt; adding the position check closes the
+        theoretical gap where two genuinely different variants near
+        each other could coincidentally share the same ref/alt bases
+        --defense in depth, since both values are already parsed out
+        of the same field).
+
+        Sourced from `variation_set[].canonical_spdi` (format
+        `seq:0-based-pos:ref:alt` -- confirmed live: BRCA1's real
+        canonical_spdi `NC_000017.11:43094297:A:C` is this variant's
+        own 1-based VCF position 43094298 minus one, i.e. the same
+        locus). `variation_loc[].start` (assembly-qualified, 1-based)
+        is checked as a second, independent position source when
+        present, since `variation_set` entries have been observed with
+        `canonical_spdi` but empty `ref`/`alt` fields directly on
+        `variation_loc` -- SPDI is what actually carries the alleles.
+
+        KNOWN LIMITATION, disclosed rather than silently assumed away:
+        for indels, ClinVar's SPDI normalization can legitimately
+        represent the identical variant with different ref/alt
+        strings than GEPER's own (VCF-anchored) representation (e.g. a
+        different shared-anchor-base convention). This check does not
+        attempt indel re-normalization, so a genuine indel match can
+        come back `False` rather than `True` in that case. The safe
+        default either way is to NOT attribute an unconfirmed record's
+        classification to the query variant, so this asymmetry errs
+        toward under- rather than over-attribution -- consistent with
+        every other "never fabricate evidence" guarantee in this
+        codebase. SNV matching (the case that motivated this fix) is
+        unaffected: a single base has no alternate normalization.
+
+        Returns None (not False) when no `variation_set` entry carries
+        a usable SPDI at all, so "checked, doesn't match" and "could
+        not check" stay distinguishable to callers -- same principle
+        as `ClinVarMatchStatus` itself.
         """
         if variant is None:
             return None
         variation_set = entry.get("variation_set")
         if not isinstance(variation_set, list):
             return None
+
+        build_name = (
+            "GRCh37"
+            if assembly and assembly.strip().upper().replace("-", "").replace("_", "") in {"GRCH37", "HG19", "B37"}
+            else "GRCh38"
+        )
+        ref, alt = variant.ref.upper(), variant.alt.upper()
+        checked_any = False
+
         for v in variation_set:
-            spdi = v.get("canonical_spdi") if isinstance(v, dict) else None
+            if not isinstance(v, dict):
+                continue
+            spdi = v.get("canonical_spdi")
             if not spdi or spdi.count(":") < 3:
                 continue
-            _, _, spdi_ref, spdi_alt = spdi.split(":", 3)
-            if spdi_ref.upper() == variant.ref.upper() and spdi_alt.upper() == variant.alt.upper():
-                return True
-        return False if variation_set else None
+            checked_any = True
+            _, spdi_pos, spdi_ref, spdi_alt = spdi.split(":", 3)
+            if spdi_ref.upper() != ref or spdi_alt.upper() != alt:
+                continue
+
+            # Alleles agree -- confirm position too. SPDI's own
+            # position is 0-based; +1 makes it comparable to the VCF's
+            # 1-based `variant.pos`.
+            try:
+                if int(spdi_pos) + 1 == variant.pos:
+                    return True
+            except ValueError:
+                pass
+            # Fall back to the assembly-matched variation_loc entry's
+            # own (1-based) start, in case the SPDI position couldn't
+            # be parsed cleanly.
+            for loc in v.get("variation_loc") or []:
+                if not isinstance(loc, dict):
+                    continue
+                if (loc.get("assembly_name") or "").strip() != build_name:
+                    continue
+                start = loc.get("start")
+                if start and str(start).strip().isdigit() and int(start) == variant.pos:
+                    return True
+
+        return False if checked_any else None
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """

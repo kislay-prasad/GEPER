@@ -78,16 +78,31 @@ class InterpretationEngine:
             variant_dict.get("alt"),
         )
 
-        # ClinVar evidence carries the most clinical weight.
-        clinvar_records = clinvar_result.get("records", []) if clinvar_result else []
-        if clinvar_records:
-            top = clinvar_records[0]
+        # ClinVar evidence carries the most clinical weight. Reads
+        # `primary_record` (the allele-matched record), never
+        # `records[0]` -- ClinVar's positional search can return
+        # several distinct co-located variants at one genomic
+        # position, and a bare first-record read used to attribute
+        # whichever one happened to sort first to this variant, even
+        # when it was a different allele entirely (confirmed live:
+        # BRCA1 17:43094298 returns a genuinely Benign SNV alongside an
+        # unrelated Pathogenic frameshift deletion at the same locus --
+        # see `database/clinvar_client.py`'s module docstring).
+        clinvar_records = (clinvar_result or {}).get("records") or []
+        if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
+            top = clinvar_result["primary_record"]
             sig = (top.get("clinical_significance") or "").strip().lower()
             weight = _SIGNIFICANCE_WEIGHT.get(sig, 0)
             significance_score += weight
             evidence.append(
                 f"ClinVar reports '{top.get('clinical_significance', 'unknown significance')}' "
                 f"(review status: {top.get('review_status', 'n/a')})."
+            )
+        elif clinvar_result and clinvar_result.get("match_status") == "position_only":
+            evidence.append(
+                f"No ClinVar record found for this exact variant ({len(clinvar_records)} other, "
+                "non-matching ClinVar-catalogued variant(s) exist at this genomic position; their "
+                "classifications are not evidence about this variant)."
             )
         else:
             evidence.append("No ClinVar record found; clinical significance is undetermined from this source.")

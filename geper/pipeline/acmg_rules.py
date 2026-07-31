@@ -1508,6 +1508,33 @@ class ACMGRuleEngine:
     )
 
     @staticmethod
+    def _clinvar_not_found_reason(clinvar_result: Dict[str, Any]) -> str:
+        """
+        Honest "why is there no ClinVar evidence for this variant" text,
+        distinguishing `database/clinvar_client.py::ClinVarMatchStatus`'s
+        two negative states: `POSITION_ONLY` (other ClinVar-catalogued
+        variants exist at this genomic position, but none of them are
+        this allele -- surfaced as context, never as this variant's own
+        classification) vs `NOT_FOUND` (ClinVar has nothing at this
+        position at all). Collapsing these into one "not found" message
+        is exactly the bug this whole fix exists to remove -- see
+        `ClinVarClient`'s module docstring for the real BRCA1 case where
+        a co-located, unrelated variant's classification used to leak
+        through as if it were this variant's own.
+        """
+        if not clinvar_result:
+            return "no ClinVar record was found for this exact variant."
+        status = clinvar_result.get("match_status")
+        if status == "position_only":
+            others = clinvar_result.get("record_count") or 0
+            return (
+                f"no ClinVar record was found for this exact variant -- {others} other ClinVar-catalogued "
+                "variant(s) exist at this genomic position, but none match this allele, so their "
+                "classifications are not evidence about this variant."
+            )
+        return "no ClinVar record was found for this exact variant."
+
+    @staticmethod
     def _bp6(clinvar_result: Dict[str, Any]) -> CriterionResult:
         """
         BP6 (ACMG/AMP 2015): "Reputable source recently reports variant
@@ -1525,13 +1552,13 @@ class ACMGRuleEngine:
         share BP6's circularity problem.
         """
         direction, strength = _STRENGTH["BP6"]
-        if not clinvar_result or not clinvar_result.get("found") or not clinvar_result.get("records"):
+        if not clinvar_result or not clinvar_result.get("found") or not clinvar_result.get("primary_record"):
             return _not_evaluated(
                 "BP6",
-                "no ClinVar record was found for this exact variant. " + ACMGRuleEngine._BP6_DEPRECATION_CAVEAT,
+                ACMGRuleEngine._clinvar_not_found_reason(clinvar_result) + " " + ACMGRuleEngine._BP6_DEPRECATION_CAVEAT,
             )
 
-        top = clinvar_result["records"][0]
+        top = clinvar_result["primary_record"]
         raw_significance = top.get("clinical_significance")
         raw_review_status = top.get("review_status")
         significance = (raw_significance or "").strip().lower()
@@ -1849,15 +1876,56 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _clinvar_crossref(clinvar_result: Dict[str, Any]) -> Dict[str, Any]:
-        if not clinvar_result or not clinvar_result.get("records"):
+        """
+        Uses `primary_record` (the allele-matched ClinVar record), never
+        `records[0]` -- a bare first-record read used to attribute a
+        co-located, unrelated variant's classification to the one under
+        analysis whenever ClinVar's positional search returned more
+        than one variant at the same locus (see
+        `database/clinvar_client.py`'s module docstring for the real
+        BRCA1 case this fixes).
+
+        When ClinVar has *other*, non-matching variants at this exact
+        position (`match_status == "position_only"`), they are surfaced
+        here as explicit context -- clearly labelled as not this
+        variant's own classification -- rather than silently discarded,
+        so a reviewer can see why a nearby, differently-classified
+        variant might appear in other tools' output for this locus.
+        """
+        if not clinvar_result:
             return {"available": False}
-        top = clinvar_result["records"][0]
-        return {
-            "available": True,
-            "clinical_significance": top.get("clinical_significance"),
-            "review_status": top.get("review_status"),
-            "note": "Provided for cross-reference only; not used as an input to this engine's own combining rules.",
-        }
+
+        if clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
+            top = clinvar_result["primary_record"]
+            return {
+                "available": True,
+                "clinical_significance": top.get("clinical_significance"),
+                "review_status": top.get("review_status"),
+                "accession": top.get("accession"),
+                "note": "Provided for cross-reference only; not used as an input to this engine's own combining rules.",
+            }
+
+        if clinvar_result.get("match_status") == "position_only":
+            others = [
+                {
+                    "accession": r.get("accession"),
+                    "title": r.get("title"),
+                    "clinical_significance": r.get("clinical_significance"),
+                    "review_status": r.get("review_status"),
+                }
+                for r in (clinvar_result.get("records") or [])
+            ]
+            return {
+                "available": False,
+                "co_located_other_variants": others,
+                "note": (
+                    f"No ClinVar record found for this exact variant. {len(others)} other, non-matching "
+                    "ClinVar-catalogued variant(s) exist at this genomic position (listed for context "
+                    "only -- their classifications are not evidence about this variant)."
+                ),
+            }
+
+        return {"available": False}
 
     # ------------------------------------------------------------------
     # Combining rules (Richards et al. 2015 point-based approximation)

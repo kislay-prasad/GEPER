@@ -208,13 +208,16 @@ class PrioritizationEngine:
     @staticmethod
     def _clinical_factor(clinvar_result, clingen_result, weight, reasons) -> PriorityFactor:
         parts, notes = [], []
-        if clinvar_result and clinvar_result.get("records"):
-            sig = (clinvar_result["records"][0].get("clinical_significance") or "").strip().lower()
+        if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
+            top = clinvar_result["primary_record"]
+            sig = (top.get("clinical_significance") or "").strip().lower()
             v = _CLINVAR_DIRECTIONAL_SCORE.get(sig, 0.2 if sig else 0.0)
             parts.append(v)
-            notes.append(f"ClinVar classifies this variant as '{clinvar_result['records'][0].get('clinical_significance')}'.")
+            notes.append(f"ClinVar classifies this variant as '{top.get('clinical_significance')}'.")
             if v >= 0.75:
                 reasons.append(f"✓ {'Pathogenic' if v == 1.0 else 'Likely pathogenic'} ClinVar record")
+        elif clinvar_result and clinvar_result.get("match_status") == "position_only":
+            notes.append("No ClinVar record found for this exact variant (other, non-matching variants exist at this position).")
         else:
             notes.append("No ClinVar record found.")
         if clingen_result and clingen_result.get("found"):

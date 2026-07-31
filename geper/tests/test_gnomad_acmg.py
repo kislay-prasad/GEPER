@@ -96,7 +96,8 @@ class TestGnomadAcmgEvidence(unittest.TestCase):
     def test_evidence_is_additive_not_replacing(self):
         """Full interpret() call: gnomAD evidence appended alongside pre-existing ClinVar evidence, never overwriting it."""
         variant_dict = {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"}
-        clinvar_result = {"records": [{"clinical_significance": "Pathogenic", "review_status": "criteria provided"}]}
+        primary = {"clinical_significance": "Pathogenic", "review_status": "criteria provided", "variant_match": True}
+        clinvar_result = {"records": [primary], "match_status": "matched", "primary_record": primary}
         gnomad_result = {"skipped": False, "found": True, "global_af": 0.2, "population_breakdown": {}}
 
         result = self.engine.interpret(

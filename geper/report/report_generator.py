@@ -412,6 +412,12 @@ class ReportGenerator:
             lines.append(f"- **ClinVar:** {cv.get('clinical_significance') or 'n/a'} ({cv.get('review_status') or 'n/a'})")
         elif clin.get("clinvar_error"):
             lines.append(f"- **ClinVar:** _lookup failed (external service issue: {clin['clinvar_error']}) -- not evidence of an absent record, see Annotation Detail below._")
+        elif clin.get("clinvar_co_located_count"):
+            lines.append(
+                f"- **ClinVar:** no record found for this exact variant "
+                f"({clin['clinvar_co_located_count']} other variant(s) catalogued at this genomic "
+                "position, but none match this allele -- see Annotation Detail below)."
+            )
         else:
             lines.append("- **ClinVar:** no record found.")
         if clin.get("clingen_available"):
@@ -651,14 +657,38 @@ class ReportGenerator:
 
     @staticmethod
     def _render_clinvar(clinvar: Dict[str, Any]) -> List[str]:
+        # `found` now means "a record matching this exact variant's
+        # allele was found" (see `database/clinvar_client.py`'s module
+        # docstring), not merely "ClinVar returned something at this
+        # genomic position" -- so `match_status == "position_only"`
+        # gets its own branch rather than falling into "no record
+        # found", and every listed record is labelled with whether it
+        # is this variant or a different, co-located one, so this raw
+        # audit-trail listing can never again be read as "here are up
+        # to 3 records about this variant" when some of them aren't.
         lines = ["### ClinVar", ""]
-        if not clinvar or not clinvar.get("found"):
+        if clinvar and clinvar.get("error"):
+            lines.append(f"_Failed: {clinvar['error']} -- not evidence ClinVar has no record, see the AI Model Status/Stage Warnings above._")
+            lines.append("")
+            return lines
+        if not clinvar or clinvar.get("match_status") != "position_only" and clinvar.get("match_status") != "matched":
+            # Covers both a genuine `not_found` and any other
+            # unrecognized/missing shape -- never silently renders an
+            # empty section, matching this function's pre-fix fallback.
             lines.append("_No ClinVar record found for this variant._")
             lines.append("")
             return lines
-        for record in clinvar.get("records", [])[:3]:
+        if clinvar.get("match_status") == "position_only":
             lines.append(
-                f"- **{record.get('clinical_significance', 'Unknown significance')}** "
+                "_No ClinVar record matches this exact variant's allele. The following variant(s) are "
+                "catalogued at this same genomic position but are NOT this variant:_"
+            )
+            lines.append("")
+        for record in clinvar.get("records", [])[:3]:
+            match = record.get("variant_match")
+            label = "**this variant**" if match else ("_different variant at this position_" if match is False else "_match unconfirmed_")
+            lines.append(
+                f"- {label} — **{record.get('clinical_significance', 'Unknown significance')}** "
                 f"({record.get('review_status', 'n/a')}) — "
                 f"{', '.join(record.get('condition') or []) or 'condition not specified'}"
             )

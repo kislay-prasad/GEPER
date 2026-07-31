@@ -169,10 +169,10 @@ class ConfidenceEngine:
         quality_parts: List[float] = []
         notes: List[str] = []
 
-        if clinvar_result and clinvar_result.get("records"):
+        if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
             sources.append("ClinVar")
             presence_parts.append(1.0)
-            top = clinvar_result["records"][0]
+            top = clinvar_result["primary_record"]
             review_status = (top.get("review_status") or "").lower()
             # ClinVar's own star-rating concept, reused descriptively
             # (not re-derived as a new metric): more submitters / an
@@ -193,6 +193,11 @@ class ConfidenceEngine:
             else:
                 quality_parts.append(0.2)
                 notes.append("ClinVar record present with no reported review status.")
+        elif clinvar_result and clinvar_result.get("match_status") == "position_only":
+            notes.append(
+                "No ClinVar record found for this exact variant (other, non-matching variants are "
+                "catalogued at this genomic position, but do not count as evidence about this variant)."
+            )
         else:
             notes.append("No ClinVar record found for this variant.")
 

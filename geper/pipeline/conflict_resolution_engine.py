@@ -192,11 +192,12 @@ class ConflictResolutionEngine:
 
     @staticmethod
     def _clinical_conflict(clinvar_result, clingen_result) -> Optional[ConflictItem]:
-        if not (clinvar_result and clinvar_result.get("records")):
+        if not (clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")):
             return None
         if not (clingen_result and clingen_result.get("found")):
             return None
-        sig = (clinvar_result["records"][0].get("clinical_significance") or "").lower()
+        top = clinvar_result["primary_record"]
+        sig = (top.get("clinical_significance") or "").lower()
         validity = (clingen_result.get("clinical_validity_summary") or "").lower()
         if "pathogenic" not in sig:
             return None
@@ -205,7 +206,7 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="ClinVar pathogenicity vs ClinGen gene-disease validity",
             category="Clinical",
-            evidence_a={"source": "ClinVar", "statement": f"Variant classified as '{clinvar_result['records'][0].get('clinical_significance')}'."},
+            evidence_a={"source": "ClinVar", "statement": f"Variant classified as '{top.get('clinical_significance')}'."},
             evidence_b={"source": "ClinGen", "statement": f"Gene-disease validity for {clingen_result.get('gene_symbol', 'this gene')} curated as '{clingen_result.get('clinical_validity_summary')}'."},
             severity="Major",
             resolution="ACMG classification is unchanged by this conflict. GEPER's ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",
@@ -223,9 +224,13 @@ class ConflictResolutionEngine:
         if af is None or af < gcfg.BS1_AF_THRESHOLD:
             return None
         pathogenic_leaning = acmg_classification in ("Pathogenic", "Likely Pathogenic")
+        clinvar_primary = (
+            clinvar_result["primary_record"]
+            if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
+            else None
+        )
         clinvar_pathogenic = bool(
-            clinvar_result and clinvar_result.get("records")
-            and "pathogenic" in (clinvar_result["records"][0].get("clinical_significance") or "").lower()
+            clinvar_primary and "pathogenic" in (clinvar_primary.get("clinical_significance") or "").lower()
         )
         if not (pathogenic_leaning or clinvar_pathogenic):
             return None
@@ -236,7 +241,7 @@ class ConflictResolutionEngine:
             clinical_side.append(f"ACMG classification: {acmg_classification}")
             clinical_sources.append("GEPER ACMG engine")
         if clinvar_pathogenic:
-            clinical_side.append(f"classification: {clinvar_result['records'][0].get('clinical_significance')}")
+            clinical_side.append(f"classification: {clinvar_primary.get('clinical_significance')}")
             clinical_sources.append("ClinVar")
         return ConflictItem(
             conflict_type="Population rarity inconsistent with pathogenic-leaning clinical interpretation",

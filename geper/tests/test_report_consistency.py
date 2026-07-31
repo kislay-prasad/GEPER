@@ -127,7 +127,8 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
         raw-evidence-derived section agrees with real stage output too,
         not just UniProt."""
         gnomad_result = {"skipped": False, "error": None, "found": True, "global_af": 0.0001}
-        clinvar_result = {"records": [{"clinical_significance": "Pathogenic", "review_status": "criteria provided"}]}
+        clinvar_primary = {"clinical_significance": "Pathogenic", "review_status": "criteria provided", "variant_match": True}
+        clinvar_result = {"records": [clinvar_primary], "match_status": "matched", "primary_record": clinvar_primary}
         clingen_result = {"found": True, "gene_symbol": "BRCA1", "clinical_validity_summary": "Definitive"}
         alphafold_result = {"found": True, "mean_plddt": 91.2, "model_version": "v4", "affected_residue_band": "Very high"}
 

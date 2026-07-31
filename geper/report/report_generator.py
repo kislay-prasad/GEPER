@@ -643,7 +643,19 @@ class ReportGenerator:
 
     @staticmethod
     def _render_dbsnp(dbsnp: Dict[str, Any]) -> List[str]:
+        # `found` means an allele-matched rsID was resolved (see
+        # `database/dbsnp_client.py`'s module docstring), not merely
+        # "some rsID exists at this position" -- `match_status ==
+        # "position_only"` gets its own honest line rather than falling
+        # into "no dbSNP record found".
         lines = ["### dbSNP", ""]
+        if dbsnp and dbsnp.get("match_status") == "position_only":
+            lines.append(
+                f"_Not catalogued in dbSNP under this exact allele ({dbsnp.get('record_count')} other "
+                "rsID(s) exist at this genomic position, but do not match this allele)._"
+            )
+            lines.append("")
+            return lines
         if not dbsnp or not dbsnp.get("found"):
             lines.append("_No dbSNP record found._")
             lines.append("")

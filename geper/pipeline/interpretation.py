@@ -107,9 +107,21 @@ class InterpretationEngine:
         else:
             evidence.append("No ClinVar record found; clinical significance is undetermined from this source.")
 
-        # dbSNP presence indicates the variant is catalogued (common or previously observed).
-        if dbsnp_result and dbsnp_result.get("found"):
+        # dbSNP presence indicates the variant is catalogued (common or
+        # previously observed). `found`/`rsid` only reflect an
+        # allele-matched rsID (see `database/dbsnp_client.py`'s module
+        # docstring) -- never the first rsID a position search happened
+        # to return, which used to misattribute a co-located variant's
+        # rsID to this one (confirmed live: 17:43094298 returned
+        # rs397508848, the rsID of an unrelated 2bp deletion, instead
+        # of rs80357024, this variant's own).
+        if dbsnp_result and dbsnp_result.get("match_status") == "matched":
             evidence.append(f"Catalogued in dbSNP as {dbsnp_result.get('rsid')}.")
+        elif dbsnp_result and dbsnp_result.get("match_status") == "position_only":
+            evidence.append(
+                f"Not catalogued in dbSNP under this exact allele ({dbsnp_result.get('record_count')} "
+                "other rsID(s) exist at this genomic position, but do not match this allele)."
+            )
         else:
             evidence.append("Not found in dbSNP; may be novel or a private variant.")
 

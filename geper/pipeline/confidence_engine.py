@@ -253,11 +253,13 @@ class ConfidenceEngine:
         else:
             notes.append("gnomAD lookup was skipped or unavailable for this variant.")
 
-        if dbsnp_result and dbsnp_result.get("found"):
+        if dbsnp_result and dbsnp_result.get("match_status") == "matched":
             sources.append("dbSNP")
             presence_parts.append(1.0)
             quality_parts.append(0.6)
             notes.append("Variant is catalogued in dbSNP.")
+        elif dbsnp_result and dbsnp_result.get("match_status") == "position_only":
+            notes.append("Variant not catalogued in dbSNP under this exact allele (other rsIDs exist at this position).")
         else:
             notes.append("Variant not found in dbSNP (may be novel/private, or lookup was unavailable).")
 

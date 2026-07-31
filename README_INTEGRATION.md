@@ -72,6 +72,12 @@ project's own, unmodified CLI entry point in its own subprocess:
 
 ## Usage
 
+Running this natively requires installing both projects' dependencies
+by hand (see each project's own install docs). For a pre-built
+environment with every system tool (bwa/samtools/bcftools/freebayes/
+tabix/etc.) and Python dependency already in place, see
+[DOCKER.md](DOCKER.md).
+
 ### 1. Run Kim standalone (unchanged, full mode)
 ```bash
 cd kim_pipeline

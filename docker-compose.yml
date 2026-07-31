@@ -1,0 +1,76 @@
+# =============================================================================
+# GEPER docker-compose -- wires together what a plain `docker run` would
+# otherwise need 5+ repeated `-v`/`-e` flags for every single time: the
+# model-weight/dataset caches (named volumes, so they persist and are
+# re-downloaded exactly once no matter how many times the container is
+# recreated), the input/output data directories (host bind mounts, so
+# results land directly where you can see them without `docker cp`), and
+# NCBI credentials (read from a `.env` file Compose loads automatically --
+# see DOCKER.md for exactly what to put in it).
+#
+# This is genuinely simplifying, not decorative: without it, the
+# equivalent `docker run` command for a single analysis is a ~15-line,
+# easy-to-typo invocation repeated for every run. See DOCKER.md for both
+# forms side by side.
+#
+# NOT YET VERIFIED by actually running `docker compose up`/`run` -- see
+# this repo's DOCKER.md "Verified vs. not yet verified" section. Only
+# YAML-syntax-level checks were possible on this machine (see that
+# section for how).
+# =============================================================================
+
+services:
+  geper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: geper:latest
+    container_name: geper
+
+    environment:
+      # Read from a `.env` file in this same directory (Compose loads it
+      # automatically; see DOCKER.md for the exact file to create) or from
+      # variables already exported in your shell. Left empty (not baked
+      # into the image or this file) so nobody accidentally commits a real
+      # API key -- see geper/utils/ncbi_eutils.py's own startup warning
+      # about the committed placeholder default for GEPER_NCBI_EMAIL.
+      - GEPER_NCBI_EMAIL=${GEPER_NCBI_EMAIL:-}
+      - GEPER_NCBI_API_KEY=${GEPER_NCBI_API_KEY:-}
+      # Optional: point at a pre-downloaded local BLAST database / a
+      # pre-downloaded local AlphaMissense catalogue slice instead of
+      # letting GEPER build/download either on first use -- see
+      # DOCKER.md "Optional environment variables."
+      - GEPER_BLAST_DATABASE=${GEPER_BLAST_DATABASE:-}
+      - GEPER_ALPHAMISSENSE_HG38_LOCAL=${GEPER_ALPHAMISSENSE_HG38_LOCAL:-}
+      - GEPER_ALPHAMISSENSE_HG19_LOCAL=${GEPER_ALPHAMISSENSE_HG19_LOCAL:-}
+
+    volumes:
+      # --- Model weights / bootstrap datasets: named volumes, so they
+      #     survive `docker compose down` and are fetched at most once
+      #     regardless of how many times the container is recreated. See
+      #     the Dockerfile's own "Model weights" comment for what lives in
+      #     each of these and why none of it is baked into the image
+      #     itself (multi-GB, re-fetchable).
+      - geper_model_cache:/app/geper/model_cache
+      - geper_checkpoints:/app/geper/checkpoints
+      - geper_plugin_model_cache:/app/geper/plugin_model_cache
+      - geper_hf_cache:/root/.cache/huggingface
+      # --- Input/output: host bind mounts, so you can drop a VCF/FASTQ
+      #     into ./data and read results out of ./output directly, no
+      #     `docker cp` needed.
+      - ./data:/data
+      - ./output:/app/geper/geper_output
+
+    # No command by default -- matches the Dockerfile's own CMD (an
+    # interactive shell). Override per-invocation with `docker compose run
+    # geper <command>` -- see DOCKER.md for the exact commands for each of
+    # GEPER's three supported workflows (standalone GEPER, standalone Kim,
+    # or the combined bridge).
+    stdin_open: true
+    tty: true
+
+volumes:
+  geper_model_cache:
+  geper_checkpoints:
+  geper_plugin_model_cache:
+  geper_hf_cache:

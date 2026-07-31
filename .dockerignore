@@ -1,0 +1,66 @@
+# =============================================================================
+# Docker build-context exclusions.
+#
+# Mirrors .gitignore's own reasoning almost exactly (see that file's
+# header comment): everything excluded below is either re-created
+# automatically by this project's own bootstrap/download logic on first
+# use, or is genuinely local/host-only state that must never be baked
+# into an image. Keeping the build context small also makes `docker
+# build` itself faster -- geper/plugin_model_cache/ alone is ~3.1GB on a
+# machine that has already run GEPER once; sending that to the Docker
+# daemon on every build (even though a COPY would never reference it)
+# would be pure waste.
+# =============================================================================
+
+# --- Version control / editor / OS cruft ------------------------------------
+.git/
+.gitignore
+.claude/
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- AI model weights / reference data (auto-downloaded on first use;
+#     baked into the image only where explicitly justified in the
+#     Dockerfile -- e.g. geper/hyena-dna/'s SOURCE, not its weights) ---------
+geper/plugin_model_cache/
+geper/hyena-dna/
+geper/checkpoints/
+
+# --- Evidence-source local datasets / bulk downloads (auto-bootstrapped) ----
+geper/model_cache/
+
+# --- Run output / logs --------------------------------------------------------
+geper/geper_output/
+geper/logs/
+*.log
+
+# --- Docker-related files themselves (no reason for the image to contain
+#     its own Dockerfile/compose file) ----------------------------------------
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# --- Local secrets / overrides (must never be baked into an image) ----------
+.env
+.env.*
+geper/config.yaml
+!geper/config.yaml.example
+
+# Note: geper/testdata/, geper/testdata_bench/, and the repo-root
+# test_data/ are intentionally NOT excluded here (same reasoning
+# .gitignore documents) -- they're tiny, purpose-built fixtures, not the
+# large re-fetchable caches this file targets, and having them in the
+# image is useful for exactly the kind of "does this image actually
+# work" smoke test this task's Colab verification will run.

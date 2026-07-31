@@ -3,6 +3,7 @@
 import unittest
 from unittest import mock
 
+from pipeline.clingen.utils import GeneResolution, GeneResolutionStatus
 from pipeline.uniprot.cache import UniProtCache
 from pipeline.uniprot.lookup import UniProtLookup
 from pipeline.uniprot.models import UniProtAnnotation, UniProtFeature
@@ -162,7 +163,7 @@ class TestUniProtLookupQueryVariant(unittest.TestCase):
 
         lookup = UniProtLookup(provider=provider, cache=None)
         with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
-             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol") as fake_resolve:
+             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail") as fake_resolve:
             fake_config.uniprot.ENABLED = True
             result = lookup.query_variant(_make_variant(), assembly="GRCh38", gene_symbol_hint="TP53")
 
@@ -172,14 +173,39 @@ class TestUniProtLookupQueryVariant(unittest.TestCase):
     def test_no_gene_resolved_returns_informative_not_found(self):
         provider = mock.Mock()
         lookup = UniProtLookup(provider=provider, cache=None)
+        not_found = GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="no gene overlaps this position.")
         with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
-             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol", return_value=None):
+             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=not_found):
             fake_config.uniprot.ENABLED = True
             result = lookup.query_variant(_make_variant())
 
         provider.query.assert_not_called()
         self.assertFalse(result["found"])
         self.assertIn("gene", result["reason"])
+
+    def test_ambiguous_gene_resolution_returns_clear_reason_not_a_guess(self):
+        """Regression test for the STK11/CBARP-shaped case: when the
+        gene overlap is genuinely ambiguous, this must never silently
+        pick one candidate -- gene_symbol stays None and the reason
+        names the tied candidates."""
+        provider = mock.Mock()
+        lookup = UniProtLookup(provider=provider, cache=None)
+        ambiguous = GeneResolution(
+            GeneResolutionStatus.AMBIGUOUS, None, "none",
+            reason="2 protein-coding genes genuinely overlap this position (STK11, CBARP) and could not be disambiguated.",
+            candidates=["STK11", "CBARP"],
+        )
+        with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
+             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=ambiguous):
+            fake_config.uniprot.ENABLED = True
+            result = lookup.query_variant(_make_variant())
+
+        provider.query.assert_not_called()
+        self.assertFalse(result["found"])
+        self.assertIsNone(result["gene_symbol"])
+        self.assertEqual(result["gene_resolution_status"], "ambiguous")
+        self.assertIn("STK11", result["reason"])
+        self.assertIn("CBARP", result["reason"])
 
 
 if __name__ == "__main__":

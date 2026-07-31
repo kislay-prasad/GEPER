@@ -22,7 +22,7 @@ Layering: UniProtLookup -> UniProtCache -> CompositeUniProtProvider ->
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
-from pipeline.clingen.utils import resolve_gene_symbol
+from pipeline.clingen.utils import GeneResolution, GeneResolutionStatus, resolve_gene_symbol_detail
 from pipeline.uniprot.cache import UniProtCache
 from pipeline.uniprot.models import UniProtAnnotation
 from pipeline.uniprot.provider import CompositeUniProtProvider
@@ -56,15 +56,21 @@ class UniProtLookup:
         # Same rationale as ClinGenLookup._gene_symbol_memo: a
         # non-persisted, non-TTL'd memo since gene-boundary annotation
         # doesn't change within one process's lifetime.
-        self._gene_symbol_memo: Dict[str, Optional[str]] = {}
+        self._gene_symbol_memo: Dict[str, GeneResolution] = {}
 
-    def _resolve_gene(self, variant: Variant, build: str) -> Optional[str]:
+    def _resolve_gene(self, variant: Variant, build: str) -> GeneResolution:
+        """Own fallback resolution for when no `gene_symbol_hint` is
+        supplied -- see `pipeline/clingen/utils.py`'s docstring for the
+        full VCF-GENE=-first, CDS-containment/MANE-Select-disambiguated
+        resolution order this now shares with `ClinGenLookup`."""
         memo_key = f"{build}:{variant.chrom}:{variant.pos}"
         if memo_key in self._gene_symbol_memo:
             return self._gene_symbol_memo[memo_key]
-        gene_symbol = resolve_gene_symbol(variant.chrom, variant.pos, build=build)
-        self._gene_symbol_memo[memo_key] = gene_symbol
-        return gene_symbol
+        info = {k.upper(): v for k, v in (variant.info or {}).items()}
+        vcf_gene_hint = info.get("GENE")
+        resolution = resolve_gene_symbol_detail(variant.chrom, variant.pos, build=build, vcf_gene_hint=vcf_gene_hint)
+        self._gene_symbol_memo[memo_key] = resolution
+        return resolution
 
     def query_gene(self, gene_symbol: str) -> Dict[str, Any]:
         """Look up UniProt evidence for a gene symbol directly (used by callers that already know the gene, e.g. tests/reports)."""
@@ -106,18 +112,33 @@ class UniProtLookup:
             return dict(_SKIPPED_RESULT)
 
         build = assembly or "GRCh38"
-        gene_symbol = normalize_gene_symbol(gene_symbol_hint) or self._resolve_gene(variant, build)
-        if not gene_symbol:
+        hinted = normalize_gene_symbol(gene_symbol_hint)
+        if hinted:
+            result = self.query_gene(hinted)
+            result.setdefault("gene_symbol", hinted)
+            return result
+
+        resolution = self._resolve_gene(variant, build)
+        if not resolution.gene_symbol:
             return {
                 "skipped": False,
                 "found": False,
                 "gene_symbol": None,
                 "error": None,
-                "reason": "no overlapping gene annotation found for this position; UniProt annotation is gene-level and requires a resolved gene symbol",
+                "reason": (
+                    "gene resolution ambiguous; UniProt annotation is gene-level and refuses to guess "
+                    f"among tied candidates: {resolution.reason}"
+                    if resolution.status == GeneResolutionStatus.AMBIGUOUS
+                    else f"no overlapping gene annotation found for this position; UniProt annotation is gene-level and requires a resolved gene symbol ({resolution.reason})"
+                ),
+                "gene_resolution_status": resolution.status.value,
+                "gene_resolution_candidates": resolution.candidates,
             }
 
-        result = self.query_gene(gene_symbol)
-        result.setdefault("gene_symbol", gene_symbol)
+        result = self.query_gene(resolution.gene_symbol)
+        result.setdefault("gene_symbol", resolution.gene_symbol)
+        result["gene_resolution_status"] = resolution.status.value
+        result["gene_resolution_source"] = resolution.source
         return result
 
     def query_variants_batch(
@@ -129,12 +150,21 @@ class UniProtLookup:
 
         build = assembly or "GRCh38"
         hints = gene_symbol_hints or [None] * len(variants)
-        gene_symbols = [
-            normalize_gene_symbol(hint) or self._resolve_gene(variant, build)
-            for variant, hint in zip(variants, hints)
-        ]
+        # Each entry is (gene_symbol_or_None, resolution_or_None) --
+        # `resolution` is only populated when this module had to fall
+        # back to its own resolution (no hint supplied), so a hinted
+        # item's `reason`/`candidates` are never fabricated for a
+        # lookup that never actually ran.
+        resolved: List[tuple] = []
+        for variant, hint in zip(variants, hints):
+            normalized_hint = normalize_gene_symbol(hint)
+            if normalized_hint:
+                resolved.append((normalized_hint, None))
+            else:
+                resolution = self._resolve_gene(variant, build)
+                resolved.append((resolution.gene_symbol, resolution))
 
-        distinct_genes = sorted({g for g in gene_symbols if g})
+        distinct_genes = sorted({g for g, _ in resolved if g})
         to_fetch = []
         cached_by_gene: Dict[str, Dict[str, Any]] = {}
         for gene in distinct_genes:
@@ -158,20 +188,37 @@ class UniProtLookup:
                     self.cache.put(gene_cache_key(gene), result)
 
         results: List[Dict[str, Any]] = []
-        for gene_symbol in gene_symbols:
+        for gene_symbol, resolution in resolved:
             if not gene_symbol:
                 results.append(
                     {
                         "skipped": False,
                         "found": False,
                         "gene_symbol": None,
-                        "reason": "no overlapping gene annotation found for this position",
+                        "reason": (
+                            "gene resolution ambiguous; UniProt annotation is gene-level and refuses to "
+                            f"guess among tied candidates: {resolution.reason}"
+                            if resolution is not None and resolution.status == GeneResolutionStatus.AMBIGUOUS
+                            else "no overlapping gene annotation found for this position"
+                            + (f" ({resolution.reason})" if resolution is not None else "")
+                        ),
+                        **(
+                            {
+                                "gene_resolution_status": resolution.status.value,
+                                "gene_resolution_candidates": resolution.candidates,
+                            }
+                            if resolution is not None
+                            else {}
+                        ),
                     }
                 )
                 continue
             result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
+            if resolution is not None:
+                result["gene_resolution_status"] = resolution.status.value
+                result["gene_resolution_source"] = resolution.source
             results.append(result)
 
         return results

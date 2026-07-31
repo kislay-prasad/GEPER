@@ -25,7 +25,7 @@ from config import CONFIG
 from pipeline.clingen.cache import ClinGenCache
 from pipeline.clingen.models import ClinGenGeneEvidence
 from pipeline.clingen.provider import CompositeClinGenProvider
-from pipeline.clingen.utils import gene_cache_key, normalize_gene_symbol, resolve_gene_symbol
+from pipeline.clingen.utils import GeneResolution, GeneResolutionStatus, gene_cache_key, normalize_gene_symbol, resolve_gene_symbol_detail
 from pipeline.vcf_parser import Variant
 from utils.logger import get_logger
 
@@ -52,19 +52,29 @@ class ClinGenLookup:
             if CONFIG.clingen.CACHE_ENABLED
             else None
         )
-        # A small in-process memo of chrom:pos -> gene symbol, kept
+        # A small in-process memo of chrom:pos -> GeneResolution, kept
         # separate from the (persisted, TTL'd) gene-evidence cache
         # above: gene-boundary annotation doesn't need a TTL or disk
         # persistence to be safe to reuse for the life of one process.
-        self._gene_symbol_memo: Dict[str, Optional[str]] = {}
+        self._gene_symbol_memo: Dict[str, GeneResolution] = {}
 
-    def _resolve_gene(self, variant: Variant, build: str) -> Optional[str]:
+    def _resolve_gene(self, variant: Variant, build: str) -> GeneResolution:
+        """
+        Full-detail resolution (see `pipeline/clingen/utils.py`'s
+        docstring) -- prefers the VCF's own `GENE=` INFO field when
+        present, only falling back to the Ensembl overlap/region
+        lookup (with CDS-containment/MANE-Select disambiguation for a
+        genuinely overlapping-gene position) when the VCF carries no
+        such annotation.
+        """
         memo_key = f"{build}:{variant.chrom}:{variant.pos}"
         if memo_key in self._gene_symbol_memo:
             return self._gene_symbol_memo[memo_key]
-        gene_symbol = resolve_gene_symbol(variant.chrom, variant.pos, build=build)
-        self._gene_symbol_memo[memo_key] = gene_symbol
-        return gene_symbol
+        info = {k.upper(): v for k, v in (variant.info or {}).items()}
+        vcf_gene_hint = info.get("GENE")
+        resolution = resolve_gene_symbol_detail(variant.chrom, variant.pos, build=build, vcf_gene_hint=vcf_gene_hint)
+        self._gene_symbol_memo[memo_key] = resolution
+        return resolution
 
     def query_gene(self, gene_symbol: str) -> Dict[str, Any]:
         """Look up ClinGen evidence for a gene symbol directly (used by callers that already know the gene, e.g. tests/reports)."""
@@ -104,18 +114,27 @@ class ClinGenLookup:
             return dict(_SKIPPED_RESULT)
 
         build = assembly or "GRCh38"
-        gene_symbol = self._resolve_gene(variant, build)
-        if not gene_symbol:
+        resolution = self._resolve_gene(variant, build)
+        if not resolution.gene_symbol:
             return {
                 "skipped": False,
                 "found": False,
                 "gene_symbol": None,
                 "error": None,
-                "reason": "no overlapping gene annotation found for this position; ClinGen curation is gene-level and requires a resolved gene symbol",
+                "reason": (
+                    "gene resolution ambiguous; ClinGen curation is gene-level and refuses to guess "
+                    f"among tied candidates: {resolution.reason}"
+                    if resolution.status == GeneResolutionStatus.AMBIGUOUS
+                    else f"no overlapping gene annotation found for this position; ClinGen curation is gene-level and requires a resolved gene symbol ({resolution.reason})"
+                ),
+                "gene_resolution_status": resolution.status.value,
+                "gene_resolution_candidates": resolution.candidates,
             }
 
-        result = self.query_gene(gene_symbol)
-        result.setdefault("gene_symbol", gene_symbol)
+        result = self.query_gene(resolution.gene_symbol)
+        result.setdefault("gene_symbol", resolution.gene_symbol)
+        result["gene_resolution_status"] = resolution.status.value
+        result["gene_resolution_source"] = resolution.source
         return result
 
     def query_variants_batch(self, variants: List[Variant], assembly: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -124,13 +143,13 @@ class ClinGenLookup:
             return [dict(_SKIPPED_RESULT) for _ in variants]
 
         build = assembly or "GRCh38"
-        gene_symbols = [self._resolve_gene(v, build) for v in variants]
+        resolutions = [self._resolve_gene(v, build) for v in variants]
 
         # Resolve each *distinct* gene once, then fan the shared
         # per-gene result back out to every variant that mapped to it
         # -- avoids re-querying ClinGen once per variant for genes
         # covered by many variants in the same VCF.
-        distinct_genes = sorted({g for g in gene_symbols if g})
+        distinct_genes = sorted({r.gene_symbol for r in resolutions if r.gene_symbol})
         to_fetch = []
         cached_by_gene: Dict[str, Dict[str, Any]] = {}
         for gene in distinct_genes:
@@ -154,20 +173,30 @@ class ClinGenLookup:
                     self.cache.put(gene_cache_key(gene), result)
 
         results: List[Dict[str, Any]] = []
-        for gene_symbol in gene_symbols:
-            if not gene_symbol:
+        for resolution in resolutions:
+            if not resolution.gene_symbol:
                 results.append(
                     {
                         "skipped": False,
                         "found": False,
                         "gene_symbol": None,
-                        "reason": "no overlapping gene annotation found for this position",
+                        "reason": (
+                            "gene resolution ambiguous; ClinGen curation is gene-level and refuses to "
+                            f"guess among tied candidates: {resolution.reason}"
+                            if resolution.status == GeneResolutionStatus.AMBIGUOUS
+                            else f"no overlapping gene annotation found for this position ({resolution.reason})"
+                        ),
+                        "gene_resolution_status": resolution.status.value,
+                        "gene_resolution_candidates": resolution.candidates,
                     }
                 )
                 continue
+            gene_symbol = resolution.gene_symbol
             result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
+            result["gene_resolution_status"] = resolution.status.value
+            result["gene_resolution_source"] = resolution.source
             results.append(result)
 
         return results

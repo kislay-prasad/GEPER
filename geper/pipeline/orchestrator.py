@@ -1944,11 +1944,42 @@ class GeperPipeline:
                 result = self.hpo_client.query_variant(gene_symbol)
             if result.get("error"):
                 errors.append(f"HPO stage: {result['error']}")
-            return result
+            return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"HPO stage failed: {exc}")
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc)}
+
+    @staticmethod
+    def _with_gene_resolution_context(result: Dict[str, Any], clingen_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        HPO/Orphanet/UniProt all reuse the gene symbol ClinGen's stage
+        already resolved rather than re-resolving it themselves (see
+        each stage helper's own docstring). When that resolution
+        genuinely came back `AMBIGUOUS` (see
+        `pipeline/clingen/utils.py::GeneResolutionStatus` -- multiple
+        protein-coding genes overlap and could not be disambiguated,
+        as opposed to no gene existing here at all), this replaces the
+        downstream stage's generic "no gene resolved" reason with the
+        specific ambiguous-candidates explanation, so a reviewer reading
+        the HPO/Orphanet/UniProt section of the report sees *why*
+        gene-level evidence is missing rather than a bare negative.
+        Never touches `result` when a gene symbol was actually
+        resolved.
+        """
+        if result.get("gene_symbol"):
+            return result
+        status = (clingen_result or {}).get("gene_resolution_status")
+        if status != "ambiguous":
+            return result
+        result = dict(result)
+        result["reason"] = (
+            "gene resolution ambiguous -- ClinGen's own gene-overlap resolution could not "
+            f"disambiguate this position: {(clingen_result or {}).get('reason', '')}"
+        )
+        result["gene_resolution_status"] = status
+        result["gene_resolution_candidates"] = (clingen_result or {}).get("gene_resolution_candidates", [])
+        return result
 
     def _run_normalization_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
@@ -2026,7 +2057,7 @@ class GeperPipeline:
                 result = self.orphanet_client.query_variant(gene_symbol)
             if result.get("error"):
                 errors.append(f"Orphanet stage: {result['error']}")
-            return result
+            return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"Orphanet stage failed: {exc}")
             logger.error(errors[-1])
@@ -2059,7 +2090,7 @@ class GeperPipeline:
                 )
             if result.get("error"):
                 errors.append(f"Transcript-structure stage: {result['error']}")
-            return result
+            return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"Transcript-structure stage failed: {exc}")
             logger.error(errors[-1])
@@ -2177,7 +2208,7 @@ class GeperPipeline:
                 result = self.uniprot_client.query_variant(variant, assembly=assembly, gene_symbol_hint=gene_hint)
             if result.get("error"):
                 errors.append(f"UniProt stage: {result['error']}")
-            return result
+            return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"UniProt stage failed: {exc}")
             logger.error(errors[-1])

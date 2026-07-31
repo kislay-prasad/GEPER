@@ -44,6 +44,7 @@ from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate
 
 from config import CONFIG
 from utils.logger import get_logger
+from utils.timezone_utils import format_ist
 
 logger = get_logger(__name__)
 
@@ -460,7 +461,12 @@ def _build_patient_header_table(
     rows.append([Paragraph("Sample ID", lbl), Paragraph(sample_id, val)])
     rows.append([Paragraph("Run ID", lbl), Paragraph(run_id, val)])
     rows.append([Paragraph("Genome Reference Build", lbl), Paragraph(assembly or "Not specified", val)])
-    rows.append([Paragraph("Report Generated", lbl), Paragraph(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), val)])
+    # Displayed in IST (report is for Indian hospitals) -- the
+    # underlying timestamp is still generated in UTC
+    # (`datetime.now(timezone.utc)`) and only converted for this
+    # human-facing label; nothing stored/logged changes. See
+    # `utils/timezone_utils.py`.
+    rows.append([Paragraph("Report Generated", lbl), Paragraph(format_ist(datetime.now(timezone.utc)), val)])
 
     table = Table(rows, colWidths=[55 * mm, 110 * mm], hAlign="LEFT")
     table.setStyle(TableStyle([

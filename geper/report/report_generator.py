@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from utils.logger import get_logger
+from utils.timezone_utils import format_ist_from_iso
 from report.clinical_report_builder import build_clinical_report
 from pipeline.models.status import render_status_table_lines
 
@@ -32,7 +33,11 @@ class ReportGenerator:
         lines: List[str] = []
         lines.append("# GEPER Variant Analysis Report")
         lines.append("")
-        lines.append(f"**Generated:** {json_document.get('generated_at')}")
+        # Displayed in IST (report is for Indian hospitals); the
+        # stored `generated_at` itself stays UTC (see
+        # report/json_builder.py) -- only this human-facing line
+        # converts it. See utils/timezone_utils.py.
+        lines.append(f"**Generated:** {format_ist_from_iso(json_document.get('generated_at'))}")
         lines.append(f"**Input VCF:** `{json_document.get('input_vcf')}`")
         lines.append(f"**Variants analyzed:** {json_document.get('variant_count')}")
         lines.append("")

@@ -3,7 +3,8 @@ Clinical-grade PDF report generator.
 
 Renders the same JSON document shape `report/json_builder.py::JSONResultBuilder.build()`
 produces as a multi-page, ReportLab-based PDF suitable for a hospital
-laboratory's diagnostic record: a patient/sample header, a sequencing
+laboratory's diagnostic record: a title/logo header (first page only --
+see `_build_report_header`), a patient/sample header, a sequencing
 QC status table, one section per variant finding (reusing
 `report/clinical_report_builder.py`'s already-computed evidence --
 nothing here re-derives ACMG classification or evidence from raw
@@ -11,7 +12,7 @@ provider dicts a second time), a pathologist sign-off block, and a
 standard legal disclaimer.
 
 Entry point: `generate_pdf(document, output_path, patient_meta=None,
-qc_metrics=None, run_id=None)`.
+qc_metrics=None, run_id=None, logo_path=None)`.
 
 Compliance note (India DPDP Act 2023, not HIPAA/GDPR -- this is an
 India-market product): this module parses and renders whatever
@@ -29,14 +30,17 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Union
 
+from PIL import Image as PILImage
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from config import CONFIG
 from utils.logger import get_logger
@@ -47,6 +51,15 @@ _DEIDENTIFIED_LABEL = "De-identified / Research Sample"
 
 _PAGE_W, _PAGE_H = A4
 _MARGIN = 20 * mm
+
+# Header logo's height is derived at render time from the title
+# Paragraph's own measured height (see `_build_report_header`), not a
+# fixed constant -- that's what makes "roughly matches the title text
+# next to it" literally true rather than approximate, and keeps it
+# correct automatically if the title style ever changes. This gap is
+# the only fixed measurement: horizontal breathing room between the
+# logo and the title text that follows it.
+_LOGO_TITLE_GAP = 4 * mm
 
 _DISCLAIMER_TEXT = (
     "Limitations and Disclaimer: This test was developed and its performance characteristics "
@@ -297,6 +310,137 @@ _TABLE_GRID_COLOR = colors.HexColor("#cccccc")
 # Flowable builders
 # ---------------------------------------------------------------------------
 
+def _resolve_logo_path(logo_path: Optional[str]) -> Optional[str]:
+    """
+    Which logo file (if any) `_build_report_header` should attempt to
+    load, per call.
+
+    An explicit `generate_pdf(logo_path=...)` argument always wins, so
+    a caller can either force a specific logo (a white-label
+    deployment's own mark) or force no logo at all for one call by
+    passing `logo_path=""` -- distinct from passing nothing, which
+    defers to `CONFIG.report_branding` (GEPER's own default mark,
+    globally enabled/disabled/repointed via
+    GEPER_REPORT_LOGO_ENABLED / GEPER_REPORT_LOGO_PATH, see
+    `config.py::ReportBrandingConfig`). Returning None here only means
+    "don't try" -- it says nothing about whether a path, if resolved,
+    actually points to a loadable image; that's `_build_report_header`'s
+    job, with its own graceful fallback.
+    """
+    if logo_path is not None:
+        return logo_path or None
+    if not CONFIG.report_branding.ENABLED:
+        return None
+    return CONFIG.report_branding.LOGO_PATH or None
+
+
+def _load_cropped_logo_image(path: str) -> BytesIO:
+    """
+    Open the logo at `path` and, when it carries transparency, crop it
+    to the bounding box of its actual visible (non-transparent)
+    content before returning it as an in-memory PNG.
+
+    Why this matters for sizing: an icon-style logo is routinely saved
+    on a much larger transparent canvas than the mark itself (GEPER's
+    own `assets/logo.png` is a 500x500 canvas whose visible content is
+    only ~213px tall, roughly 43% of the canvas height). Sizing a
+    bounding box that includes that invisible padding to "match the
+    title's height" (as an earlier version of this function did)
+    therefore actually renders the *visible* mark at well under half
+    that height -- which is exactly the "tiny icon" bug this was
+    written to fix. Cropping first means the height this module
+    computes always corresponds to what a viewer actually sees, for
+    GEPER's own mark or any white-label logo a hospital supplies,
+    regardless of how much padding its source file happens to carry.
+
+    Returns the original image bytes unchanged (still as a BytesIO, so
+    the caller has one consistent input type) when there is no alpha
+    channel, or when the alpha channel's bounding box can't be
+    determined (fully transparent or fully opaque image -- `getbbox()`
+    returns None in both cases, and there is nothing meaningful to
+    crop to).
+    """
+    with PILImage.open(path) as img:
+        img.load()  # force the read to happen inside this `with` block, before the file handle closes
+        has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
+        if has_alpha:
+            rgba = img.convert("RGBA")
+            bbox = rgba.split()[-1].getbbox()
+            if bbox is not None:
+                img = rgba.crop(bbox)
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
+def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+    """
+    First-page report header: the title, with a logo placed to its
+    left when one is available and loadable.
+
+    This is a normal flowable placed as the very first entry of the
+    story, not a canvas-drawn watermark/background -- it sits in the
+    document flow alongside the title text exactly like the Sample ID/
+    Run ID table and disclaimer that follow it, and it never repeats
+    on later pages simply because it is only ever added once, at the
+    top of the story: `SimpleDocTemplate` always starts the story at
+    the top of page 1, so "first page only" falls out of that
+    placement for free, without any page-number bookkeeping.
+
+    Sizing: the logo's target height is the title Paragraph's own
+    measured height (`title.wrap(...)`, at the full content width so
+    it's measured as the single line it actually renders as) -- not a
+    hardcoded constant -- so it is a literal height match, not an
+    approximation, and stays correct if the title style ever changes.
+    The logo is cropped to its visible content first (see
+    `_load_cropped_logo_image`) so that measured height corresponds to
+    what's actually visible, not an oversized transparent canvas.
+    Width is always derived from the (cropped) image's own aspect
+    ratio, so a non-square white-label logo is never stretched.
+
+    Never raises. A missing file, an unreadable path, a corrupt image,
+    or any other load failure is caught here and logged -- report
+    generation must never fail because branding didn't load; it
+    degrades to the exact plain-title header this codebase rendered
+    before this feature existed.
+    """
+    content_width = _PAGE_W - 2 * _MARGIN
+    title = Paragraph("GEPER Clinical Genomic Analysis Report", styles["ReportTitle"])
+    _, title_height = title.wrap(content_width, 1000)
+
+    resolved = _resolve_logo_path(logo_path)
+    if not resolved:
+        return [title]
+
+    try:
+        image_buf = _load_cropped_logo_image(resolved)
+        native_w, native_h = ImageReader(image_buf).getSize()
+        if not native_w or not native_h:
+            raise ValueError(f"reported image dimensions were {native_w}x{native_h}")
+        logo_h = title_height
+        logo_w = logo_h * (native_w / native_h)
+        image_buf.seek(0)
+        logo = Image(image_buf, width=logo_w, height=logo_h)
+    except Exception as exc:  # noqa: BLE001 -- any failure here must degrade to the text-only header, never crash report generation
+        logger.warning(f"Could not load report logo from '{resolved}' ({exc}); rendering the text-only header instead.")
+        return [title]
+
+    logo_column_width = logo_w + _LOGO_TITLE_GAP
+    header_table = Table(
+        [[logo, title]],
+        colWidths=[logo_column_width, content_width - logo_column_width],
+        hAlign="LEFT",
+    )
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return [header_table]
+
 def _build_patient_header_table(
     patient: Dict[str, Any], sample_id: str, run_id: str, assembly: Optional[str], styles: Dict[str, ParagraphStyle]
 ) -> Table:
@@ -490,6 +634,7 @@ def generate_pdf(
     patient_meta: Optional[Union[Dict[str, Any], str]] = None,
     qc_metrics: Optional[Dict[str, float]] = None,
     run_id: Optional[str] = None,
+    logo_path: Optional[str] = None,
 ) -> str:
     """
     Render `document` (the JSON document shape
@@ -511,13 +656,24 @@ def generate_pdf(
     compute these itself from a VCF-only pipeline.
     `run_id`: optional caller-supplied run/accession identifier; see
     `_derive_run_id`'s docstring for the fallback when not given.
+    `logo_path`: optional per-call override for the header logo image
+    (any format ReportLab/PIL can decode -- PNG-with-alpha is the
+    common case). None (the default) defers to
+    `CONFIG.report_branding` (GEPER's own default mark, or a
+    white-label deployment's, via GEPER_REPORT_LOGO_PATH /
+    GEPER_REPORT_LOGO_ENABLED); pass "" explicitly to force no logo
+    for just this call regardless of that config. See
+    `_build_report_header`'s docstring for the placement (first page
+    only, alongside the title, never a watermark) and the graceful
+    fallback when the file is missing or fails to load.
 
     Raises on a genuine ReportLab rendering failure (unlike every other
     optional-evidence integration in this codebase, which degrades
     gracefully) -- silently emitting a corrupt/truncated PDF would be
     worse than a loud failure for a document a hospital will file.
-    `patient_meta` parsing failures are the one thing this function
-    swallows (see `_parse_patient_meta`), per spec.
+    `patient_meta` parsing failures and logo load failures are the
+    things this function swallows (see `_parse_patient_meta` and
+    `_build_report_header`), per spec.
     """
     if "variants" in document:
         variants = document.get("variants") or []
@@ -544,13 +700,13 @@ def generate_pdf(
         title="GEPER Clinical Genomic Analysis Report",
     )
 
-    story: List[Any] = [
-        Paragraph("GEPER Clinical Genomic Analysis Report", styles["ReportTitle"]),
+    story: List[Any] = list(_build_report_header(logo_path, styles))
+    story.extend([
         Spacer(1, 4 * mm),
         _build_patient_header_table(patient, sample_id, resolved_run_id, assembly, styles),
         Spacer(1, 6 * mm),
         Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),
-    ]
+    ])
     story.extend(_build_qc_flowables(qc_metrics, styles))
     story.append(Spacer(1, 4 * mm))
 

@@ -159,6 +159,12 @@ pyyaml>=6.0
 # `reportlab` package is not. Requires Python >=3.9,<4, compatible with
 # this project's 3.11/3.12 requirement.
 reportlab>=5.0.0
+# Pillow: already an install-time dependency of reportlab's own image
+# support, but imported directly here too (report/summary.py crops the
+# header logo to its visible content before sizing it -- see
+# `_load_cropped_logo_image`), so it's declared explicitly rather than
+# relied on transitively. HPND-licensed, no commercial-use restriction.
+Pillow>=9.0
 
 # --- MMSplice (pipeline/models/mmsplice/) -----------------------------------
 # Splice-effect prediction. tensorflow is the only *new* runtime

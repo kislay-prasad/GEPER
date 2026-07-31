@@ -1671,6 +1671,33 @@ class QCReportConfig:
 
 
 @dataclass(frozen=True)
+class ReportBrandingConfig:
+    """
+    Branding configuration for the clinical PDF report's header logo
+    (`report/summary.py`). Configurable rather than hardcoded so a
+    white-label deployment (e.g. a hospital supplying its own mark) can
+    point at a different image, or disable the logo entirely, without a
+    code change.
+
+    LOGO_PATH defaults to GEPER's own mark (`geper/assets/logo.png`,
+    resolved relative to this file's own directory so it works
+    regardless of the process's current working directory). A missing,
+    unreadable, or corrupt file at this path is never fatal -- see
+    `report/summary.py::_build_report_header`'s docstring -- report
+    generation falls back to the existing text-only header rather than
+    raising.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_REPORT_LOGO_ENABLED", "true").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+    LOGO_PATH: str = os.environ.get(
+        "GEPER_REPORT_LOGO_PATH",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png"),
+    )
+
+
+@dataclass(frozen=True)
 class SplicingConfig:
     """
     Configuration for the new AI-model plugin manager
@@ -1877,6 +1904,7 @@ class GeperConfig:
     conflict: ConflictConfig = field(default_factory=ConflictConfig)
     splicing: SplicingConfig = field(default_factory=SplicingConfig)
     qc_report: QCReportConfig = field(default_factory=QCReportConfig)
+    report_branding: ReportBrandingConfig = field(default_factory=ReportBrandingConfig)
     normalization: VariantNormalizationConfig = field(default_factory=VariantNormalizationConfig)
 
     OUTPUT_DIR: str = os.environ.get("GEPER_OUTPUT_DIR", "./geper_output")

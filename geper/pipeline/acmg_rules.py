@@ -1622,10 +1622,24 @@ class ACMGRuleEngine:
 
         records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "PS3"]
         if not records:
-            return _not_evaluated(
-                "PS3",
-                "functional-evidence sources had a result for this variant, but none of it supported a "
-                "damaging (PS3) call -- see BS3 for whether it instead supports a benign call.",
+            # `found` (checked above) means at least one source
+            # actually returned a curated/calibrated result for this
+            # exact variant -- the evidence was checked and it simply
+            # doesn't support a damaging call, which is a negative
+            # finding, not a gap. Reporting `not_evaluated` here (as
+            # this used to) would misleadingly claim the evidence
+            # couldn't be checked at all, when it demonstrably was
+            # (see BS3's own "call" filter on the same records: a
+            # damaging-vs-no-damaging assay result answers both
+            # questions from the same source, so PS3 not matching is
+            # itself informative, not unknown).
+            return CriterionResult(
+                "PS3", direction, strength, "not_triggered",
+                "Functional-evidence sources (ClinGen Evidence Repository and/or MaveDB) had a result for "
+                "this variant, but none of it supported a damaging (PS3) call -- see BS3 for whether it "
+                "instead supports a benign call.",
+                evidence_sources=["ClinGen Evidence Repository", "MaveDB"],
+                confidence="Low",
             )
 
         return ACMGRuleEngine._functional_evidence_criterion("PS3", direction, strength, records[0])
@@ -1658,10 +1672,17 @@ class ACMGRuleEngine:
 
         records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "BS3"]
         if not records:
-            return _not_evaluated(
-                "BS3",
-                "functional-evidence sources had a result for this variant, but none of it supported a "
-                "benign (BS3) call -- see PS3 for whether it instead supports a damaging call.",
+            # Mirrors `_ps3`'s identical fix: `found` means the
+            # evidence was genuinely checked, so no BS3-supporting
+            # record is a negative finding, not a gap -- see `_ps3`'s
+            # comment for the full reasoning.
+            return CriterionResult(
+                "BS3", direction, strength, "not_triggered",
+                "Functional-evidence sources (ClinGen Evidence Repository and/or MaveDB) had a result for "
+                "this variant, but none of it supported a benign (BS3) call -- see PS3 for whether it "
+                "instead supports a damaging call.",
+                evidence_sources=["ClinGen Evidence Repository", "MaveDB"],
+                confidence="Low",
             )
 
         return ACMGRuleEngine._functional_evidence_criterion("BS3", direction, strength, records[0])

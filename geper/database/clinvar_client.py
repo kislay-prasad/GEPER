@@ -16,6 +16,7 @@ from config import CONFIG
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
 
 logger = get_logger(__name__)
 
@@ -26,6 +27,7 @@ class ClinVarClient:
     def __init__(self):
         self.base_url = CONFIG.api.NCBI_EUTILS_BASE
         self.db = CONFIG.api.CLINVAR_DB
+        warn_if_placeholder_contact(CONFIG.api.NCBI_EMAIL, caller="ClinVarClient")
 
     def query_variant(
         self, variant: Variant, rsid: Optional[str] = None, assembly: Optional[str] = None
@@ -178,12 +180,48 @@ class ClinVarClient:
         return False if variation_set else None
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        GET `url` and return the parsed JSON body, retrying up to
+        `CONFIG.api.MAX_RETRIES` times.
+
+        A 429 (NCBI's rate-limit response) is handled specially: NCBI
+        sends a `Retry-After` header telling the client exactly how
+        long to wait (confirmed live 2026-07-31: `Retry-After: 2` on a
+        real 429), so that's honored instead of guessing via the
+        default exponential backoff, which is what every other failure
+        mode still uses. A 429 still consumes one of the retry
+        attempts -- with `CONFIG.api.NCBI_API_KEY` set (10 req/s vs. 3
+        req/s unauthenticated), this should now rarely happen at all,
+        but polite handling matters either way.
+
+        The JSON body itself is parsed leniently (`lenient_json_loads`)
+        rather than via `response.json()`'s strict parser -- a real
+        ClinVar response has been observed to contain a raw control
+        character inside a JSON string, which strict parsing rejects
+        as a `ValueError` and (before this fix) this loop then retried
+        as if it were a network failure, exhausting all attempts on a
+        response that was actually complete, valid data. See
+        `utils/ncbi_eutils.py::lenient_json_loads`'s docstring for why
+        this is a data-layer quirk to route around, not a failure to
+        retry into oblivion.
+        """
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
                 response = requests.get(url, params=params, timeout=CONFIG.api.REQUEST_TIMEOUT_SECS)
+                if response.status_code == 429:
+                    retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                    wait = retry_after if retry_after is not None else CONFIG.api.RETRY_BACKOFF_SECS * attempt
+                    last_error = requests.HTTPError(f"429 Too Many Requests from '{url}'")
+                    logger.warning(
+                        f"ClinVar request attempt {attempt} rate-limited (429); waiting {wait:.1f}s "
+                        f"({'NCBI Retry-After header' if retry_after is not None else 'default backoff'})."
+                    )
+                    if attempt < CONFIG.api.MAX_RETRIES:
+                        time.sleep(wait)
+                    continue
                 response.raise_for_status()
-                return response.json()
+                return lenient_json_loads(response.text, source=url)
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"ClinVar request attempt {attempt} failed: {exc}")

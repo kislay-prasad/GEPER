@@ -368,7 +368,12 @@ class TestPS3BS3Rules(unittest.TestCase):
         self.assertIn("ENIGMA BRCA1 and BRCA2 VCEP", ps3.rationale)
 
         bs3 = ACMGRuleEngine._bs3(functional_evidence_result)
-        self.assertEqual(bs3.status, "not_evaluated")
+        # Regression test for the not_evaluated-vs-not_triggered fix
+        # (2026-07-31): the same functional_evidence_result was
+        # genuinely checked for a BS3 call and found none (the only
+        # record is PS3) -- that's a checked negative, not a gap.
+        self.assertEqual(bs3.status, "not_triggered")
+        self.assertIn("none of it supported a benign (BS3) call", bs3.rationale)
 
     def test_erepo_evidence_code_with_strength_suffix_is_honored(self):
         functional_evidence_result = {
@@ -424,15 +429,19 @@ class TestPS3BS3Rules(unittest.TestCase):
         self.assertEqual(ps3.strength, "supporting")
         self.assertEqual(ps3.confidence, "Low")
 
-    def test_found_but_no_relevant_call_is_not_evaluated(self):
+    def test_found_but_no_relevant_call_is_not_triggered(self):
         """found=True but the only record is BS3 -- PS3 must not be
-        fabricated as triggered, and must not silently reuse BS3's data."""
+        fabricated as triggered, and must not silently reuse BS3's data.
+        Regression test for the not_evaluated-vs-not_triggered fix
+        (2026-07-31): this is a checked negative (the evidence source
+        was consulted and doesn't support PS3), not an unchecked gap."""
         functional_evidence_result = {
             "found": True, "source": "mavedb", "gene_symbol": "BRCA1",
             "records": [{"source": "mavedb", "call": "BS3", "strength": "moderate", "matched_hgvs": "x"}],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
-        self.assertEqual(ps3.status, "not_evaluated")
+        self.assertEqual(ps3.status, "not_triggered")
+        self.assertIn("none of it supported a damaging (PS3) call", ps3.rationale)
 
     def test_cftr_style_gap_end_to_end(self):
         """The real, live-confirmed CFTR gap: neither source has

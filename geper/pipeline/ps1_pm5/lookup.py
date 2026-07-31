@@ -32,6 +32,7 @@ from pipeline.ps1_pm5.utils import clinvar_codon_match_from_esummary, dedupe_by_
 from pipeline.pvs1.models import TranscriptContext
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
 
 logger = get_logger(__name__)
 
@@ -55,6 +56,7 @@ class ClinVarCodonLookup:
             if CONFIG.ps1_pm5.CACHE_ENABLED
             else None
         )
+        warn_if_placeholder_contact(CONFIG.api.NCBI_EMAIL, caller="ClinVarCodonLookup")
 
     def query_codon(
         self, transcript: TranscriptContext, codon_number: int, assembly: str = "GRCh38"
@@ -164,12 +166,35 @@ class ClinVarCodonLookup:
         return matches
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        GET `url` and return the parsed JSON body, retrying up to
+        `CONFIG.ps1_pm5.MAX_RETRIES` times. Mirrors
+        `database/clinvar_client.py::_request_json`'s two fixes: a 429
+        honors NCBI's `Retry-After` header instead of guessing via the
+        default exponential backoff, and the JSON body is parsed
+        leniently (`lenient_json_loads`) so a raw control character
+        inside a string value (observed live in a real ClinVar
+        response) is recovered as the complete, valid data it is,
+        rather than exhausting every retry attempt on a response that
+        was never actually a network failure.
+        """
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.ps1_pm5.MAX_RETRIES + 1):
             try:
                 response = requests.get(url, params=params, timeout=CONFIG.ps1_pm5.QUERY_TIMEOUT_SECS)
+                if response.status_code == 429:
+                    retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                    wait = retry_after if retry_after is not None else CONFIG.ps1_pm5.RETRY_BACKOFF_SECS * attempt
+                    last_error = requests.HTTPError(f"429 Too Many Requests from '{url}'")
+                    logger.warning(
+                        f"PS1/PM5 ClinVar request attempt {attempt} rate-limited (429); waiting {wait:.1f}s "
+                        f"({'NCBI Retry-After header' if retry_after is not None else 'default backoff'})."
+                    )
+                    if attempt < CONFIG.ps1_pm5.MAX_RETRIES:
+                        time.sleep(wait)
+                    continue
                 response.raise_for_status()
-                return response.json()
+                return lenient_json_loads(response.text, source=url)
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"PS1/PM5 ClinVar request attempt {attempt} failed: {exc}")

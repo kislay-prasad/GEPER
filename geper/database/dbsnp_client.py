@@ -16,6 +16,7 @@ from config import CONFIG
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
 
 logger = get_logger(__name__)
 
@@ -27,6 +28,7 @@ class DbSNPClient:
         self.eutils_base = CONFIG.api.NCBI_EUTILS_BASE
         self.variation_base = CONFIG.api.NCBI_VARIATION_BASE
         self.db = CONFIG.api.DBSNP_DB
+        warn_if_placeholder_contact(CONFIG.api.NCBI_EMAIL, caller="DbSNPClient")
 
     def lookup_variant(self, variant: Variant, assembly: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -122,12 +124,39 @@ class DbSNPClient:
         }
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        GET `url` and return the parsed JSON body, retrying up to
+        `CONFIG.api.MAX_RETRIES` times. Shared with `_fetch_variation_detail`
+        (NCBI Variation Services, a different host/API from classic
+        eutils) -- the retry/parse behavior below is generic HTTP
+        robustness, not eutils-specific, so it applies to both call
+        sites.
+
+        A 429 (eutils' rate-limit response) honors NCBI's `Retry-After`
+        header instead of guessing via the default exponential
+        backoff -- see `database/clinvar_client.py::_request_json`'s
+        docstring (this mirrors that fix). The JSON body is parsed
+        leniently (`lenient_json_loads`) rather than via
+        `response.json()`'s strict parser, for the same
+        control-character reason documented there.
+        """
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
                 response = requests.get(url, params=params, timeout=CONFIG.api.REQUEST_TIMEOUT_SECS)
+                if response.status_code == 429:
+                    retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                    wait = retry_after if retry_after is not None else CONFIG.api.RETRY_BACKOFF_SECS * attempt
+                    last_error = requests.HTTPError(f"429 Too Many Requests from '{url}'")
+                    logger.warning(
+                        f"dbSNP request attempt {attempt} rate-limited (429); waiting {wait:.1f}s "
+                        f"({'NCBI Retry-After header' if retry_after is not None else 'default backoff'})."
+                    )
+                    if attempt < CONFIG.api.MAX_RETRIES:
+                        time.sleep(wait)
+                    continue
                 response.raise_for_status()
-                return response.json()
+                return lenient_json_loads(response.text, source=url)
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"dbSNP request attempt {attempt} failed: {exc}")

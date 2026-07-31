@@ -107,6 +107,23 @@ class LocalBigWigProvider(ConservationProviderBase):
         self._checked_binary: Optional[bool] = None
 
     def is_available(self) -> bool:
+        # Windows caveat (verified, not just suspected): UCSC's kent-tools
+        # ship no official Windows build of bigWigSummary at all (Linux/
+        # macOS only), and even a deployer-supplied extension-less POSIX-
+        # style binary placed on PATH is invisible to `shutil.which` on
+        # Windows -- it only probes `<name>.<ext>` for each PATHEXT
+        # extension (.EXE/.COM/.BAT/...), never the bare name, so a
+        # bigWigSummary without an extension is never found there
+        # (confirmed locally: a chmod'd, PATH-visible extension-less file
+        # returns None from `shutil.which` on Windows). A real
+        # `bigWigSummary.exe` (Windows-native or a suitable port) would
+        # still be found normally since `.EXE` is in the default
+        # PATHEXT. Net effect: on a bare Windows deployment this local
+        # track is realistically always unavailable, which is exactly
+        # the safe behavior here -- it degrades to the GERP API fallback
+        # (`MyVariantGerpProvider`) rather than failing, so this is
+        # documented as a known limitation, not treated as a bug to work
+        # around.
         if self._checked_binary is None:
             import shutil
 

@@ -124,6 +124,75 @@ class TestLocalBigWigProvider(unittest.TestCase):
         self.assertFalse(ann.found)
         self.assertIsNotNone(ann.error)
 
+    def test_parses_gerp_score_from_successful_bigwigsummary_call(self):
+        # GERP's local-bigwig fallback (`GERP_GRCH38_LOCAL_BIGWIG`) shares
+        # this exact class/code path with phylop/phastcons -- covered
+        # here explicitly since it was previously untested (only
+        # exercised, if at all, via a real deployer-provisioned file).
+        provider = LocalBigWigProvider("gerp")
+        fake_proc = mock.Mock(returncode=0, stdout="5.01\n", stderr="")
+        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
+            "subprocess.run", return_value=fake_proc
+        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+            fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.gerp.bw"
+            fake_config.conservation.QUERY_TIMEOUT_SECS = 5
+            ann = provider.query("chr17", 7674858, "C", "T", "GRCh38")
+        self.assertTrue(mock_run.called)
+        self.assertTrue(ann.found)
+        self.assertAlmostEqual(ann.gerp_score, 5.01)
+        self.assertIsNone(ann.phylop_score)
+        self.assertIsNone(ann.phastcons_score)
+
+    def test_subprocess_argv_is_list_form_not_shell_string(self):
+        # Windows-specific regression guard: this must stay a list
+        # passed to subprocess.run (Python's own argv-list quoting,
+        # via list2cmdline on Windows), never a shell=True string built
+        # by hand -- a hand-built string would corrupt/mis-tokenize a
+        # Windows-style local bigwig path containing both a drive
+        # letter+backslashes and a space (e.g. under
+        # "C:\\Program Files\\..."), which is a realistic path shape
+        # on Windows that a POSIX-only deployer would never hit.
+        provider = LocalBigWigProvider("gerp")
+        windows_path = r"C:\Users\Test User\bigwig data\hg38.gerp.bw"
+        fake_proc = mock.Mock(returncode=0, stdout="2.5\n", stderr="")
+        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
+            "subprocess.run", return_value=fake_proc
+        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+            fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = windows_path
+            fake_config.conservation.QUERY_TIMEOUT_SECS = 5
+            provider.query("chr17", 7674858, "C", "T", "GRCh38")
+
+        self.assertTrue(mock_run.called)
+        args, kwargs = mock_run.call_args
+        argv = args[0]
+        self.assertIsInstance(argv, list, "must be a list (argv-form), not a shell command string")
+        self.assertEqual(
+            argv,
+            ["bigWigSummary", windows_path, "chr17", "7674857", "7674858", "1"],
+        )
+        self.assertNotIn("shell", kwargs)  # default False -- no shell=True, so no manual quoting is needed at all
+
+    def test_missing_binary_after_all_raises_filenotfound_handled_gracefully(self):
+        # Covers the real Windows failure mode: shutil.which() only
+        # checks `<PATHEXT>`-suffixed candidates on Windows (verified
+        # separately -- an extension-less POSIX-style `bigWigSummary`,
+        # the exact form UCSC's own kent-tools ship for Linux/macOS
+        # with no official Windows build, is invisible to it even when
+        # genuinely present on PATH). `is_available()` can therefore
+        # say True (e.g. a real `bigWigSummary.exe` was found) while
+        # the subsequent actual `subprocess.run` still raises
+        # FileNotFoundError (e.g. removed between the check and the
+        # call, or a stale/broken PATH entry) -- this must degrade to
+        # a skipped local lookup, not an unhandled crash.
+        provider = LocalBigWigProvider("gerp")
+        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
+            "subprocess.run", side_effect=FileNotFoundError("bigWigSummary")
+        ), mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+            fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.gerp.bw"
+            fake_config.conservation.QUERY_TIMEOUT_SECS = 5
+            result = provider.query("chr17", 100, "C", "T", "GRCh38")
+        self.assertIsNone(result)
+
 
 class TestUCSCApiProviderMocked(unittest.TestCase):
     def test_successful_phylop_response_parsed(self):

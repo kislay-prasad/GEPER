@@ -554,7 +554,17 @@ class GnomadConfig:
         "0", "false", "no", "off",
     )
 
-    QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_GNOMAD_TIMEOUT", "30"))
+    # 45s, not the 30s most other API integrations in this file use:
+    # gnomAD's public GraphQL endpoint has observed, real read timeouts
+    # around 30s under load (absorbed by the retry below without
+    # failing the run, but each occurrence wastes a full 30s attempt
+    # before the retry). A slightly longer timeout reduces how often
+    # that wasted-attempt-then-retry cycle fires on a large VCF with
+    # many variants, without changing worst-case behavior when the
+    # endpoint is genuinely down (still MAX_RETRIES attempts, each
+    # bounded by this timeout, before the variant falls back to a
+    # not-evaluated annotation).
+    QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_GNOMAD_TIMEOUT", "45"))
     MAX_RETRIES: int = int(os.environ.get("GEPER_GNOMAD_MAX_RETRIES", "3"))
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_GNOMAD_RETRY_BACKOFF", "1.5"))
 

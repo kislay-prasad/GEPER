@@ -18,6 +18,7 @@ Routing rules (see config.RoutingConfig for the underlying thresholds):
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
+from pipeline.pvs1.utils import protein_effect_flags, transcript_from_result
 from pipeline.sequence_context import SequenceContext
 from pipeline.vcf_parser import Variant
 from utils.exceptions import RoutingError
@@ -132,7 +133,7 @@ class SequenceRouter:
         return True
 
     def is_missense_eligible(
-        self, variant: Variant, ref_protein: Optional[str], alt_protein: Optional[str]
+        self, variant: Variant, transcript_result: Optional[Dict[str, Any]]
     ) -> bool:
         """
         Decide whether AlphaMissense should run for this variant.
@@ -140,25 +141,38 @@ class SequenceRouter:
         substitution caused by a genomic missense change. This
         deliberately excludes every other consequence class rather
         than trying to make AlphaMissense degrade gracefully on input
-        it was never designed for:
+        it was never designed for.
 
+        Consequence is classified via `pipeline/pvs1/utils.py::
+        protein_effect_flags` -- the same transcript-CDS-frame machinery
+        BP7/BP1 use -- NOT `pipeline/protein_translator.py`'s local
+        window translation (flat +/-500bp, no splicing, no reverse-
+        complement for minus-strand transcripts). That window was
+        already shown to call frame essentially at random for any
+        variant more than a few dozen bases from whatever AUG it
+        happens to find in the window, which made this gate a coin
+        flip rather than a real missense/synonymous call. See
+        `ProteinEffectFlags`'s docstring for the full history.
+
+        Excludes:
           - non-SNV VCF records (insertion/deletion/MNV) -- covers
             frameshift-causing indels and multi-base substitutions.
           - symbolic or structural ALT alleles (e.g. '<DEL>', '*') or
             an `SVTYPE`-tagged record -- never a simple substitution.
-          - no translatable protein context at all (intronic, no ORF
-            found in the local window, etc: ref/alt protein is None)
-            -- the same signal `requires_protein_analysis` already
-            uses to skip ESM-2.
-          - synonymous changes (ref_protein == alt_protein).
-          - a stop codon gained or lost (nonsense / stop-loss), or a
-            length change (frameshift) between ref_protein and
-            alt_protein -- AlphaMissense doesn't score either class.
-          - more than one residue differing between ref_protein and
-            alt_protein -- this window-based local translation isn't
-            precise enough to call a single defined substitution in
-            that case, and AlphaMissense's catalogue is keyed on
-            exactly one.
+          - anything `protein_effect_flags` could not classify from
+            real transcript/CDS data (`determined=False`): no
+            transcript structure fetched, no CDS sequence, a
+            build/transcript mismatch at this codon, or a multi-
+            nucleotide same-length substitution. Skipping is the safe
+            default here -- see this method's caller in
+            `pipeline/orchestrator.py::_run_alphamissense_stage` for
+            why running AlphaMissense on an unclassified consequence
+            (rather than skipping) would risk scoring a synonymous,
+            nonsense, or frameshift change as if it were a clean
+            missense substitution.
+          - synonymous, nonsense/stop-loss, and frameshift/in-frame-
+            indel calls -- AlphaMissense's catalogue is keyed on
+            exactly one missense substitution per entry.
         """
         if variant.variant_type != "SNV":
             return False
@@ -166,15 +180,9 @@ class SequenceRouter:
             return False
         if variant.alt.startswith("<") or variant.alt in (".", "*") or len(variant.alt) != 1:
             return False
-        if not ref_protein or not alt_protein:
+
+        transcript = transcript_from_result(transcript_result)
+        flags = protein_effect_flags(variant.to_dict(), transcript)
+        if not flags.determined:
             return False
-        if len(ref_protein) != len(alt_protein):
-            return False
-        if ref_protein == alt_protein:
-            return False
-        if ref_protein.endswith("*") != alt_protein.endswith("*"):
-            return False
-        differing_positions = [
-            i for i, (r, a) in enumerate(zip(ref_protein, alt_protein)) if r != a
-        ]
-        return len(differing_positions) == 1
+        return flags.is_missense

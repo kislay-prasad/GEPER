@@ -1037,9 +1037,25 @@ class GeperPipeline:
                     logger.error(errors[-1])
                     self._model_stage_errors.setdefault(model_key, str(exc)[:120])
 
+        # ClinGen + transcript-structure resolution: moved ahead of the
+        # protein/AlphaMissense stages below (they used to run first,
+        # before any transcript data existed) because
+        # `_run_alphamissense_stage` now needs `transcript_result` to
+        # classify missense eligibility via the same transcript-CDS-frame
+        # `protein_effect_flags` machinery BP7/BP1 use, rather than the
+        # legacy protein-translator window (see
+        # `pipeline/router.py::SequenceRouter.is_missense_eligible`'s
+        # docstring). Neither stage depends on anything computed below
+        # it here -- `_run_clingen_stage` only needs `variant`, and
+        # `_run_transcript_stage` only needs `variant` + `clingen_result`
+        # -- so this reorder changes no other stage's inputs.
+        clingen_result = self._run_clingen_stage(variant, errors)
+        transcript_result = self._run_transcript_stage(variant, clingen_result, errors)
+        self._attach_hgvs_c(normalization_result, transcript_result)
+
         rna_result = self._run_rna_stage(variant, sequence_context, errors)
         protein_result = self._run_protein_stage(variant, sequence_context, errors)
-        alphamissense_result = self._run_alphamissense_stage(variant, protein_result, errors)
+        alphamissense_result = self._run_alphamissense_stage(variant, transcript_result, errors)
         mmsplice_result = self._run_mmsplice_stage(variant, errors)
         ensemble_result = self._run_ensemble_stage(variant, sequence_context, errors)
         # Standalone splice-prediction plugins for BP7 (see
@@ -1054,11 +1070,8 @@ class GeperPipeline:
         clinvar_result = self._run_clinvar_stage(variant, dbsnp_result, errors)
         gnomad_result = self._run_gnomad_stage(variant, errors)
         conservation_result = self._run_conservation_stage(variant, errors)
-        clingen_result = self._run_clingen_stage(variant, errors)
         hpo_result = self._run_hpo_stage(clingen_result, errors)
         orphanet_result = self._run_orphanet_stage(clingen_result, errors)
-        transcript_result = self._run_transcript_stage(variant, clingen_result, errors)
-        self._attach_hgvs_c(normalization_result, transcript_result)
         clinvar_codon_result = self._run_clinvar_codon_stage(variant, transcript_result, errors)
         functional_evidence_result = self._run_functional_evidence_stage(
             variant, clingen_result, transcript_result, errors
@@ -1408,41 +1421,42 @@ class GeperPipeline:
             logger.error(errors[-1])
             self._model_stage_errors.setdefault("esm2", str(exc)[:120])
             # `skipped: True` stays True (see `_run_rna_stage`'s
-            # matching comment for why -- `_run_alphamissense_stage`
-            # gates on `protein_result.get("skipped")` to decide
-            # whether it's safe to proceed, and a crashed translation
-            # is exactly as unusable as a legitimately-skipped one).
-            # `error` is new -- see `_run_rna_stage`'s comment.
+            # matching comment for why -- ESM-2's own downstream
+            # consumers still gate on this). Note `_run_alphamissense_stage`
+            # no longer reads this result at all: its eligibility gate
+            # is decided from `transcript_result`, not from whether
+            # this ESM-2 translation succeeded (see that method's
+            # docstring). `error` is new -- see `_run_rna_stage`'s comment.
             return {"skipped": True, "reason": str(exc), "error": str(exc)}
 
     def _run_alphamissense_stage(
-        self, variant: Variant, protein_result: Dict[str, Any], errors: List[str]
+        self, variant: Variant, transcript_result: Dict[str, Any], errors: List[str]
     ) -> Dict[str, Any]:
         """
         Routes to AlphaMissense only for variants the router classifies
         as an eligible missense substitution (see
         SequenceRouter.is_missense_eligible) -- never for synonymous,
-        intronic, splice, frameshift, or structural variants. Runs
-        after the protein stage since eligibility depends on the
-        translated ref/alt protein it produces.
+        intronic, splice, frameshift, or structural variants. Eligibility
+        is decided from `transcript_result` (the transcript-CDS-frame
+        `protein_effect_flags` machinery BP7/BP1 also use), not from the
+        protein stage's ESM-2 translation -- AlphaMissense's own lookup
+        below is keyed on genomic chrom:pos:ref:alt, never on the
+        translated ref/alt protein string, so it has no dependency on
+        that stage having found an ORF in its local window. Runs after
+        `_run_transcript_stage` (earlier in `_process_variant`) rather
+        than after the protein stage for that reason.
 
         Follows the exact same graceful-degradation shape as every
         other stage: a missing/failed AlphaMissense never aborts the
         variant, only records `errors` and returns a `skipped` result.
         """
-        if not protein_result or protein_result.get("skipped"):
-            return {"skipped": True, "reason": "no protein translation available"}
-
-        translation = protein_result.get("translation", {})
-        ref_protein = translation.get("ref_protein")
-        alt_protein = translation.get("alt_protein")
-
-        if not self.router.is_missense_eligible(variant, ref_protein, alt_protein):
+        if not self.router.is_missense_eligible(variant, transcript_result):
             return {
                 "skipped": True,
                 "reason": "variant is not an eligible missense substitution "
-                "(synonymous, nonsense, frameshift, structural, or non-coding "
-                "variants are never routed to AlphaMissense)",
+                "(synonymous, nonsense, frameshift, structural, non-coding, "
+                "or undeterminable-consequence variants are never routed to "
+                "AlphaMissense)",
             }
 
         if not self._model_availability.get("alphamissense", True):

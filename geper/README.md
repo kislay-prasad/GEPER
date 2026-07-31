@@ -264,20 +264,30 @@ Thresholds live in `config.py::RoutingConfig` and can be tuned without
 touching any pipeline logic.
 
 **AlphaMissense eligibility** (`SequenceRouter.is_missense_eligible`,
-evaluated after the protein-translation stage, independently of the
-DNA-model routing table above) requires *all* of:
+evaluated after the ClinGen + transcript-structure stages,
+independently of the DNA-model routing table above) requires *all* of:
 - the VCF record is a single-base SNV (not an insertion/deletion/MNV),
 - it isn't a symbolic (`<DEL>`, `*`) or `SVTYPE`-flagged ALT allele,
-- a protein was actually translated for both ref and alt (an ORF —
-  start codon — was found in the local window; otherwise the variant
-  is treated as non-coding/intronic for this purpose, same signal
-  ESM-2 routing already uses),
-- the ref/alt proteins are the same length (excludes frameshift),
-- exactly one residue differs, and no stop codon is gained or lost
-  (excludes synonymous, nonsense, and stop-loss changes).
+- the transcript-CDS-frame consequence classifier
+  (`pipeline/pvs1/utils.py::protein_effect_flags` — the same one
+  BP1/BP7 use) determines the variant's consequence at all (needs a
+  fetched transcript structure with CDS sequence covering this
+  position; otherwise the variant is treated as
+  non-coding/intronic/undeterminable for this purpose, and
+  AlphaMissense is skipped rather than guessed at), and
+- that classification is exactly missense (excludes synonymous,
+  nonsense/stop-loss, and frameshift/in-frame-indel changes).
 
 Anything else (synonymous, intronic, splice-only, frameshift,
-structural) is never sent to AlphaMissense.
+structural, or a consequence the transcript data couldn't determine)
+is never sent to AlphaMissense. This gate used to read
+`pipeline/protein_translator.py`'s frame-unaware local-window
+translation (ref/alt protein strings); that window has no splicing and
+no reverse-complement step, so it silently misclassified real missense
+variants (e.g. it read as "no change" for real BRCA1/TP53/PRNP
+missense substitutions verified live on 2026-07-31) — never routing
+them to AlphaMissense at all. The transcript-CDS-frame classifier
+fixes this.
 
 ## 8. External data sources
 

@@ -100,43 +100,72 @@ def main() -> int:
     print("=" * 78)
     print("PART 1 -- Unit-level: SequenceRouter.is_missense_eligible")
     print("=" * 78)
+    import json as _json
     from pipeline.router import SequenceRouter
     from pipeline.vcf_parser import Variant
 
     router = SequenceRouter()
 
-    def _variant(chrom="1", pos=100, ref="A", alt="T", info=None):
+    def _variant(chrom="1", pos=100, ref="A", alt="T", variant_type="SNV", info=None):
         return Variant(
             chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt,
             qual=None, filter_status=".", info=info or {},
         )
 
+    # Real, live-fetched TP53/BRCA1 transcript fixtures (same ones
+    # tests/test_bp1_bp3_bp6_bp7.py and tests/test_is_missense_eligible.py
+    # validate `protein_effect_flags` against) -- eligibility is now
+    # decided from `transcript_result`'s transcript-CDS-frame
+    # classification, not from ESM-2's local-window ref/alt protein
+    # strings, so these fixtures (not raw protein strings) are the
+    # correct input here.
+    _fixtures_dir = _os.path.join(_SCRIPT_DIR, "tests", "fixtures")
+    with open(_os.path.join(_fixtures_dir, "ps1_pm5_transcript.json"), "r", encoding="utf-8") as _fh:
+        _tp53_record = _json.load(_fh)["transcript"]
+    with open(_os.path.join(_fixtures_dir, "pvs1_transcripts.json"), "r", encoding="utf-8") as _fh:
+        _pvs1_transcripts = _json.load(_fh)["transcripts"]
+
+    def _tp53_result():
+        return {"skipped": False, "found": True, "transcript": _tp53_record}
+
+    def _brca1_result():
+        return {"skipped": False, "found": True, "transcript": _pvs1_transcripts["BRCA1"]}
+
     cases = [
-        # (label, variant, ref_protein, alt_protein, expected_eligible)
-        ("clean missense (1 residue differs)", _variant(), "MAKLVQST", "MAKLIQST", True),
-        ("synonymous (proteins identical)", _variant(), "MAKLVQST", "MAKLVQST", False),
-        ("nonsense (stop gained)", _variant(), "MAKLVQST", "MAKLV*", False),
-        ("stop-loss (stop removed)", _variant(), "MAKLV*", "MAKLVQST", False),
-        ("frameshift (length changes)", _variant(), "MAKLVQST", "MAKLVQSTPP", False),
-        ("no ORF found (ref/alt protein None)", _variant(), None, None, False),
-        ("non-SNV variant type (insertion)", _variant(ref="A", alt="ATG"), "MAKLVQST", "MAKLIQST", False),
-        ("symbolic ALT allele", _variant(alt="<DEL>"), "MAKLVQST", "MAKLIQST", False),
-        ("SVTYPE-flagged record", _variant(info={"SVTYPE": "DEL"}), "MAKLVQST", "MAKLIQST", False),
-        ("multi-residue difference (ambiguous)", _variant(), "MAKLVQST", "MDKLIQST".replace("D", "A", 0) or "MDKLIQST", False),
+        # (label, variant, transcript_result, expected_eligible)
+        # Real: TP53 p.Arg248Trp, c.742C>T, 17:7674221 G>A -- ClinVar
+        # Pathogenic, expert panel. codon 248, R->W.
+        ("clean missense (real TP53 R248W)", _variant("17", 7674221, "G", "A"), _tp53_result(), True),
+        # Real: TP53 p.Arg175=, c.525C>T, 17:7675087 G>A -- codon 175, R->R.
+        ("synonymous (real TP53 R175=)", _variant("17", 7675087, "G", "A"), _tp53_result(), False),
+        # Real: BRCA1 codon 50, K->* (nonsense).
+        ("nonsense (real BRCA1 codon 50 K->*)", _variant("17", 43106520, "T", "A"), _brca1_result(), False),
+        # Real: TP53 c.792_794del (p.Leu265del), in-frame deletion.
+        ("in-frame indel (real TP53 c.792_794del)",
+         _variant("17", 7673826, "AGTAG", "AG", variant_type="deletion"), _tp53_result(), False),
+        # Real: frameshift deletion at the same TP53 locus.
+        ("frameshift (length changes)",
+         _variant("17", 7673826, "AG", "A", variant_type="deletion"), _tp53_result(), False),
+        ("undetermined consequence (no transcript data)", _variant("17", 7674221, "G", "A"), None, False),
+        ("non-SNV variant type (insertion)", _variant(ref="A", alt="ATG", variant_type="insertion"), _tp53_result(), False),
+        ("symbolic ALT allele", _variant(alt="<DEL>"), _tp53_result(), False),
+        ("SVTYPE-flagged record", _variant(info={"SVTYPE": "DEL"}), _tp53_result(), False),
     ]
 
     part1_ok = True
-    for label, variant, ref_p, alt_p, expected in cases:
-        actual = router.is_missense_eligible(variant, ref_p, alt_p)
+    for label, variant, transcript_result, expected in cases:
+        actual = router.is_missense_eligible(variant, transcript_result)
         status = "PASS" if actual == expected else "FAIL"
         if actual != expected:
             part1_ok = False
         print(f"  [{status}] {label}: expected={expected}, got={actual}")
 
     if part1_ok:
-        print("\nPART 1: PASSED -- missense eligibility correctly includes only clean, "
-              "single-residue SNV substitutions and excludes synonymous, nonsense, "
-              "frameshift, symbolic/structural, and no-ORF cases.\n")
+        print("\nPART 1: PASSED -- missense eligibility, classified from real "
+              "transcript-CDS-frame data, correctly includes only clean, "
+              "single-residue SNV substitutions and excludes synonymous, "
+              "nonsense, frameshift/in-frame-indel, symbolic/structural, "
+              "non-SNV, and undetermined-consequence cases.\n")
     else:
         print("\nPART 1: FAILED\n")
         all_passed = False
@@ -325,6 +354,51 @@ def main() -> int:
             lambda self, variant, assembly=None: {"rsid": None, "found": False},
         )
     )
+
+    # Transcript structure: `_run_alphamissense_stage` now decides
+    # missense eligibility from `transcript_result` (the same
+    # transcript-CDS-frame `protein_effect_flags` machinery BP7/BP1
+    # use), not from ESM-2's local-window ref/alt protein strings --
+    # see `pipeline/router.py::SequenceRouter.is_missense_eligible`'s
+    # docstring. `TranscriptLookup` itself calls the network-gated
+    # Ensembl REST API (unreachable in this sandbox, per the module
+    # docstring), so it is faked here like the other network-bound
+    # providers above. A minimal single-exon, single-codon synthetic
+    # CDS per variant is enough: it needs to classify each of the three
+    # known variants as a real, clean missense substitution (not
+    # synonymous/nonsense/frameshift) at its own genomic position --
+    # matching the same real REF>ALT codon changes described in
+    # testdata/known_variants_grch37.vcf (F5 rs6025 T>C, HBB rs334
+    # T>A, ALDH2 rs671 G>A), not standing in for the real biology at
+    # those loci (which the real, unmocked AlphaMissense lookup below
+    # is what actually gets verified against real catalogue data).
+    _fake_codons = {
+        ("1", 169519049): "TTT",  # F5 rs6025: T>C -> CTT (Phe->Leu), missense
+        ("11", 5248232): "TTT",   # HBB rs334: T>A -> ATT (Phe->Ile), missense
+        ("12", 112241766): "GGG",  # ALDH2 rs671: G>A -> AGG (Gly->Arg), missense
+    }
+
+    def _fake_transcript_query(self, variant, assembly="GRCh38", gene_symbol=None):
+        codon = _fake_codons.get((variant.chrom, variant.pos))
+        if codon is None:
+            return {"found": False, "skipped": False, "transcript": None}
+        transcript = {
+            "transcript_id": "FAKE0000001",
+            "gene_symbol": gene_symbol or "FAKE",
+            "chrom": variant.chrom,
+            "strand": 1,
+            "cds_genomic_start": variant.pos,
+            "cds_genomic_end": variant.pos + 2,
+            "is_mane_select": True,
+            "is_canonical": True,
+            "source": "verify_alphamissense_integration fake",
+            "cds_sequence": codon,
+            "exons": [{"start": variant.pos, "end": variant.pos + 2}],
+        }
+        return {"found": True, "skipped": False, "transcript": transcript}
+
+    from pipeline.pvs1.lookup import TranscriptLookup
+    patches.append(mock.patch.object(TranscriptLookup, "query_variant", _fake_transcript_query))
 
     with mock.patch.dict(
         "os.environ", {"GEPER_ALPHAMISSENSE_HG19_LOCAL": AM_FIXTURE_HG19, "GEPER_ALPHAMISSENSE_HG38_LOCAL": AM_FIXTURE_HG38}

@@ -181,9 +181,8 @@ class StageEvidence(BaseModel):
         via the same audit). Those methods now also set an explicit
         `error` key on their exception paths while deliberately
         LEAVING `skipped`/`supported`/`predicted` unchanged (control-
-        flow gates elsewhere, e.g. `_run_alphamissense_stage`'s own
-        `protein_result.get("skipped")` check, still need "crashed"
-        to behave like "skipped" for THEIR purposes) -- so `error`
+        flow gates elsewhere still need "crashed" to behave like
+        "skipped" for THEIR purposes) -- so `error`
         must be checked first here, or a stage that is both
         `skipped=True` AND carries a real `error` would still resolve
         to `NOT_RUN`, silently undoing the fix. Every provider that

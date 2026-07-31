@@ -22,7 +22,7 @@ file is self-contained):
   - Net result: both code and weights are commercially usable and
     redistributable (Apache-2.0 requires only notice/attribution
     preservation; MIT is even less restrictive). No GPL-style
-    copyleft concern, unlike OpenSpliceAI.
+    copyleft concern.
 
 Weights are loaded via `enformer_pytorch.from_pretrained`, which is a
 thin wrapper over HuggingFace's standard `PreTrainedModel.from_pretrained`

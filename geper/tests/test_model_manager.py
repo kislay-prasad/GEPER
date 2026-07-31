@@ -4,8 +4,8 @@ Unit tests for the new AI model plugin framework
 project spec.
 
 Every plugin used here is a small mocked/fake `PluginModel` defined
-locally in this file, not a real OpenSpliceAI/Enformer/Borzoi
-integration -- these tests exercise the manager's own mechanics
+locally in this file, not a real Enformer/Borzoi integration --
+these tests exercise the manager's own mechanics
 (lazy loading, instance caching, failure isolation, availability
 gating, version tracking), independent of any real model weights or
 network access.
@@ -58,8 +58,8 @@ class _AlwaysAvailableFakePlugin(PluginModel):
 
 
 class _UnavailableFakePlugin(PluginModel):
-    """Never available -- e.g. representing OpenSpliceAI/Enformer/
-    Borzoi before license verification, but as a fully generic case."""
+    """Never available -- e.g. representing Enformer/Borzoi before
+    license verification, but as a fully generic case."""
 
     @classmethod
     def metadata(cls) -> ModelMetadata:
@@ -404,27 +404,27 @@ class TestModelManager(unittest.TestCase):
 
 
 class TestPendingPluginsRegisterAsUnavailable(unittest.TestCase):
-    """Confirms OpenSpliceAI/Enformer/Borzoi/SpliceFormer participate
-    in the exact same framework the mocked tests above exercise.
-    OpenSpliceAI stays hard-disabled (GPL-3.0, never integrated);
-    Enformer/Borzoi/SpliceFormer are license-cleared (see
-    pipeline/models/pending_plugins.py's docstring) and so default to
-    enabled, becoming available automatically whenever their optional
-    pip package/dependency is installed or successfully
-    auto-installed."""
+    """Confirms Enformer/Borzoi/SpliceFormer participate in the exact
+    same framework the mocked tests above exercise. All three are
+    license-cleared (see pipeline/models/pending_plugins.py's
+    docstring) and so default to enabled, becoming available
+    automatically whenever their optional pip package/dependency is
+    installed or successfully auto-installed."""
 
-    def test_default_registry_has_all_six_new_models(self):
-        # Was "all four", then "all five" before SPiP's own addition
-        # (pipeline/models/spip_plugin.py) registered a sixth key.
+    def test_default_registry_has_all_five_new_models(self):
+        # Was "all four", then "all five" (SPiP's own addition --
+        # pipeline/models/spip_plugin.py -- registered a fifth key),
+        # then back to "all five" after OpenSpliceAI's never-integrated
+        # placeholder was removed entirely.
         from pipeline.models.pending_plugins import build_default_registry
 
         registry = build_default_registry()
         self.assertEqual(
             set(registry.keys()),
-            {"openspliceai", "enformer", "borzoi", "spliceformer", "splicebert", "spip"},
+            {"enformer", "borzoi", "spliceformer", "splicebert", "spip"},
         )
 
-    def test_openspliceai_never_available_but_others_are_dependency_gated(self):
+    def test_enformer_borzoi_spliceformer_are_dependency_gated(self):
         from pipeline.models.pending_plugins import (
             BorzoiPlugin,
             EnformerPlugin,
@@ -434,8 +434,6 @@ class TestPendingPluginsRegisterAsUnavailable(unittest.TestCase):
 
         registry = build_default_registry()
         available = set(registry.available_keys())
-        # OpenSpliceAI is never available regardless of environment.
-        self.assertNotIn("openspliceai", available)
         # Enformer/Borzoi/SpliceFormer are available if and only if
         # their package/dependency is importable (or auto-installable)
         # -- never hardcoded either way here, since that depends on
@@ -448,7 +446,7 @@ class TestPendingPluginsRegisterAsUnavailable(unittest.TestCase):
         from pipeline.models.pending_plugins import build_default_registry
 
         manager = ModelManager(registry=build_default_registry())
-        for key in ("openspliceai", "enformer", "borzoi", "spliceformer"):
+        for key in ("enformer", "borzoi", "spliceformer"):
             self.assertIsNone(manager.predict(key, "ACGT...ref", "ACGT...alt"))
 
     def test_metadata_never_asserts_unverified_license_as_true(self):
@@ -456,11 +454,7 @@ class TestPendingPluginsRegisterAsUnavailable(unittest.TestCase):
         # are now genuinely verified as commercially usable (see
         # pipeline/models/enformer_plugin.py and borzoi_plugin.py's
         # docstrings for the sourcing), so commercial_use_allowed=True
-        # is correct for them, not a guess. OpenSpliceAI's license
-        # (GPL-3.0) was also verified -- and verified to be
-        # copyleft-incompatible with GEPER's proprietary codebase, so
-        # it must report commercial_use_allowed=False, not True and
-        # not None (this is a settled "no," not an open question).
+        # is correct for them, not a guess.
         from pipeline.models.pending_plugins import build_default_registry
 
         registry = build_default_registry()
@@ -468,7 +462,6 @@ class TestPendingPluginsRegisterAsUnavailable(unittest.TestCase):
         self.assertTrue(meta["enformer"].commercial_use_allowed)
         self.assertTrue(meta["borzoi"].commercial_use_allowed)
         self.assertTrue(meta["spliceformer"].commercial_use_allowed)
-        self.assertIs(meta["openspliceai"].commercial_use_allowed, False)
 
     def test_disabling_config_flag_forces_plugin_unavailable_regardless_of_dependency(self):
         # Enformer/Borzoi are enabled by default (license-cleared), but

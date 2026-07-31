@@ -5,10 +5,9 @@ enformer_plugin.py and borzoi_plugin.py) into one consensus
 assessment, via the same `ModelManager` the rest of the plugin
 framework uses.
 
-OpenSpliceAI is deliberately excluded from this ensemble: it is not
-integrated (GPL-3.0; see pipeline/models/pending_plugins.py), so it
-can never appear in `models_used` below, regardless of any config
-flag.
+SpliceFormer/SpliceBERT/SPiP are registered in the same plugin
+framework but deliberately excluded from this ensemble -- see
+pipeline/models/pending_plugins.py's module docstring for why.
 
 Routing rules (used directly by pipeline/acmg_rules.py's PP3/BP4
 integration -- see that module for how `evaluate()`'s output is
@@ -39,8 +38,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Only these two participate in the ensemble. OpenSpliceAI is
-# intentionally never added here (see module docstring).
+# Only these two participate in the ensemble (see module docstring).
 _ENSEMBLE_MODEL_KEYS = ("enformer", "borzoi")
 
 # Same thresholds EnformerPlugin/BorzoiPlugin each already use

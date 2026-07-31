@@ -16,9 +16,8 @@ gets an explicit status for every variant, one of:
     SKIPPED  -- available, but not applicable to this variant (wrong
                 variant type, non-coding, not routed here, etc).
     DISABLED -- not available in this environment/configuration at
-                all (missing optional dependency, feature flag off,
-                or -- for OpenSpliceAI -- a deliberate licensing
-                decision; see pipeline/models/pending_plugins.py).
+                all (missing optional dependency, or a feature flag
+                off).
     FAILED   -- was attempted for this variant and raised/errored.
 
 This module is presentation/bookkeeping only: it reads the same
@@ -47,13 +46,12 @@ DISPLAY_NAMES: Dict[str, str] = {
     "mmsplice": "MMSplice",
     "spliceformer": "SpliceFormer",
     "splicebert": "SpliceBERT",
-    "openspliceai": "OpenSpliceAI",
 }
 
 # Fixed rendering order (matches the project's own example status
 # table): the two DNA sequence-context models, the two new splicing/
 # regulatory models, RNA/protein embedding models, then the two
-# evidence-scoring predictors, then the not-integrated placeholder.
+# evidence-scoring predictors.
 DISPLAY_ORDER: List[str] = [
     "hyenadna",
     "evo2",
@@ -65,19 +63,12 @@ DISPLAY_ORDER: List[str] = [
     "mmsplice",
     "spliceformer",
     "splicebert",
-    "openspliceai",
 ]
 
 USED = "used"
 SKIPPED = "skipped"
 DISABLED = "disabled"
 FAILED = "failed"
-
-_OPENSPLICEAI_REASON = (
-    "not integrated -- GPL-3.0 licensed (code and weights); linking it "
-    "into GEPER's proprietary codebase would require distributing the "
-    "combined work under GPL-3.0 -- see pipeline/models/pending_plugins.py"
-)
 
 
 def _entry(status: str, reason: str) -> Dict[str, str]:
@@ -285,10 +276,6 @@ def build_ai_model_status(
         status[key] = _ensemble_model_status(
             key, ensemble_result, plugin_availability, plugin_failures, model_stage_errors
         )
-
-    # OpenSpliceAI is never integrated (GPL-3.0) -- always DISABLED,
-    # regardless of any config flag. See pending_plugins.py.
-    status["openspliceai"] = _entry(DISABLED, _OPENSPLICEAI_REASON)
 
     return status
 

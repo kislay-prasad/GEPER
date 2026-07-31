@@ -1,7 +1,7 @@
 """
 Registry of plugin model classes.
 
-A thin, dependency-free mapping from a short key (e.g. "openspliceai")
+A thin, dependency-free mapping from a short key (e.g. "enformer")
 to a `PluginModel` subclass -- deliberately NOT a global mutable
 singleton auto-populated at import time (that would force importing
 every plugin module, and therefore every plugin's optional heavy

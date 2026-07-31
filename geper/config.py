@@ -1727,13 +1727,6 @@ class SplicingConfig:
     force one of them off regardless of environment -- same knob,
     inverted default.
 
-    OpenSpliceAI is the one exception: its own code/weights are
-    GPL-3.0, a copyleft license incompatible with linking directly
-    into GEPER's proprietary codebase, so it stays hard-disabled
-    regardless of `ENABLE_OPENSPLICEAI`'s value (see
-    pipeline/models/pending_plugins.py) -- that flag defaults off
-    since flipping it can never actually enable anything.
-
     License status, per model (see each plugin module for the full
     verification writeup):
       - Enformer: cleared for commercial use. Both the wrapper code
@@ -1745,10 +1738,6 @@ class SplicingConfig:
         (`BORZOI_HF_REPO` below). Calico's original GCS `.h5`
         checkpoints have no equivalent explicit weight license and
         are never used, regardless of this flag.
-      - OpenSpliceAI: NOT integrated. Its own code/weights are
-        GPL-3.0, a copyleft license incompatible with linking directly
-        into GEPER's proprietary codebase; `ENABLE_OPENSPLICEAI` has
-        no effect (see pipeline/models/pending_plugins.py).
       - SpliceFormer: cleared for commercial use. Both the official
         model source (vendored unmodified under
         `pipeline/models/spliceformer/vendor/`) and its pretrained
@@ -1771,9 +1760,6 @@ class SplicingConfig:
         pipeline/models/spip_plugin.py for the full writeup.
     """
 
-    ENABLE_OPENSPLICEAI: bool = os.environ.get(
-        "GEPER_ENABLE_OPENSPLICEAI", "false"
-    ).strip().lower() not in ("0", "false", "no", "off")
     ENABLE_ENFORMER: bool = os.environ.get(
         "GEPER_ENABLE_ENFORMER", "true"
     ).strip().lower() not in ("0", "false", "no", "off")

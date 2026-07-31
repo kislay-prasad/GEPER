@@ -37,9 +37,9 @@ self-contained):
     attribution, carried through to any report/audit reader exactly
     the way `ModelMetadata` is designed to be consulted.
   - Net result: both code and weights are commercially usable. No
-    copyleft concern (unlike OpenSpliceAI, GPL-3.0); the one real
-    difference from SpliceFormer/Enformer/Borzoi's weight licenses is
-    CC-BY-4.0's attribution requirement, which is why `license_notes`
+    copyleft concern; the one real difference from SpliceFormer/
+    Enformer/Borzoi's weight licenses is CC-BY-4.0's attribution
+    requirement, which is why `license_notes`
     spells it out explicitly rather than reusing "MIT/Apache-2.0,
     notice-preservation only" boilerplate.
 

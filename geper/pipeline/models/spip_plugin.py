@@ -32,8 +32,7 @@ file is self-contained):
     other GEPER stage that reads RefSeq/genome coordinates (VCF
     parsing, BLAST, gnomAD/ClinVar lookups) already relies on.
   - Net result: commercially usable and redistributable (MIT:
-    attribution + license notice preserved). No copyleft concern,
-    unlike OpenSpliceAI (GPL-3.0; see pipeline/models/pending_plugins.py).
+    attribution + license notice preserved). No copyleft concern.
 
 Implementation note (why this plugin looks completely different from
 every other plugin in this family): SPiP is not a PyTorch model --

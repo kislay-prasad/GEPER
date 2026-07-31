@@ -158,7 +158,6 @@ _MODEL_DISPLAY_NAMES = {
     "borzoi": "Borzoi",
     "spliceformer": "SpliceFormer",
     "splicebert": "SpliceBERT",
-    "openspliceai": "OpenSpliceAI",
 }
 
 
@@ -257,8 +256,7 @@ class GeperPipeline:
 
         # Enformer + Borzoi splicing/regulatory AI ensemble (Objectives
         # 3/4/7): one process-wide ModelManager over the "new models"
-        # plugin registry (Enformer, Borzoi, and the hard-disabled
-        # OpenSpliceAI placeholder -- see pipeline/models/pending_plugins.py),
+        # plugin registry (see pipeline/models/pending_plugins.py),
         # wrapped in an EnsembleManager that combines whichever of
         # Enformer/Borzoi are actually available. Both plugins are
         # config-gated off by default (CONFIG.splicing.ENABLE_ENFORMER /
@@ -336,8 +334,8 @@ class GeperPipeline:
             )
 
         # Same probe as above, but for the separate plugin-model family
-        # (Enformer/Borzoi/OpenSpliceAI -- pipeline/models/*, managed
-        # through self.model_manager rather than MODEL_REGISTRY/
+        # (Enformer/Borzoi/SpliceFormer/SpliceBERT/SPiP -- pipeline/models/*,
+        # managed through self.model_manager rather than MODEL_REGISTRY/
         # ModelCache). Kept in its own dict rather than merged into
         # `_model_availability` above: that dict's every "unavailable"
         # entry is looked up directly in `MODEL_REGISTRY` (line above),

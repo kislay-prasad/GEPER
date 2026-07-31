@@ -33,8 +33,7 @@ self-contained, same convention as EnformerPlugin/BorzoiPlugin):
     applies: check what the notice actually attaches to).
   - Net result: both code and weights are commercially usable and
     redistributable (MIT: attribution + license notice preserved).
-    No copyleft concern, unlike OpenSpliceAI (GPL-3.0; see
-    pipeline/models/pending_plugins.py).
+    No copyleft concern.
 
 Implementation note (why this plugin looks different from Enformer/
 Borzoi's `from_pretrained(...)` one-liner): unlike Enformer

@@ -19,10 +19,6 @@ exactly like every other evidence source. See `pipeline/models/ensemble.py`
 for the two-model (Enformer + Borzoi) consensus this produces, and
 `pipeline/models/enformer_plugin.py` / `borzoi_plugin.py` for the real,
 license-audited integrations themselves.
-
-OpenSpliceAI is registered here too (via `build_default_registry()`)
-but is hard-disabled regardless of config -- see
-`pipeline/models/pending_plugins.py` for why (GPL-3.0).
 """
 
 import threading

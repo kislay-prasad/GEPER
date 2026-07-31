@@ -26,7 +26,6 @@ from pipeline.models.borzoi_plugin import BorzoiPlugin
 from pipeline.models.enformer_plugin import EnformerPlugin
 from pipeline.models.manager import ModelManager
 from pipeline.models.pending_plugins import (
-    OpenSpliceAIPlugin,
     SpliceFormerPlugin,
     build_default_registry,
 )
@@ -62,37 +61,27 @@ class TestSpliceFormerRegisteredAlongsideEnformerAndBorzoi(unittest.TestCase):
     test_borzoi_plugin.py already cover).
     """
 
-    def test_all_six_keys_registered(self):
-        # Was "all four", then "all five" before SPiP's own addition
-        # (pipeline/models/spip_plugin.py) registered a sixth key --
-        # updated here rather than left stale, same as this test
-        # itself updated when SpliceFormer/SpliceBERT were added.
+    def test_all_five_keys_registered(self):
+        # Was "all four", then "all five" (SPiP's own addition --
+        # pipeline/models/spip_plugin.py -- registered a fifth key),
+        # then back to "all five" after OpenSpliceAI's never-integrated
+        # placeholder was removed entirely -- updated here rather than
+        # left stale, same as this test itself updated when
+        # SpliceFormer/SpliceBERT were added.
         registry = build_default_registry()
         self.assertEqual(
             sorted(registry.keys()),
-            ["borzoi", "enformer", "openspliceai", "spip", "splicebert", "spliceformer"],
+            ["borzoi", "enformer", "spip", "splicebert", "spliceformer"],
         )
 
-    def test_openspliceai_still_never_available_after_spliceformer_addition(self):
-        # Backwards-compatibility check: registering a fourth plugin
-        # must not change OpenSpliceAI's hard-disabled behavior.
-        registry = build_default_registry()
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=False
-        ), mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=False
-        ):
-            self.assertNotIn("openspliceai", set(registry.available_keys()))
-        self.assertFalse(OpenSpliceAIPlugin.is_available())
-
-    def test_manager_predict_never_crashes_for_any_of_the_four(self):
+    def test_manager_predict_never_crashes_for_any_of_the_three(self):
         manager = ModelManager(registry=build_default_registry())
         with mock.patch(
             "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=False
         ), mock.patch(
             "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=False
         ):
-            for key in ("openspliceai", "enformer", "borzoi", "spliceformer"):
+            for key in ("enformer", "borzoi", "spliceformer"):
                 self.assertIsNone(manager.predict(key, "A" * 10, "T" * 10))
 
     def test_spliceformer_metadata_reachable_regardless_of_availability(self):
@@ -262,13 +251,11 @@ class TestBackwardsCompatibility(unittest.TestCase):
         from pipeline.models.pending_plugins import (
             BorzoiPlugin as ReexportedBorzoi,
             EnformerPlugin as ReexportedEnformer,
-            OpenSpliceAIPlugin as ReexportedOpenSpliceAI,
             SpliceFormerPlugin as ReexportedSpliceFormer,
         )
 
         self.assertIs(ReexportedEnformer, EnformerPlugin)
         self.assertIs(ReexportedBorzoi, BorzoiPlugin)
-        self.assertIs(ReexportedOpenSpliceAI, OpenSpliceAIPlugin)
         self.assertIs(ReexportedSpliceFormer, SpliceFormerPlugin)
 
 

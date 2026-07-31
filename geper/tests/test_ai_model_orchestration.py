@@ -58,11 +58,6 @@ class TestBuildAIModelStatusCoversEveryModel(unittest.TestCase):
             self.assertIn(status[key]["status"], (USED, SKIPPED, DISABLED, FAILED))
             self.assertTrue(status[key]["reason"])  # never an empty/blank reason
 
-    def test_openspliceai_is_always_disabled(self):
-        status = build_ai_model_status(**_base_kwargs())
-        self.assertEqual(status["openspliceai"]["status"], DISABLED)
-        self.assertIn("GPL-3.0", status["openspliceai"]["reason"])
-
 
 class TestDNAContextModelStatus(unittest.TestCase):
     def test_used_when_routed_and_result_present(self):
@@ -172,7 +167,7 @@ class TestRenderStatusTableLines(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("HyenaDNA", text)
         self.assertIn("Skipped:", text)  # evo2 etc fall here
-        self.assertIn("Disabled:", text)  # enformer/borzoi/openspliceai default off
+        self.assertIn("Disabled:", text)  # enformer/borzoi default off
 
     def test_never_raises_on_incomplete_status_dict(self):
         # Defensive: a malformed/partial status dict must not crash

@@ -21,7 +21,7 @@ import torch
 from pipeline.models.borzoi_plugin import BorzoiPlugin
 from pipeline.models.enformer_plugin import EnformerPlugin
 from pipeline.models.manager import ModelManager
-from pipeline.models.pending_plugins import OpenSpliceAIPlugin, build_default_registry
+from pipeline.models.pending_plugins import build_default_registry
 
 
 class _FakeEnformerModel:
@@ -58,31 +58,19 @@ class _FakeBorzoiModel:
 
 
 class TestBothPluginsDisabledByDefault(unittest.TestCase):
-    def test_openspliceai_unavailable_enformer_borzoi_dependency_gated(self):
-        # OpenSpliceAI is never available (GPL-3.0, not integrated).
+    def test_enformer_borzoi_dependency_gated(self):
         # Enformer/Borzoi are license-cleared and enabled by default,
         # so their availability tracks their optional pip package
         # rather than being hardcoded here.
         registry = build_default_registry()
         available = set(registry.available_keys())
-        self.assertNotIn("openspliceai", available)
         self.assertEqual("enformer" in available, EnformerPlugin.is_available())
         self.assertEqual("borzoi" in available, BorzoiPlugin.is_available())
 
-    def test_manager_predict_never_crashes_for_any_of_the_three(self):
+    def test_manager_predict_never_crashes_for_either(self):
         manager = ModelManager(registry=build_default_registry())
-        for key in ("openspliceai", "enformer", "borzoi"):
+        for key in ("enformer", "borzoi"):
             self.assertIsNone(manager.predict(key, "A" * 10, "T" * 10))
-
-    def test_openspliceai_stays_disabled_even_if_its_flag_is_flipped(self):
-        with mock.patch("pipeline.models.pending_plugins.CONFIG") as mock_config:
-            mock_config.splicing.ENABLE_OPENSPLICEAI = True
-            self.assertFalse(OpenSpliceAIPlugin.is_available())
-
-    def test_openspliceai_metadata_explicitly_marks_commercial_use_false(self):
-        meta = OpenSpliceAIPlugin.metadata()
-        self.assertIs(meta.commercial_use_allowed, False)
-        self.assertIn("GPL-3.0", meta.license_name)
 
 
 class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
@@ -188,19 +176,17 @@ class TestBackwardsCompatibility(unittest.TestCase):
             registry.register("bad", object)
 
     def test_existing_pending_plugins_import_path_still_works(self):
-        # OpenSpliceAIPlugin, EnformerPlugin, BorzoiPlugin, and
-        # build_default_registry must all still be importable from
-        # pending_plugins (re-exported), even though Enformer/Borzoi's
-        # real implementations now live in their own modules.
+        # EnformerPlugin, BorzoiPlugin, and build_default_registry must
+        # all still be importable from pending_plugins (re-exported),
+        # even though Enformer/Borzoi's real implementations now live
+        # in their own modules.
         from pipeline.models.pending_plugins import (
             BorzoiPlugin as ReexportedBorzoi,
             EnformerPlugin as ReexportedEnformer,
-            OpenSpliceAIPlugin as ReexportedOpenSpliceAI,
         )
 
         self.assertIs(ReexportedEnformer, EnformerPlugin)
         self.assertIs(ReexportedBorzoi, BorzoiPlugin)
-        self.assertIs(ReexportedOpenSpliceAI, OpenSpliceAIPlugin)
 
 
 if __name__ == "__main__":

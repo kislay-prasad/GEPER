@@ -4,7 +4,11 @@ Clinical-grade PDF report generator.
 Renders the same JSON document shape `report/json_builder.py::JSONResultBuilder.build()`
 produces as a multi-page, ReportLab-based PDF suitable for a hospital
 laboratory's diagnostic record: a title/logo header (first page only --
-see `_build_report_header`), a patient/sample header, a sequencing
+see `_build_report_header`), a one-page skimmable Clinician Summary
+(`_build_clinician_summary_flowables` -- sample identity, one compact row
+per variant, and any reviewer-attention flags, ending in a page break; see
+that function's docstring for how it differs from each variant's own
+"Executive Summary" paragraph), a patient/sample header, a sequencing
 QC status table, one section per variant finding (reusing
 `report/clinical_report_builder.py`'s already-computed evidence --
 nothing here re-derives ACMG classification or evidence from raw
@@ -40,9 +44,11 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus.flowables import Flowable
 
 from config import CONFIG
+from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist
 
@@ -250,6 +256,56 @@ class _NumberedCanvas(Canvas):
         self.drawRightString(_PAGE_W - _MARGIN, 12 * mm, f"Page {self._pageNumber} of {total_pages}")
         self.setStrokeColor(colors.lightgrey)
         self.line(_MARGIN, 16 * mm, _PAGE_W - _MARGIN, 16 * mm)
+
+
+# ---------------------------------------------------------------------------
+# PDF bookmarks (outline/TOC)
+# ---------------------------------------------------------------------------
+
+class _Bookmark(Flowable):
+    """
+    A zero-size flowable that, when the document layout engine reaches it
+    in the normal top-to-bottom flow, marks the current page as the
+    target of a named PDF bookmark and adds a matching entry to the PDF's
+    outline (the navigation panel most PDF viewers show in a sidebar).
+
+    This is the standard ReportLab/Platypus recipe for outline entries --
+    `Canvas.bookmarkPage`/`Canvas.addOutlineEntry` are canvas-level calls,
+    and a flowable's `draw()` is the only place in Platypus's flowable
+    API that has the live canvas for the exact page this content actually
+    lands on (which page that turns out to be depends on everything laid
+    out before it, so it cannot be known any earlier). `width`/`height`
+    are both 0 so inserting this never shifts any surrounding layout --
+    it occupies no visible space itself.
+
+    Compatible with `_NumberedCanvas`'s two-pass buffering (`showPage`
+    snapshots `self.__dict__`, `save` replays it) because `bookmarkPage`/
+    `addOutlineEntry` mutate the canvas's underlying PDF document object
+    directly, not the per-page graphics-state attributes that trick
+    snapshots and restores -- the same reason page content itself
+    survives that buffering unaffected.
+
+    `key` must be unique across the whole document; `title` is the
+    (non-unique) label shown in the outline; `level` follows
+    `addOutlineEntry`'s own rule (may repeat or drop to any shallower
+    level freely, but may only go one level deeper than the last entry
+    at a time) -- see that method's docstring for the full rule.
+    """
+
+    def __init__(self, key: str, title: str, level: int = 0):
+        Flowable.__init__(self)
+        self.key = key
+        self.title = title
+        self.level = level
+        self.width = 0
+        self.height = 0
+
+    def wrap(self, availWidth, availHeight):
+        return 0, 0
+
+    def draw(self):
+        self.canv.bookmarkPage(self.key)
+        self.canv.addOutlineEntry(self.title, self.key, level=self.level, closed=False)
 
 
 def _make_first_page_decoration():
@@ -536,13 +592,275 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
     return flowables
 
 
+# ---------------------------------------------------------------------------
+# One-page clinician summary
+# ---------------------------------------------------------------------------
+#
+# A single skimmable front page (sample identity, then one compact row per
+# variant, then any reviewer-attention flags), placed before the existing
+# per-variant detail sections and everything after it in `generate_pdf` --
+# nothing below this block is touched by this feature. Distinct from each
+# variant's own "Executive Summary" (`clinical_report["executive_summary"]`,
+# rendered inside its full "Finding N" section, one paragraph of prose) --
+# this page is a run-level dashboard meant to be read in well under 30
+# seconds, not prose: short table cells, not paragraphs, and only the
+# highest-signal 2-3 evidence items per variant, not the full supporting-
+# evidence list.
+#
+# This is pure synthesis over data `clinical_report`/`interpretation_result`
+# /`provenance` already computed -- nothing here re-derives ACMG
+# classification, confidence, or evidence, matching every other builder in
+# this module and in report/clinical_report_builder.py.
+
+def _normalize_evidence_text(item: Any) -> str:
+    """Same `dict-or-plain-string` normalization `report/report_generator.py`'s
+    Markdown renderer already applies to `supporting_evidence` entries."""
+    if isinstance(item, dict):
+        return item.get("text") or ""
+    return str(item) if item is not None else ""
+
+
+def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[Dict[str, Any]]) -> List[str]:
+    """
+    Short, plain-language reasons this one variant's finding may need a
+    reviewer's attention before sign-off -- deliberately narrow (not every
+    caveat the full report carries, e.g. routine "not yet scored" pending
+    states are left to the detailed sections) so this stays a genuine
+    signal on a 30-second skim, not noise.
+
+      - No clinical interpretation could be built at all (a data gap, not
+        a benign finding -- see `_build_variant_section`'s identical
+        framing for the full-detail section).
+      - A real (Minor/Moderate/Major) evidence conflict was detected --
+        `clinical_report["conflict_resolution"]["severity"]`, the same
+        field the Conflict Resolution Engine (Phase 6) computes.
+      - Gene resolution came back genuinely ambiguous (multiple candidate
+        genes overlap this position and could not be disambiguated) --
+        see `pipeline/orchestrator.py::GeperPipeline._with_gene_resolution_context`
+        and `pipeline/clingen/utils.py::GeneResolutionStatus`. Checked
+        against the ClinGen and transcript-structure stages, the two
+        stages that surface this status onto their own result dict.
+    """
+    if not clinical:
+        return ["No clinical interpretation available"]
+
+    flags: List[str] = []
+
+    severity = (clinical.get("conflict_resolution") or {}).get("severity")
+    if severity in ("Minor", "Moderate", "Major"):
+        flags.append(f"Conflicting evidence ({severity})")
+
+    for stage_key in ("clingen", "transcript"):
+        if (variant_result.get(stage_key) or {}).get("gene_resolution_status") == "ambiguous":
+            flags.append("Ambiguous gene resolution")
+            break
+
+    return flags
+
+
+def _provenance_gap_sources(document: Dict[str, Any], variants: List[Dict[str, Any]]) -> List[str]:
+    """
+    Data sources this report actually cited as evidence (union of every
+    variant's `clinical_report["evidence_sources"]`) for which
+    `pipeline/provenance.py` recorded `status: "unknown"` -- consulted,
+    but no version/release/hash identifier could be pinned down. This is
+    the genuinely actionable reproducibility gap for a reviewer ("this
+    finding used ClinVar, but which ClinVar snapshot cannot be
+    determined"), as opposed to `status: "not_consulted"` (expected for
+    every source this run never needed) or `"timestamp_only"`/
+    `"hash_only"` (a real, if less specific, identifier does exist) --
+    neither of those is a gap worth interrupting a 30-second skim for.
+
+    Deliberately does not flag a source with NO matching evidence_sources
+    entry at all (i.e. never cited by anything in this report) even if
+    its own provenance status is "unknown" -- an uncited source's version
+    gap cannot affect anything a reviewer is being asked to sign off on
+    here. `document["provenance"]` (run-level, not per-variant) is read
+    from `document` directly since it is absent entirely from the
+    single-variant ad hoc calling convention `generate_pdf` also accepts
+    (see its docstring) -- `variants` is passed in already resolved by
+    the caller so both calling conventions share this one code path.
+    """
+    cited: set = set()
+    for variant_result in variants:
+        clinical = variant_result.get("clinical_report") or {}
+        cited.update(clinical.get("evidence_sources") or [])
+    if not cited:
+        return []
+
+    prefixes = {
+        EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX[name]
+        for name in cited
+        if name in EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
+    }
+    if not prefixes:
+        return []
+
+    gaps: List[str] = []
+    for record in document.get("provenance") or []:
+        source = record.get("source") or ""
+        if record.get("status") == "unknown" and any(source.startswith(p) for p in prefixes):
+            gaps.append(source)
+    return gaps
+
+
+def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[str, ParagraphStyle]) -> Table:
+    val, small = styles["TableValue"], styles["TableValueSmall"]
+    header = [
+        Paragraph(h, styles["TableHeader"])
+        for h in ("#", "Variant / Gene", "Classification", "Confidence", "Top Evidence", "Attention")
+    ]
+    rows: List[List[Paragraph]] = [header]
+    flag_rows: List[int] = []  # 1-based row indices (into `rows`) carrying at least one reviewer flag
+
+    for idx, variant_result in enumerate(variants, start=1):
+        variant = variant_result.get("variant", {})
+        locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+        clinical = variant_result.get("clinical_report")
+        gene = (variant_result.get("interpretation_result") or {}).get("gene_symbol")
+        gene_line = f"{locus}<br/><b>{gene}</b>" if gene else locus
+
+        acmg = (clinical or {}).get("acmg_classification") or {}
+        classification = acmg.get("classification") or "Not classified"
+
+        confidence = (clinical or {}).get("confidence") or {}
+        if confidence.get("pending", True):
+            confidence_text = "Pending"
+        else:
+            score = confidence.get("score")
+            score_text = f"{score:.0f}%" if isinstance(score, (int, float)) else ""
+            confidence_text = f"{confidence.get('label') or 'n/a'}" + (f" ({score_text})" if score_text else "")
+
+        top_evidence = [
+            _normalize_evidence_text(item) for item in ((clinical or {}).get("supporting_evidence") or [])[:3]
+        ]
+        top_evidence = [t for t in top_evidence if t]
+        evidence_text = "<br/>".join(f"• {t}" for t in top_evidence) if top_evidence else "—"
+
+        flags = _variant_reviewer_flags(variant_result, clinical)
+        # "!" not the Unicode warning-sign glyph (U+26A0): Helvetica's
+        # WinAnsiEncoding (what ReportLab's built-in fonts use) has no
+        # glyph for U+26A0, unlike "•"/em dash above which both are
+        # already in that encoding and already used elsewhere in this
+        # module -- an unsupported glyph would render as a blank/tofu
+        # box in the actual PDF, not just in a text-extraction tool.
+        flags_text = "<br/>".join(f"! {f}" for f in flags) if flags else "—"
+        if flags:
+            # `idx` (1-based variant number) already equals this row's
+            # position in `rows`, since `rows[0]` is the header row.
+            flag_rows.append(idx)
+
+        rows.append([
+            Paragraph(str(idx), val),
+            Paragraph(gene_line, small),
+            Paragraph(classification, small),
+            Paragraph(confidence_text, small),
+            Paragraph(evidence_text, small),
+            Paragraph(flags_text, styles["StatusWarn"] if flags else small),
+        ])
+
+    col_widths = [8 * mm, 35 * mm, 30 * mm, 20 * mm, 53 * mm, 24 * mm]
+    table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
+    style_cmds = [
+        ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3c5e")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for row_idx in flag_rows:
+        style_cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#fdf1d6")))
+    table.setStyle(TableStyle(style_cmds))
+    return table
+
+
+def _build_clinician_summary_flowables(
+    document: Dict[str, Any],
+    variants: List[Dict[str, Any]],
+    sample_id: str,
+    run_id: str,
+    assembly: Optional[str],
+    styles: Dict[str, ParagraphStyle],
+) -> List[Any]:
+    """
+    The one-page front-page summary itself: identity strip, one compact
+    row per variant, then a short reviewer-attention callout. Ends with a
+    `PageBreak()` so the existing detailed sections (patient header, QC,
+    per-variant findings -- built by the unmodified functions below)
+    always start on a fresh page, exactly as before this feature existed.
+
+    Designed to fit one page for a typical run (a handful of variants);
+    for an unusually large batch this table will legitimately spill onto
+    a second page like any other ReportLab flowable -- silently truncating
+    real findings to force a hard one-page limit would hide clinically
+    relevant results, which is worse than an honest overflow.
+
+    `variants` is the same already-resolved list `generate_pdf` builds
+    (handles both the normal `document["variants"]` shape and the single-
+    variant ad hoc calling convention -- see that function's docstring)
+    so this never has to special-case the input shape itself.
+    """
+    flow: List[Any] = [
+        _Bookmark("bm_clinician_summary", "Clinician Summary"),
+        Paragraph("Clinician Summary", styles["SectionHeading"]),
+        Paragraph(
+            "One row per variant finding; see the numbered “Finding” sections below for full detail "
+            "on any of them.",
+            styles["Footnote"],
+        ),
+        Spacer(1, 2 * mm),
+    ]
+
+    identity = (
+        f"<b>Sample:</b> {sample_id} &nbsp;&nbsp; <b>Run:</b> {run_id} &nbsp;&nbsp; "
+        f"<b>Reference build:</b> {assembly or 'not specified'} &nbsp;&nbsp; "
+        f"<b>Variants analyzed:</b> {len(variants)}"
+    )
+    flow.append(Paragraph(identity, styles["BodyText"]))
+    flow.append(Spacer(1, 3 * mm))
+
+    if variants:
+        flow.append(_build_clinician_summary_table(variants, styles))
+    else:
+        flow.append(Paragraph("No variants were analyzed in this run.", styles["BodyText"]))
+    flow.append(Spacer(1, 3 * mm))
+
+    attention_lines: List[str] = []
+    for idx, variant_result in enumerate(variants, start=1):
+        clinical = variant_result.get("clinical_report")
+        flags = _variant_reviewer_flags(variant_result, clinical)
+        if flags:
+            variant = variant_result.get("variant", {})
+            locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+            attention_lines.append(f"Finding {idx} ({locus}): {'; '.join(flags)}")
+    gap_sources = _provenance_gap_sources(document, variants)
+    if gap_sources:
+        attention_lines.append(
+            "Data-source version not determinable for cited evidence from: " + ", ".join(sorted(gap_sources)) + "."
+        )
+
+    flow.append(Paragraph("Reviewer Attention", styles["SectionHeading"]))
+    if attention_lines:
+        flow.extend(Paragraph(f"! {line}", styles["BulletText"]) for line in attention_lines)
+    else:
+        flow.append(Paragraph("No conflicts, ambiguous gene resolution, or evidence-provenance gaps flagged for this run.", styles["BodyText"]))
+
+    flow.append(PageBreak())
+    return flow
+
+
 def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """Renders one variant's already-computed `clinical_report` dict (see report/clinical_report_builder.py) -- no evidence is re-derived here."""
     variant = variant_result.get("variant", {})
     locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
     clinical = variant_result.get("clinical_report")
 
-    flow: List[Any] = [Spacer(1, 4 * mm), Paragraph(f"Finding {idx}: {locus}", styles["SectionHeading"])]
+    flow: List[Any] = [
+        _Bookmark(f"bm_finding_{idx}", f"Finding {idx}: {locus}"),
+        Spacer(1, 4 * mm),
+        Paragraph(f"Finding {idx}: {locus}", styles["SectionHeading"]),
+    ]
 
     if not clinical:
         flow.append(Paragraph(
@@ -621,6 +939,7 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
     ]))
 
     return KeepTogether([
+        _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
         Spacer(1, 10 * mm),
         Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
         Spacer(1, 4 * mm),
@@ -707,10 +1026,12 @@ def generate_pdf(
     )
 
     story: List[Any] = list(_build_report_header(logo_path, styles))
+    story.append(Spacer(1, 4 * mm))
+    story.extend(_build_clinician_summary_flowables(document, variants, sample_id, resolved_run_id, assembly, styles))
     story.extend([
-        Spacer(1, 4 * mm),
         _build_patient_header_table(patient, sample_id, resolved_run_id, assembly, styles),
         Spacer(1, 6 * mm),
+        _Bookmark("bm_qc", "Sequencing Quality Control Metrics"),
         Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),
     ])
     story.extend(_build_qc_flowables(qc_metrics, styles))

@@ -396,6 +396,31 @@ KNOWN_SOURCES = (
     "Functional evidence (MaveDB)",
 )
 
+# Evidence-source short names, exactly as recorded in a variant's
+# `clinical_report["evidence_sources"]` (see
+# `report/clinical_report_builder.py::_REFERENCES`), mapped onto the
+# `KNOWN_SOURCES` prefix(es) they correspond to here -- a prefix match,
+# not an exact one, since ClinGen and AlphaMissense each expand to a
+# more specific provenance source name above (e.g.
+# "ClinGen (gene validity)"). Sources with no provenance entry at all
+# (MMSplice, protein_translator -- GEPER's own code, not an external
+# data source) are simply absent from this mapping; there is no version
+# to look up for them. Shared by `report/summary.py` (the one-page
+# Clinician Summary's provenance-gap flag) and `compare_reports.py`
+# (cross-run provenance diffing) so the two never define this mapping
+# differently.
+EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX: Dict[str, str] = {
+    "ClinVar": "ClinVar",
+    "dbSNP": "dbSNP",
+    "gnomAD": "gnomAD",
+    "ClinGen": "ClinGen",
+    "UniProt": "UniProt",
+    "InterPro": "InterPro",
+    "AlphaFold DB": "AlphaFold DB",
+    "AlphaMissense": "AlphaMissense",
+    "BLAST": "BLAST",
+}
+
 
 class RunProvenanceCollector:
     """

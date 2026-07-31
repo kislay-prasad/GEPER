@@ -170,30 +170,37 @@ class StageEvidence(BaseModel):
         for exactly which override each of the 11 providers gets and
         why.
 
-        Known, disclosed limitation (a design smell surfaced by
-        writing this adapter, not fixed here): at least three stages
-        -- `_run_protein_stage`, `_run_blast_stage`, and
-        `_run_mmsplice_stage` in `pipeline/orchestrator.py` -- fold a
-        genuine exception into the exact same `{"skipped": True,
-        "reason": "..."}` (or `supported=False`) shape used for a
-        normal, expected skip (no ORF found / no sequence context /
-        variant not splice-eligible), with no separate `error` key on
-        that path. This function therefore cannot structurally tell
-        "correctly skipped" apart from "crashed" for those three
-        stages -- both become `NOT_RUN` here, exactly as they already
-        render identically as "not run" in today's reports. Fixing
-        that would mean changing what those three `_run_*_stage`
-        methods return, which is a source-level fix beyond this
-        validation-layer pass; see this module's docstring for the
-        list of what's in vs. out of scope.
+        Precedence -- `error` is checked BEFORE `skipped`: fixed
+        design smell (previously: `_run_protein_stage`,
+        `_run_blast_stage`, and `_run_mmsplice_stage` in
+        `pipeline/orchestrator.py` folded a genuine exception into the
+        exact same `{"skipped": True, "reason": "..."}` (or
+        `supported=False`) shape used for a normal, expected skip --
+        `RNA-FM`/`_run_rna_stage` and `AlphaMissense`
+        /`_run_alphamissense_stage` had the identical collapse, found
+        via the same audit). Those methods now also set an explicit
+        `error` key on their exception paths while deliberately
+        LEAVING `skipped`/`supported`/`predicted` unchanged (control-
+        flow gates elsewhere, e.g. `_run_alphamissense_stage`'s own
+        `protein_result.get("skipped")` check, still need "crashed"
+        to behave like "skipped" for THEIR purposes) -- so `error`
+        must be checked first here, or a stage that is both
+        `skipped=True` AND carries a real `error` would still resolve
+        to `NOT_RUN`, silently undoing the fix. Every provider that
+        already set `error` correctly before this change (ClinVar,
+        dbSNP, gnomAD, ClinGen, HPO, Orphanet, transcript structure,
+        PS1/PM5 codon matches, PS3/BS3 functional evidence, UniProt,
+        InterPro, AlphaFold) never sets `skipped=True` on that same
+        path, so this reordering does not change their behavior at
+        all -- verified by this module's own test suite.
         """
         if not raw:
             return cls(status=StageStatus.NOT_RUN, data={})
-        if raw.get("skipped") is True:
-            return cls(status=StageStatus.NOT_RUN, data=raw)
         error = raw.get("error")
         if error:
             return cls(status=StageStatus.ERROR, error=str(error), data=raw)
+        if raw.get("skipped") is True:
+            return cls(status=StageStatus.NOT_RUN, data=raw)
         found = found_when(raw) if found_when is not None else bool(raw.get(found_key))
         return cls(status=StageStatus.FOUND if found else StageStatus.NOT_FOUND, data=raw)
 
@@ -403,6 +410,12 @@ class InterpretationResultForReport(BaseModel):
     explainability: Optional[Dict[str, Any]] = None
     recommendations: List[str]
     evidence_sources: List[str]
+    # Which AI models genuinely crashed for this variant (as opposed
+    # to a legitimate skip) -- see `InterpretationResult.ai_model_errors`'s
+    # own docstring in `pipeline/interpretation_result.py`. Required,
+    # not `Optional`, matching every other list field here: this is
+    # always at least `[]` once `InterpretationResult` exists.
+    ai_model_errors: List[Dict[str, Any]]
 
     @model_validator(mode="after")
     def _pending_flag_matches_populated_value(self) -> "InterpretationResultForReport":

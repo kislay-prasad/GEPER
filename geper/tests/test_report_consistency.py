@@ -76,11 +76,15 @@ def _build_variant_result_with_serialized_interpretation(**raw_results):
     interpretation["interpretation_result"] = result_obj.to_dict()
 
     return build_variant_result(
-        variant_dict=_VARIANT_DICT, sequence_context={}, dna_model_results={}, rna_result={},
-        protein_result={}, blast_result=raw_results.get("blast_result", {}),
+        variant_dict=_VARIANT_DICT, sequence_context={}, dna_model_results={},
+        rna_result=raw_results.get("rna_result", {}),
+        protein_result=raw_results.get("protein_result", {}),
+        blast_result=raw_results.get("blast_result", {}),
         clinvar_result=raw_results.get("clinvar_result", {}),
         dbsnp_result=raw_results.get("dbsnp_result", {}),
         interpretation=interpretation, errors=[],
+        alphamissense_result=raw_results.get("alphamissense_result"),
+        mmsplice_result=raw_results.get("mmsplice_result"),
         gnomad_result=raw_results.get("gnomad_result"),
         clingen_result=raw_results.get("clingen_result"),
         uniprot_result=raw_results.get("uniprot_result"),
@@ -207,6 +211,97 @@ class TestErrorStateNeverConflatedWithNotFound(unittest.TestCase):
         struct = vr["clinical_report"]["structural_knowledge"]
         self.assertFalse(struct["available"])
         self.assertIsNotNone(struct["error"])
+
+
+class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCase):
+    """
+    Regression tests for a second real bug, found while building the
+    Pydantic schema layer (pipeline/stage_schemas.py): `_run_protein_stage`,
+    `_run_blast_stage`, and `_run_mmsplice_stage` in
+    pipeline/orchestrator.py used to fold a genuine exception into the
+    exact same dict shape as a normal, expected skip (e.g. "no sequence
+    context" / "variant not splice-eligible"), with no separate `error`
+    key -- so a crashed BLAST search rendered identically to "genuinely
+    no homology hits", and a crashed AlphaMissense/MMSplice call
+    rendered identically to "not an eligible variant type". RNA-FM and
+    AlphaMissense had the identical collapse, found by auditing the
+    rest of the orchestrator for the same pattern.
+
+    Fix: those methods now set an explicit `error` key on their
+    exception paths (while leaving `skipped`/`supported`/`predicted`
+    unchanged, since other stages still gate on them for control flow
+    -- see each method's own comment in pipeline/orchestrator.py), and
+    that distinction is threaded all the way to both the clinical
+    report's summary sections and the Annotation Detail Markdown trail.
+    """
+
+    def test_blast_error_is_distinct_from_no_hits(self):
+        blast_error = {"hits": [], "hit_count": 0, "skipped": True, "reason": "boom", "error": "BLAST server unreachable: boom"}
+        vr = _build_variant_result_with_serialized_interpretation(blast_result=blast_error)
+        seq = vr["clinical_report"]["sequence_context"]
+        self.assertEqual(seq["blast"]["error"], "BLAST server unreachable: boom")
+
+        doc = {"generated_at": "now", "input_vcf": "x.vcf", "variant_count": 1, "variants": [vr]}
+        markdown = ReportGenerator().generate(doc)
+        self.assertIn("BLAST:** _lookup failed", markdown)
+        self.assertNotIn("**BLAST:** 0 homology hit(s)", markdown)
+        # The Annotation Detail trail must agree, not contradict it.
+        self.assertIn("### BLAST Results", markdown)
+        self.assertNotIn("_No significant BLAST hits._", markdown)
+
+    def test_genuine_no_blast_hits_is_unaffected(self):
+        blast_no_hits = {"hits": [], "hit_count": 0, "skipped": False}
+        vr = _build_variant_result_with_serialized_interpretation(blast_result=blast_no_hits)
+        seq = vr["clinical_report"]["sequence_context"]
+        self.assertIsNone(seq["blast"]["error"])
+
+    def test_mmsplice_error_is_distinct_from_ineligible(self):
+        mmsplice_error = {
+            "supported": False, "predicted": False, "skip_reason": "Keras inference crashed",
+            "interpretation": "Keras inference crashed", "error": "Keras inference crashed",
+        }
+        vr = _build_variant_result_with_serialized_interpretation(mmsplice_result=mmsplice_error)
+        ai = vr["clinical_report"]["ai_consensus"]
+        self.assertEqual(len(ai["model_errors"]), 1)
+        self.assertEqual(ai["model_errors"][0]["source"], "MMSplice")
+        self.assertEqual(ai["model_errors"][0]["error"], "Keras inference crashed")
+
+        doc = {"generated_at": "now", "input_vcf": "x.vcf", "variant_count": 1, "variants": [vr]}
+        markdown = ReportGenerator().generate(doc)
+        self.assertIn("MMSplice:** _lookup failed", markdown)
+        self.assertIn("### MMSplice (Splice Effect Prediction)", markdown)
+        self.assertIn("_Failed: Keras inference crashed", markdown)
+
+    def test_alphamissense_error_is_distinct_from_ineligible(self):
+        am_error = {"skipped": True, "reason": "tabix crashed", "error": "tabix crashed"}
+        vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_error)
+        ai = vr["clinical_report"]["ai_consensus"]
+        self.assertEqual(len(ai["model_errors"]), 1)
+        self.assertEqual(ai["model_errors"][0]["source"], "AlphaMissense")
+
+        doc = {"generated_at": "now", "input_vcf": "x.vcf", "variant_count": 1, "variants": [vr]}
+        markdown = ReportGenerator().generate(doc)
+        self.assertIn("AlphaMissense:** _lookup failed", markdown)
+        self.assertIn("_Failed: tabix crashed", markdown)
+
+    def test_a_real_verdict_and_a_crash_can_coexist_in_ai_consensus(self):
+        # AlphaMissense crashing must never hide MMSplice's real result.
+        am_error = {"skipped": True, "reason": "x", "error": "tabix crashed"}
+        mmsplice_ok = {"supported": True, "predicted": True, "interpretation_category": "likely_no_effect", "delta_logit_psi": 0.1}
+        vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_error, mmsplice_result=mmsplice_ok)
+        ai = vr["clinical_report"]["ai_consensus"]
+        self.assertEqual(len(ai["classifying_models"]), 1)
+        self.assertEqual(ai["classifying_models"][0]["source"], "MMSplice")
+        self.assertEqual(len(ai["model_errors"]), 1)
+        self.assertEqual(ai["model_errors"][0]["source"], "AlphaMissense")
+
+    def test_ineligible_alphamissense_is_still_silent_not_an_error(self):
+        """The fix must not flip every skip into an error -- a real,
+        legitimate ineligibility skip still produces no error entry."""
+        am_ineligible = {"skipped": True, "reason": "variant is not an eligible missense substitution"}
+        vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_ineligible)
+        ai = vr["clinical_report"]["ai_consensus"]
+        self.assertEqual(ai["model_errors"], [])
 
 
 class TestBuildClinicalReportBackwardCompatibility(unittest.TestCase):

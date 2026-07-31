@@ -1111,7 +1111,18 @@ class GeperPipeline:
             errors.append(f"RNA-FM stage failed: {exc}")
             logger.error(errors[-1])
             self._model_stage_errors.setdefault("rna_fm", str(exc)[:120])
-            return {"skipped": True, "reason": str(exc)}
+            # `skipped: True` is kept (not flipped to False) so every
+            # existing downstream reader that gates on it -- e.g.
+            # `pipeline/interpretation_result.py`'s
+            # `ai_context_models` check -- keeps treating a crashed
+            # stage exactly like a legitimately-skipped one for
+            # control-flow purposes (there is no usable RNA-FM output
+            # either way). `error` is new: it's what lets
+            # `pipeline/stage_schemas.py::StageEvidence.from_raw`
+            # resolve this to `ERROR` instead of `NOT_RUN` -- see that
+            # module's docstring for why the two were indistinguishable
+            # before this key existed.
+            return {"skipped": True, "reason": str(exc), "error": str(exc)}
 
     def _run_protein_stage(self, variant: Variant, sequence_context, errors: List[str]) -> Dict[str, Any]:
         if sequence_context is None:
@@ -1150,7 +1161,13 @@ class GeperPipeline:
             errors.append(f"Protein/ESM-2 stage failed: {exc}")
             logger.error(errors[-1])
             self._model_stage_errors.setdefault("esm2", str(exc)[:120])
-            return {"skipped": True, "reason": str(exc)}
+            # `skipped: True` stays True (see `_run_rna_stage`'s
+            # matching comment for why -- `_run_alphamissense_stage`
+            # gates on `protein_result.get("skipped")` to decide
+            # whether it's safe to proceed, and a crashed translation
+            # is exactly as unusable as a legitimately-skipped one).
+            # `error` is new -- see `_run_rna_stage`'s comment.
+            return {"skipped": True, "reason": str(exc), "error": str(exc)}
 
     def _run_alphamissense_stage(
         self, variant: Variant, protein_result: Dict[str, Any], errors: List[str]
@@ -1206,7 +1223,14 @@ class GeperPipeline:
             errors.append(f"AlphaMissense stage failed: {exc}")
             logger.error(errors[-1])
             self._model_stage_errors.setdefault("alphamissense", str(exc)[:120])
-            return {"skipped": True, "reason": str(exc)}
+            # `skipped: True` stays True (see `_run_rna_stage`'s
+            # matching comment); `error` is new -- and, unlike
+            # RNA-FM/protein, this one also flows into
+            # `pipeline/stage_schemas.py::RawEvidenceBundle` directly
+            # (`alphamissense` is one of its 11 required fields), so
+            # this fix is what lets that boundary resolve a genuine
+            # AlphaMissense crash to `ERROR` instead of `NOT_RUN`.
+            return {"skipped": True, "reason": str(exc), "error": str(exc)}
 
     def _run_mmsplice_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
@@ -1249,9 +1273,19 @@ class GeperPipeline:
             errors.append(f"MMSplice stage failed: {exc}")
             logger.error(errors[-1])
             self._model_stage_errors.setdefault("mmsplice", str(exc)[:120])
+            # `supported`/`predicted` stay False (this stage has no
+            # "skipped" key at all, so keeping both False is what
+            # already-existing downstream readers of this shape
+            # expect for "no usable MMSplice result"). `error` is new
+            # -- MMSplice is one of `RawEvidenceBundle`'s 11 required
+            # fields (see `pipeline/stage_schemas.py`), and without
+            # this key a genuine crash here previously resolved to
+            # `NOT_FOUND` ("checked, no splice effect"), not just
+            # `NOT_RUN` -- an even more misleading label for a crash,
+            # since it implied the lookup succeeded.
             return {
                 "supported": False, "predicted": False, "skip_reason": str(exc)[:300],
-                "interpretation": str(exc)[:300],
+                "interpretation": str(exc)[:300], "error": str(exc)[:300],
             }
 
     def _get_mmsplice_service(self) -> MMSpliceService:
@@ -1472,7 +1506,17 @@ class GeperPipeline:
             errors.append(f"{_MODEL_DISPLAY_NAMES.get(key, key)} stage failed: {exc}")
             logger.error(errors[-1])
             self._model_stage_errors.setdefault(key, str(exc)[:120])
-            return {"available": True, "classification": None, "skip_reason": str(exc)[:300]}
+            # `available: True` already distinguished "ran (but failed)"
+            # from "never eligible to run" (the `available: False`
+            # branches above) -- `error` is an additional, explicit
+            # signal for consistency with every other stage fixed
+            # alongside this one (see `_run_rna_stage`'s comment); not
+            # currently read by any consumer of spliceformer/splicebert
+            # results (there is no raw_evidence/clinical-report
+            # rendering path for these two plugins -- see BP7 in
+            # `pipeline/acmg_rules.py`), added for the same schema-
+            # correctness reason regardless.
+            return {"available": True, "classification": None, "skip_reason": str(exc)[:300], "error": str(exc)[:300]}
 
     def _build_ai_model_status(
         self,
@@ -1522,7 +1566,19 @@ class GeperPipeline:
         except ExternalAPIError as exc:
             errors.append(f"BLAST stage failed: {exc}")
             logger.error(errors[-1])
-            return {"hits": [], "hit_count": 0, "skipped": True, "reason": str(exc)}
+            # `skipped: True` stays True (no downstream reader gates on
+            # it, but this keeps the shape consistent with the
+            # "no sequence context" skip above); `error` is new -- see
+            # `_run_rna_stage`'s comment for why. BLAST is one of
+            # `RawEvidenceBundle`'s 11 required fields, and unlike
+            # protein/alphamissense/mmsplice/RNA-FM it has no separate
+            # "AI Model Status" table tracking it (BLAST is a database
+            # lookup, not an AI model) -- this was the one stage with
+            # NO existing mechanism anywhere in the report to tell a
+            # clinician "BLAST failed" apart from "BLAST found nothing"
+            # before this fix; see report/clinical_report_builder.py
+            # and report/report_generator.py for where this now surfaces.
+            return {"hits": [], "hit_count": 0, "skipped": True, "reason": str(exc), "error": str(exc)}
 
     def _run_dbsnp_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         # `sequence_context_gen.assembly` holds the build resolved by the

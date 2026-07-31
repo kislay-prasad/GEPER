@@ -117,6 +117,19 @@ class InterpretationResult:
     # re-deriving it from the raw evidence.
     evidence_sources: List[str] = field(default_factory=list)
 
+    # Which AI-consensus/context models (AlphaMissense, MMSplice,
+    # ESM-2, RNA-FM) genuinely crashed for this variant, as opposed to
+    # being legitimately not-run (disabled, ineligible variant type,
+    # unavailable in this environment) -- distinct from `ai_consensus`
+    # (which only ever lists a model that actually produced a real
+    # verdict) precisely so a crash is never silently indistinguishable
+    # from "not applicable" in `ai_consensus`'s own absence. See
+    # `pipeline/stage_schemas.py::StageStatus`'s docstring and
+    # `pipeline/orchestrator.py`'s `_run_rna_stage`/`_run_protein_stage`/
+    # `_run_alphamissense_stage`/`_run_mmsplice_stage` for the `error`
+    # key this is built from.
+    ai_model_errors: List[Dict[str, Any]] = field(default_factory=list)
+
     # Legacy fields kept verbatim for any caller still reading the old
     # `interpretation` dict shape directly.
     legacy_summary: Optional[str] = None
@@ -162,6 +175,7 @@ class InterpretationResult:
             "explainability": self.explainability,
             "recommendations": self.recommendations,
             "evidence_sources": self.evidence_sources,
+            "ai_model_errors": self.ai_model_errors,
             "legacy_summary": self.legacy_summary,
             "legacy_confidence": self.legacy_confidence,
             "legacy_significance_score": self.legacy_significance_score,
@@ -318,6 +332,25 @@ def build_interpretation_result(
     if protein_result and protein_result.get("esm2"):
         ai_context_models.append("ESM2")
 
+    # A genuine crash (vs. a legitimate "not eligible"/"not available"
+    # skip) for any AI-consensus or context model, so the report can
+    # say "this model failed" instead of silently omitting it the same
+    # way an ineligible variant would be -- see this field's own
+    # docstring on `InterpretationResult`. Keyed off the `error` field
+    # `pipeline/orchestrator.py`'s `_run_*_stage` methods now set ONLY
+    # on their genuine-exception paths (never on a normal skip), so
+    # this check can't misfire on an ordinary "AlphaMissense not
+    # eligible for this variant" result.
+    ai_model_errors: List[Dict[str, Any]] = []
+    if rna_result and rna_result.get("error"):
+        ai_model_errors.append({"source": "RNA-FM", "error": rna_result["error"]})
+    if protein_result and protein_result.get("error"):
+        ai_model_errors.append({"source": "ESM2", "error": protein_result["error"]})
+    if alphamissense_result and alphamissense_result.get("error"):
+        ai_model_errors.append({"source": "AlphaMissense", "error": alphamissense_result["error"]})
+    if mmsplice_result and mmsplice_result.get("error"):
+        ai_model_errors.append({"source": "MMSplice", "error": mmsplice_result["error"]})
+
     return InterpretationResult(
         variant=variant_dict,
         gene_symbol=gene_symbol,
@@ -333,6 +366,7 @@ def build_interpretation_result(
         biological_evidence=biological_evidence,
         recommendations=recommendations,
         evidence_sources=sorted(evidence_sources),
+        ai_model_errors=ai_model_errors,
         legacy_summary=interpretation.get("summary"),
         legacy_confidence=interpretation.get("confidence"),
         legacy_significance_score=interpretation.get("significance_score"),

@@ -169,6 +169,7 @@ class TestInterpretationResultForReport(unittest.TestCase):
             "priority_explanation": [], "priority_breakdown": {},
             "conflict_summary": None, "conflict_list": [], "conflict_score": 0.0, "conflict_severity": None,
             "conflict_resolution": None, "explainability": None, "recommendations": [], "evidence_sources": [],
+            "ai_model_errors": [],
         }
         base.update(overrides)
         return base

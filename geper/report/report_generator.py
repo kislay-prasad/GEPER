@@ -253,11 +253,18 @@ class ReportGenerator:
         lines.append("### 7. AI Consensus")
         lines.append("")
         votes = ai.get("classifying_models") or []
+        model_errors = ai.get("model_errors") or []
         if votes:
             for v in votes:
                 lines.append(f"- **{v.get('source')}:** {v.get('prediction')} (score={v.get('score')})")
-        else:
+        elif not model_errors:
             lines.append("*No classifying AI model (AlphaMissense/MMSplice) produced a result.*")
+        # `model_errors` is reported alongside `votes`, not only in its
+        # `elif` -- one model can crash while the other still produces
+        # a real verdict, and a crash must never be silently absent
+        # just because the other model's result is present.
+        for err in model_errors:
+            lines.append(f"- **{err.get('source')}:** _lookup failed ({err.get('error')}) -- not evidence of no effect, see Annotation Detail below._")
         context = ai.get("context_models_used") or []
         lines.append("")
         lines.append(
@@ -346,7 +353,11 @@ class ReportGenerator:
         lines.append("### 12. Sequence Context")
         lines.append("")
         lines.append(f"- **Context models used:** {', '.join(seq.get('context_models_used') or []) or 'none'}")
-        lines.append(f"- **BLAST:** {seq['blast'].get('hit_count', 0)} homology hit(s)")
+        blast_error = seq["blast"].get("error")
+        if blast_error:
+            lines.append(f"- **BLAST:** _lookup failed ({blast_error}) -- not evidence of no homology, see Annotation Detail below._")
+        else:
+            lines.append(f"- **BLAST:** {seq['blast'].get('hit_count', 0)} homology hit(s)")
         lines.append(f"- *{seq.get('ensembl_note')}*")
         lines.append("")
 
@@ -600,7 +611,13 @@ class ReportGenerator:
         if not rna_result:
             return []
         lines = ["### RNA-FM Analysis", ""]
-        if rna_result.get("skipped"):
+        if rna_result.get("error"):
+            # A genuine crash, not a normal "not transcript-relevant"
+            # skip -- distinguished via the `error` key
+            # `pipeline/orchestrator.py::_run_rna_stage` now sets only
+            # on its exception path (see that method's comment).
+            lines.append(f"_Failed: {rna_result['error']} -- not evidence RNA-FM was inapplicable, see the AI Model Status table above._")
+        elif rna_result.get("skipped"):
             lines.append(f"_Skipped: {rna_result.get('reason', 'not applicable')}._")
         else:
             lines.append(
@@ -615,7 +632,10 @@ class ReportGenerator:
         if not protein_result:
             return []
         lines = ["### Protein / ESM-2 Analysis", ""]
-        if protein_result.get("skipped"):
+        if protein_result.get("error"):
+            # Same distinction as `_render_rna` -- see that method's comment.
+            lines.append(f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._")
+        elif protein_result.get("skipped"):
             lines.append(f"_Skipped: {protein_result.get('reason', 'not applicable')}._")
         else:
             translation = protein_result.get("translation", {})
@@ -632,6 +652,11 @@ class ReportGenerator:
         if not am_result:
             return []
         lines = ["### AlphaMissense", ""]
+        if am_result.get("error"):
+            # Same distinction as `_render_rna` -- see that method's comment.
+            lines.append(f"_Failed: {am_result['error']} -- not evidence this variant lacks a catalogue entry, see the AI Model Status table above._")
+            lines.append("")
+            return lines
         if am_result.get("skipped"):
             lines.append(f"_Skipped: {am_result.get('reason', 'not applicable')}._")
             lines.append("")
@@ -659,6 +684,14 @@ class ReportGenerator:
         if not mmsplice_result:
             return []
         lines = ["### MMSplice (Splice Effect Prediction)", ""]
+        if mmsplice_result.get("error"):
+            # Same distinction as `_render_rna` -- see that method's
+            # comment. Checked first: MMSplice's own "not scored"/
+            # "skipped" branches below both key off `supported`/
+            # `predicted`, which a genuine crash also leaves False.
+            lines.append(f"_Failed: {mmsplice_result['error']} -- not evidence of no splice effect, see the AI Model Status table above._")
+            lines.append("")
+            return lines
         if not mmsplice_result.get("supported", False):
             lines.append(
                 f"_Not scored: {mmsplice_result.get('skip_reason') or mmsplice_result.get('interpretation') or 'unsupported'}._"
@@ -1075,6 +1108,15 @@ class ReportGenerator:
         if not blast_result:
             return []
         lines = ["### BLAST Results", ""]
+        if blast_result.get("error"):
+            # A genuine crash, not "genuinely no hits" -- see
+            # `pipeline/orchestrator.py::_run_blast_stage`'s comment.
+            # Previously this branch didn't exist at all: an empty
+            # `hits` list from either cause rendered identically as
+            # "No significant BLAST hits."
+            lines.append(f"_Failed: {blast_result['error']} -- not evidence of no homology._")
+            lines.append("")
+            return lines
         hits = blast_result.get("hits", [])
         if not hits:
             lines.append("_No significant BLAST hits._")

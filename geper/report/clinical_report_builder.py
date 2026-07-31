@@ -206,9 +206,22 @@ def _conflict_resolution_section(ir: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _ai_consensus_section(ir: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    `model_errors` distinguishes "this model genuinely crashed" from
+    "this model was never applicable/available" -- an absent entry in
+    `classifying_models` alone is ambiguous between the two (a
+    synonymous variant never routed to AlphaMissense looks identical
+    to an AlphaMissense that crashed, from `classifying_models` alone).
+    Same distinction `_protein_knowledge`/`_structural_knowledge`/
+    `_clinical_evidence`'s `*_error` fields already make for UniProt/
+    InterPro/AlphaFold/ClinVar/ClinGen -- see
+    `pipeline/interpretation_result.py::InterpretationResult
+    .ai_model_errors`'s docstring for where this is computed.
+    """
     return {
         "classifying_models": ir.get("ai_consensus", []),  # AlphaMissense / MMSplice verdicts only
         "context_models_used": ir.get("ai_context_models", []),  # HyenaDNA/Evo2/RNA-FM/ESM2, no verdict
+        "model_errors": ir.get("ai_model_errors", []),
     }
 
 
@@ -331,11 +344,20 @@ def _clinical_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _sequence_context(ir: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    `blast["error"]` distinguishes a failed BLAST search from a
+    genuine "no homology hits" result -- see `_protein_knowledge`'s
+    docstring for the same distinction elsewhere. Unlike UniProt/
+    InterPro/AlphaFold/ClinVar/ClinGen, BLAST previously had NO
+    mechanism anywhere in this report to make that distinction (see
+    `pipeline/orchestrator.py::_run_blast_stage`).
+    """
     blast = raw.get("blast") or {}
     return {
         "context_models_used": ir.get("ai_context_models", []),
         "blast": {
             "hit_count": blast.get("hit_count", 0),
+            "error": blast.get("error"),
         },
         # Ensembl is used internally for sequence-context retrieval
         # (transcript/region lookups feeding the DNA/RNA models above)

@@ -7,26 +7,34 @@ Ground truth, not synthetic guesses, for each rule's core positive
 example:
 
   - BP1 (missense in a gene where LOF is the established disease
-    mechanism): BRCA1 p.Ser1613Gly (NM_007294.4:c.4837A>G), real
-    ClinVar VCV000041827, "Benign", reviewed by expert panel. Residue
-    1613 confirmed against BRCA1's real canonical UniProt sequence
-    (P38398, fetched live: residue 1613 = Ser) -- `ref_protein`/
-    `alt_protein` below are that real local sequence context (residues
-    1605-1620) with the real S1613G substitution applied, not an
-    arbitrary stand-in string. Paired with BRCA1's real ClinGen
+    mechanism): BRCA1 p.Ser1613Gly (NM_007294.4:c.4837A>G, genomic
+    17:43071077 T>C on the minus strand), real ClinVar VCV000041827,
+    "Benign", reviewed by expert panel. Residue 1613 confirmed against
+    BRCA1's real canonical UniProt sequence (P38398: residue 1613 =
+    Ser) and, as of this module's rewrite, also confirmed directly
+    against the real BRCA1 transcript CDS in
+    `tests/fixtures/pvs1_transcripts.json` via
+    `coding_consequence_detail` (codon 1613, S->G) -- the same
+    transcript-CDS-frame call `pipeline/acmg_rules.py::
+    ACMGRuleEngine._protein_effect_flags` now uses in production,
+    replacing this module's old `protein_result=missense_protein_result(...)`
+    mocking of `pipeline/protein_translator.py`'s frame-unaware local
+    translation window. Paired with BRCA1's real ClinGen
     dosage-sensitivity curation (haploinsufficiency score 3,
     "Sufficient evidence for dosage pathogenicity" -- verbatim from
     `tests/fixtures/clingen_dosage_sensitivity.tsv`, the same live
     ClinGen download `test_pvs1.py`'s `_CLINGEN_DOSAGE` table uses).
-    A second real example, CFTR p.Gly551Asp (c.1652G>A, VCV000007120,
-    "Pathogenic", practice guideline -- CFTR's most clinically famous
-    gating mutation), exercises the LOF_ESTABLISHED_RECESSIVE (dosage
-    score 30) branch. Using a real *pathogenic* missense here is
-    deliberate, not an error: BP1 is evaluated as one independent piece
-    of supporting evidence, exactly as real curation does -- a gene's
-    LOF mechanism does not stop being established just because one
-    particular missense variant in it turns out pathogenic through
-    other evidence; that is precisely why BP1 is only ever "supporting"
+    A second real example, CFTR p.Gly551Asp (c.1652G>A, genomic
+    7:117587806 G>A, VCV000007120, "Pathogenic", practice guideline --
+    CFTR's most clinically famous gating mutation), exercises the
+    LOF_ESTABLISHED_RECESSIVE (dosage score 30) branch, likewise
+    confirmed against the real CFTR fixture CDS (codon 551, G->D).
+    Using a real *pathogenic* missense here is deliberate, not an
+    error: BP1 is evaluated as one independent piece of supporting
+    evidence, exactly as real curation does -- a gene's LOF mechanism
+    does not stop being established just because one particular
+    missense variant in it turns out pathogenic through other
+    evidence; that is precisely why BP1 is only ever "supporting"
     strength.
 
   - BP3 (in-frame indel in a UniProt-annotated repeat region): reuses
@@ -53,20 +61,30 @@ example:
     "reputable" even under BP6's own wording).
 
   - BP7 (synonymous, no splice impact predicted): grounded by a real
-    synonymous BRCA1 ClinVar record, c.5175A>G (p.Glu1725=),
-    VCV000136552, "Likely benign", reviewed by expert panel -- BP7
-    itself only consumes `is_synonymous` (a bool) plus each splice
-    predictor's own result dict, so this record is cited for narrative
-    grounding rather than fed through coordinate machinery the rule
-    doesn't use. The MMSplice/SpliceFormer/SpliceBERT result dicts
-    below mirror each plugin's own real, documented output shape
-    (MMSplice: `interpretation_category`; SpliceFormer/SpliceBERT:
-    `classification` in the shared no_significant_effect/
-    moderate_effect/large_effect buckets, per
-    `pipeline/models/spliceformer_plugin.py`/`splicebert_plugin.py`'s
-    own `_infer_impl`) rather than running the actual models, which
-    this session's scoped-tests-only, no-heavy-model-loading
-    requirement rules out.
+    synonymous TP53 ClinVar-associated substitution, c.525C>T
+    (p.Arg175=, genomic 17:7675087 G>A) -- the same real record
+    `tests/test_ps1_pm5.py::test_ps1_requires_a_missense_query_not_synonymous`
+    already validates via `coding_consequence_detail` against
+    `tests/fixtures/ps1_pm5_transcript.json`'s real TP53 transcript
+    CDS. BP7 now takes `variant_dict` + `transcript_result` (the same
+    transcript-CDS-frame inputs PS1/PM5/PVS1 already use) rather than
+    the old `protein_result=synonymous_protein_result()` mock of
+    `pipeline/protein_translator.py`'s frame-unaware local window --
+    see this module's BP1 section and
+    `pipeline/acmg_rules.py::ACMGRuleEngine._protein_effect_flags`'s
+    docstring for why that window was replaced (it produced false
+    "synonymous" calls for real missense variants, e.g. PRNP
+    p.Pro102Leu). The "not synonymous" negative case reuses TP53's own
+    real p.Arg248Trp missense (c.742C>T, genomic 17:7674221 G>A,
+    ClinVar Pathogenic, expert panel -- the exact variant that exposed
+    this bug). The MMSplice/SpliceFormer/SpliceBERT result dicts below
+    mirror each plugin's own real, documented output shape (MMSplice:
+    `interpretation_category`; SpliceFormer/SpliceBERT: `classification`
+    in the shared no_significant_effect/moderate_effect/large_effect
+    buckets, per `pipeline/models/spliceformer_plugin.py`/
+    `splicebert_plugin.py`'s own `_infer_impl`) rather than running the
+    actual models, which this session's scoped-tests-only, no-heavy-
+    model-loading requirement rules out.
 """
 
 import json
@@ -89,6 +107,9 @@ with open(os.path.join(_FIXTURE_DIR, "ps1_pm5_transcript.json"), "r", encoding="
 with open(os.path.join(_FIXTURE_DIR, "pm4_hba2_transcript.json"), "r", encoding="utf-8") as _fh:
     _HBA2_RECORD = json.load(_fh)["transcript"]
 
+with open(os.path.join(_FIXTURE_DIR, "pvs1_transcripts.json"), "r", encoding="utf-8") as _fh:
+    _PVS1_TRANSCRIPTS = json.load(_fh)["transcripts"]
+
 
 def tp53_transcript_result():
     return {"skipped": False, "found": True, "transcript": _TP53_RECORD}
@@ -96,6 +117,14 @@ def tp53_transcript_result():
 
 def hba2_transcript_result():
     return {"skipped": False, "found": True, "transcript": _HBA2_RECORD}
+
+
+def gene_transcript_result(gene):
+    """Real transcript structure (BRCA1/BRCA2/MYH7/CFTR), from the same
+    live-fetched fixture `test_pvs1.py` uses -- these carry `cds_sequence`,
+    so `coding_consequence_detail`/`protein_effect_flags` can call a real
+    substitution's consequence in this transcript's actual reading frame."""
+    return {"skipped": False, "found": True, "transcript": _PVS1_TRANSCRIPTS[gene]}
 
 
 def uniprot_result(features=None, found=True):
@@ -121,24 +150,45 @@ def clingen_result(gene, validity="Definitive"):
     }
 
 
-# BRCA1 P38398, residues 1605-1620 (real UniProt sequence, fetched
-# live), with the real p.Ser1613Gly substitution (index 8, 0-based)
-# applied -- see module docstring.
-_BRCA1_1605_1620 = "LKVAESAQSPAAAHTT"
-assert _BRCA1_1605_1620[8] == "S"  # residue 1613
-_BRCA1_S1613G_ALT = _BRCA1_1605_1620[:8] + "G" + _BRCA1_1605_1620[9:]
+# Real variant_dict/transcript_result pairs, replacing the old
+# `protein_result=missense_protein_result(...)` mocks of
+# `pipeline/protein_translator.py`'s frame-unaware local translation
+# window (see module docstring -- that window is no longer what BP1/
+# BP7 read from; each of these was independently confirmed via
+# `coding_consequence_detail` against the cited real transcript CDS
+# fixture before being hardcoded here).
 
+# BRCA1 p.Ser1613Gly = c.4837A>G, genomic 17:43071077 T>C (minus
+# strand) -- VCV000041827, Benign, expert panel. Confirmed: codon
+# 1613, S->G.
+_BRCA1_S1613G = {"chrom": "17", "pos": 43071077, "ref": "T", "alt": "C"}
 
-def missense_protein_result(ref, alt):
-    return {"skipped": False, "translation": {"ref_protein": ref, "alt_protein": alt}}
+# CFTR p.Gly551Asp = c.1652G>A, genomic 7:117587806 G>A -- VCV000007120,
+# Pathogenic, practice guideline. Confirmed: codon 551, G->D.
+_CFTR_G551D = {"chrom": "7", "pos": 117587806, "ref": "G", "alt": "A"}
 
+# MYH7 codon 50, K->Q -- not tied to a specific ClinVar record (this
+# test only exercises the "dosage not established" negative branch,
+# same as the original synthetic "MAAAQ"->"MAAAH" it replaces); still a
+# real substitution against the real MYH7 transcript CDS, confirmed:
+# codon 50, K->Q.
+_MYH7_MISSENSE = {"chrom": "14", "pos": 23433585, "ref": "T", "alt": "G"}
 
-def nonsense_protein_result():
-    return {"skipped": False, "translation": {"ref_protein": "MAAAQ", "alt_protein": "MAA*"}}
+# BRCA1 codon 50, K->* (nonsense) -- not tied to a specific ClinVar
+# record (only used for the "nonsense doesn't trigger BP1" negative
+# check); confirmed against the real BRCA1 transcript CDS.
+_BRCA1_NONSENSE = {"chrom": "17", "pos": 43106520, "ref": "T", "alt": "A"}
 
+# TP53 p.Arg248Trp = c.742C>T, genomic 17:7674221 G>A -- ClinVar
+# Pathogenic, expert panel. Confirmed against
+# `tests/fixtures/ps1_pm5_transcript.json`: codon 248, R->W. The exact
+# variant that exposed the BP7 bug this rewrite fixes.
+_TP53_R248W = {"chrom": "17", "pos": 7674221, "ref": "G", "alt": "A"}
 
-def synonymous_protein_result():
-    return {"skipped": False, "translation": {"ref_protein": "MAAAQ", "alt_protein": "MAAAQ"}}
+# TP53 p.Arg175= (synonymous) = c.525C>T, genomic 17:7675087 G>A --
+# same real record `test_ps1_pm5.py` already validates. Confirmed:
+# codon 175, R->R.
+_TP53_SYNONYMOUS = {"chrom": "17", "pos": 7675087, "ref": "G", "alt": "A"}
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +199,8 @@ class TestBP1(unittest.TestCase):
     def test_brca1_real_missense_triggers_bp1(self):
         """Real: BRCA1 p.Ser1613Gly (VCV000041827, Benign), dosage score 3 (LOF_ESTABLISHED)."""
         result = ACMGRuleEngine().evaluate(
-            protein_result=missense_protein_result(_BRCA1_1605_1620, _BRCA1_S1613G_ALT),
+            variant_dict=_BRCA1_S1613G,
+            transcript_result=gene_transcript_result("BRCA1"),
             clingen_result=clingen_result("BRCA1"),
         )
         bp1 = result["all_criteria"]["BP1"]
@@ -160,7 +211,8 @@ class TestBP1(unittest.TestCase):
     def test_cftr_real_pathogenic_missense_in_recessive_lof_gene_triggers_bp1(self):
         """Real: CFTR p.Gly551Asp (VCV000007120, Pathogenic), dosage score 30 (LOF_ESTABLISHED_RECESSIVE)."""
         result = ACMGRuleEngine().evaluate(
-            protein_result=missense_protein_result("MGSCVQ", "MGSCDQ"),
+            variant_dict=_CFTR_G551D,
+            transcript_result=gene_transcript_result("CFTR"),
             clingen_result=clingen_result("CFTR"),
         )
         bp1 = result["all_criteria"]["BP1"]
@@ -170,7 +222,8 @@ class TestBP1(unittest.TestCase):
     def test_myh7_missense_does_not_trigger_bp1_dosage_not_established(self):
         """MYH7 dosage score 0 -- real biology: MYH7 cardiomyopathy is a missense/dominant-negative mechanism gene, not a truncating one, so BP1 correctly does not apply."""
         result = ACMGRuleEngine().evaluate(
-            protein_result=missense_protein_result("MAAAQ", "MAAAH"),
+            variant_dict=_MYH7_MISSENSE,
+            transcript_result=gene_transcript_result("MYH7"),
             clingen_result=clingen_result("MYH7"),
         )
         bp1 = result["all_criteria"]["BP1"]
@@ -179,20 +232,31 @@ class TestBP1(unittest.TestCase):
 
     def test_nonsense_variant_does_not_trigger_bp1(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=nonsense_protein_result(),
+            variant_dict=_BRCA1_NONSENSE,
+            transcript_result=gene_transcript_result("BRCA1"),
             clingen_result=clingen_result("BRCA1"),
         )
         self.assertEqual(result["all_criteria"]["BP1"]["status"], "not_triggered")
 
     def test_no_clingen_data_is_not_evaluated(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=missense_protein_result("MAAAQ", "MAAAH"),
+            variant_dict=_BRCA1_S1613G,
+            transcript_result=gene_transcript_result("BRCA1"),
+        )
+        self.assertEqual(result["all_criteria"]["BP1"]["status"], "not_evaluated")
+
+    def test_undetermined_consequence_is_not_evaluated(self):
+        """No transcript structure at all -- BP1 must report a gap (not_evaluated), never guess missense/not-missense."""
+        result = ACMGRuleEngine().evaluate(
+            variant_dict=_BRCA1_S1613G,
+            clingen_result=clingen_result("BRCA1"),
         )
         self.assertEqual(result["all_criteria"]["BP1"]["status"], "not_evaluated")
 
     def test_bp1_contributes_supporting_point_to_combining_rules(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=missense_protein_result(_BRCA1_1605_1620, _BRCA1_S1613G_ALT),
+            variant_dict=_BRCA1_S1613G,
+            transcript_result=gene_transcript_result("BRCA1"),
             clingen_result=clingen_result("BRCA1"),
         )
         self.assertTrue(any("BP1 triggered (supporting, benign) contributes 1 point" in t for t in result["combining_rule_trace"]))
@@ -327,32 +391,46 @@ def damaging_plugin_result(classification="large_effect", score=0.8):
     return {"score": score, "classification": classification, "confidence": score}
 
 
+def _synonymous_kwargs():
+    return {"variant_dict": _TP53_SYNONYMOUS, "transcript_result": tp53_transcript_result()}
+
+
+def _missense_kwargs():
+    return {"variant_dict": _TP53_R248W, "transcript_result": tp53_transcript_result()}
+
+
 class TestBP7(unittest.TestCase):
     def test_non_synonymous_variant_does_not_trigger_bp7(self):
-        result = ACMGRuleEngine().evaluate(protein_result=missense_protein_result("MAAAQ", "MAAAH"))
+        """Real: TP53 p.Arg248Trp (c.742C>T) -- the exact variant that exposed this bug (was misread as 'synonymous' by the old frame-unaware translation window)."""
+        result = ACMGRuleEngine().evaluate(**_missense_kwargs())
         self.assertEqual(result["all_criteria"]["BP7"]["status"], "not_triggered")
 
+    def test_undetermined_consequence_is_not_evaluated(self):
+        """No transcript structure at all -- BP7 must report a gap (not_evaluated), never guess synonymous/not-synonymous."""
+        result = ACMGRuleEngine().evaluate(variant_dict=_TP53_SYNONYMOUS)
+        self.assertEqual(result["all_criteria"]["BP7"]["status"], "not_evaluated")
+
     def test_synonymous_with_no_splice_evidence_at_all_triggers_low_confidence(self):
-        """Real: BRCA1 c.5175A>G (p.Glu1725=), VCV000136552, Likely benign -- narrative grounding; BP7 itself only consumes is_synonymous + each predictor's own result dict."""
-        result = ACMGRuleEngine().evaluate(protein_result=synonymous_protein_result())
+        """Real: TP53 c.525C>T (p.Arg175=) -- the same real record `test_ps1_pm5.py` validates; BP7 itself only consumes is_synonymous + each predictor's own result dict."""
+        result = ACMGRuleEngine().evaluate(**_synonymous_kwargs())
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "triggered")
         self.assertEqual(bp7["confidence"], "Low")
 
     def test_synonymous_with_mmsplice_no_effect_triggers(self):
-        result = ACMGRuleEngine().evaluate(protein_result=synonymous_protein_result(), mmsplice_result=no_effect_mmsplice())
+        result = ACMGRuleEngine().evaluate(mmsplice_result=no_effect_mmsplice(), **_synonymous_kwargs())
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "triggered")
         self.assertIn("MMSplice", bp7["evidence_sources"])
 
     def test_synonymous_with_mmsplice_damaging_blocks_bp7(self):
-        result = ACMGRuleEngine().evaluate(protein_result=synonymous_protein_result(), mmsplice_result=damaging_mmsplice())
+        result = ACMGRuleEngine().evaluate(mmsplice_result=damaging_mmsplice(), **_synonymous_kwargs())
         self.assertEqual(result["all_criteria"]["BP7"]["status"], "not_triggered")
 
     def test_synonymous_with_spliceformer_no_effect_triggers(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=synonymous_protein_result(),
             spliceformer_result=no_effect_plugin_result(),
+            **_synonymous_kwargs(),
         )
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "triggered")
@@ -360,9 +438,9 @@ class TestBP7(unittest.TestCase):
 
     def test_synonymous_with_spliceformer_damaging_blocks_even_when_mmsplice_is_silent(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=synonymous_protein_result(),
             mmsplice_result=no_effect_mmsplice(),
             spliceformer_result=damaging_plugin_result("large_effect"),
+            **_synonymous_kwargs(),
         )
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "not_triggered")
@@ -370,17 +448,17 @@ class TestBP7(unittest.TestCase):
 
     def test_synonymous_with_splicebert_damaging_blocks(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=synonymous_protein_result(),
             splicebert_result=damaging_plugin_result("moderate_effect"),
+            **_synonymous_kwargs(),
         )
         self.assertEqual(result["all_criteria"]["BP7"]["status"], "not_triggered")
 
     def test_all_three_predictors_agreeing_no_effect_triggers_with_all_sources_listed(self):
         result = ACMGRuleEngine().evaluate(
-            protein_result=synonymous_protein_result(),
             mmsplice_result=no_effect_mmsplice(),
             spliceformer_result=no_effect_plugin_result(),
             splicebert_result=no_effect_plugin_result(),
+            **_synonymous_kwargs(),
         )
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "triggered")
@@ -390,8 +468,8 @@ class TestBP7(unittest.TestCase):
     def test_ensemble_result_alone_is_not_read_by_bp7(self):
         """ensemble_result is Enformer/Borzoi (PP3/BP4's field) -- BP7 must not treat it as a splice-predictor source."""
         result = ACMGRuleEngine().evaluate(
-            protein_result=synonymous_protein_result(),
             ensemble_result={"models_used": ["enformer", "borzoi"], "classification": "large_effect", "consensus_score": 0.9, "basis": "two_model_consensus", "agreement_percentage": 90.0},
+            **_synonymous_kwargs(),
         )
         bp7 = result["all_criteria"]["BP7"]
         self.assertEqual(bp7["status"], "triggered")  # no MMSplice/SpliceFormer/SpliceBERT evidence at all -> low-confidence trigger, unaffected by ensemble_result

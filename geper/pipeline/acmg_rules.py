@@ -54,6 +54,7 @@ from pipeline.pvs1.utils import (
     coding_consequence_detail,
     lof_mechanism_from_clingen,
     population_af_from_gnomad,
+    protein_effect_flags,
     transcript_from_result,
 )
 
@@ -160,7 +161,7 @@ class ACMGRuleEngine:
     ) -> Dict[str, Any]:
         criteria: Dict[str, CriterionResult] = {}
 
-        is_lof, is_inframe_indel, is_synonymous, is_missense = self._protein_effect_flags(protein_result)
+        is_synonymous, is_missense = self._protein_effect_flags(variant_dict, transcript_result)
 
         criteria["PVS1"] = self._pvs1(
             variant_dict=variant_dict,
@@ -183,9 +184,8 @@ class ACMGRuleEngine:
             variant_dict=variant_dict, transcript_result=transcript_result, uniprot_result=uniprot_result,
         )
         criteria["PS4"] = self._ps4(gnomad_result)
-        criteria["PP3"] = self._pp3(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
+        criteria["PP3"], criteria["BP4"] = self._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
         criteria["BA1"], criteria["BS1"] = self._ba1_bs1(gnomad_result)
-        criteria["BP4"] = self._bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
         criteria["BP7"] = self._bp7(is_synonymous, mmsplice_result, spliceformer_result, splicebert_result)
         criteria["PP1"] = self._pp1(clingen_result)
         criteria["BS4"] = self._bs4(clingen_result)
@@ -241,29 +241,36 @@ class ACMGRuleEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _protein_effect_flags(protein_result: Dict[str, Any]):
-        is_lof = is_inframe_indel = is_synonymous = is_missense = False
-        if protein_result and not protein_result.get("skipped"):
-            translation = protein_result.get("translation", {})
-            ref_p, alt_p = translation.get("ref_protein"), translation.get("alt_protein")
-            if ref_p and alt_p:
-                if ref_p == alt_p:
-                    is_synonymous = True
-                elif alt_p.endswith("*") and not ref_p.endswith("*"):
-                    is_lof = True
-                elif len(ref_p) != len(alt_p):
-                    length_delta = abs(len(alt_p) - len(ref_p))
-                    if length_delta % 3 == 0:
-                        is_inframe_indel = True
-                    else:
-                        is_lof = True  # frameshift
-                else:
-                    # Same length, differs from reference, and the new
-                    # protein doesn't gain a stop codon (that's the LOF
-                    # branch above): a plain single/multi-residue
-                    # substitution -- BP1's precondition.
-                    is_missense = True
-        return is_lof, is_inframe_indel, is_synonymous, is_missense
+    def _protein_effect_flags(
+        variant_dict: Dict[str, Any], transcript_result: Dict[str, Any]
+    ) -> "tuple[Optional[bool], Optional[bool]]":
+        """
+        (is_synonymous, is_missense) for BP7/BP1, called from the
+        transcript's real CDS reading frame -- never from
+        `pipeline/protein_translator.py`'s frame-unaware local
+        translation window. That window translates from the first AUG
+        it happens to find in a short flanking sequence, which for a
+        coding variant more than a few dozen bases from the transcript's
+        true start codon is an essentially arbitrary frame: it produced
+        matching ref/alt "protein" text for real missense variants
+        (BP7 wrongly triggering, contributing benign points) purely by
+        coincidence of which wrong codon the substitution happened to
+        land in. See `pipeline/pvs1/utils.py::protein_effect_flags` and
+        `coding_consequence_detail` for the transcript-CDS-frame
+        replacement and its own docstrings for the full history.
+
+        Returns `(None, None)` -- never a guessed boolean -- when the
+        consequence genuinely could not be determined from transcript
+        data (no transcript structure, no CDS sequence fetched, a
+        build/transcript coordinate mismatch, or a multi-nucleotide
+        same-length substitution). Callers must report "not_evaluated"
+        for that case, not a triggered/not_triggered guess.
+        """
+        transcript = transcript_from_result(transcript_result)
+        flags = protein_effect_flags(variant_dict, transcript)
+        if not flags.determined:
+            return None, None
+        return flags.is_synonymous, flags.is_missense
 
     # ------------------------------------------------------------------
     # Individually-evaluated criteria
@@ -814,21 +821,107 @@ class ACMGRuleEngine:
         ensemble_result: Dict[str, Any] = None,
         conservation_result: Dict[str, Any] = None,
     ) -> CriterionResult:
-        direction, strength = _STRENGTH["PP3"]
-        supporting, sources = [], []
-        am_damaging = mm_damaging = ensemble_damaging = conservation_damaging = False
+        pp3, _ = ACMGRuleEngine._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
+        return pp3
+
+    @staticmethod
+    def _bp4(
+        alphamissense_result: Dict[str, Any],
+        mmsplice_result: Dict[str, Any],
+        ensemble_result: Dict[str, Any] = None,
+        conservation_result: Dict[str, Any] = None,
+    ) -> CriterionResult:
+        _, bp4 = ACMGRuleEngine._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
+        return bp4
+
+    @staticmethod
+    def _pp3_bp4(
+        alphamissense_result: Dict[str, Any],
+        mmsplice_result: Dict[str, Any],
+        ensemble_result: Dict[str, Any] = None,
+        conservation_result: Dict[str, Any] = None,
+    ) -> "tuple[CriterionResult, CriterionResult]":
+        """
+        PP3 ("computational evidence supports a deleterious effect") and
+        BP4 ("computational evidence suggests no deleterious effect")
+        evaluated together, from one shared scan of the same four
+        computational evidence sources (AlphaMissense, MMSplice, the
+        Enformer/Borzoi AI ensemble, and PhyloP/PhastCons/GERP++
+        conservation).
+
+        BUG THIS REPLACES: `_pp3` and `_bp4` used to each independently
+        scan this same evidence for their own favored direction only,
+        with no check against the opposite direction. Every individual
+        *source* is internally consistent (AlphaMissense reports exactly
+        one am_class; MMSplice/the ensemble report exactly one
+        classification -- none of those can argue both directions at
+        once), but nothing stopped PP3 finding a damaging signal from
+        one source while BP4 simultaneously found a benign signal from
+        a *different* source on the same variant -- e.g. AlphaMissense
+        'likely_pathogenic' (triggers PP3) alongside PhastCons
+        'not_conserved' (triggers BP4). Both were reported as
+        "triggered" side by side, which is a contradiction: PP3 and BP4
+        are logical opposites and the report should never assert both.
+        (There was also a half-finished attempt at this exact fix
+        already in `_bp4` -- `checked_mm`/`mm_neutral_only`/
+        `no_damaging_signal` were computed but never actually used to
+        gate anything; this replaces that dead code with a real,
+        symmetric fix, and along the way lets MMSplice's own "no
+        significant splice effect" reading count as genuine BP4
+        evidence, matching how MMSplice's damaging reading already
+        counted for PP3.)
+
+        RESOLUTION -- when should conflicting predictors win?
+        When the same evaluation finds *both* a damaging and a benign
+        computational signal, computational evidence is
+        self-contradictory for this variant, and this reports
+        "not_triggered" for *both* PP3 and BP4 (never one arbitrarily
+        overriding the other), with the opposing signal(s) surfaced in
+        `conflicting_evidence` so the disagreement stays visible rather
+        than being silently dropped. Reasoning:
+          - ACMG/AMP 2015 and the ClinGen SVI's later in silico
+            calibration work (Pejaver et al. 2022) both expect
+            computational evidence to come from a source (or sources)
+            that agree, not from picking whichever predictor argues the
+            direction you want; GEPER has no validated ranking of
+            AlphaMissense vs. conservation vs. the splice ensemble that
+            would justify letting one silently outvote another.
+          - This mirrors a precedent already in this exact engine: BP7
+            (see `_bp7`) already treats "a damaging call from any
+            splice source blocks the synonymous/benign claim" as
+            correct -- extending the same "any dissent blocks the
+            claim" principle symmetrically to both PP3 and BP4 here is
+            the internally consistent choice for this codebase.
+          - A majority-vote or fixed-priority scheme (e.g.
+            "AlphaMissense always wins") was considered and rejected:
+            it would still be picking a winner GEPER has no evidence
+            base to justify, dressed up as a rule instead of an
+            assumption.
+        This is deliberately the most conservative resolution (favors
+        neither direction) rather than an attempt to be "decisive".
+        """
+        pp3_dir, pp3_strength = _STRENGTH["PP3"]
+        bp4_dir, bp4_strength = _STRENGTH["BP4"]
+        sources: List[str] = []
+        damaging: List[tuple] = []  # (source_label, evidence_text)
+        benign: List[tuple] = []
+
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             sources.append("AlphaMissense")
             if am_class == "likely_pathogenic":
-                am_damaging = True
-                supporting.append(f"AlphaMissense predicts 'likely_pathogenic' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).")
+                damaging.append(("AlphaMissense", f"AlphaMissense predicts 'likely_pathogenic' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')})."))
+            elif am_class == "likely_benign":
+                benign.append(("AlphaMissense", f"AlphaMissense predicts 'likely_benign' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')})."))
+
         if mmsplice_result and mmsplice_result.get("predicted"):
             category = mmsplice_result.get("interpretation_category")
             sources.append("MMSplice")
             if category in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
-                mm_damaging = True
-                supporting.append(f"MMSplice predicts a damaging splice effect ({mmsplice_result.get('interpretation')}).")
+                damaging.append(("MMSplice", f"MMSplice predicts a damaging splice effect ({mmsplice_result.get('interpretation')})."))
+            else:
+                benign.append(("MMSplice", "MMSplice predicts no significant splice disruption."))
+
         # Ensemble (Enformer/Borzoi) evidence -- additive, third source.
         # Follows the routing rules documented in
         # pipeline/models/ensemble.py::EnsembleManager.evaluate:
@@ -845,24 +938,29 @@ class ACMGRuleEngine:
             basis_label = "single-model prediction" if basis == "single_model" else (
                 f"{len(models_used)}-model consensus (agreement={ensemble_result.get('agreement_percentage')}%)"
             )
-            sources.append(f"AI-ensemble({'+'.join(models_used)})")
+            label = f"AI-ensemble({'+'.join(models_used)})"
+            sources.append(label)
+            score_str = f"{consensus_score:.3f}" if consensus_score is not None else "n/a"
             if classification in ("large_effect", "moderate_effect"):
-                ensemble_damaging = True
-                score_str = f"{consensus_score:.3f}" if consensus_score is not None else "n/a"
-                supporting.append(
+                damaging.append((label, (
                     f"Splicing/regulatory AI ensemble ({basis_label}) predicts a "
                     f"'{classification}' effect (score={score_str}). {ensemble_result.get('reasoning', '')}"
-                )
-        # Conservation (PhyloP, PhastCons) evidence -- additive,
-        # fourth+ source(s). See `_conservation_signal`'s own
-        # docstring for the conserved/not_conserved/ambiguous/None
-        # classification; only "conserved" contributes here (an
-        # "ambiguous" score is real evidence that was checked but
-        # doesn't clearly argue either direction, so it still counts
-        # toward `sources` but never toward `conservation_damaging`).
+                )))
+            elif classification == "no_significant_effect":
+                benign.append((label, (
+                    f"Splicing/regulatory AI ensemble ({basis_label}) predicts "
+                    f"'no_significant_effect' (score={score_str}). {ensemble_result.get('reasoning', '')}"
+                )))
+
+        # Conservation (PhyloP, PhastCons, GERP++) evidence -- additive,
+        # fourth+ source(s). See `_conservation_signal`'s own docstring
+        # for the conserved/not_conserved/ambiguous/None classification.
         # Each integrated score type (see `_CONSERVATION_SCORE_TYPES`)
         # is checked independently -- PhyloP and PhastCons agreeing is
-        # two lines of evidence, not double-counted as one.
+        # two lines of evidence, not double-counted as one, and the two
+        # disagreeing (one "conserved", the other "not_conserved") is
+        # exactly the kind of internal conflict this method now surfaces
+        # rather than letting each side of it feed a different criterion.
         for score_key, label, conserved_field, not_conserved_field in ACMGRuleEngine._CONSERVATION_SCORE_TYPES:
             cfg = CONFIG.conservation
             cons_direction, cons_score = ACMGRuleEngine._conservation_signal(
@@ -872,30 +970,95 @@ class ACMGRuleEngine:
                 continue
             sources.append(label)
             if cons_direction == "conserved":
-                conservation_damaging = True
-                supporting.append(
+                damaging.append((label, (
                     f"{label} conservation score ({cons_score:.2f}) is at or above the conserved "
                     f"threshold ({getattr(cfg, conserved_field)}), indicating evolutionary constraint "
                     "at this position."
-                )
+                )))
+            elif cons_direction == "not_conserved":
+                benign.append((label, (
+                    f"{label} conservation score ({cons_score:.2f}) is at or below the not-conserved "
+                    f"threshold ({getattr(cfg, not_conserved_field)}), indicating no evolutionary "
+                    "constraint at this position."
+                )))
+
         if not sources:
-            return _not_evaluated("PP3", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
-        if am_damaging or mm_damaging or ensemble_damaging or conservation_damaging:
-            return CriterionResult(
-                "PP3", direction, strength, "triggered",
-                "Computational evidence (from " + " and ".join(sources) + ") supports a deleterious "
-                "effect on the gene/gene product.",
-                supporting_evidence=supporting,
-                evidence_sources=sources,
-                confidence="Moderate" if len(supporting) > 1 else "Low",
+            na = _not_evaluated("PP3", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
+            nb = _not_evaluated("BP4", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
+            return na, nb
+
+        damaging_texts = [text for _, text in damaging]
+        benign_texts = [text for _, text in benign]
+
+        if damaging and benign:
+            damaging_labels = ", ".join(dict.fromkeys(label for label, _ in damaging))
+            benign_labels = ", ".join(dict.fromkeys(label for label, _ in benign))
+            conflict_note = (
+                f"Computational predictors disagree for this variant: {damaging_labels} indicate a "
+                f"deleterious effect, while {benign_labels} indicate no deleterious effect. Neither PP3 "
+                "nor BP4 is applied when the integrated computational evidence is self-contradictory."
             )
-        return CriterionResult(
-            "PP3", direction, strength, "not_triggered",
+            pp3 = CriterionResult(
+                "PP3", pp3_dir, pp3_strength, "not_triggered", conflict_note,
+                supporting_evidence=damaging_texts, conflicting_evidence=benign_texts,
+                evidence_sources=sources, confidence="Low",
+            )
+            bp4 = CriterionResult(
+                "BP4", bp4_dir, bp4_strength, "not_triggered", conflict_note,
+                supporting_evidence=benign_texts, conflicting_evidence=damaging_texts,
+                evidence_sources=sources, confidence="Low",
+            )
+            return pp3, bp4
+
+        if damaging:
+            pp3 = CriterionResult(
+                "PP3", pp3_dir, pp3_strength, "triggered",
+                "Computational evidence (from " + " and ".join(dict.fromkeys(label for label, _ in damaging)) +
+                ") supports a deleterious effect on the gene/gene product.",
+                supporting_evidence=damaging_texts,
+                evidence_sources=sources,
+                confidence="Moderate" if len(damaging_texts) > 1 else "Low",
+            )
+            bp4 = CriterionResult(
+                "BP4", bp4_dir, bp4_strength, "not_triggered",
+                "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
+                "converge on a benign prediction.",
+                conflicting_evidence=damaging_texts,
+                evidence_sources=sources, confidence="Low",
+            )
+            return pp3, bp4
+
+        if benign:
+            bp4 = CriterionResult(
+                "BP4", bp4_dir, bp4_strength, "triggered",
+                "Computational evidence (" + " and ".join(dict.fromkeys(label for label, _ in benign)) +
+                ") suggests no deleterious effect.",
+                supporting_evidence=benign_texts,
+                evidence_sources=sources, confidence="Low",
+            )
+            pp3 = CriterionResult(
+                "PP3", pp3_dir, pp3_strength, "not_triggered",
+                "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
+                "indicate a damaging effect.",
+                conflicting_evidence=benign_texts,
+                evidence_sources=sources, confidence="Low",
+            )
+            return pp3, bp4
+
+        # Sources returned results, but none crossed either directional
+        # threshold (e.g. only "ambiguous" conservation scores).
+        pp3 = CriterionResult(
+            "PP3", pp3_dir, pp3_strength, "not_triggered",
             "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
             "indicate a damaging effect.",
-            evidence_sources=sources,
-            confidence="Low",
+            evidence_sources=sources, confidence="Low",
         )
+        bp4 = CriterionResult(
+            "BP4", bp4_dir, bp4_strength, "not_triggered",
+            "Computational predictors that returned a result did not converge on a benign prediction.",
+            evidence_sources=sources, confidence="Low",
+        )
+        return pp3, bp4
 
     @staticmethod
     def _ba1_bs1(gnomad_result: Dict[str, Any]):
@@ -949,86 +1112,8 @@ class ACMGRuleEngine:
         return ba1, bs1
 
     @staticmethod
-    def _bp4(
-        alphamissense_result: Dict[str, Any],
-        mmsplice_result: Dict[str, Any],
-        ensemble_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
-    ) -> CriterionResult:
-        direction, strength = _STRENGTH["BP4"]
-        supporting, sources = [], []
-        am_benign = mm_neutral_only = ensemble_benign = conservation_benign = False
-        checked_mm = False
-        if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
-            am_class = (alphamissense_result.get("am_class") or "").strip().lower()
-            sources.append("AlphaMissense")
-            if am_class == "likely_benign":
-                am_benign = True
-                supporting.append(f"AlphaMissense predicts 'likely_benign' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).")
-        if mmsplice_result and mmsplice_result.get("predicted"):
-            checked_mm = True
-            category = mmsplice_result.get("interpretation_category")
-            sources.append("MMSplice")
-            if category not in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
-                mm_neutral_only = True
-        # Ensemble (Enformer/Borzoi) evidence -- additive, third source.
-        # Same routing rules as _pp3 above (see pipeline/models/
-        # ensemble.py::EnsembleManager.evaluate for the 0/1/2-model
-        # logic this consumes).
-        if ensemble_result and ensemble_result.get("models_used"):
-            models_used = ensemble_result["models_used"]
-            classification = ensemble_result.get("classification")
-            consensus_score = ensemble_result.get("consensus_score")
-            basis = ensemble_result.get("basis")
-            basis_label = "single-model prediction" if basis == "single_model" else (
-                f"{len(models_used)}-model consensus (agreement={ensemble_result.get('agreement_percentage')}%)"
-            )
-            sources.append(f"AI-ensemble({'+'.join(models_used)})")
-            if classification == "no_significant_effect":
-                ensemble_benign = True
-                score_str = f"{consensus_score:.3f}" if consensus_score is not None else "n/a"
-                supporting.append(
-                    f"Splicing/regulatory AI ensemble ({basis_label}) predicts "
-                    f"'no_significant_effect' (score={score_str}). {ensemble_result.get('reasoning', '')}"
-                )
-        # Conservation (PhyloP, PhastCons) evidence -- additive,
-        # fourth+ source(s). See `_pp3`'s own comment /
-        # `_conservation_signal`'s docstring for the
-        # conserved/not_conserved/ambiguous/None classification.
-        for score_key, label, conserved_field, not_conserved_field in ACMGRuleEngine._CONSERVATION_SCORE_TYPES:
-            cfg = CONFIG.conservation
-            cons_direction, cons_score = ACMGRuleEngine._conservation_signal(
-                conservation_result, score_key, getattr(cfg, conserved_field), getattr(cfg, not_conserved_field)
-            )
-            if cons_direction is None:
-                continue
-            sources.append(label)
-            if cons_direction == "not_conserved":
-                conservation_benign = True
-                supporting.append(
-                    f"{label} conservation score ({cons_score:.2f}) is at or below the not-conserved "
-                    f"threshold ({getattr(cfg, not_conserved_field)}), indicating no evolutionary "
-                    "constraint at this position."
-                )
-        if not sources:
-            return _not_evaluated("BP4", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
-        no_damaging_signal = am_benign or (checked_mm and mm_neutral_only and not (alphamissense_result and alphamissense_result.get("found") and (alphamissense_result.get("am_class") or "").lower() == "likely_pathogenic"))
-        if am_benign or ensemble_benign or conservation_benign:
-            return CriterionResult(
-                "BP4", direction, strength, "triggered",
-                "Computational evidence (" + " and ".join(sources) + ") suggests no deleterious effect.",
-                supporting_evidence=supporting or ["MMSplice predicts no significant splice disruption."],
-                evidence_sources=sources, confidence="Low",
-            )
-        return CriterionResult(
-            "BP4", direction, strength, "not_triggered",
-            "Computational predictors that returned a result did not converge on a benign prediction.",
-            evidence_sources=sources, confidence="Low",
-        )
-
-    @staticmethod
     def _bp7(
-        is_synonymous: bool,
+        is_synonymous: Optional[bool],
         mmsplice_result: Dict[str, Any],
         spliceformer_result: Dict[str, Any] = None,
         splicebert_result: Dict[str, Any] = None,
@@ -1077,11 +1162,19 @@ class ACMGRuleEngine:
         keeps operating on MMSplice alone, same as before this change.
         """
         direction, strength = _STRENGTH["BP7"]
+        if is_synonymous is None:
+            return _not_evaluated(
+                "BP7",
+                "This variant's protein-level consequence could not be determined from transcript "
+                "data (no transcript/CDS structure was available, or this is a multi-nucleotide "
+                "substitution), so synonymous status cannot be confirmed -- BP7 requires a confirmed "
+                "synonymous call, never an assumption.",
+            )
         if not is_synonymous:
             return CriterionResult(
                 "BP7", direction, strength, "not_triggered",
-                "Variant is not synonymous at the protein level.",
-                evidence_sources=["protein_translator"],
+                "Variant is not synonymous at the protein level (transcript-CDS-frame consequence call).",
+                evidence_sources=["transcript_cds"],
             )
 
         sources, supporting, conflicting = [], [], []
@@ -1116,7 +1209,7 @@ class ACMGRuleEngine:
                 "SpliceFormer, or SpliceBERT) was available to check for a conflicting splice effect.",
                 supporting_evidence=["Synonymous at the protein level."],
                 conflicting_evidence=["No splice predictor produced a result for this variant, so a splice effect cannot be ruled out."],
-                evidence_sources=["protein_translator"], confidence="Low",
+                evidence_sources=["transcript_cds"], confidence="Low",
             )
 
         if mm_damaging or plugin_damaging:
@@ -1126,7 +1219,7 @@ class ACMGRuleEngine:
                 " predicts a damaging splice effect, so BP7 (synonymous with no splice impact) does "
                 "not apply.",
                 conflicting_evidence=conflicting,
-                evidence_sources=["protein_translator"] + sources, confidence="Moderate",
+                evidence_sources=["transcript_cds"] + sources, confidence="Moderate",
             )
 
         return CriterionResult(
@@ -1134,7 +1227,7 @@ class ACMGRuleEngine:
             "Variant is synonymous at the protein level and splice-effect evidence from " +
             ", ".join(sources) + " does not predict a significant splice-disrupting effect.",
             supporting_evidence=["Synonymous at the protein level."] + supporting,
-            evidence_sources=["protein_translator"] + sources,
+            evidence_sources=["transcript_cds"] + sources,
             confidence="Moderate",
         )
 
@@ -1243,7 +1336,7 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
-    def _bp1(is_missense: bool, clingen_result: Dict[str, Any]) -> CriterionResult:
+    def _bp1(is_missense: Optional[bool], clingen_result: Dict[str, Any]) -> CriterionResult:
         """
         BP1 (ACMG/AMP 2015): "Missense variant in a gene for which
         primarily truncating variants are known to cause disease" --
@@ -1275,11 +1368,20 @@ class ACMGRuleEngine:
         gene mechanism is genuinely established.
         """
         direction, strength = _STRENGTH["BP1"]
+        if is_missense is None:
+            return _not_evaluated(
+                "BP1",
+                "This variant's protein-level consequence could not be determined from transcript "
+                "data (no transcript/CDS structure was available, or this is a multi-nucleotide "
+                "substitution), so missense status cannot be confirmed -- BP1 requires a confirmed "
+                "missense call, never an assumption.",
+            )
         if not is_missense:
             return CriterionResult(
                 "BP1", direction, strength, "not_triggered",
-                "Variant is not a missense substitution at the protein level.",
-                evidence_sources=["protein_translator"],
+                "Variant is not a missense substitution at the protein level (transcript-CDS-frame "
+                "consequence call).",
+                evidence_sources=["transcript_cds"],
             )
 
         mechanism, evidence = lof_mechanism_from_clingen(clingen_result)
@@ -1300,7 +1402,7 @@ class ACMGRuleEngine:
                 "dosage-sensitivity axis PVS1 uses). No gene-specific BP1 point calibration is "
                 "integrated here, so the unmodified 2015 default (supporting) strength is applied.",
                 supporting_evidence=evidence,
-                evidence_sources=["ClinGen", "protein_translator"],
+                evidence_sources=["ClinGen", "transcript_cds"],
                 confidence="Low",
                 details={"lof_mechanism": mechanism},
             )
@@ -1314,7 +1416,7 @@ class ACMGRuleEngine:
             "establish loss-of-function/truncating variants as this gene's disease mechanism, so BP1's "
             "precondition is not met.",
             conflicting_evidence=evidence,
-            evidence_sources=["ClinGen", "protein_translator"],
+            evidence_sources=["ClinGen", "transcript_cds"],
             confidence="Low",
             details={"lof_mechanism": mechanism},
         )

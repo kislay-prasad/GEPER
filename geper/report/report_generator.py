@@ -713,8 +713,14 @@ class ReportGenerator:
             lines.append(f"_Skipped: {protein_result.get('reason', 'not applicable')}._")
         else:
             translation = protein_result.get("translation", {})
-            lines.append(f"- **Reference protein:** `{translation.get('ref_protein') or 'n/a'}`")
-            lines.append(f"- **Alternate protein:** `{translation.get('alt_protein') or 'n/a'}`")
+            lines.append(f"- **Reference protein (local window):** `{translation.get('ref_protein') or 'n/a'}`")
+            lines.append(f"- **Alternate protein (local window):** `{translation.get('alt_protein') or 'n/a'}`")
+            lines.append(
+                "  - _Translated from the first start codon found in a short flanking DNA window "
+                "(no exon/splicing awareness); this is the raw sequence handed to ESM-2, not a "
+                "clinical call. It is NOT the transcript-verified consequence -- see the ACMG "
+                "criteria (BP7/BP1/PS1/PM5/PVS1) in the Clinical Report above for that._"
+            )
             esm = protein_result.get("esm2", {})
             if esm:
                 lines.append(f"- Embedding dim: {esm.get('embedding_dim', 'n/a')}")

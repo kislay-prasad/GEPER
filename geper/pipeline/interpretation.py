@@ -19,6 +19,7 @@ from pipeline.confidence_engine import ConfidenceEngine
 from pipeline.prioritization_engine import PrioritizationEngine
 from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.explainability_engine import ExplainabilityEngine
+from pipeline.pvs1.utils import protein_effect_flags, transcript_from_result
 
 logger = get_logger(__name__)
 
@@ -97,30 +98,47 @@ class InterpretationEngine:
         else:
             evidence.append("Not found in dbSNP; may be novel or a private variant.")
 
-        # Protein-level consequence.
+        # Protein-level consequence, called from the transcript's real
+        # CDS reading frame -- never from
+        # `pipeline/protein_translator.py`'s frame-unaware local
+        # translation window. That window translates from the first
+        # AUG it happens to find in a short flanking sequence, which is
+        # an essentially arbitrary reading frame for any variant more
+        # than a few dozen bases from the transcript's true start
+        # codon -- it previously produced this exact line, "Translated
+        # protein sequence is unchanged (synonymous at the protein
+        # level)", for real missense variants (e.g. PRNP p.Pro102Leu)
+        # purely by coincidence of which wrong codon the substitution
+        # landed in. See `pipeline/pvs1/utils.py::protein_effect_flags`
+        # and `coding_consequence_detail` for the transcript-CDS-frame
+        # replacement.
         # `is_predicted_lof` is tracked explicitly (rather than
         # re-derived from the `evidence` text later) so the ClinGen
         # dosage-sensitivity block below can condition PVS1-style
         # reasoning on the actual translation outcome, not on string
         # matching against human-readable evidence text.
         is_predicted_lof = False
-        if protein_result and not protein_result.get("skipped"):
-            translation = protein_result.get("translation", {})
-            ref_p, alt_p = translation.get("ref_protein"), translation.get("alt_protein")
-            if ref_p and alt_p:
-                if ref_p == alt_p:
-                    evidence.append("Translated protein sequence is unchanged (synonymous at the protein level).")
-                elif alt_p.endswith("*") and not ref_p.endswith("*"):
-                    evidence.append("Alternate allele introduces a premature stop codon (nonsense variant).")
-                    significance_score += 2
-                    is_predicted_lof = True
-                elif len(ref_p) != len(alt_p):
-                    evidence.append("Alternate allele causes a frameshift/length change in the translated protein.")
-                    significance_score += 2
-                    is_predicted_lof = True
-                else:
-                    evidence.append("Alternate allele causes an amino acid substitution (missense variant).")
-                    significance_score += 1
+        protein_flags = protein_effect_flags(variant_dict, transcript_from_result(transcript_result))
+        if not protein_flags.determined:
+            evidence.append(
+                "Protein-level consequence could not be determined from transcript data (no CDS "
+                "sequence was available for this variant/transcript, or this is a multi-nucleotide "
+                "substitution)."
+            )
+        elif protein_flags.is_synonymous:
+            evidence.append("Transcript-verified protein consequence: synonymous (no amino acid change).")
+        elif protein_flags.is_lof:
+            if len(ref or "") != len(alt or ""):
+                evidence.append("Transcript-verified protein consequence: frameshift.")
+            else:
+                evidence.append("Transcript-verified protein consequence: premature stop codon (nonsense).")
+            significance_score += 2
+            is_predicted_lof = True
+        elif protein_flags.is_inframe_indel:
+            evidence.append("Transcript-verified protein consequence: in-frame insertion/deletion.")
+        elif protein_flags.is_missense:
+            evidence.append("Transcript-verified protein consequence: missense (amino acid substitution).")
+            significance_score += 1
 
         # AlphaMissense: a modest, independent contribution alongside the
         # protein-level missense evidence above -- deliberately small

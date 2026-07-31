@@ -570,6 +570,95 @@ def classify_pm4_variant(
     return None, notes
 
 
+@dataclass(frozen=True)
+class ProteinEffectFlags:
+    """
+    Transcript-CDS-frame classification of a variant's protein-level
+    effect: `is_lof` (nonsense or frameshift), `is_inframe_indel`,
+    `is_synonymous`, `is_missense`. Exactly one is True when
+    `determined` is True; all four are False when `determined` is
+    False, which callers must check before trusting any of them.
+
+    This is the transcript-aware replacement for
+    `pipeline/acmg_rules.py::ACMGRuleEngine._protein_effect_flags`'s
+    old use of `pipeline/protein_translator.py`'s frame-unaware local
+    translation window -- see `coding_consequence_detail`'s docstring
+    for why that window is unusable for this. Both BP7 (benign,
+    synonymous-only) and BP1 (benign, missense-only) fed directly off
+    that window before this existed: for a variant far from the
+    spurious in-window AUG the window happens to find, the "protein"
+    it translates is in an essentially arbitrary reading frame, so
+    "ref == alt" (synonymous) or "differs by one residue" (missense)
+    were both close to coin flips rather than real calls -- exactly
+    how a textbook missense variant (e.g. PRNP P102L) could read as
+    synonymous and pick up BP7's benign points.
+    """
+
+    is_lof: bool
+    is_inframe_indel: bool
+    is_synonymous: bool
+    is_missense: bool
+    determined: bool
+
+
+def protein_effect_flags(
+    variant_dict: Optional[Dict[str, Any]], transcript: Optional[TranscriptContext]
+) -> ProteinEffectFlags:
+    """
+    Classify a variant's protein-level effect using only transcript-
+    verified data: REF/ALT length parity for indels (frameshift vs.
+    in-frame -- needs no CDS sequence, exactly like
+    `classify_null_variant`'s and `classify_pm4_variant`'s identical
+    arithmetic), and `coding_consequence_detail`'s CDS-frame codon call
+    for single-nucleotide substitutions.
+
+    `determined` is False -- and every flag False with it -- whenever
+    no reliable transcript-based call was possible: no variant
+    coordinates, no CDS sequence fetched for this transcript, a
+    build/transcript mismatch at the variant's codon, or a
+    multi-nucleotide substitution (`coding_consequence_detail` only
+    calls single-base substitutions; a same-length substitution longer
+    than 1 base returns undetermined rather than a guess). Callers must
+    treat `determined=False` as "not evaluated", never as a negative
+    finding.
+    """
+    if not variant_dict:
+        return ProteinEffectFlags(False, False, False, False, False)
+
+    pos = variant_dict.get("pos")
+    ref = (variant_dict.get("ref") or "").upper()
+    alt = (variant_dict.get("alt") or "").upper()
+    if pos is None or not ref or not alt:
+        return ProteinEffectFlags(False, False, False, False, False)
+
+    if len(ref) != len(alt):
+        length_delta = len(alt) - len(ref)
+        if length_delta % 3 != 0:
+            return ProteinEffectFlags(True, False, False, False, True)
+        return ProteinEffectFlags(False, True, False, False, True)
+
+    if len(ref) != 1:
+        # Multi-nucleotide same-length substitution: not covered by
+        # `coding_consequence_detail` (single-base only).
+        return ProteinEffectFlags(False, False, False, False, False)
+
+    detail = coding_consequence_detail(transcript, int(pos), ref, alt)
+    if detail is None:
+        return ProteinEffectFlags(False, False, False, False, False)
+
+    if detail.category == CONSEQUENCE_SYNONYMOUS:
+        return ProteinEffectFlags(False, False, True, False, True)
+    if detail.category == CONSEQUENCE_NONSENSE:
+        return ProteinEffectFlags(True, False, False, False, True)
+    if detail.category == CONSEQUENCE_MISSENSE:
+        return ProteinEffectFlags(False, False, False, True, True)
+    # CONSEQUENCE_STOP_LOST: none of the four classes apply (matches
+    # the old window-translation semantics, which never classified
+    # stop-loss as any of BP7/BP1's or PVS1's classes -- PM4 handles
+    # stop-loss on its own via `classify_pm4_variant`).
+    return ProteinEffectFlags(False, False, False, False, True)
+
+
 def _protein_null_flags(protein_result: Optional[Dict[str, Any]]) -> Tuple[bool, bool]:
     """
     (is_nonsense, is_frameshift) from GEPER's local protein translation.

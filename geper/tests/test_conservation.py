@@ -672,16 +672,43 @@ class TestConservationACMGExtension(unittest.TestCase):
             result = ACMGRuleEngine._bp4(None, None, None, {"found": True, "phylop_score": 1.0, "phastcons_score": 0.5})
         self.assertEqual(result.status, "not_triggered")
 
-    def test_conservation_never_overrides_existing_alphamissense_evidence(self):
-        """Additive-only guarantee (same as the ensemble_result
-        integration's own comment): a damaging AlphaMissense call plus
-        a not-conserved PhyloP score must still trigger PP3 (from
-        AlphaMissense), not be suppressed by the conflicting PhyloP
-        signal -- BP4 is a separate, independent criterion."""
+    def test_conflicting_alphamissense_and_conservation_triggers_neither_pp3_nor_bp4(self):
+        """Reversed by the PP3/BP4 mutual-exclusivity fix (see
+        `ACMGRuleEngine._pp3_bp4`'s docstring): a damaging AlphaMissense
+        call plus a not-conserved PhyloP score used to still trigger PP3
+        unconditionally (this test previously asserted exactly that,
+        treating PP3/BP4 as fully independent criteria that never needed
+        to agree). That let a report show both "computational evidence
+        supports a deleterious effect" (PP3) and "suggests no
+        deleterious effect" (BP4) for the same variant whenever two
+        different predictors disagreed. Now, self-contradictory
+        computational evidence triggers neither -- both report
+        not_triggered with the opposing signal surfaced in
+        `conflicting_evidence`."""
         am_result = {"skipped": False, "found": True, "am_class": "likely_pathogenic", "am_pathogenicity": 0.95}
+        cons_result = {"found": True, "phylop_score": -2.67}
         with mock.patch("pipeline.acmg_rules.CONFIG", self._cfg()):
-            pp3 = ACMGRuleEngine._pp3(am_result, None, None, {"found": True, "phylop_score": -2.67})
+            pp3 = ACMGRuleEngine._pp3(am_result, None, None, cons_result)
+            bp4 = ACMGRuleEngine._bp4(am_result, None, None, cons_result)
+        self.assertEqual(pp3.status, "not_triggered")
+        self.assertEqual(bp4.status, "not_triggered")
+        self.assertIn("AlphaMissense", pp3.evidence_sources)
+        self.assertIn("PhyloP", pp3.evidence_sources)
+        self.assertTrue(any("PhyloP" in c for c in pp3.conflicting_evidence))
+        self.assertTrue(any("AlphaMissense" in c for c in bp4.conflicting_evidence))
+
+    def test_agreeing_alphamissense_and_conservation_triggers_pp3_not_bp4(self):
+        """Same two sources as above, but agreeing (both damaging) --
+        must still trigger PP3 normally, confirming the conflict check
+        only suppresses genuine disagreement, not concordant evidence
+        from multiple sources."""
+        am_result = {"skipped": False, "found": True, "am_class": "likely_pathogenic", "am_pathogenicity": 0.95}
+        cons_result = {"found": True, "phylop_score": 7.76}
+        with mock.patch("pipeline.acmg_rules.CONFIG", self._cfg()):
+            pp3 = ACMGRuleEngine._pp3(am_result, None, None, cons_result)
+            bp4 = ACMGRuleEngine._bp4(am_result, None, None, cons_result)
         self.assertEqual(pp3.status, "triggered")
+        self.assertEqual(bp4.status, "not_triggered")
         self.assertIn("AlphaMissense", pp3.evidence_sources)
         self.assertIn("PhyloP", pp3.evidence_sources)
 

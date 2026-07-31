@@ -152,6 +152,13 @@ safetensors>=0.4.0
 # without it.
 pyyaml>=6.0
 
+# --- Stage-boundary schema validation (pipeline/stage_schemas.py) ----------
+# Pydantic v2 (the `pydantic>=2.0` API -- `model_validate`/`model_config`/
+# `model_validator`, not the v1 `.parse_obj()`/`class Config` style).
+# Pure validation, no torch/transformers dependency -- cannot conflict
+# with anything else in this file.
+pydantic>=2.0,<3.0
+
 # --- Clinical PDF report generation (report/summary.py) --------------------
 # BSD-licensed (License :: OSI Approved :: BSD License, verified against
 # PyPI's own package metadata) -- no commercial-use restriction, unlike

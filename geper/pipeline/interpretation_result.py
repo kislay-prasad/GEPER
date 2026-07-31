@@ -29,6 +29,8 @@ optional kwarg (default `None`, matching the existing pattern used for
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from pipeline.stage_schemas import validate_acmg_evaluation
+
 
 @dataclass
 class InterpretationResult:
@@ -235,6 +237,13 @@ def build_interpretation_result(
     reorganization -- no new scoring or evidence derivation happens here.
     """
     acmg = interpretation.get("acmg_evaluation") or {}
+    # Schema validation at this boundary (pipeline/stage_schemas.py) --
+    # logged loudly on a malformed acmg_evaluation, never fatal here
+    # either: `acmg` above (the original, unvalidated dict) is still
+    # what the rest of this function reads, exactly as before this
+    # check existed.
+    _variant_ref = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
+    validate_acmg_evaluation(acmg, variant_ref=_variant_ref)
 
     gene_symbol = None
     if clingen_result and clingen_result.get("gene_symbol"):

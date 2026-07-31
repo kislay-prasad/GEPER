@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from utils.logger import get_logger
 from report.clinical_report_builder import build_clinical_report
+from pipeline.stage_schemas import build_raw_evidence_bundle, validate_interpretation_result_for_report
 
 logger = get_logger(__name__)
 
@@ -136,6 +137,18 @@ def build_variant_result(
         "interpro": interpro_result,
         "alphafold": alphafold_result,
     }
+    # Schema validation at this exact boundary (pipeline/stage_schemas.py)
+    # -- the site of the bug above. Deliberately does NOT replace
+    # `raw_evidence_for_report`/`resolved_interpretation_result` below:
+    # a validation failure is logged loudly (see
+    # `build_raw_evidence_bundle`/`validate_interpretation_result_for_report`)
+    # and this function still proceeds with the original, unvalidated
+    # dicts -- falling back to a validated-but-blank result on failure
+    # would silently reintroduce the exact "empty raw_evidence" bug
+    # this schema exists to catch, just one layer further in.
+    _variant_ref = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
+    build_raw_evidence_bundle(variant_ref=_variant_ref, **{f"{k}_result": v for k, v in raw_evidence_for_report.items()})
+    validate_interpretation_result_for_report(resolved_interpretation_result, variant_ref=_variant_ref)
     result = {
         "variant": variant_dict,
         "sequence_context": sequence_context,

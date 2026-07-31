@@ -253,5 +253,79 @@ class TestQueryVariantIntegration(unittest.TestCase):
         self.assertEqual(result["primary_record"]["review_status"], "reviewed by expert panel")
 
 
+class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
+    """
+    Regression test for a second, upstream bug found while verifying
+    this fix in production: `database/dbsnp_client.py::DbSNPClient.
+    lookup_variant` resolves an rsID via the same kind of unchecked
+    `esearch_uids[0]` pick this module's own record selection used to
+    have -- live-confirmed for 17:43094298, dbSNP's positional esearch
+    returns `['397508848', '80357024']`, and `[0]` (`rs397508848`) is
+    the 2bp deletion `c.1232_1233del`'s rsID, not the queried SNV's
+    (`rs80357024`). `ClinVarClient` used to search by rsID *instead
+    of* position whenever one was supplied, so a wrong rsID didn't
+    just mis-rank results -- the correct record never entered the
+    candidate set at all, and no amount of correct `_variant_match`
+    logic could recover it. `query_variant` now always runs the
+    positional search and unions in the rsID search's results, so the
+    correct record is present in `records` regardless of which rsID
+    dbSNP resolved.
+    """
+
+    def test_correct_record_found_even_with_wrong_rsid(self):
+        entries = [_BRCA1_CONFLICTING_SNV, _BRCA1_UNRELATED_DELETION, _BRCA1_CORRECT_SNV]
+        # Positional esearch returns all 3 real UIDs; the (wrong) rsID
+        # esearch returns only the deletion's UID -- exactly the live
+        # dbSNP behavior this reproduces.
+        responses = [
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esearch_response(["619783", "54169", "41804"]))),
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esearch_response(["54169"]))),
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esummary_response(entries))),
+        ]
+        with mock.patch("requests.get", side_effect=responses) as mock_get:
+            result = ClinVarClient().query_variant(_variant(), rsid="rs397508848", assembly="GRCh38")
+
+        self.assertEqual(mock_get.call_count, 3)  # positional esearch + rsid esearch + one merged esummary
+        self.assertEqual(result["match_status"], ClinVarMatchStatus.MATCHED.value)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["primary_record"]["accession"], "VCV000041804")
+        self.assertEqual(result["primary_record"]["clinical_significance"], "Benign")
+
+    def test_esummary_fetched_once_per_uid_even_if_returned_by_both_searches(self):
+        """The rsID search returning a UID the positional search
+        already found must not double-fetch or double-list it."""
+        entries = [_BRCA1_CORRECT_SNV]
+        responses = [
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esearch_response(["41804"]))),
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esearch_response(["41804"]))),  # same UID again
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esummary_response(entries))),
+        ]
+        with mock.patch("requests.get", side_effect=responses):
+            result = ClinVarClient().query_variant(_variant(), rsid="rs80357024", assembly="GRCh38")
+
+        self.assertEqual(result["record_count"], 1)
+        self.assertEqual(len(result["records"]), 1)
+
+    def test_no_rsid_runs_only_the_positional_search(self):
+        entries = [_BRCA1_CORRECT_SNV]
+        responses = [
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esearch_response(["41804"]))),
+            mock.Mock(status_code=200, raise_for_status=lambda: None,
+                      text=__import__("json").dumps(_esummary_response(entries))),
+        ]
+        with mock.patch("requests.get", side_effect=responses) as mock_get:
+            result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        self.assertEqual(mock_get.call_count, 2)  # positional esearch + esummary only
+        self.assertEqual(result["primary_record"]["accession"], "VCV000041804")
+
+
 if __name__ == "__main__":
     unittest.main()

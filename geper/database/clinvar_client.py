@@ -33,6 +33,41 @@ Callers should read `primary_record`/`matched_records`, not `records`
 (which stays the full, unfiltered, position-based list -- kept for
 context/audit display, e.g. "other variants catalogued at this
 position", never for attributing a classification).
+
+Candidate-set completeness (the *retrieval* half of this, distinct
+from matching)
+------------------------------------------------------------------
+The matcher above is only as good as the candidate set it gets to
+search. `query_variant` accepts an optional `rsid` (resolved
+upstream by `database/dbsnp_client.py::DbSNPClient.lookup_variant`,
+which the orchestrator passes through when available) as a second,
+more specific search route. That rsID resolution has the *exact same*
+unfiltered-`[0]`-pick shape this module's own bug had:
+`DbSNPClient.lookup_variant` takes dbSNP's positional esearch
+`uids[0]` with no allele check, and a genomic position frequently has
+more than one dbSNP UID (confirmed live: 17:43094298 returns
+`['397508848', '80357024']` -- `rs397508848` is the 2bp deletion
+`c.1232_1233del`, `rs80357024` is the actually-queried SNV
+`c.1233T>G`; picking index 0 silently returns the deletion's rsID).
+Passed to a ClinVar rsID-based search (`{rsid}[rs]`), a wrong rsID
+doesn't just mis-rank results -- it returns a *narrower, wrong*
+candidate set that never contains the correct record at all, so no
+amount of correct allele-matching downstream can recover it (the
+matcher has nothing to match). This was caught in production: 3 of 5
+`test_data/nuclear_test.vcf` variants (every position where dbSNP had
+more than one UID) resolved to `POSITION_ONLY` post-fix, purely
+because the correct ClinVar record never reached `_variant_match`.
+
+Fix: `query_variant` always runs the position-based esearch
+(previously used only when no rsID was supplied) and, when an rsID is
+also given, unions its esearch results into the same candidate set
+rather than substituting for it. `DbSNPClient`'s own rsID resolution
+is NOT fixed here -- it's a genuine, separate bug (anything else that
+trusts its `uids[0]` rsID has the same exposure) but is out of this
+fix's scope; not relying on it as the *only* ClinVar retrieval route
+is what actually closes this gap, and does so without touching
+`_variant_match`'s matching logic (which was already correct -- it
+simply never got the right candidate to evaluate).
 """
 
 import enum
@@ -80,9 +115,20 @@ class ClinVarClient:
         self, variant: Variant, rsid: Optional[str] = None, assembly: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Look up ClinVar records for a variant. Prefers an rsID (from a
-        prior dbSNP lookup) for a precise match; otherwise falls back
-        to a positional search term.
+        Look up ClinVar records for a variant.
+
+        Always runs the position-based search (previously only used
+        when no rsID was available); when `rsid` is also given (from a
+        prior dbSNP lookup), its results are UNIONED into the same
+        candidate set rather than substituting for the positional
+        search -- see this module's docstring for why: a position can
+        have more than one dbSNP UID, `DbSNPClient.lookup_variant`
+        resolves that ambiguity with the same kind of unchecked `[0]`
+        pick this module used to have, and a wrong rsID's ClinVar
+        search returns a candidate set that never contains the correct
+        record at all. Deduped by ClinVar UID, so a variant with both
+        a correct rsID and a reliable position never pays for two
+        redundant esummary fetches of the same record.
 
         `assembly` is the genome build the input VCF's coordinates are
         on. ClinVar's Entrez position field is build-specific
@@ -93,19 +139,27 @@ class ClinVarClient:
 
         Returns `found=True` (and a non-None `primary_record`) only
         when at least one returned record's own allele/position match
-        the *queried* variant -- never merely because the position
-        search returned something (see this module's docstring for why
-        that distinction matters). `records` is still the full,
-        unfiltered, position-based list, for callers that want to show
-        other variants catalogued at this position as context.
+        the *queried* variant -- never merely because a search
+        returned something (see this module's docstring for why that
+        distinction matters). `records` is still the full, unfiltered,
+        union candidate list, for callers that want to show other
+        variants catalogued at this position as context.
         """
-        search_term = self._build_search_term(variant, rsid, assembly)
-        uids = self._esearch(search_term)
+        position_term = self._positional_search_term(variant, assembly)
+        queries_run = [position_term]
+        uids = list(self._esearch(position_term))
+
+        if rsid:
+            rsid_term = f"{rsid}[rs]"
+            queries_run.append(rsid_term)
+            for uid in self._esearch(rsid_term):
+                if uid not in uids:
+                    uids.append(uid)
 
         if not uids:
-            logger.info(f"No ClinVar records found for '{search_term}'.")
+            logger.info(f"No ClinVar records found for {' | '.join(queries_run)!r}.")
             return {
-                "query": search_term,
+                "query": queries_run,
                 "found": False,
                 "match_status": ClinVarMatchStatus.NOT_FOUND.value,
                 "record_count": 0,
@@ -125,13 +179,13 @@ class ClinVarClient:
             match_status = ClinVarMatchStatus.POSITION_ONLY
             primary_record = None
             logger.info(
-                f"ClinVar returned {len(records)} record(s) at '{search_term}' but none match "
-                f"{variant.chrom}:{variant.pos} {variant.ref}>{variant.alt} by allele -- reporting "
-                "POSITION_ONLY, not attributing any of their classifications to this variant."
+                f"ClinVar returned {len(records)} record(s) for {' | '.join(queries_run)!r} but none "
+                f"match {variant.chrom}:{variant.pos} {variant.ref}>{variant.alt} by allele -- "
+                "reporting POSITION_ONLY, not attributing any of their classifications to this variant."
             )
 
         return {
-            "query": search_term,
+            "query": queries_run,
             "found": match_status == ClinVarMatchStatus.MATCHED,
             "match_status": match_status.value,
             "record_count": len(records),
@@ -170,11 +224,7 @@ class ClinVarClient:
 
         return max(matched_records, key=sort_key)
 
-    def _build_search_term(
-        self, variant: Variant, rsid: Optional[str], assembly: Optional[str]
-    ) -> str:
-        if rsid:
-            return f"{rsid}[rs]"
+    def _positional_search_term(self, variant: Variant, assembly: Optional[str]) -> str:
         chrom = variant.chrom.replace("chr", "")
         position_field = self._position_field(assembly)
         # NOTE: earlier versions appended a bare `AND {ref}>{alt}` clause

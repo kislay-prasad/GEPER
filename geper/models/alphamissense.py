@@ -62,6 +62,7 @@ import torch
 
 from config import CONFIG
 from models.base_model import BaseGenomicModel
+from pipeline.provenance import write_dataset_provenance_sidecar
 from utils.auto_install import ensure_system_binary_available
 from utils.exceptions import ModelInferenceError, ModelLoadError
 from utils.logger import get_logger
@@ -166,6 +167,15 @@ def _run_tabix_index(tabix_binary: str, local_tsv_gz: str) -> None:
         )
 
 
+def catalogue_cache_path(build: str) -> str:
+    """Where the auto-downloaded catalogue for `build` ("hg38"/"hg19")
+    is cached -- public so `pipeline/provenance.py`/
+    `pipeline/orchestrator.py` can read its provenance sidecar without
+    triggering the (~9GB) download."""
+    cache_dir = os.path.join(CONFIG.CACHE_DIR, CONFIG.alphamissense.CACHE_SUBDIR)
+    return os.path.join(cache_dir, f"AlphaMissense_{build}.tsv.gz")
+
+
 def _download_catalogue(url: str, dest_path: str) -> None:
     """
     Stream-download the (~9GB) catalogue file to `dest_path`, via a
@@ -177,6 +187,7 @@ def _download_catalogue(url: str, dest_path: str) -> None:
     try:
         with requests.get(url, stream=True, timeout=60) as response:
             response.raise_for_status()
+            headers = dict(response.headers)
             total_bytes = int(response.headers.get("Content-Length", 0))
             downloaded = 0
             next_log_at = 0
@@ -194,6 +205,19 @@ def _download_catalogue(url: str, dest_path: str) -> None:
                         )
                         next_log_at = downloaded + max(total_bytes // 20, 200 * 1024 * 1024)
         os.replace(part_path, dest_path)
+        # Provenance sidecar (pipeline/provenance.py). The GCS-hosted
+        # catalogue's `ETag` is literally the object's own MD5 (verified
+        # live: a 32-hex-char value, same shape as `x-goog-hash`'s `md5=`
+        # component) -- a precise, server-authoritative content
+        # identifier used directly rather than sha256-hashing this ~9GB
+        # file ourselves, which would add real, avoidable cost on every
+        # (re)download for no extra confidence.
+        write_dataset_provenance_sidecar(
+            dest_path, url, response_headers=headers,
+            content_hash=(headers.get("ETag") or "").strip('"') or None,
+            hash_algorithm="gcs-etag-md5" if headers.get("ETag") else None,
+            compute_hash_from_file=False,
+        )
     except Exception as exc:
         if os.path.exists(part_path):
             os.remove(part_path)
@@ -256,7 +280,7 @@ def _ensure_local_catalogue(configured_source: str, build: str, tabix_binary: st
 
     cache_dir = os.path.join(CONFIG.CACHE_DIR, CONFIG.alphamissense.CACHE_SUBDIR)
     os.makedirs(cache_dir, exist_ok=True)
-    local_path = os.path.join(cache_dir, f"AlphaMissense_{build}.tsv.gz")
+    local_path = catalogue_cache_path(build)
 
     with _DOWNLOAD_LOCK:
         # Re-check after acquiring the lock: another thread may have

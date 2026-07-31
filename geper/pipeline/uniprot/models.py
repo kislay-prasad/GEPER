@@ -58,6 +58,14 @@ class UniProtAnnotation:
 
     error: Optional[str] = None
 
+    # UniProt's own real, source-published release identifiers, from
+    # the live REST API's `X-UniProt-Release`/`X-UniProt-Release-Date`
+    # response headers (verified live, e.g. release "2026_02"). None
+    # for the local-dataset provider or a call that never reached the
+    # live API. See `pipeline/provenance.py`'s docstring for the audit.
+    release: Optional[str] = None
+    release_date: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "gene_symbol": self.gene_symbol,
@@ -73,6 +81,8 @@ class UniProtAnnotation:
             "disease_comments": self.disease_comments,
             "features": [f.to_dict() for f in self.features],
             "error": self.error,
+            "release": self.release,
+            "release_date": self.release_date,
         }
 
     @staticmethod

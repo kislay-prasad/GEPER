@@ -54,6 +54,15 @@ class InterProAnnotation:
     domains: List[InterProDomainMatch] = field(default_factory=list)
     error: Optional[str] = None
 
+    # The live REST API's own `InterPro-Version` response header
+    # (verified live, e.g. "109.0") -- InterPro's real, source-
+    # published version identifier for this data. None for the local-
+    # dataset provider (no equivalent signal in a static file) or when
+    # this annotation didn't come from a live API call at all (error/
+    # not-found sentinels built without ever reaching `_get`). See
+    # `pipeline/provenance.py`'s docstring for the full per-source audit.
+    api_version: Optional[str] = None
+
     def affected_domains(self, position: Optional[int]) -> List[Dict[str, Any]]:
         """
         Domains whose matched span overlaps `position` (a
@@ -86,6 +95,7 @@ class InterProAnnotation:
             "found": self.found,
             "domains": [d.to_dict() for d in self.domains],
             "error": self.error,
+            "api_version": self.api_version,
         }
 
     @staticmethod

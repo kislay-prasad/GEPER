@@ -121,6 +121,14 @@ class DbSNPClient:
             "genes": sorted(gene_names) if gene_names else None,
             "mane_select": primary_snapshot.get("canonical_annotation") is not None,
             "raw_present": bool(primary_snapshot),
+            # dbSNP's own real, source-published version identifier --
+            # the build this record was last updated against (verified
+            # live, e.g. 157). dbSNP itself has no "database-wide
+            # release version" beyond the build number; this is the
+            # honest, real signal, captured per-record since that's
+            # what this endpoint returns it against. See
+            # `pipeline/provenance.py`'s docstring for the full audit.
+            "dbsnp_build": payload.get("last_update_build_id"),
         }
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:

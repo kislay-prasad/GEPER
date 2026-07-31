@@ -119,6 +119,12 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
 
     def __init__(self, api_base: Optional[str] = None):
         self.api_base = api_base or CONFIG.uniprot.API_BASE
+        # Set by `_get()` on every successful response -- read by
+        # `query()` right after. See `pipeline/provenance.py`'s
+        # docstring for why this exists and `LiveAPIInterProProvider`
+        # for the identical pattern.
+        self._last_release: Optional[str] = None
+        self._last_release_date: Optional[str] = None
 
     def is_available(self) -> bool:
         return bool(CONFIG.uniprot.ENABLED) and not CONFIG.uniprot.OFFLINE_MODE
@@ -148,9 +154,12 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
 
         results = payload.get("results") or []
         if not results:
-            return UniProtAnnotation.not_found(gene_symbol, self.name)
-
-        return parse_uniprot_entry(gene_symbol, results[0], self.name)
+            annotation = UniProtAnnotation.not_found(gene_symbol, self.name)
+        else:
+            annotation = parse_uniprot_entry(gene_symbol, results[0], self.name)
+        annotation.release = self._last_release
+        annotation.release_date = self._last_release_date
+        return annotation
 
     def _get(self, url: str, params: Dict[str, str]) -> Dict[str, Any]:
         last_error: Optional[Exception] = None
@@ -158,6 +167,9 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
             try:
                 response = requests.get(url, params=params, timeout=CONFIG.uniprot.QUERY_TIMEOUT_SECS)
                 response.raise_for_status()
+                # Present on every successful response (verified live).
+                self._last_release = response.headers.get("X-UniProt-Release")
+                self._last_release_date = response.headers.get("X-UniProt-Release-Date")
                 return response.json()
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc

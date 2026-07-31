@@ -47,6 +47,7 @@ pipeline).
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 from threading import Lock
@@ -55,9 +56,25 @@ from typing import Optional
 import requests
 
 from config import CONFIG
+from pipeline.provenance import write_dataset_provenance_sidecar
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ClinGen's gene-validity download's `Content-Disposition` filename
+# embeds its release date (verified live:
+# "Clingen-Gene-Disease-Summary-2026-07-31.csv") -- a real, source-
+# published version identifier, not just a download timestamp. The
+# dosage-sensitivity download has no equivalent filename pattern, so
+# this simply yields no match there (`_release_date_from_headers`
+# returns None, not a guess).
+_FILENAME_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def _release_date_from_headers(headers) -> Optional[str]:
+    content_disposition = headers.get("Content-Disposition", "")
+    match = _FILENAME_DATE_RE.search(content_disposition)
+    return match.group(1) if match else None
 
 _GENE_VALIDITY_CACHE_FILENAME = "gene_validity.csv"
 _DOSAGE_CACHE_FILENAME = "dosage_sensitivity.tsv"
@@ -70,6 +87,18 @@ _fetch_lock = Lock()
 
 def _cache_dir() -> str:
     return CONFIG.clingen.AUTO_FETCH_DIR or os.path.join(CONFIG.CACHE_DIR, "clingen")
+
+
+def gene_validity_cache_path() -> str:
+    """Where `ensure_gene_validity_file()` caches its download -- public
+    so `pipeline/provenance.py`/`pipeline/orchestrator.py` can read its
+    provenance sidecar without triggering a fetch."""
+    return os.path.join(_cache_dir(), _GENE_VALIDITY_CACHE_FILENAME)
+
+
+def dosage_sensitivity_cache_path() -> str:
+    """Same as `gene_validity_cache_path()`, for the dosage-sensitivity download."""
+    return os.path.join(_cache_dir(), _DOSAGE_CACHE_FILENAME)
 
 
 def _is_fresh(path: str) -> bool:
@@ -107,6 +136,13 @@ def _download(url: str, dest_path: str) -> bool:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return False
+
+    # Provenance sidecar (pipeline/provenance.py) -- persisted alongside
+    # the cache so a later run (even after a restart) can report exactly
+    # which ClinGen snapshot it's using, without re-downloading. Never
+    # blocks a successful fetch: a sidecar-write failure is logged
+    # inside `write_dataset_provenance_sidecar` itself, not raised here.
+    write_dataset_provenance_sidecar(dest_path, url, response_headers=response.headers, release_date=_release_date_from_headers(response.headers))
     return True
 
 

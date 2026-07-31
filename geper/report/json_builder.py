@@ -20,7 +20,15 @@ logger = get_logger(__name__)
 class JSONResultBuilder:
     """Builds the unified JSON output document for a GEPER run."""
 
-    def __init__(self, input_vcf_path: str, assembly: str = None, vcf_samples: List[str] = None):
+    def __init__(
+        self,
+        input_vcf_path: str,
+        assembly: str = None,
+        vcf_samples: List[str] = None,
+        provenance_collector: Any = None,
+        code_version: str = None,
+        model_checkpoints: Dict[str, str] = None,
+    ):
         self.input_vcf_path = input_vcf_path
         # Genome reference build resolved by the orchestrator's assembly
         # preflight (`validate_assembly`, from the VCF header and/or
@@ -37,6 +45,20 @@ class JSONResultBuilder:
         # Sample ID instead of a fabricated placeholder.
         self.vcf_samples = vcf_samples or []
         self.variant_results: List[Dict[str, Any]] = []
+        # New, additive: data-source version pinning / run provenance
+        # (pipeline/provenance.py) -- what makes a report reproducible
+        # later. `provenance_collector` is the orchestrator's live
+        # `RunProvenanceCollector` (a *reference*, not a snapshot taken
+        # here): `.to_list()` is only called inside `build()`, so a
+        # `write()` invoked mid-run (the periodic checkpoint write in
+        # `pipeline/orchestrator.py::run()`) reflects whatever's been
+        # captured so far, and the final `write()` reflects the
+        # complete run. `None` (the default, for backward compatibility
+        # with any caller that doesn't pass one) renders as an empty
+        # list, not a fabricated one.
+        self.provenance_collector = provenance_collector
+        self.code_version = code_version
+        self.model_checkpoints = model_checkpoints or {}
 
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
@@ -50,6 +72,19 @@ class JSONResultBuilder:
             "vcf_samples": self.vcf_samples,
             "variant_count": len(self.variant_results),
             "variants": self.variant_results,
+            # Code version + AI model checkpoints (task point 5) --
+            # reproducibility of the CODE, alongside the data-source
+            # provenance list below (which covers reproducibility of
+            # the DATA each variant's evidence came from).
+            "code_version": self.code_version,
+            "model_checkpoints": self.model_checkpoints,
+            # Data-source provenance (task points 1-4, 6): one entry
+            # per known external source, always present (never omitted)
+            # -- a source this run never consulted still appears, with
+            # `status: "not_consulted"`, structurally distinct from a
+            # source that was consulted but yielded no version
+            # (`status: "unknown"`). See pipeline/provenance.py.
+            "provenance": self.provenance_collector.to_list() if self.provenance_collector is not None else [],
         }
 
     def write(self, output_path: str) -> str:

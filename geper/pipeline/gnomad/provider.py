@@ -206,6 +206,17 @@ _DATASET_BY_BUILD = {
 }
 
 
+def dataset_id_for_build(build: str) -> Optional[str]:
+    """
+    The gnomAD release identifier (e.g. "gnomad_r4") this build's
+    GraphQL queries use -- IS the version pin for this data source
+    (see `pipeline/provenance.py`'s docstring): known statically from
+    `build` alone, no query needed, since it's the literal `datasetId`
+    every GraphQL request for this build already sends.
+    """
+    return _DATASET_BY_BUILD.get(build)
+
+
 class GraphQLGnomadProvider(GnomadProviderBase):
     """
     Queries gnomAD's public GraphQL API directly, for deployments

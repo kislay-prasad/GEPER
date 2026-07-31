@@ -103,6 +103,11 @@ class LiveAPIInterProProvider(InterProProviderBase):
 
     def __init__(self, api_base: Optional[str] = None):
         self.api_base = api_base or CONFIG.interpro.API_BASE
+        # Set by `_get()` on every successful (or 404/204) response --
+        # read by `query()` right after, so the returned annotation can
+        # carry InterPro's own real, source-published version identifier.
+        # See `pipeline/provenance.py`'s docstring for why this exists.
+        self._last_api_version: Optional[str] = None
 
     def is_available(self) -> bool:
         return bool(CONFIG.interpro.ENABLED) and not CONFIG.interpro.OFFLINE_MODE
@@ -124,13 +129,19 @@ class LiveAPIInterProProvider(InterProProviderBase):
             logger.warning(f"InterPro REST API query failed for accession '{normalized}': {exc}")
             return InterProAnnotation.from_error(accession, str(exc))
 
-        return parse_interpro_response(accession, payload, self.name)
+        annotation = parse_interpro_response(accession, payload, self.name)
+        annotation.api_version = self._last_api_version
+        return annotation
 
     def _get(self, url: str, params: Dict[str, str]) -> Dict[str, Any]:
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.interpro.MAX_RETRIES + 1):
             try:
                 response = requests.get(url, params=params, timeout=CONFIG.interpro.QUERY_TIMEOUT_SECS)
+                # Present on every response regardless of status code
+                # (verified live, including on a 404) -- captured before
+                # any early-return branch below.
+                self._last_api_version = response.headers.get("InterPro-Version")
                 if response.status_code == 404:
                     # InterPro's API returns a plain 404 for an accession with no matches at all
                     # (rather than a 200 with an empty results list) -- treat as "not found", not an error.

@@ -38,14 +38,19 @@ from database.blast_client import BLASTClient
 from database.clinvar_client import ClinVarClient
 from database.dbsnp_client import DbSNPClient
 from models import MODEL_REGISTRY as _BASE_MODEL_REGISTRY
+from models.alphamissense import catalogue_cache_path as alphamissense_catalogue_cache_path
 from pipeline.assembly_validator import validate_assembly
 from pipeline.alphafold.lookup import AlphaFoldLookup
+import pipeline.clingen.bootstrap as clingen_bootstrap
 from pipeline.clingen.lookup import ClinGenLookup
+import pipeline.hpo.bootstrap as hpo_bootstrap
+import pipeline.orphanet.bootstrap as orphanet_bootstrap
 from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.hpo.lookup import HPOLookup
 from pipeline.orphanet.lookup import OrphanetLookup
 from pipeline.conservation.lookup import ConservationLookup
 from pipeline.gnomad.lookup import GnomadLookup
+from pipeline.gnomad.provider import dataset_id_for_build as gnomad_dataset_id_for_build
 from pipeline.interpretation import InterpretationEngine
 from pipeline.interpro.lookup import InterProLookup
 from pipeline.models.ensemble import EnsembleManager
@@ -56,6 +61,16 @@ from pipeline.models.pending_plugins import build_default_registry
 from pipeline.models.status import build_ai_model_status
 from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
+from pipeline.provenance import (
+    RunProvenanceCollector,
+    VersionStatus,
+    capture_blast_local_tool_versions,
+    capture_ensembl_release,
+    get_geper_code_version,
+    get_model_checkpoint_identifiers,
+    local_file_provenance,
+    read_dataset_provenance_sidecar,
+)
 from pipeline.ps1_pm5.lookup import ClinVarCodonLookup
 from pipeline.pvs1.lookup import TranscriptLookup
 from pipeline.pvs1.utils import canonical_protein_position, transcript_from_result
@@ -359,6 +374,122 @@ class GeperPipeline:
         self._startup_validated = False
         self._logged_missing_at_routing: set = set()
 
+        # Data-source version pinning / run provenance (pipeline/provenance.py)
+        # -- one collector per pipeline instance (i.e. per run), pre-seeded
+        # with every known source as NOT_CONSULTED. Run-level captures
+        # (code version, model checkpoints, Ensembl's release, local BLAST+
+        # tool versions, bootstrapped-dataset sidecars) happen once, here,
+        # rather than per-variant; per-source captures that depend on an
+        # actual query response (ClinVar, dbSNP, gnomAD, UniProt, InterPro,
+        # AlphaFold, functional evidence) happen in `_process_variant` the
+        # first time each stage returns real data -- see
+        # `_capture_stage_provenance`.
+        self.provenance = RunProvenanceCollector()
+        self._capture_startup_provenance()
+
+    def _capture_startup_provenance(self) -> None:
+        """
+        Run-level provenance captures that don't depend on any specific
+        variant: GEPER's own code version, the AI model checkpoint
+        identifiers already known to config, Ensembl's current release
+        (one lightweight `/info/data` call), local BLAST+ tool versions,
+        and whatever's already on disk for the bootstrapped/cached
+        datasets (ClinGen gene-validity/dosage, HPO, Orphanet,
+        AlphaMissense) -- reading their provenance sidecars, never
+        triggering a fresh download here. Never raises: every capture is
+        independently wrapped so one failing source can't prevent the
+        rest (or pipeline startup itself) from proceeding.
+        """
+        self.geper_code_version = get_geper_code_version()
+        self.model_checkpoints = get_model_checkpoint_identifiers()
+
+        try:
+            ensembl = capture_ensembl_release()
+            if ensembl.get("version"):
+                self.provenance.record("Ensembl", VersionStatus.VERSION_KNOWN, version=ensembl["version"], endpoint=ensembl["endpoint"])
+            else:
+                self.provenance.record(
+                    "Ensembl", VersionStatus.UNKNOWN, endpoint=ensembl.get("endpoint"),
+                    notes=f"Could not reach Ensembl's /info/data endpoint: {ensembl.get('error')}",
+                )
+        except Exception as exc:  # noqa: BLE001 -- provenance capture must never break pipeline startup
+            logger.warning(f"Ensembl release provenance capture failed: {exc}")
+
+        try:
+            blast = capture_blast_local_tool_versions()
+            if blast.get("version"):
+                self.provenance.record("BLAST", VersionStatus.VERSION_KNOWN, version=blast["version"])
+            elif not self.ai_only:
+                self.provenance.record(
+                    "BLAST", VersionStatus.UNKNOWN,
+                    notes="No local BLAST+ tools found on PATH; remote NCBI BLAST exposes no queryable database version.",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"BLAST tool-version provenance capture failed: {exc}")
+
+        self._capture_bootstrapped_dataset_provenance(
+            "ClinGen (gene validity)", CONFIG.clingen.GENE_VALIDITY_LOCAL_FILE, clingen_bootstrap.gene_validity_cache_path()
+        )
+        self._capture_bootstrapped_dataset_provenance(
+            "ClinGen (dosage sensitivity)", CONFIG.clingen.DOSAGE_SENSITIVITY_LOCAL_FILE, clingen_bootstrap.dosage_sensitivity_cache_path()
+        )
+        self._capture_bootstrapped_dataset_provenance("HPO", CONFIG.hpo.LOCAL_FILE, hpo_bootstrap.genes_to_phenotype_cache_path())
+        self._capture_bootstrapped_dataset_provenance("Orphanet", "", orphanet_bootstrap.gene_disorder_cache_path())
+
+        # AlphaMissense: keyed by build ("hg38"/"hg19", not "GRCh38"/
+        # "GRCh37" -- see `models/alphamissense.py::catalogue_cache_path`),
+        # and only meaningful if AlphaMissense is actually enabled --
+        # otherwise this stays NOT_CONSULTED, correctly, rather than
+        # reporting on a catalogue this run will never touch.
+        if CONFIG.alphamissense.ENABLED:
+            genome_label = "hg38" if (self.sequence_context_gen.assembly or "GRCh38") != "GRCh37" else "hg19"
+            configured_local = CONFIG.alphamissense.LOCAL_HG38_PATH if genome_label == "hg38" else CONFIG.alphamissense.LOCAL_HG19_PATH
+            self._capture_bootstrapped_dataset_provenance(
+                "AlphaMissense catalogue", configured_local, alphamissense_catalogue_cache_path(genome_label)
+            )
+
+    def _capture_bootstrapped_dataset_provenance(self, source: str, configured_local_file: str, auto_fetch_path: str) -> None:
+        """
+        Records whichever file this source will actually query from for
+        this run: an explicitly deployer-configured local file (hashed
+        directly -- no GEPER-tracked download to read a sidecar for), or
+        the auto-fetch cache path's own provenance sidecar (written by
+        the corresponding `pipeline/*/bootstrap.py` at download time,
+        possibly in a previous run -- reproducibility needs "what's
+        actually being used now", not "what did we just download").
+        Records NOT_CONSULTED-preserving UNKNOWN (never raises, never
+        silently skips this source) when neither exists yet -- e.g. the
+        auto-fetch hasn't happened on first use yet.
+        """
+        if configured_local_file:
+            self.provenance.record(**self._provenance_kwargs_from_dataclass(local_file_provenance(source, configured_local_file)))
+            return
+        sidecar = read_dataset_provenance_sidecar(auto_fetch_path)
+        if sidecar is None:
+            return  # stays NOT_CONSULTED -- no local file configured and nothing fetched yet
+        if sidecar.get("release_date") or sidecar.get("version"):
+            status = VersionStatus.VERSION_KNOWN
+        elif sidecar.get("content_hash"):
+            status = VersionStatus.HASH_ONLY
+        else:
+            status = VersionStatus.TIMESTAMP_ONLY
+        self.provenance.record(
+            source, status,
+            version=sidecar.get("version"), release_date=sidecar.get("release_date"),
+            content_hash=sidecar.get("content_hash"), hash_algorithm=sidecar.get("hash_algorithm"),
+            query_timestamp=sidecar.get("downloaded_at"), endpoint=sidecar.get("url"),
+            notes=None if status == VersionStatus.VERSION_KNOWN else "No release version published/parseable for this download; content hash and download timestamp recorded instead.",
+        )
+
+    @staticmethod
+    def _provenance_kwargs_from_dataclass(record) -> Dict[str, Any]:
+        return {
+            "source": record.source, "status": record.status, "version": record.version,
+            "release_date": record.release_date, "content_hash": record.content_hash,
+            "hash_algorithm": record.hash_algorithm, "query_timestamp": record.query_timestamp,
+            "endpoint": record.endpoint, "notes": record.notes,
+        }
+
     def _timer(self, stage: str):
         """
         Returns the profiler's timing context manager for `stage`, or a
@@ -490,7 +621,10 @@ class GeperPipeline:
             self._startup_validated = True
 
         # --- Resume-from-checkpoint (issue #8) ------------------------------
-        result_builder = JSONResultBuilder(input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples)
+        result_builder = JSONResultBuilder(
+            input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples,
+            provenance_collector=self.provenance, code_version=self.geper_code_version, model_checkpoints=self.model_checkpoints,
+        )
         completed_keys = set()
         stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
 
@@ -514,7 +648,10 @@ class GeperPipeline:
                     f"Could not read existing checkpoint '{json_path}' for "
                     f"resume ({exc}); starting this run fresh instead."
                 )
-                result_builder = JSONResultBuilder(input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples)
+                result_builder = JSONResultBuilder(
+                    input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples,
+                    provenance_collector=self.provenance, code_version=self.geper_code_version, model_checkpoints=self.model_checkpoints,
+                )
                 completed_keys = set()
                 stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
 
@@ -989,6 +1126,12 @@ class GeperPipeline:
             splicebert_result=splicebert_result,
         )
 
+        self._capture_stage_provenance(
+            clinvar_result=clinvar_result, dbsnp_result=dbsnp_result, gnomad_result=gnomad_result,
+            uniprot_result=uniprot_result, interpro_result=interpro_result, alphafold_result=alphafold_result,
+            functional_evidence_result=functional_evidence_result,
+        )
+
         return build_variant_result(
             variant_dict=variant.to_dict(),
             sequence_context=context_dict,
@@ -1019,6 +1162,109 @@ class GeperPipeline:
             ai_splicing_ensemble_result=ensemble_result,
             ai_model_status=ai_model_status,
         )
+
+    def _capture_stage_provenance(
+        self,
+        *,
+        clinvar_result: Dict[str, Any],
+        dbsnp_result: Dict[str, Any],
+        gnomad_result: Optional[Dict[str, Any]],
+        uniprot_result: Optional[Dict[str, Any]],
+        interpro_result: Optional[Dict[str, Any]],
+        alphafold_result: Optional[Dict[str, Any]],
+        functional_evidence_result: Optional[Dict[str, Any]],
+    ) -> None:
+        """
+        Per-variant provenance capture for the sources whose version
+        signal only appears in an actual query response (unlike the
+        run-level captures in `_capture_startup_provenance`). Called
+        once per variant; cheap and idempotent -- `RunProvenanceCollector
+        .record`'s own priority ordering means calling this every
+        variant, not just the first, is harmless (a later call with the
+        same or better info just re-confirms/upgrades the existing
+        record, never downgrades it). Never raises: each source's
+        capture is independent, so one malformed result can't prevent
+        the others from being recorded.
+        """
+        try:
+            if clinvar_result:
+                if clinvar_result.get("error"):
+                    self.provenance.record("ClinVar", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {clinvar_result['error']}")
+                else:
+                    self.provenance.record(
+                        "ClinVar", VersionStatus.TIMESTAMP_ONLY,
+                        notes="ClinVar E-utilities exposes no database-wide release version; each matched record's own 'last_evaluated' date is captured in that record already.",
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"ClinVar provenance capture failed: {exc}")
+
+        try:
+            if dbsnp_result:
+                build = (dbsnp_result.get("detail") or {}).get("dbsnp_build")
+                if build:
+                    self.provenance.record("dbSNP", VersionStatus.VERSION_KNOWN, version=f"dbSNP build {build}")
+                elif dbsnp_result.get("error"):
+                    self.provenance.record("dbSNP", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {dbsnp_result['error']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"dbSNP provenance capture failed: {exc}")
+
+        try:
+            if gnomad_result and not gnomad_result.get("skipped"):
+                dataset_id = gnomad_dataset_id_for_build(self.sequence_context_gen.assembly or "GRCh38")
+                if dataset_id:
+                    self.provenance.record("gnomAD", VersionStatus.VERSION_KNOWN, version=dataset_id)
+                elif gnomad_result.get("error"):
+                    self.provenance.record("gnomAD", VersionStatus.UNKNOWN, notes=f"Query failed: {gnomad_result['error']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"gnomAD provenance capture failed: {exc}")
+
+        try:
+            if uniprot_result and not uniprot_result.get("skipped"):
+                if uniprot_result.get("release"):
+                    self.provenance.record("UniProt", VersionStatus.VERSION_KNOWN, version=f"UniProt {uniprot_result['release']}", release_date=uniprot_result.get("release_date"))
+                elif uniprot_result.get("error"):
+                    self.provenance.record("UniProt", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {uniprot_result['error']}")
+                elif uniprot_result.get("source") == "local_dataset":
+                    self.provenance.record("UniProt", VersionStatus.TIMESTAMP_ONLY, notes="Served from a locally-configured dataset this run, not the live REST API; no release header available.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"UniProt provenance capture failed: {exc}")
+
+        try:
+            if interpro_result and not interpro_result.get("skipped"):
+                if interpro_result.get("api_version"):
+                    self.provenance.record("InterPro", VersionStatus.VERSION_KNOWN, version=f"InterPro {interpro_result['api_version']}")
+                elif interpro_result.get("error"):
+                    self.provenance.record("InterPro", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {interpro_result['error']}")
+                elif interpro_result.get("source") == "local_dataset":
+                    self.provenance.record("InterPro", VersionStatus.TIMESTAMP_ONLY, notes="Served from a locally-configured dataset this run, not the live REST API; no version header available.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"InterPro provenance capture failed: {exc}")
+
+        try:
+            if alphafold_result and not alphafold_result.get("skipped"):
+                if alphafold_result.get("model_version"):
+                    self.provenance.record("AlphaFold DB", VersionStatus.VERSION_KNOWN, version=f"AlphaFold DB v{alphafold_result['model_version']}")
+                elif alphafold_result.get("error"):
+                    self.provenance.record("AlphaFold DB", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {alphafold_result['error']}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"AlphaFold DB provenance capture failed: {exc}")
+
+        try:
+            if functional_evidence_result:
+                source = functional_evidence_result.get("source")
+                if source == "clingen_erepo":
+                    self.provenance.record("Functional evidence (ClinGen ERepo)", VersionStatus.TIMESTAMP_ONLY, notes="No source-wide API version exposed; individual records carry their own 'publishedDate'.")
+                elif source == "mavedb":
+                    self.provenance.record("Functional evidence (MaveDB)", VersionStatus.TIMESTAMP_ONLY, notes="No source-wide API version exposed; individual score sets carry their own 'publishedDate'/'modificationDate'.")
+                elif functional_evidence_result.get("error"):
+                    # The composite provider doesn't disclose which of
+                    # ERepo/MaveDB the failure was in -- honestly
+                    # recorded against both rather than guessing one.
+                    note = f"A functional-evidence query failed this run: {functional_evidence_result['error']}"
+                    self.provenance.record("Functional evidence (ClinGen ERepo)", VersionStatus.UNKNOWN, notes=note)
+                    self.provenance.record("Functional evidence (MaveDB)", VersionStatus.UNKNOWN, notes=note)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Functional-evidence provenance capture failed: {exc}")
 
     # ------------------------------------------------------------------
     # Individual stage helpers

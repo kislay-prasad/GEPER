@@ -46,6 +46,10 @@ class ReportGenerator:
         lines.append("---")
         lines.append("")
 
+        lines.extend(self._render_provenance(json_document))
+        lines.append("---")
+        lines.append("")
+
         for idx, variant_result in enumerate(json_document.get("variants", []), start=1):
             lines.extend(self._render_variant_section(idx, variant_result))
             lines.append("---")
@@ -59,6 +63,76 @@ class ReportGenerator:
             fh.write(content)
         logger.info(f"Wrote Markdown report to '{output_path}'.")
         return output_path
+
+    @staticmethod
+    def _render_provenance(json_document: Dict[str, Any]) -> List[str]:
+        """
+        Data-source version pinning / run provenance (pipeline/provenance.py)
+        -- the section that makes this report reproducible later: GEPER's
+        own code version, the AI model checkpoints this run used, and
+        every external data source's version/hash/timestamp. Run-level
+        (once per report, not per-variant) -- placed before the per-
+        variant sections since it describes the whole run, not one
+        finding.
+
+        `status` labels are rendered honestly, not smoothed over: a
+        source this run never consulted says exactly that (NOT the same
+        as "no version available", which gets its own distinct label --
+        see `pipeline/provenance.py::VersionStatus`'s own docstring for
+        why collapsing the two would repeat the raw_evidence bug class).
+        """
+        lines = ["## Data Source Provenance", ""]
+        lines.append(
+            "*Recorded for reproducibility: if this report needs to be reproduced later, "
+            "the exact data-source versions and code version below are what to match.*"
+        )
+        lines.append("")
+        lines.append(f"- **GEPER code version:** `{json_document.get('code_version') or 'unknown'}`")
+        lines.append("")
+
+        checkpoints = json_document.get("model_checkpoints") or {}
+        lines.append("**AI model checkpoints:**")
+        lines.append("")
+        if checkpoints:
+            for name, identifier in sorted(checkpoints.items()):
+                lines.append(f"- **{name}:** `{identifier}`")
+        else:
+            lines.append("*No AI model checkpoint identifiers recorded for this run.*")
+        lines.append("")
+
+        provenance = json_document.get("provenance") or []
+        lines.append("**External data sources:**")
+        lines.append("")
+        if not provenance:
+            lines.append("*No data-source provenance was recorded for this run.*")
+            lines.append("")
+            return lines
+
+        status_labels = {
+            "not_consulted": "Not consulted this run",
+            "unknown": "Consulted -- no version/hash could be determined",
+            "timestamp_only": "Consulted -- no release version published; query time recorded",
+            "hash_only": "Consulted -- content hash recorded, no release version published",
+            "version_known": "Version known",
+        }
+        for record in provenance:
+            status = record.get("status", "unknown")
+            label = status_labels.get(status, status)
+            lines.append(f"- **{record.get('source')}:** {label}")
+            if record.get("version"):
+                lines.append(f"  - Version: {record['version']}")
+            if record.get("release_date"):
+                lines.append(f"  - Release date: {record['release_date']}")
+            if record.get("content_hash"):
+                lines.append(f"  - Content hash ({record.get('hash_algorithm') or 'unknown algorithm'}): `{record['content_hash']}`")
+            if record.get("query_timestamp"):
+                lines.append(f"  - Query/download time (UTC): {record['query_timestamp']}")
+            if record.get("endpoint"):
+                lines.append(f"  - Endpoint: {record['endpoint']}")
+            if record.get("notes"):
+                lines.append(f"  - _{record['notes']}_")
+        lines.append("")
+        return lines
 
     def _render_variant_section(self, idx: int, result: Dict[str, Any]) -> List[str]:
         variant = result.get("variant", {})

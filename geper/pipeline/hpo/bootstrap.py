@@ -30,6 +30,7 @@ from typing import Optional
 import requests
 
 from config import CONFIG
+from pipeline.provenance import write_dataset_provenance_sidecar
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,6 +44,13 @@ _fetch_lock = Lock()
 
 def _cache_dir() -> str:
     return CONFIG.hpo.AUTO_FETCH_DIR or os.path.join(CONFIG.CACHE_DIR, "hpo")
+
+
+def genes_to_phenotype_cache_path() -> str:
+    """Where `ensure_genes_to_phenotype_file()` caches its download --
+    public so `pipeline/provenance.py`/`pipeline/orchestrator.py` can
+    read its provenance sidecar without triggering a fetch."""
+    return os.path.join(_cache_dir(), _CACHE_FILENAME)
 
 
 def _is_fresh(path: str) -> bool:
@@ -80,6 +88,13 @@ def _download(url: str, dest_path: str) -> bool:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return False
+
+    # Provenance sidecar (pipeline/provenance.py) -- HPO's file carries
+    # no in-content or filename-embedded version (verified live: plain
+    # TSV, no preamble), so `Last-Modified`/`ETag` plus a content hash
+    # are the honest best available signal here, not a fabricated
+    # release string.
+    write_dataset_provenance_sidecar(dest_path, url, response_headers=response.headers)
     return True
 
 

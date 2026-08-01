@@ -101,6 +101,29 @@ evo2>=0.6.0
 # version-compatibility matrix -- not an arbitrary floor.
 torchvision==0.22.1
 
+# omegaconf: NOT imported anywhere in GEPER's own code, nor in
+# standalone_hyenadna.py (the only file GEPER actually imports from the
+# vendored hyena-dna checkout -- see models/hyenadna.py's module
+# docstring). It's needed one level down: the official HyenaDNA
+# checkpoint (weights.ckpt, loaded via `torch.load(..., weights_only=
+# False)` in models/hyenadna.py::_load_hyenadna_checkpoint) was produced
+# by the upstream repo's own train.py, a PyTorch-Lightning module whose
+# `save_hyperparameters()` call captures its Hydra/OmegaConf config
+# object as part of the pickled checkpoint. Unpickling that checkpoint
+# therefore imports `omegaconf` to reconstruct the embedded config,
+# even though no GEPER or standalone_hyenadna.py source line ever
+# writes `import omegaconf` -- confirmed against a real failure
+# (`ModuleNotFoundError: No module named 'omegaconf'` at HyenaDNA load
+# time) in a clean Docker build that only installs this file, where no
+# other package happens to pull omegaconf in transitively. Colab/
+# bare-metal runs never hit this because some other already-installed
+# package (or a stale environment) had it present already. Unpinned
+# upstream (geper/hyena-dna/requirements.txt's own training
+# requirements list it as a bare `omegaconf` with no version) --
+# pinned here to the current stable release since the checkpoint only
+# needs OmegaConf's DictConfig to exist, not a specific version.
+omegaconf==2.3.1
+
 # torchaudio is NOT imported anywhere in GEPER's own code (no model here
 # does audio processing) -- it is pinned explicitly anyway, exactly like
 # torchvision above, purely as a DEFENSIVE measure: several of this

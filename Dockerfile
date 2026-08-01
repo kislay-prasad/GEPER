@@ -283,6 +283,28 @@ RUN pip install --no-cache-dir -r /tmp/geper-requirements.txt \
 RUN pip install --no-cache-dir "enformer-pytorch==0.8.12"
 RUN pip install --no-cache-dir --no-deps "borzoi-pytorch==0.5.1"
 
+# --- borzoi-pytorch's own undeclared-by-omission runtime dependency ---
+# `--no-deps` above (needed to dodge the transformers conflict) means
+# pip never installs anything from borzoi-pytorch's OWN requires_dist
+# beyond what's already present. Checked that full list against live
+# PyPI metadata (pypi.org/pypi/borzoi-pytorch/json): einops, numpy,
+# torch, transformers, pandas are already installed via
+# geper/requirements.txt above -- except `intervaltree~=3.1.0`, which
+# is not. `borzoi_pytorch/__init__.py` unconditionally does `from
+# borzoi_pytorch.gene_utils import Transcriptome`, and gene_utils.py
+# does `from intervaltree import IntervalTree` at module level --
+# confirmed directly against the downloaded wheel's source, not
+# assumed -- so a bare `import borzoi_pytorch` fails immediately
+# without this. This never surfaces on Colab/bare-metal because
+# GEPER's runtime auto-install path (utils/auto_install.py::
+# ensure_pip_package_available) runs a plain `pip install
+# borzoi-pytorch` with no `--no-deps`, which pulls intervaltree in
+# transitively same as any other dependency -- this gap is specific to
+# the --no-deps workaround this Dockerfile uses above. Pinned to
+# borzoi-pytorch's own declared `~=3.1.0` constraint exactly, not a
+# newer intervaltree release, since 3.2.x falls outside that range.
+RUN pip install --no-cache-dir "intervaltree~=3.1.0"
+
 # --- MMSplice's bundled pretrained weights -----------------------------
 # geper/requirements.txt's own comment recommends exactly this for a
 # Docker/CI image (baked in here instead of GEPER's runtime auto-install

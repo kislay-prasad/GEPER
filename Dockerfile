@@ -132,8 +132,70 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --recursive https://github.com/freebayes/freebayes.git /tmp/freebayes \
+# CORRECTED again: cloning the default branch's unpinned HEAD (as this
+# Dockerfile did until now) got past `meson setup` but failed the actual
+# compile with a genuine C++ syntax bug in freebayes' OWN source --
+#     src/Parameters.cpp:178:46: error: expected ';' before 'endl'
+#        178 |    << "                   default: 0.01"  endl
+# (a missing `<<` before `endl` in a chained stream-output usage string)
+# -- not anything this Dockerfile introduced.
+#
+# Checked directly against GitHub, not assumed: the exact text
+# `"default: 0.01"` does not appear anywhere in src/Parameters.cpp at
+# tag v1.3.10 (the release the build log's own "Project version: 1.3.10"
+# message refers to -- confirmed that tag's meson.build declares the
+# identical version string, and does use Meson, not an older
+# Makefile-based build) -- that broken line was added to the default
+# branch sometime AFTER v1.3.10 was tagged, as part of later,
+# unreleased/untagged development, and was never part of any released
+# version. Pinning to v1.3.10 therefore avoids this bug by construction
+# (the buggy code doesn't exist at this commit), not by patching around
+# it -- no sed/source-patch fallback is needed. Pinning also directly
+# fixes the reproducibility gap an unpinned clone had: this build no
+# longer silently breaks again if freebayes' default branch changes
+# under us, which is exactly how this specific bug was hit in the first
+# place.
+#
+# CORRECTED a third time: even pinned to v1.3.10, a plain `git clone
+# --branch v1.3.10` failed at the CHECKOUT step (not the clone/fetch
+# itself) with:
+#     error: invalid path 'test/splice/1:883884-887618.bam'
+#     fatal: unable to checkout working tree
+# freebayes' own test fixtures name BAM files after genomic coordinates
+# (chrom:start-end), which is a legal filename on Linux but not
+# writable through whatever filesystem layer handled this checkout on
+# the reporting machine (Windows/Docker Desktop) -- either way, this
+# repo's test/ directory is genuinely not needed to build the
+# `freebayes` binary: confirmed directly against v1.3.10's own
+# meson.build that none of its five test() definitions are evaluated
+# by `meson setup` (they're only read at `meson test`/`ninja test`
+# run time, which this Dockerfile never invokes), and there is no
+# `subdir('test')` call that would need that directory to exist at
+# configure time either. So rather than depend on figuring out exactly
+# why that one file's checkout failed on some (but evidently not all)
+# platforms, this sidesteps the problem by never checking test/ out at
+# all -- a sparse, non-cone checkout that includes everything except
+# it: clone with --no-checkout (fetches all objects, writes nothing),
+# set the sparse-checkout pattern, then check out v1.3.10 for real --
+# `error: invalid path` cannot recur for a path that's never written.
+# `--recursive` moved off the initial clone (meaningless combined with
+# --no-checkout -- there's no working tree yet for submodules to
+# populate into) to an explicit `git submodule update --init
+# --recursive` after the sparse checkout, so contrib/'s vendored
+# vcflib-min/fastahack/smithwaterman sources (needed by
+# -Dprefer_system_deps=false below) are still fully populated.
+# `advice.detachedHead=false` only silences git's own informational
+# notice that checking out a tag leaves HEAD detached (expected and
+# harmless here -- this Dockerfile never commits anything in this
+# checkout) -- purely cosmetic build-log cleanup, not a fix for
+# anything that was actually failing.
+RUN git config --global advice.detachedHead false \
+    && git clone --branch v1.3.10 --no-checkout https://github.com/freebayes/freebayes.git /tmp/freebayes \
     && cd /tmp/freebayes \
+    && git sparse-checkout init --no-cone \
+    && printf '/*\n!/test/\n' > .git/info/sparse-checkout \
+    && git checkout v1.3.10 \
+    && git submodule update --init --recursive \
     && meson setup build/ -Dprefer_system_deps=false --buildtype release \
     && ninja -C build/ -v \
     && cp build/freebayes /usr/local/bin/freebayes \

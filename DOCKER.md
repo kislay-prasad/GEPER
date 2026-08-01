@@ -346,6 +346,19 @@ avoid — deliberately not started).
   bookworm (this image's base — freebayes' own CI runs on Ubuntu) via
   `packages.debian.org`, since a package existing on Ubuntu doesn't
   guarantee the same name exists on Debian.
+- The freebayes `v1.3.10` tag pin — fetched `src/Parameters.cpp` and
+  `meson.build` directly from GitHub at that exact tag (not master/HEAD)
+  and confirmed by text search that the specific line the real compile
+  error pointed at (`"default: 0.01"` next to a missing `<<`) is absent
+  from that version's source entirely, and that its `meson.build`
+  declares the same `version: '1.3.10'` the build log's own "Project
+  version" line already showed.
+- The `test/` sparse-checkout exclusion — re-fetched `v1.3.10`'s
+  `meson.build` specifically checking for `subdir('test')` calls (none)
+  and confirmed every `test()` definition's `workdir`/args are only
+  consulted at `meson test`/`ninja test` run time, not `meson setup`
+  configure time — before concluding it's safe to never check that
+  directory out at all.
 - Every system-binary dependency this Dockerfile installs — found by
   grepping every `subprocess` call to an external binary across
   `pipeline/models/`, `models/`, and `database/` in the actual GEPER
@@ -381,16 +394,53 @@ with more resources:**
    `>=4.57.6` floor.
 5. **The freebayes source build succeeds** and the resulting binary
    actually runs against the runtime stage's shared libraries. Updated
-   this pass: the build step was initially wrong (assumed a plain `make`
-   build; freebayes actually uses Meson + Ninja, confirmed against the
-   live repo, and fixed to match — see the Dockerfile's own comment at
-   the freebayes build step for the full writeup, including the exact
-   CI workflow this was copied from and the Debian-bookworm package-name
-   re-verification done for it). Still not build-tested end to end: the
-   `libcurl4`/`libssl3`/etc. runtime-stage list is a best-effort match to
-   what the builder stage's `-dev` packages would provide at *build*
-   time, not independently confirmed against the compiled binary's
-   actual `ldd` output.
+   three times this pass:
+   - The build system itself was initially wrong (assumed a plain
+     `make` build; freebayes actually uses Meson + Ninja, confirmed
+     against the live repo, and fixed to match).
+   - That got past `meson setup` but hit a genuine C++ syntax bug in
+     freebayes' own source when built from the unpinned default
+     branch's HEAD (`Parameters.cpp:178`, a missing `<<` before `endl`
+     in a usage-string). Checked directly against GitHub: that exact
+     broken line does not exist at the `v1.3.10` tag — it was added to
+     the default branch sometime after that release. The clone is now
+     pinned to `--branch v1.3.10` (also confirmed that tag's own
+     `meson.build` declares the identical `version: '1.3.10'` the
+     build log already showed, and does use Meson), which avoids the
+     bug by construction and, as a side effect, fixes the
+     reproducibility gap that let an unpinned clone break silently
+     like this in the first place.
+   - Even pinned to `v1.3.10`, a plain checkout still failed --
+     `error: invalid path 'test/splice/1:883884-887618.bam'` -- because
+     freebayes' own test fixtures name BAM files after genomic
+     coordinates (`chrom:start-end`), and that colon apparently isn't
+     writable through whatever filesystem layer handled the checkout on
+     the machine that hit this (reported from a Windows/Docker Desktop
+     rebuild). Confirmed directly against `v1.3.10`'s own `meson.build`
+     that `test/` is never needed to build the binary (its five
+     `test()` definitions are only evaluated at `meson test`/`ninja
+     test` run time, never invoked here, and there's no `subdir('test')`
+     call needing it at configure time), so the fix sidesteps the
+     problem rather than root-causing the exact filesystem behavior:
+     a non-cone sparse checkout (`clone --no-checkout` + a
+     `/*` / `!/test/` pattern + `git checkout v1.3.10`) that never
+     writes `test/` to disk at all, followed by an explicit
+     `git submodule update --init --recursive` (moved off the initial
+     clone, which is meaningless combined with `--no-checkout`) to
+     still populate `contrib/`'s vendored dependency sources.
+   - See the Dockerfile's own comments at the freebayes build step for
+     the full writeup of all three, including the exact CI workflow the
+     package list/build invocation was copied from and the
+     Debian-bookworm package-name re-verification done for it.
+   - Still not build-tested end to end: the `libcurl4`/`libssl3`/etc.
+     runtime-stage list is a best-effort match to what the builder
+     stage's `-dev` packages would provide at *build* time, not
+     independently confirmed against the compiled binary's actual
+     `ldd` output, and no compile has actually completed against
+     `v1.3.10` yet (this pass only confirmed the buggy line's absence,
+     the `meson.build`/version match, and that `test/` isn't needed at
+     configure time) — should now get further than either prior
+     attempt, not guaranteed to complete cleanly.
 6. **HyenaDNA's checkpoint download** via the pre-installed `git-lfs`
    actually works end-to-end inside the container.
 7. **SPiP's `Rscript`/CRAN-package auto-install** still works from

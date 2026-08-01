@@ -83,13 +83,60 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- freebayes, built from source -------------------------------------------
 # Not reliably packaged as a recent version on Debian/Ubuntu apt (see
-# kim_pipeline/docs/INSTALL_DEPENDENCIES.md) -- built here exactly per that
-# doc's own recipe, just inside the image instead of by hand on every fresh
-# runtime.
+# kim_pipeline/docs/INSTALL_DEPENDENCIES.md).
+#
+# CORRECTED: a prior version of this Dockerfile assumed a plain top-level
+# `make` build and failed ("No targets specified and no makefile found").
+# freebayes has since switched its build system to Meson + Ninja -- there
+# is no Makefile OR CMakeLists.txt at the repo root at all. Confirmed
+# directly against the live freebayes/freebayes repo (master branch) this
+# session: meson.build is the only build definition present, its own
+# `executable('freebayes', ...)` target is what produces the binary, and
+# it contains no CMake usage anywhere -- so `cmake -S . -B build` (one
+# candidate fix considered) would have been just as wrong as the `make`
+# it was meant to replace. `cmake` itself stays in the apt package line
+# above regardless -- it was already there (inherited from
+# kim_pipeline/install_dependencies.sh's own list) and removing it is
+# out of scope for this fix -- but nothing in this Dockerfile actually
+# uses it: every pip package installed below is a prebuilt wheel (no
+# source compilation), and freebayes itself needs meson/ninja, not
+# cmake. Flagged rather than silently left implying otherwise.
+#
+# Both the exact apt package list below and the meson/ninja invocation
+# are copied verbatim from freebayes' own actually-exercised CI workflow
+# (.github/workflows/ci_test.yml on freebayes/freebayes, fetched this
+# session), not guessed -- that repo's CI runs on Ubuntu, so every one of
+# these package names was individually re-confirmed present on Debian
+# bookworm (this image's base) via packages.debian.org before being
+# copied here, rather than assumed to carry over.
+#
+# `-Dprefer_system_deps=false` makes meson build freebayes' own vendored
+# copies of vcflib/fastahack/smithwaterman from the git submodules under
+# ./contrib/ (already fetched by --recursive above) instead of linking
+# the system libs the apt-get line below also installs -- kept exactly
+# as CI has it (a combination actually proven to work) rather than
+# switched to `true` now that the system libs are present, since nothing
+# confirms that combination also works. `--buildtype release`, not CI's
+# own `--buildtype debug`, since this is a production image, not a CI
+# test run -- matches what freebayes' own README recommends for a
+# non-development build. `meson test` (CI's own correctness-verification
+# step) is deliberately skipped here -- it validates freebayes itself,
+# which is out of scope for building this image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        samtools bc parallel \
+        libvcflib-tools libvcflib-dev \
+        libseqlib2 libseqlib-dev \
+        libfastahack-dev fastahack \
+        smithwaterman \
+        libwfa2-dev libsimde-dev \
+        meson ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN git clone --recursive https://github.com/freebayes/freebayes.git /tmp/freebayes \
     && cd /tmp/freebayes \
-    && make -j"$(nproc)" \
-    && cp bin/freebayes /usr/local/bin/freebayes \
+    && meson setup build/ -Dprefer_system_deps=false --buildtype release \
+    && ninja -C build/ -v \
+    && cp build/freebayes /usr/local/bin/freebayes \
     && cd / && rm -rf /tmp/freebayes
 
 # --- Python environment: ONE shared venv for both projects -------------------

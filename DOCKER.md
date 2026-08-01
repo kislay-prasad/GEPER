@@ -321,15 +321,31 @@ running, and starting it would consume RAM this session was told to
 avoid — deliberately not started).
 
 **Verified locally, and how:**
-- Dockerfile structure/instruction syntax — careful manual authoring
-  and review (no Dockerfile linter like `hadolint` was available in
-  this environment to cross-check).
+- Dockerfile structure/instruction syntax — careful manual authoring and
+  review, plus a small custom Python script (no Dockerfile linter like
+  `hadolint` was available in this environment) that joins
+  backslash-continued lines the way Docker's parser does, confirms every
+  instruction keyword is valid, every `COPY --from=<stage>` references a
+  stage that's actually defined, and quotes are balanced per logical
+  instruction — this is what caught a real issue in an earlier pass (a
+  multi-line `VOLUME [...]` JSON array using backslash continuation,
+  which is NOT valid the way it was first written; fixed by splitting
+  into one `VOLUME` instruction per path instead).
 - `docker-compose.yml` YAML syntax — parses cleanly with Python's
   `yaml.safe_load()`.
 - The `transformers`/`enformer-pytorch`/`borzoi-pytorch` version
   conflict — checked against **live, real PyPI package metadata**
   (`pypi.org/pypi/<package>/json`) fetched during this session, not
   assumed. See the dedicated section above.
+- The freebayes build system and its exact system-package requirements
+  — checked against the **live freebayes/freebayes repo** (its
+  `meson.build`, README, and actually-exercised
+  `.github/workflows/ci_test.yml`), not assumed or guessed from a
+  plausible-looking `cmake` invocation. Every apt package name in that
+  CI recipe was then individually re-confirmed present on Debian
+  bookworm (this image's base — freebayes' own CI runs on Ubuntu) via
+  `packages.debian.org`, since a package existing on Ubuntu doesn't
+  guarantee the same name exists on Debian.
 - Every system-binary dependency this Dockerfile installs — found by
   grepping every `subprocess` call to an external binary across
   `pipeline/models/`, `models/`, and `database/` in the actual GEPER
@@ -364,11 +380,17 @@ with more resources:**
    it has never been confirmed working below its own declared
    `>=4.57.6` floor.
 5. **The freebayes source build succeeds** and the resulting binary
-   actually runs against the runtime stage's shared libraries (the
-   `libcurl4`/`libssl3`/etc. list is a best-effort match to what
-   `install_via_apt()`'s `-dev` packages would provide at *build* time,
-   not independently confirmed against the compiled binary's actual
-   `ldd` output).
+   actually runs against the runtime stage's shared libraries. Updated
+   this pass: the build step was initially wrong (assumed a plain `make`
+   build; freebayes actually uses Meson + Ninja, confirmed against the
+   live repo, and fixed to match — see the Dockerfile's own comment at
+   the freebayes build step for the full writeup, including the exact
+   CI workflow this was copied from and the Debian-bookworm package-name
+   re-verification done for it). Still not build-tested end to end: the
+   `libcurl4`/`libssl3`/etc. runtime-stage list is a best-effort match to
+   what the builder stage's `-dev` packages would provide at *build*
+   time, not independently confirmed against the compiled binary's
+   actual `ldd` output.
 6. **HyenaDNA's checkpoint download** via the pre-installed `git-lfs`
    actually works end-to-end inside the container.
 7. **SPiP's `Rscript`/CRAN-package auto-install** still works from

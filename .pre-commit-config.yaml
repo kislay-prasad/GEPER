@@ -1,0 +1,40 @@
+# See CONTRIBUTING.md for setup (`pip install pre-commit && pre-commit install`).
+repos:
+  # Lint + format. Runs repo-wide (ruff.toml excludes the vendored
+  # HazyResearch/hyena-dna and spliceformer/spip vendor/ directories),
+  # but only ever against files actually in a given commit -- adopting
+  # this does not force a one-shot repo-wide reformat.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # Deliberately scoped to the ACMG interpretation path only -- see
+  # mypy.ini's own header comment for why (this is where the PM1 bug,
+  # a None flowing where a residue number was expected, lived). The
+  # `files:` regex here must stay in sync with mypy.ini's `files =`
+  # list: it's what keeps pre-commit from invoking mypy (and mypy from
+  # falling back to checking whatever files pre-commit *did* pass) on
+  # commits that don't touch this path at all.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.0
+    hooks:
+      - id: mypy
+        name: mypy (ACMG interpretation path)
+        files: ^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas)\.py$|^geper/pipeline/pvs1/utils\.py$|^geper/pipeline/interpro/lookup\.py$
+        args: [--config-file=mypy.ini]
+        # mypy's pre-commit hook runs in its own isolated environment
+        # (language: python) -- it doesn't inherit this project's venv,
+        # so the pydantic plugin mypy.ini enables needs to be listed
+        # here explicitly or it silently can't be imported.
+        additional_dependencies: ["pydantic>=2.13,<3.0"]
+
+  # Credential scanning -- catches an API key or token pasted into a
+  # file before it's committed (relevant: one was pasted into chat
+  # earlier this session, though never into a tracked file).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

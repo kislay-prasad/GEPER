@@ -1,0 +1,28 @@
+# Repo-wide ruff config (lint + format), used by .pre-commit-config.yaml.
+# Not scoped to the mypy interpretation-path subset (see mypy.ini) --
+# ruff only ever runs against files actually in a given commit, so
+# adopting it here doesn't force a one-shot repo-wide reformat; each
+# file normalizes the first time it's next touched.
+target-version = "py312"
+line-length = 120
+
+extend-exclude = [
+    # Upstream HazyResearch/hyena-dna, cloned verbatim at build/setup
+    # time (see Dockerfile, models/hyenadna.py::install_hyenadna_colab)
+    # -- not this project's code to lint or reformat.
+    "geper/hyena-dna",
+    # Vendored third-party model source, kept verbatim against its
+    # original upstream for auditability (see each vendor/ dir's own
+    # license file) -- same reasoning as hyena-dna above.
+    "geper/pipeline/models/spliceformer/vendor",
+    "geper/pipeline/models/spip/vendor",
+]
+
+[lint]
+# Deliberately the default rule set (pyflakes + a small pycodestyle
+# subset), not an opinionated expansion (e.g. isort/bugbear/pyupgrade)
+# -- this pass is about catching real errors (unused imports, undefined
+# names, etc.) on an existing, un-linted codebase without also forcing
+# an unrelated style migration. Revisit/expand once the codebase has
+# had a chance to clear a first, narrow pass.
+select = ["E4", "E7", "E9", "F"]

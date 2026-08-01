@@ -20,14 +20,17 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.interpro.cache import InterProCache
-from pipeline.interpro.models import InterProAnnotation
 from pipeline.interpro.provider import CompositeInterProProvider
 from pipeline.interpro.utils import accession_cache_key, normalize_accession
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SKIPPED_RESULT = {"skipped": True, "reason": "InterPro integration disabled via GEPER_ENABLE_INTERPRO=false", "found": False}
+_SKIPPED_RESULT = {
+    "skipped": True,
+    "reason": "InterPro integration disabled via GEPER_ENABLE_INTERPRO=false",
+    "found": False,
+}
 
 # PM1 ("located in a mutational hot spot and/or critical and
 # well-established functional domain") means a structural/functional
@@ -67,9 +70,10 @@ class InterProLookup:
         if not CONFIG.interpro.ENABLED:
             return dict(_SKIPPED_RESULT)
 
-        accession = normalize_accession(accession)
-        if not accession:
+        normalized_accession = normalize_accession(accession)
+        if not normalized_accession:
             return {"skipped": False, "found": False, "error": "no UniProt accession provided"}
+        accession = normalized_accession
 
         key = accession_cache_key(accession)
         if self.cache is not None:
@@ -137,8 +141,10 @@ class InterProLookup:
         if protein_position is not None and result.get("found") and not result.get("error"):
             domains = result.get("domains") or []
             affected = [
-                d for d in domains
-                if isinstance(d.get("start"), int) and isinstance(d.get("end"), int)
+                d
+                for d in domains
+                if isinstance(d.get("start"), int)
+                and isinstance(d.get("end"), int)
                 and d["start"] <= protein_position <= d["end"]
                 and d.get("type") not in _NON_DOMAIN_ENTRY_TYPES
             ]
@@ -155,7 +161,8 @@ class InterProLookup:
         if not CONFIG.interpro.ENABLED:
             return [dict(_SKIPPED_RESULT) for _ in accessions]
 
-        distinct = sorted({normalize_accession(a) for a in accessions if normalize_accession(a)})
+        normalized_accessions = {normalize_accession(a) for a in accessions}
+        distinct = sorted(a for a in normalized_accessions if a)
         to_fetch = []
         cached_by_accession: Dict[str, Dict[str, Any]] = {}
         for accession in distinct:
@@ -184,7 +191,11 @@ class InterProLookup:
             if not normalized:
                 results.append({"skipped": False, "found": False, "accession": None})
                 continue
-            result = cached_by_accession.get(normalized) or fetched_by_accession.get(normalized) or {"skipped": False, "found": False}
+            result = (
+                cached_by_accession.get(normalized)
+                or fetched_by_accession.get(normalized)
+                or {"skipped": False, "found": False}
+            )
             result = dict(result)
             result.setdefault("accession", normalized)
             results.append(result)

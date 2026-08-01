@@ -230,19 +230,19 @@ def build_interpretation_result(
     *,
     variant_dict: Dict[str, Any],
     interpretation: Dict[str, Any],
-    dna_models_used: List[str] = None,
-    clinvar_result: Dict[str, Any] = None,
-    dbsnp_result: Dict[str, Any] = None,
-    protein_result: Dict[str, Any] = None,
-    blast_result: Dict[str, Any] = None,
-    alphamissense_result: Dict[str, Any] = None,
-    mmsplice_result: Dict[str, Any] = None,
-    gnomad_result: Dict[str, Any] = None,
-    clingen_result: Dict[str, Any] = None,
-    uniprot_result: Dict[str, Any] = None,
-    interpro_result: Dict[str, Any] = None,
-    alphafold_result: Dict[str, Any] = None,
-    rna_result: Dict[str, Any] = None,
+    dna_models_used: Optional[List[str]] = None,
+    clinvar_result: Optional[Dict[str, Any]] = None,
+    dbsnp_result: Optional[Dict[str, Any]] = None,
+    protein_result: Optional[Dict[str, Any]] = None,
+    blast_result: Optional[Dict[str, Any]] = None,
+    alphamissense_result: Optional[Dict[str, Any]] = None,
+    mmsplice_result: Optional[Dict[str, Any]] = None,
+    gnomad_result: Optional[Dict[str, Any]] = None,
+    clingen_result: Optional[Dict[str, Any]] = None,
+    uniprot_result: Optional[Dict[str, Any]] = None,
+    interpro_result: Optional[Dict[str, Any]] = None,
+    alphafold_result: Optional[Dict[str, Any]] = None,
+    rna_result: Optional[Dict[str, Any]] = None,
 ) -> InterpretationResult:
     """
     Build the canonical `InterpretationResult` from the outputs
@@ -256,7 +256,9 @@ def build_interpretation_result(
     # either: `acmg` above (the original, unvalidated dict) is still
     # what the rest of this function reads, exactly as before this
     # check existed.
-    _variant_ref = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
+    _variant_ref = (
+        f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
+    )
     validate_acmg_evaluation(acmg, variant_ref=_variant_ref)
 
     gene_symbol = None
@@ -279,30 +281,35 @@ def build_interpretation_result(
 
     ai_consensus: List[Dict[str, Any]] = []
     if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
-        ai_consensus.append({
-            "source": "AlphaMissense",
-            "prediction": alphamissense_result.get("am_class"),
-            "score": alphamissense_result.get("am_pathogenicity"),
-            "target": alphamissense_result.get("protein_variant"),
-        })
+        ai_consensus.append(
+            {
+                "source": "AlphaMissense",
+                "prediction": alphamissense_result.get("am_class"),
+                "score": alphamissense_result.get("am_pathogenicity"),
+                "target": alphamissense_result.get("protein_variant"),
+            }
+        )
     if mmsplice_result and mmsplice_result.get("predicted"):
-        ai_consensus.append({
-            "source": "MMSplice",
-            "prediction": mmsplice_result.get("interpretation_category"),
-            "score": mmsplice_result.get("delta_logit_psi"),
-            "target": "splicing",
-        })
+        ai_consensus.append(
+            {
+                "source": "MMSplice",
+                "prediction": mmsplice_result.get("interpretation_category"),
+                "score": mmsplice_result.get("delta_logit_psi"),
+                "target": "splicing",
+            }
+        )
 
     biological_evidence = []
     try:
         # Reuse the existing helper rather than re-deriving the same
         # UniProt/InterPro/AlphaFold conditionals here a second time.
         from pipeline.interpretation import InterpretationEngine as _IE
+
         biological_evidence = _IE._biological_context_evidence(uniprot_result, interpro_result, alphafold_result)
     except Exception:
         biological_evidence = []
 
-    evidence_sources = set()
+    evidence_sources: set[str] = set()
     for rule in triggered_rules + not_triggered_rules:
         evidence_sources.update(rule.get("evidence_sources") or [])
     if ai_consensus:
@@ -316,7 +323,12 @@ def build_interpretation_result(
     if clinvar_result and clinvar_result.get("records"):
         evidence_sources.add("ClinVar")
 
-    classification = acmg.get("classification")
+    # `or ""` matters, not just type-cleanliness: an absent
+    # "classification" key would otherwise pass None as the lookup key
+    # below, which Dict[str, ...].get() never matches anyway (silently
+    # falling through to the [] default) -- making that explicit avoids
+    # relying on dict.get's untyped-key leniency.
+    classification = acmg.get("classification") or ""
     recommendations = list(_RECOMMENDATIONS_BY_CLASSIFICATION.get(classification, []))
 
     # Bug fix (found during Phase 5 prep): this field's own docstring

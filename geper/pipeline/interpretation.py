@@ -9,7 +9,7 @@ appropriate for a clinical-adjacent research tool where every
 statement in the final report must be traceable to a concrete input.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from utils.logger import get_logger
@@ -50,26 +50,31 @@ class InterpretationEngine:
         dbsnp_result: Dict[str, Any],
         protein_result: Dict[str, Any],
         blast_result: Dict[str, Any],
-        alphamissense_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        alphafold_result: Dict[str, Any] = None,
-        rna_result: Dict[str, Any] = None,
-        ensemble_result: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        clinvar_codon_result: Dict[str, Any] = None,
-        spliceformer_result: Dict[str, Any] = None,
-        splicebert_result: Dict[str, Any] = None,
-        hpo_result: Dict[str, Any] = None,
-        phenotype_result: Dict[str, Any] = None,
-        functional_evidence_result: Dict[str, Any] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        conservation_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        rna_result: Optional[Dict[str, Any]] = None,
+        ensemble_result: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        clinvar_codon_result: Optional[Dict[str, Any]] = None,
+        spliceformer_result: Optional[Dict[str, Any]] = None,
+        splicebert_result: Optional[Dict[str, Any]] = None,
+        hpo_result: Optional[Dict[str, Any]] = None,
+        phenotype_result: Optional[Dict[str, Any]] = None,
+        functional_evidence_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         evidence: List[str] = []
-        significance_score = 0
+        # float, not int: weights accumulated below range from
+        # _SIGNIFICANCE_WEIGHT's int literals to CONFIG.mmsplice's/
+        # _gnomad_acmg_evidence's/_clingen_acmg_evidence's float ones,
+        # in the same running total -- mypy caught this being narrowed
+        # to "int" by inference from the first (int) weight added.
+        significance_score: float = 0
 
         chrom, pos, ref, alt = (
             variant_dict.get("chrom"),
@@ -92,7 +97,11 @@ class InterpretationEngine:
         if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
             top = clinvar_result["primary_record"]
             sig = (top.get("clinical_significance") or "").strip().lower()
-            weight = _SIGNIFICANCE_WEIGHT.get(sig, 0)
+            # float, not int: this name is reused below for MMSplice's/
+            # gnomAD's/ClinGen's float weights (same running total,
+            # same variable name) -- an int-only annotation here made
+            # mypy flag those later, legitimate float assignments.
+            weight: float = _SIGNIFICANCE_WEIGHT.get(sig, 0)
             significance_score += weight
             evidence.append(
                 f"ClinVar reports '{top.get('clinical_significance', 'unknown significance')}' "
@@ -261,23 +270,16 @@ class InterpretationEngine:
         # evidence source.
         for text in self._biological_context_evidence(uniprot_result, interpro_result, alphafold_result):
             evidence.append(text)
-        biological_evidence_lines = self._biological_context_evidence(uniprot_result, interpro_result, alphafold_result)
 
         # DNA model routing context.
         if dna_models_used:
-            evidence.append(
-                f"Sequence context analyzed with: {', '.join(dna_models_used)}."
-            )
+            evidence.append(f"Sequence context analyzed with: {', '.join(dna_models_used)}.")
 
         # BLAST context.
         if blast_result and blast_result.get("hit_count", 0) > 0:
-            evidence.append(
-                f"BLAST search returned {blast_result['hit_count']} homologous region(s)."
-            )
+            evidence.append(f"BLAST search returned {blast_result['hit_count']} homologous region(s).")
 
-        summary, confidence = self._build_summary(
-            chrom, pos, ref, alt, significance_score, bool(clinvar_records)
-        )
+        summary, confidence = self._build_summary(chrom, pos, ref, alt, significance_score, bool(clinvar_records))
 
         # Phase 1: independent, criterion-by-criterion ACMG/AMP evaluation.
         # Additive only -- computed from the same evidence dicts already
@@ -429,10 +431,22 @@ class InterpretationEngine:
                     acmg_classification=result_obj.acmg_classification,
                     acmg_conflicting_evidence=result_obj.conflicting_evidence,
                     ai_consensus=result_obj.ai_consensus,
-                    confidence_conflict_penalty=(confidence_result.conflict_penalty_applied if confidence_result is not None else 0.0),
-                    confidence_conflict_explanation=(confidence_result.conflict_explanation if confidence_result is not None else "Confidence engine did not run for this variant."),
-                    priority_conflict_penalty=(priority_result.conflict_penalty_applied if priority_result is not None else 0.0),
-                    priority_conflict_explanation=(priority_result.conflict_explanation if priority_result is not None else "Prioritization engine did not run for this variant."),
+                    confidence_conflict_penalty=(
+                        confidence_result.conflict_penalty_applied if confidence_result is not None else 0.0
+                    ),
+                    confidence_conflict_explanation=(
+                        confidence_result.conflict_explanation
+                        if confidence_result is not None
+                        else "Confidence engine did not run for this variant."
+                    ),
+                    priority_conflict_penalty=(
+                        priority_result.conflict_penalty_applied if priority_result is not None else 0.0
+                    ),
+                    priority_conflict_explanation=(
+                        priority_result.conflict_explanation
+                        if priority_result is not None
+                        else "Prioritization engine did not run for this variant."
+                    ),
                     clinvar_result=clinvar_result,
                     clingen_result=clingen_result,
                     gnomad_result=gnomad_result,
@@ -497,7 +511,7 @@ class InterpretationEngine:
         return legacy_result
 
     @staticmethod
-    def _gnomad_acmg_evidence(gnomad_result: Dict[str, Any]) -> List["tuple[str, float]"]:
+    def _gnomad_acmg_evidence(gnomad_result: Optional[Dict[str, Any]]) -> List["tuple[str, float]"]:
         """
         Translate a gnomAD evidence dict (see `pipeline/gnomad/models.py::
         GnomadAnnotation.to_dict()`) into zero or more (evidence_text,
@@ -521,8 +535,7 @@ class InterpretationEngine:
             # ("Absent from controls ... in a population database").
             results.append(
                 (
-                    "gnomAD: variant not found in the population database "
-                    "(PM2 evidence -- absent from gnomAD).",
+                    "gnomAD: variant not found in the population database (PM2 evidence -- absent from gnomAD).",
                     1.0,
                 )
             )
@@ -572,7 +585,7 @@ class InterpretationEngine:
 
     @staticmethod
     def _clingen_acmg_evidence(
-        clingen_result: Dict[str, Any], is_predicted_lof: bool
+        clingen_result: Optional[Dict[str, Any]], is_predicted_lof: bool
     ) -> List["tuple[str, float]"]:
         """
         Translate a ClinGen evidence dict (see
@@ -620,7 +633,11 @@ class InterpretationEngine:
         dosage = clingen_result.get("dosage_sensitivity")
         if is_predicted_lof and dosage:
             hi_score = dosage.get("haploinsufficiency_score")
-            if hi_score is not None and hi_score >= cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORE and hi_score != cfg.DOSAGE_UNLIKELY_SCORE:
+            if (
+                hi_score is not None
+                and hi_score >= cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORE
+                and hi_score != cfg.DOSAGE_UNLIKELY_SCORE
+            ):
                 results.append(
                     (
                         f"ClinGen: {gene_symbol} has sufficient curated evidence for haploinsufficiency "
@@ -669,9 +686,9 @@ class InterpretationEngine:
 
     @staticmethod
     def _biological_context_evidence(
-        uniprot_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        alphafold_result: Dict[str, Any] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """
         Purely descriptive (non-scored) context from the biological
@@ -686,18 +703,30 @@ class InterpretationEngine:
         """
         lines: List[str] = []
 
-        if uniprot_result and not uniprot_result.get("skipped") and not uniprot_result.get("error") and uniprot_result.get("found"):
+        if (
+            uniprot_result
+            and not uniprot_result.get("skipped")
+            and not uniprot_result.get("error")
+            and uniprot_result.get("found")
+        ):
             protein_name = uniprot_result.get("protein_name")
             if protein_name:
                 reviewed_note = "reviewed (Swiss-Prot)" if uniprot_result.get("reviewed") else "unreviewed"
-                lines.append(f"UniProt: encodes '{protein_name}' ({reviewed_note} entry {uniprot_result.get('accession', 'n/a')}).")
+                lines.append(
+                    f"UniProt: encodes '{protein_name}' ({reviewed_note} entry {uniprot_result.get('accession', 'n/a')})."
+                )
             if uniprot_result.get("disease_comments"):
                 lines.append(
                     f"UniProt: this gene's protein has {len(uniprot_result['disease_comments'])} documented "
                     f"disease-association comment(s) in UniProtKB."
                 )
 
-        if interpro_result and not interpro_result.get("skipped") and not interpro_result.get("error") and interpro_result.get("found"):
+        if (
+            interpro_result
+            and not interpro_result.get("skipped")
+            and not interpro_result.get("error")
+            and interpro_result.get("found")
+        ):
             affected = interpro_result.get("affected_domains")
             if affected:
                 names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
@@ -712,7 +741,12 @@ class InterpretationEngine:
                     f"are annotated on this protein overall."
                 )
 
-        if alphafold_result and not alphafold_result.get("skipped") and not alphafold_result.get("error") and alphafold_result.get("found"):
+        if (
+            alphafold_result
+            and not alphafold_result.get("skipped")
+            and not alphafold_result.get("error")
+            and alphafold_result.get("found")
+        ):
             band = alphafold_result.get("affected_residue_band")
             if band:
                 position = alphafold_result.get("protein_position")
@@ -729,7 +763,7 @@ class InterpretationEngine:
         return lines
 
     @staticmethod
-    def _build_summary(chrom, pos, ref, alt, score: int, has_clinvar: bool) -> "tuple[str, str]":
+    def _build_summary(chrom, pos, ref, alt, score: float, has_clinvar: bool) -> "tuple[str, str]":
         variant_label = f"{chrom}:{pos} {ref}>{alt}"
 
         if not has_clinvar:
@@ -758,7 +792,6 @@ class InterpretationEngine:
                 "high",
             )
         return (
-            f"{variant_label} has uncertain clinical significance based on currently "
-            f"available evidence.",
+            f"{variant_label} has uncertain clinical significance based on currently available evidence.",
             "low",
         )

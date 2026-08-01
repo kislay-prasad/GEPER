@@ -64,20 +64,32 @@ from pipeline.pvs1.utils import (
 # Richards et al. point-based approximation.
 _STRENGTH = {
     "PVS1": ("pathogenic", "very_strong"),
-    "PS1": ("pathogenic", "strong"), "PS2": ("pathogenic", "strong"),
-    "PS3": ("pathogenic", "strong"), "PS4": ("pathogenic", "strong"),
-    "PM1": ("pathogenic", "moderate"), "PM2": ("pathogenic", "moderate"),
-    "PM3": ("pathogenic", "moderate"), "PM4": ("pathogenic", "moderate"),
-    "PM5": ("pathogenic", "moderate"), "PM6": ("pathogenic", "moderate"),
-    "PP1": ("pathogenic", "supporting"), "PP2": ("pathogenic", "supporting"),
-    "PP3": ("pathogenic", "supporting"), "PP4": ("pathogenic", "supporting"),
+    "PS1": ("pathogenic", "strong"),
+    "PS2": ("pathogenic", "strong"),
+    "PS3": ("pathogenic", "strong"),
+    "PS4": ("pathogenic", "strong"),
+    "PM1": ("pathogenic", "moderate"),
+    "PM2": ("pathogenic", "moderate"),
+    "PM3": ("pathogenic", "moderate"),
+    "PM4": ("pathogenic", "moderate"),
+    "PM5": ("pathogenic", "moderate"),
+    "PM6": ("pathogenic", "moderate"),
+    "PP1": ("pathogenic", "supporting"),
+    "PP2": ("pathogenic", "supporting"),
+    "PP3": ("pathogenic", "supporting"),
+    "PP4": ("pathogenic", "supporting"),
     "PP5": ("pathogenic", "supporting"),
     "BA1": ("benign", "stand_alone"),
-    "BS1": ("benign", "strong"), "BS2": ("benign", "strong"),
-    "BS3": ("benign", "strong"), "BS4": ("benign", "strong"),
-    "BP1": ("benign", "supporting"), "BP2": ("benign", "supporting"),
-    "BP3": ("benign", "supporting"), "BP4": ("benign", "supporting"),
-    "BP5": ("benign", "supporting"), "BP6": ("benign", "supporting"),
+    "BS1": ("benign", "strong"),
+    "BS2": ("benign", "strong"),
+    "BS3": ("benign", "strong"),
+    "BS4": ("benign", "strong"),
+    "BP1": ("benign", "supporting"),
+    "BP2": ("benign", "supporting"),
+    "BP3": ("benign", "supporting"),
+    "BP4": ("benign", "supporting"),
+    "BP5": ("benign", "supporting"),
+    "BP6": ("benign", "supporting"),
     "BP7": ("benign", "supporting"),
 }
 
@@ -104,7 +116,12 @@ class CriterionResult:
     details: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        payload = {
+        # Explicit Dict[str, Any], not inferred from the literal below:
+        # a bare-literal inference would narrow the value type to the
+        # union of this dict's own field types (str | list[str] | ...),
+        # which then rejects `self.details` (a genuinely different
+        # shape, Dict[str, Any]) being added below.
+        payload: Dict[str, Any] = {
             "code": self.code,
             "direction": self.direction,
             "strength": self.strength,
@@ -123,7 +140,10 @@ class CriterionResult:
 def _not_evaluated(code: str, reason: str) -> CriterionResult:
     direction, strength = _STRENGTH[code]
     return CriterionResult(
-        code=code, direction=direction, strength=strength, status="not_evaluated",
+        code=code,
+        direction=direction,
+        strength=strength,
+        status="not_evaluated",
         rationale=f"Not evaluated: {reason}",
     )
 
@@ -139,25 +159,25 @@ class ACMGRuleEngine:
     def evaluate(
         self,
         *,
-        clinvar_result: Dict[str, Any] = None,
-        dbsnp_result: Dict[str, Any] = None,
-        protein_result: Dict[str, Any] = None,
-        alphamissense_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        ensemble_result: Dict[str, Any] = None,
-        variant_dict: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        clinvar_codon_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
-        spliceformer_result: Dict[str, Any] = None,
-        splicebert_result: Dict[str, Any] = None,
-        hpo_result: Dict[str, Any] = None,
-        phenotype_result: Dict[str, Any] = None,
-        functional_evidence_result: Dict[str, Any] = None,
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        dbsnp_result: Optional[Dict[str, Any]] = None,
+        protein_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        conservation_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        ensemble_result: Optional[Dict[str, Any]] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        clinvar_codon_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        spliceformer_result: Optional[Dict[str, Any]] = None,
+        splicebert_result: Optional[Dict[str, Any]] = None,
+        hpo_result: Optional[Dict[str, Any]] = None,
+        phenotype_result: Optional[Dict[str, Any]] = None,
+        functional_evidence_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         criteria: Dict[str, CriterionResult] = {}
 
@@ -173,25 +193,35 @@ class ACMGRuleEngine:
             mmsplice_result=mmsplice_result,
         )
         criteria["PS1"] = self._ps1(
-            variant_dict=variant_dict, transcript_result=transcript_result, clinvar_codon_result=clinvar_codon_result,
+            variant_dict=variant_dict,
+            transcript_result=transcript_result,
+            clinvar_codon_result=clinvar_codon_result,
         )
         criteria["PM5"] = self._pm5(
-            variant_dict=variant_dict, transcript_result=transcript_result, clinvar_codon_result=clinvar_codon_result,
+            variant_dict=variant_dict,
+            transcript_result=transcript_result,
+            clinvar_codon_result=clinvar_codon_result,
         )
         criteria["PM1"] = self._pm1(interpro_result)
         criteria["PM2"] = self._pm2(gnomad_result)
         criteria["PM4"] = self._pm4(
-            variant_dict=variant_dict, transcript_result=transcript_result, uniprot_result=uniprot_result,
+            variant_dict=variant_dict,
+            transcript_result=transcript_result,
+            uniprot_result=uniprot_result,
         )
         criteria["PS4"] = self._ps4(gnomad_result)
-        criteria["PP3"], criteria["BP4"] = self._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
+        criteria["PP3"], criteria["BP4"] = self._pp3_bp4(
+            alphamissense_result, mmsplice_result, ensemble_result, conservation_result
+        )
         criteria["BA1"], criteria["BS1"] = self._ba1_bs1(gnomad_result)
         criteria["BP7"] = self._bp7(is_synonymous, mmsplice_result, spliceformer_result, splicebert_result)
         criteria["PP1"] = self._pp1(clingen_result)
         criteria["BS4"] = self._bs4(clingen_result)
         criteria["BP1"] = self._bp1(is_missense, clingen_result)
         criteria["BP3"] = self._bp3(
-            variant_dict=variant_dict, transcript_result=transcript_result, uniprot_result=uniprot_result,
+            variant_dict=variant_dict,
+            transcript_result=transcript_result,
+            uniprot_result=uniprot_result,
         )
         criteria["BP6"] = self._bp6(clinvar_result)
         criteria["PP4"] = self._pp4(phenotype_result, hpo_result)
@@ -203,14 +233,24 @@ class ACMGRuleEngine:
         # ACMG/AMP criteria is accounted for in the output, per the
         # "never fabricate evidence" requirement -- each of these would
         # require a data source this pipeline does not yet integrate.
-        criteria["PS2"] = _not_evaluated("PS2", "requires confirmed de novo trio (parental) sequencing data; not integrated.")
+        criteria["PS2"] = _not_evaluated(
+            "PS2", "requires confirmed de novo trio (parental) sequencing data; not integrated."
+        )
         criteria["PM3"] = _not_evaluated("PM3", "requires trans-phase data for a recessive disorder; not integrated.")
-        criteria["PM6"] = _not_evaluated("PM6", "requires confirmed (non-parentally-tested) de novo status; not integrated.")
-        criteria["PP2"] = _not_evaluated("PP2", "requires a gene-level missense-constraint metric (e.g. gnomAD missense Z-score); not integrated.")
+        criteria["PM6"] = _not_evaluated(
+            "PM6", "requires confirmed (non-parentally-tested) de novo status; not integrated."
+        )
+        criteria["PP2"] = _not_evaluated(
+            "PP2", "requires a gene-level missense-constraint metric (e.g. gnomAD missense Z-score); not integrated."
+        )
         criteria["PP5"] = _not_evaluated("PP5", "deprecated in the 2015 ACMG/AMP guideline update; not applied.")
-        criteria["BS2"] = _not_evaluated("BS2", "requires observation in unaffected individuals at the expected penetrance age; not integrated.")
+        criteria["BS2"] = _not_evaluated(
+            "BS2", "requires observation in unaffected individuals at the expected penetrance age; not integrated."
+        )
         criteria["BP2"] = _not_evaluated("BP2", "requires trans/cis phase data; not integrated.")
-        criteria["BP5"] = _not_evaluated("BP5", "requires case-level data on an alternate molecular cause; not integrated.")
+        criteria["BP5"] = _not_evaluated(
+            "BP5", "requires case-level data on an alternate molecular cause; not integrated."
+        )
 
         # Attach ClinVar as descriptive cross-reference (never used to
         # directly trigger a rule here -- ClinVar's own classification is
@@ -242,7 +282,7 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _protein_effect_flags(
-        variant_dict: Dict[str, Any], transcript_result: Dict[str, Any]
+        variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
     ) -> "tuple[Optional[bool], Optional[bool]]":
         """
         (is_synonymous, is_missense) for BP7/BP1, called from the
@@ -278,13 +318,13 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _pvs1(
-        variant_dict: Dict[str, Any] = None,
-        protein_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        protein_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PVS1, evaluated through the ClinGen SVI decision tree rather than
@@ -330,15 +370,18 @@ class ACMGRuleEngine:
         else:
             strength = nominal_strength
             not_a_null = evaluation.null_variant_type not in QUALIFYING_NULL_TYPES
-            missing_inputs = (
-                evaluation.lof_mechanism == LOF_UNKNOWN
-                or (evaluation.transcript_id is None and not not_a_null
-                    and evaluation.null_variant_type != NULL_WHOLE_GENE_DELETION)
+            missing_inputs = evaluation.lof_mechanism == LOF_UNKNOWN or (
+                evaluation.transcript_id is None
+                and not not_a_null
+                and evaluation.null_variant_type != NULL_WHOLE_GENE_DELETION
             )
             status = "not_evaluated" if (missing_inputs and not not_a_null) else "not_triggered"
 
         return CriterionResult(
-            "PVS1", direction, strength, status,
+            "PVS1",
+            direction,
+            strength,
+            status,
             evaluation.rationale,
             supporting_evidence=list(evaluation.supporting_evidence),
             conflicting_evidence=list(evaluation.conflicting_evidence),
@@ -349,7 +392,7 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _ps1_pm5_query_context(
-        variant_dict: Dict[str, Any], transcript_result: Dict[str, Any]
+        variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
     ) -> "tuple":
         """
         Shared setup for `_ps1`/`_pm5`: the transcript, the query
@@ -364,7 +407,11 @@ class ACMGRuleEngine:
         pos = variant_dict.get("pos") if variant_dict else None
         ref = (variant_dict.get("ref") or "") if variant_dict else ""
         alt = (variant_dict.get("alt") or "") if variant_dict else ""
-        query = coding_consequence_detail(transcript, int(pos), ref, alt) if (transcript is not None and pos is not None) else None
+        query = (
+            coding_consequence_detail(transcript, int(pos), ref, alt)
+            if (transcript is not None and pos is not None)
+            else None
+        )
         return transcript, (int(pos) if pos is not None else None), ref, alt, query
 
     @staticmethod
@@ -382,10 +429,15 @@ class ACMGRuleEngine:
         if evaluation.applies:
             status = "triggered"
         else:
-            no_consequence = "could not be determined" in evaluation.rationale or "was not evaluated" in evaluation.rationale
+            no_consequence = (
+                "could not be determined" in evaluation.rationale or "was not evaluated" in evaluation.rationale
+            )
             status = "not_evaluated" if no_consequence else "not_triggered"
         return CriterionResult(
-            evaluation.code, direction, nominal_strength, status,
+            evaluation.code,
+            direction,
+            nominal_strength,
+            status,
             evaluation.rationale,
             supporting_evidence=list(evaluation.supporting_evidence),
             conflicting_evidence=list(evaluation.conflicting_evidence),
@@ -396,9 +448,9 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _ps1(
-        variant_dict: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        clinvar_codon_result: Dict[str, Any] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        clinvar_codon_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PS1 (Strong): this variant produces the identical amino acid
@@ -424,9 +476,9 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _pm5(
-        variant_dict: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        clinvar_codon_result: Dict[str, Any] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        clinvar_codon_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PM5 (Moderate): this variant produces a novel amino acid change
@@ -452,7 +504,7 @@ class ACMGRuleEngine:
         return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
 
     @staticmethod
-    def _pm1(interpro_result: Dict[str, Any]) -> CriterionResult:
+    def _pm1(interpro_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         PM1 (ACMG/AMP 2015): variant is located in a mutational hot
         spot and/or critical, well-established functional domain
@@ -483,7 +535,12 @@ class ACMGRuleEngine:
         that was wrong for almost every real variant).
         """
         direction, strength = _STRENGTH["PM1"]
-        if not interpro_result or interpro_result.get("skipped") or interpro_result.get("error") or not interpro_result.get("found"):
+        if (
+            not interpro_result
+            or interpro_result.get("skipped")
+            or interpro_result.get("error")
+            or not interpro_result.get("found")
+        ):
             return _not_evaluated("PM1", "InterPro domain annotation was unavailable for this gene/residue.")
 
         protein_position = interpro_result.get("protein_position")
@@ -501,18 +558,28 @@ class ACMGRuleEngine:
         if affected:
             names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
             return CriterionResult(
-                "PM1", direction, strength, "triggered",
+                "PM1",
+                direction,
+                strength,
+                "triggered",
                 f"Residue {protein_position} (transcript-verified against this gene's MANE Select/"
                 f"canonical transcript) falls within an annotated functional domain/family region "
                 f"({names}), a location InterPro/Pfam curation flags as structurally/functionally "
                 f"significant.",
-                supporting_evidence=[f"InterPro/Pfam: residue {protein_position} overlaps {len(affected)} domain/family region(s): {names}."],
-                conflicting_evidence=["Checked only against this gene's MANE Select/Ensembl-canonical transcript; a different disease-relevant transcript could number this residue differently."],
+                supporting_evidence=[
+                    f"InterPro/Pfam: residue {protein_position} overlaps {len(affected)} domain/family region(s): {names}."
+                ],
+                conflicting_evidence=[
+                    "Checked only against this gene's MANE Select/Ensembl-canonical transcript; a different disease-relevant transcript could number this residue differently."
+                ],
                 evidence_sources=["InterPro"],
                 confidence="Moderate",
             )
         return CriterionResult(
-            "PM1", direction, strength, "not_triggered",
+            "PM1",
+            direction,
+            strength,
+            "not_triggered",
             f"Residue {protein_position} (transcript-verified against this gene's MANE Select/canonical "
             f"transcript) does not overlap any annotated InterPro/Pfam domain region.",
             evidence_sources=["InterPro"],
@@ -520,16 +587,18 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
-    def _pm2(gnomad_result: Dict[str, Any]) -> CriterionResult:
+    def _pm2(gnomad_result: Optional[Dict[str, Any]]) -> CriterionResult:
         direction, strength = _STRENGTH["PM2"]
         if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
             return _not_evaluated("PM2", "gnomAD lookup was skipped or errored for this variant.")
         cfg = CONFIG.gnomad
         if not gnomad_result.get("found"):
             return CriterionResult(
-                "PM2", direction, strength, "triggered",
-                "Variant is absent from gnomAD, consistent with PM2's 'absent from controls in a "
-                "population database'.",
+                "PM2",
+                direction,
+                strength,
+                "triggered",
+                "Variant is absent from gnomAD, consistent with PM2's 'absent from controls in a population database'.",
                 supporting_evidence=["gnomAD: variant not found."],
                 evidence_sources=["gnomAD"],
                 confidence="Moderate",
@@ -537,7 +606,10 @@ class ACMGRuleEngine:
         global_af = gnomad_result.get("global_af")
         if global_af is not None and global_af <= cfg.PM2_AF_THRESHOLD:
             return CriterionResult(
-                "PM2", direction, strength, "triggered",
+                "PM2",
+                direction,
+                strength,
+                "triggered",
                 f"gnomAD global allele frequency ({global_af:.2e}) is at or below the PM2 rarity "
                 f"threshold ({cfg.PM2_AF_THRESHOLD:.2e}).",
                 supporting_evidence=[f"gnomAD global AF = {global_af:.2e}."],
@@ -545,7 +617,10 @@ class ACMGRuleEngine:
                 confidence="Moderate",
             )
         return CriterionResult(
-            "PM2", direction, strength, "not_triggered",
+            "PM2",
+            direction,
+            strength,
+            "not_triggered",
             f"gnomAD global allele frequency ({global_af if global_af is not None else 'n/a'}) exceeds "
             f"the PM2 rarity threshold; variant is not rare enough for PM2.",
             evidence_sources=["gnomAD"],
@@ -553,7 +628,7 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
-    def _ps4(gnomad_result: Dict[str, Any]) -> CriterionResult:
+    def _ps4(gnomad_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         PS4 (Strong): "the prevalence of the variant in affected
         individuals is significantly increased compared to its
@@ -596,11 +671,15 @@ class ACMGRuleEngine:
             "computed, and this criterion can never be triggered by this pipeline as currently built."
         )
         if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
-            return _not_evaluated("PS4", base_reason + " gnomAD control-population data was also unavailable for this variant.")
+            return _not_evaluated(
+                "PS4", base_reason + " gnomAD control-population data was also unavailable for this variant."
+            )
 
         af, af_label = population_af_from_gnomad(gnomad_result)
         if af is None:
-            return _not_evaluated("PS4", base_reason + " No usable gnomAD allele frequency was returned for this variant either.")
+            return _not_evaluated(
+                "PS4", base_reason + " No usable gnomAD allele frequency was returned for this variant either."
+            )
 
         cfg = CONFIG.gnomad
         if af >= cfg.BA1_AF_THRESHOLD:
@@ -621,11 +700,18 @@ class ACMGRuleEngine:
             context = f"For context only (not part of the PS4 comparison): gnomAD allele frequency is {af_label}."
 
         return CriterionResult(
-            "PS4", direction, strength, "not_evaluated",
+            "PS4",
+            direction,
+            strength,
+            "not_evaluated",
             base_reason + " " + context,
             evidence_sources=["gnomAD"],
             confidence="Low",
-            details={"gnomad_allele_frequency": af, "gnomad_allele_frequency_label": af_label, "case_frequency_source": None},
+            details={
+                "gnomad_allele_frequency": af,
+                "gnomad_allele_frequency_label": af_label,
+                "case_frequency_source": None,
+            },
         )
 
     # UniProt's own controlled-vocabulary feature-type strings (verified
@@ -645,7 +731,7 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _pm4_repeat_region_hit(
-        uniprot_result: Dict[str, Any], protein_position: Optional[int]
+        uniprot_result: Optional[Dict[str, Any]], protein_position: Optional[int]
     ) -> "tuple[Optional[bool], Optional[Dict[str, Any]]]":
         """
         Whether `protein_position` falls inside a UniProt-annotated
@@ -665,7 +751,12 @@ class ACMGRuleEngine:
         list, so this filters the raw list directly rather than
         assuming a pre-filtered key exists.
         """
-        if not uniprot_result or uniprot_result.get("skipped") or uniprot_result.get("error") or not uniprot_result.get("found"):
+        if (
+            not uniprot_result
+            or uniprot_result.get("skipped")
+            or uniprot_result.get("error")
+            or not uniprot_result.get("found")
+        ):
             return None, None
         if protein_position is None:
             return None, None
@@ -680,9 +771,9 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _pm4(
-        variant_dict: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PM4: an in-frame insertion/deletion (length change a multiple
@@ -712,9 +803,14 @@ class ACMGRuleEngine:
 
         if detail is None:
             if transcript is None:
-                return _not_evaluated("PM4", "transcript structure was unavailable to classify this variant's coding consequence.")
+                return _not_evaluated(
+                    "PM4", "transcript structure was unavailable to classify this variant's coding consequence."
+                )
             return CriterionResult(
-                "PM4", direction, strength, "not_triggered",
+                "PM4",
+                direction,
+                strength,
+                "not_triggered",
                 "Predicted consequence is neither an in-frame insertion/deletion nor a stop-loss "
                 "substitution." + (f" ({notes[-1]})" if notes else ""),
                 evidence_sources=["transcript_structure"],
@@ -728,19 +824,37 @@ class ACMGRuleEngine:
         checked, repeat_feature = ACMGRuleEngine._pm4_repeat_region_hit(uniprot_result, detail.codon_number)
 
         if checked is True:
+            # _pm4_repeat_region_hit only ever returns (True, feature)
+            # together (see its own docstring/return statements) --
+            # this makes that pairing an explicit, checked invariant
+            # rather than one mypy can't see across the two return
+            # values.
+            assert repeat_feature is not None
             label = repeat_feature.get("description") or repeat_feature.get("feature_type")
             return CriterionResult(
-                "PM4", direction, strength, "not_triggered",
+                "PM4",
+                direction,
+                strength,
+                "not_triggered",
                 f"Predicted consequence is a qualifying {detail.category.replace('_', ' ')} at codon "
                 f"{detail.codon_number}, but that position falls within a UniProt-annotated "
                 f"{repeat_feature.get('feature_type')} region ({label}, residues "
                 f"{repeat_feature.get('begin')}-{repeat_feature.get('end')}) -- PM4 does not apply in a "
                 "known repeat/low-complexity region, where length changes are plausible benign population "
                 "variation rather than a functional disruption.",
-                conflicting_evidence=[f"UniProt: {repeat_feature.get('feature_type')} ({label}), residues {repeat_feature.get('begin')}-{repeat_feature.get('end')}."],
+                conflicting_evidence=[
+                    f"UniProt: {repeat_feature.get('feature_type')} ({label}), residues {repeat_feature.get('begin')}-{repeat_feature.get('end')}."
+                ],
                 evidence_sources=["transcript_structure", "UniProt"],
                 confidence="Moderate",
-                details={"variant_detail": {"category": detail.category, "codon_number": detail.codon_number, "residues_changed": detail.residues_changed}, "notes": notes},
+                details={
+                    "variant_detail": {
+                        "category": detail.category,
+                        "codon_number": detail.codon_number,
+                        "residues_changed": detail.residues_changed,
+                    },
+                    "notes": notes,
+                },
             )
 
         supporting = list(notes)
@@ -755,7 +869,10 @@ class ACMGRuleEngine:
             supporting.append("UniProt: no repeat/compositional-bias region annotated at this codon.")
 
         return CriterionResult(
-            "PM4", direction, strength, "triggered",
+            "PM4",
+            direction,
+            strength,
+            "triggered",
             f"Predicted consequence is a qualifying {detail.category.replace('_', ' ')}"
             + (f" ({detail.residues_changed} residue(s))" if detail.residues_changed else "")
             + f" at codon {detail.codon_number}"
@@ -768,7 +885,11 @@ class ACMGRuleEngine:
             evidence_sources=["transcript_structure"] + (["UniProt"] if checked is not None else []),
             confidence=confidence,
             details={
-                "variant_detail": {"category": detail.category, "codon_number": detail.codon_number, "residues_changed": detail.residues_changed},
+                "variant_detail": {
+                    "category": detail.category,
+                    "codon_number": detail.codon_number,
+                    "residues_changed": detail.residues_changed,
+                },
                 "notes": notes,
                 "unchecked_caveats": unchecked,
             },
@@ -789,7 +910,12 @@ class ACMGRuleEngine:
     )
 
     @staticmethod
-    def _conservation_signal(conservation_result: Dict[str, Any], score_key: str, conserved_threshold: float, not_conserved_threshold: float):
+    def _conservation_signal(
+        conservation_result: Optional[Dict[str, Any]],
+        score_key: str,
+        conserved_threshold: float,
+        not_conserved_threshold: float,
+    ):
         """
         Classifies one conservation score type from a
         `pipeline.conservation.lookup.ConservationLookup` result into
@@ -803,7 +929,12 @@ class ACMGRuleEngine:
         (see `_CONSERVATION_SCORE_TYPES`) rather than duplicating this
         logic per type.
         """
-        if not conservation_result or conservation_result.get("skipped") or conservation_result.get("error") or not conservation_result.get("found"):
+        if (
+            not conservation_result
+            or conservation_result.get("skipped")
+            or conservation_result.get("error")
+            or not conservation_result.get("found")
+        ):
             return None, None
         score = conservation_result.get(score_key)
         if score is None:
@@ -818,8 +949,8 @@ class ACMGRuleEngine:
     def _pp3(
         alphamissense_result: Dict[str, Any],
         mmsplice_result: Dict[str, Any],
-        ensemble_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
+        ensemble_result: Optional[Dict[str, Any]] = None,
+        conservation_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         pp3, _ = ACMGRuleEngine._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
         return pp3
@@ -828,18 +959,18 @@ class ACMGRuleEngine:
     def _bp4(
         alphamissense_result: Dict[str, Any],
         mmsplice_result: Dict[str, Any],
-        ensemble_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
+        ensemble_result: Optional[Dict[str, Any]] = None,
+        conservation_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         _, bp4 = ACMGRuleEngine._pp3_bp4(alphamissense_result, mmsplice_result, ensemble_result, conservation_result)
         return bp4
 
     @staticmethod
     def _pp3_bp4(
-        alphamissense_result: Dict[str, Any],
-        mmsplice_result: Dict[str, Any],
-        ensemble_result: Dict[str, Any] = None,
-        conservation_result: Dict[str, Any] = None,
+        alphamissense_result: Optional[Dict[str, Any]],
+        mmsplice_result: Optional[Dict[str, Any]],
+        ensemble_result: Optional[Dict[str, Any]] = None,
+        conservation_result: Optional[Dict[str, Any]] = None,
     ) -> "tuple[CriterionResult, CriterionResult]":
         """
         PP3 ("computational evidence supports a deleterious effect") and
@@ -910,15 +1041,37 @@ class ACMGRuleEngine:
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             sources.append("AlphaMissense")
             if am_class == "likely_pathogenic":
-                damaging.append(("AlphaMissense", f"AlphaMissense predicts 'likely_pathogenic' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')})."))
+                damaging.append(
+                    (
+                        "AlphaMissense",
+                        f"AlphaMissense predicts 'likely_pathogenic' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).",
+                    )
+                )
             elif am_class == "likely_benign":
-                benign.append(("AlphaMissense", f"AlphaMissense predicts 'likely_benign' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')})."))
+                benign.append(
+                    (
+                        "AlphaMissense",
+                        f"AlphaMissense predicts 'likely_benign' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).",
+                    )
+                )
 
         if mmsplice_result and mmsplice_result.get("predicted"):
             category = mmsplice_result.get("interpretation_category")
             sources.append("MMSplice")
-            if category in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
-                damaging.append(("MMSplice", f"MMSplice predicts a damaging splice effect ({mmsplice_result.get('interpretation')})."))
+            if category in (
+                "strong_donor_loss",
+                "strong_acceptor_loss",
+                "exon_skipping",
+                "intron_retention",
+                "strong",
+                "moderate",
+            ):
+                damaging.append(
+                    (
+                        "MMSplice",
+                        f"MMSplice predicts a damaging splice effect ({mmsplice_result.get('interpretation')}).",
+                    )
+                )
             else:
                 benign.append(("MMSplice", "MMSplice predicts no significant splice disruption."))
 
@@ -935,22 +1088,34 @@ class ACMGRuleEngine:
             classification = ensemble_result.get("classification")
             consensus_score = ensemble_result.get("consensus_score")
             basis = ensemble_result.get("basis")
-            basis_label = "single-model prediction" if basis == "single_model" else (
-                f"{len(models_used)}-model consensus (agreement={ensemble_result.get('agreement_percentage')}%)"
+            basis_label = (
+                "single-model prediction"
+                if basis == "single_model"
+                else (f"{len(models_used)}-model consensus (agreement={ensemble_result.get('agreement_percentage')}%)")
             )
             label = f"AI-ensemble({'+'.join(models_used)})"
             sources.append(label)
             score_str = f"{consensus_score:.3f}" if consensus_score is not None else "n/a"
             if classification in ("large_effect", "moderate_effect"):
-                damaging.append((label, (
-                    f"Splicing/regulatory AI ensemble ({basis_label}) predicts a "
-                    f"'{classification}' effect (score={score_str}). {ensemble_result.get('reasoning', '')}"
-                )))
+                damaging.append(
+                    (
+                        label,
+                        (
+                            f"Splicing/regulatory AI ensemble ({basis_label}) predicts a "
+                            f"'{classification}' effect (score={score_str}). {ensemble_result.get('reasoning', '')}"
+                        ),
+                    )
+                )
             elif classification == "no_significant_effect":
-                benign.append((label, (
-                    f"Splicing/regulatory AI ensemble ({basis_label}) predicts "
-                    f"'no_significant_effect' (score={score_str}). {ensemble_result.get('reasoning', '')}"
-                )))
+                benign.append(
+                    (
+                        label,
+                        (
+                            f"Splicing/regulatory AI ensemble ({basis_label}) predicts "
+                            f"'no_significant_effect' (score={score_str}). {ensemble_result.get('reasoning', '')}"
+                        ),
+                    )
+                )
 
         # Conservation (PhyloP, PhastCons, GERP++) evidence -- additive,
         # fourth+ source(s). See `_conservation_signal`'s own docstring
@@ -970,21 +1135,37 @@ class ACMGRuleEngine:
                 continue
             sources.append(label)
             if cons_direction == "conserved":
-                damaging.append((label, (
-                    f"{label} conservation score ({cons_score:.2f}) is at or above the conserved "
-                    f"threshold ({getattr(cfg, conserved_field)}), indicating evolutionary constraint "
-                    "at this position."
-                )))
+                damaging.append(
+                    (
+                        label,
+                        (
+                            f"{label} conservation score ({cons_score:.2f}) is at or above the conserved "
+                            f"threshold ({getattr(cfg, conserved_field)}), indicating evolutionary constraint "
+                            "at this position."
+                        ),
+                    )
+                )
             elif cons_direction == "not_conserved":
-                benign.append((label, (
-                    f"{label} conservation score ({cons_score:.2f}) is at or below the not-conserved "
-                    f"threshold ({getattr(cfg, not_conserved_field)}), indicating no evolutionary "
-                    "constraint at this position."
-                )))
+                benign.append(
+                    (
+                        label,
+                        (
+                            f"{label} conservation score ({cons_score:.2f}) is at or below the not-conserved "
+                            f"threshold ({getattr(cfg, not_conserved_field)}), indicating no evolutionary "
+                            "constraint at this position."
+                        ),
+                    )
+                )
 
         if not sources:
-            na = _not_evaluated("PP3", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
-            nb = _not_evaluated("BP4", "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.")
+            na = _not_evaluated(
+                "PP3",
+                "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.",
+            )
+            nb = _not_evaluated(
+                "BP4",
+                "no computational predictor (AlphaMissense/MMSplice/AI-ensemble/PhyloP/PhastCons/GERP++) produced a result for this variant.",
+            )
             return na, nb
 
         damaging_texts = [text for _, text in damaging]
@@ -999,73 +1180,119 @@ class ACMGRuleEngine:
                 "nor BP4 is applied when the integrated computational evidence is self-contradictory."
             )
             pp3 = CriterionResult(
-                "PP3", pp3_dir, pp3_strength, "not_triggered", conflict_note,
-                supporting_evidence=damaging_texts, conflicting_evidence=benign_texts,
-                evidence_sources=sources, confidence="Low",
+                "PP3",
+                pp3_dir,
+                pp3_strength,
+                "not_triggered",
+                conflict_note,
+                supporting_evidence=damaging_texts,
+                conflicting_evidence=benign_texts,
+                evidence_sources=sources,
+                confidence="Low",
             )
             bp4 = CriterionResult(
-                "BP4", bp4_dir, bp4_strength, "not_triggered", conflict_note,
-                supporting_evidence=benign_texts, conflicting_evidence=damaging_texts,
-                evidence_sources=sources, confidence="Low",
+                "BP4",
+                bp4_dir,
+                bp4_strength,
+                "not_triggered",
+                conflict_note,
+                supporting_evidence=benign_texts,
+                conflicting_evidence=damaging_texts,
+                evidence_sources=sources,
+                confidence="Low",
             )
             return pp3, bp4
 
         if damaging:
             pp3 = CriterionResult(
-                "PP3", pp3_dir, pp3_strength, "triggered",
-                "Computational evidence (from " + " and ".join(dict.fromkeys(label for label, _ in damaging)) +
-                ") supports a deleterious effect on the gene/gene product.",
+                "PP3",
+                pp3_dir,
+                pp3_strength,
+                "triggered",
+                "Computational evidence (from "
+                + " and ".join(dict.fromkeys(label for label, _ in damaging))
+                + ") supports a deleterious effect on the gene/gene product.",
                 supporting_evidence=damaging_texts,
                 evidence_sources=sources,
                 confidence="Moderate" if len(damaging_texts) > 1 else "Low",
             )
             bp4 = CriterionResult(
-                "BP4", bp4_dir, bp4_strength, "not_triggered",
+                "BP4",
+                bp4_dir,
+                bp4_strength,
+                "not_triggered",
                 "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
                 "converge on a benign prediction.",
                 conflicting_evidence=damaging_texts,
-                evidence_sources=sources, confidence="Low",
+                evidence_sources=sources,
+                confidence="Low",
             )
             return pp3, bp4
 
         if benign:
             bp4 = CriterionResult(
-                "BP4", bp4_dir, bp4_strength, "triggered",
-                "Computational evidence (" + " and ".join(dict.fromkeys(label for label, _ in benign)) +
-                ") suggests no deleterious effect.",
+                "BP4",
+                bp4_dir,
+                bp4_strength,
+                "triggered",
+                "Computational evidence ("
+                + " and ".join(dict.fromkeys(label for label, _ in benign))
+                + ") suggests no deleterious effect.",
                 supporting_evidence=benign_texts,
-                evidence_sources=sources, confidence="Low",
+                evidence_sources=sources,
+                confidence="Low",
             )
             pp3 = CriterionResult(
-                "PP3", pp3_dir, pp3_strength, "not_triggered",
+                "PP3",
+                pp3_dir,
+                pp3_strength,
+                "not_triggered",
                 "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
                 "indicate a damaging effect.",
                 conflicting_evidence=benign_texts,
-                evidence_sources=sources, confidence="Low",
+                evidence_sources=sources,
+                confidence="Low",
             )
             return pp3, bp4
 
         # Sources returned results, but none crossed either directional
         # threshold (e.g. only "ambiguous" conservation scores).
         pp3 = CriterionResult(
-            "PP3", pp3_dir, pp3_strength, "not_triggered",
+            "PP3",
+            pp3_dir,
+            pp3_strength,
+            "not_triggered",
             "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
             "indicate a damaging effect.",
-            evidence_sources=sources, confidence="Low",
+            evidence_sources=sources,
+            confidence="Low",
         )
         bp4 = CriterionResult(
-            "BP4", bp4_dir, bp4_strength, "not_triggered",
+            "BP4",
+            bp4_dir,
+            bp4_strength,
+            "not_triggered",
             "Computational predictors that returned a result did not converge on a benign prediction.",
-            evidence_sources=sources, confidence="Low",
+            evidence_sources=sources,
+            confidence="Low",
         )
         return pp3, bp4
 
     @staticmethod
-    def _ba1_bs1(gnomad_result: Dict[str, Any]):
+    def _ba1_bs1(gnomad_result: Optional[Dict[str, Any]]):
         ba1_dir, ba1_strength = _STRENGTH["BA1"]
         bs1_dir, bs1_strength = _STRENGTH["BS1"]
-        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") or not gnomad_result.get("found"):
-            reason = "gnomAD lookup was skipped, errored, or the variant was not found." if not (gnomad_result and gnomad_result.get("found")) else ""
+        if (
+            not gnomad_result
+            or gnomad_result.get("skipped")
+            or gnomad_result.get("error")
+            or not gnomad_result.get("found")
+        ):
+            reason = (
+                "gnomAD lookup was skipped, errored, or the variant was not found."
+                if not (gnomad_result and gnomad_result.get("found"))
+                else ""
+            )
             na = _not_evaluated("BA1", reason or "gnomAD data unavailable.")
             nb = _not_evaluated("BS1", reason or "gnomAD data unavailable.")
             return na, nb
@@ -1084,39 +1311,70 @@ class ACMGRuleEngine:
             nb = _not_evaluated("BS1", "gnomAD record found but no allele frequency reported.")
             return na, nb
 
-        af_label = f"{af:.2e}" + (" (popmax)" if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else " (global)")
+        af_label = f"{af:.2e}" + (
+            " (popmax)" if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else " (global)"
+        )
 
         if af >= cfg.BA1_AF_THRESHOLD:
             ba1 = CriterionResult(
-                "BA1", ba1_dir, ba1_strength, "triggered",
+                "BA1",
+                ba1_dir,
+                ba1_strength,
+                "triggered",
                 f"Allele frequency {af_label} is at or above the BA1 stand-alone-benign threshold "
                 f"({cfg.BA1_AF_THRESHOLD:.2e}), too common to be a rare-disease-causing variant.",
                 supporting_evidence=[f"gnomAD allele frequency = {af_label}."],
-                evidence_sources=["gnomAD"], confidence="High",
+                evidence_sources=["gnomAD"],
+                confidence="High",
             )
-            bs1 = CriterionResult("BS1", bs1_dir, bs1_strength, "not_triggered", "Superseded by BA1 (stand-alone).", evidence_sources=["gnomAD"])
+            bs1 = CriterionResult(
+                "BS1",
+                bs1_dir,
+                bs1_strength,
+                "not_triggered",
+                "Superseded by BA1 (stand-alone).",
+                evidence_sources=["gnomAD"],
+            )
             return ba1, bs1
 
-        ba1 = CriterionResult("BA1", ba1_dir, ba1_strength, "not_triggered", f"Allele frequency {af_label} is below the BA1 threshold.", evidence_sources=["gnomAD"])
+        ba1 = CriterionResult(
+            "BA1",
+            ba1_dir,
+            ba1_strength,
+            "not_triggered",
+            f"Allele frequency {af_label} is below the BA1 threshold.",
+            evidence_sources=["gnomAD"],
+        )
 
         if af >= cfg.BS1_AF_THRESHOLD:
             bs1 = CriterionResult(
-                "BS1", bs1_dir, bs1_strength, "triggered",
+                "BS1",
+                bs1_dir,
+                bs1_strength,
+                "triggered",
                 f"Allele frequency {af_label} exceeds the expected frequency for the disorder "
                 f"(BS1 threshold {cfg.BS1_AF_THRESHOLD:.2e}).",
                 supporting_evidence=[f"gnomAD allele frequency = {af_label}."],
-                evidence_sources=["gnomAD"], confidence="Moderate",
+                evidence_sources=["gnomAD"],
+                confidence="Moderate",
             )
         else:
-            bs1 = CriterionResult("BS1", bs1_dir, bs1_strength, "not_triggered", f"Allele frequency {af_label} is below the BS1 threshold.", evidence_sources=["gnomAD"])
+            bs1 = CriterionResult(
+                "BS1",
+                bs1_dir,
+                bs1_strength,
+                "not_triggered",
+                f"Allele frequency {af_label} is below the BS1 threshold.",
+                evidence_sources=["gnomAD"],
+            )
         return ba1, bs1
 
     @staticmethod
     def _bp7(
         is_synonymous: Optional[bool],
-        mmsplice_result: Dict[str, Any],
-        spliceformer_result: Dict[str, Any] = None,
-        splicebert_result: Dict[str, Any] = None,
+        mmsplice_result: Optional[Dict[str, Any]],
+        spliceformer_result: Optional[Dict[str, Any]] = None,
+        splicebert_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         BP7 (ACMG/AMP 2015): "A synonymous (silent) variant for which
@@ -1172,7 +1430,10 @@ class ACMGRuleEngine:
             )
         if not is_synonymous:
             return CriterionResult(
-                "BP7", direction, strength, "not_triggered",
+                "BP7",
+                direction,
+                strength,
+                "not_triggered",
                 "Variant is not synonymous at the protein level (transcript-CDS-frame consequence call).",
                 evidence_sources=["transcript_cds"],
             )
@@ -1182,7 +1443,14 @@ class ACMGRuleEngine:
         if mmsplice_result and mmsplice_result.get("predicted"):
             sources.append("MMSplice")
             category = mmsplice_result.get("interpretation_category")
-            if category in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+            if category in (
+                "strong_donor_loss",
+                "strong_acceptor_loss",
+                "exon_skipping",
+                "intron_retention",
+                "strong",
+                "moderate",
+            ):
                 mm_damaging = True
                 conflicting.append(f"MMSplice: {mmsplice_result.get('interpretation')}.")
             else:
@@ -1204,28 +1472,43 @@ class ACMGRuleEngine:
 
         if not sources:
             return CriterionResult(
-                "BP7", direction, strength, "triggered",
+                "BP7",
+                direction,
+                strength,
+                "triggered",
                 "Variant is synonymous at the protein level; no splice-prediction evidence (MMSplice, "
                 "SpliceFormer, or SpliceBERT) was available to check for a conflicting splice effect.",
                 supporting_evidence=["Synonymous at the protein level."],
-                conflicting_evidence=["No splice predictor produced a result for this variant, so a splice effect cannot be ruled out."],
-                evidence_sources=["transcript_cds"], confidence="Low",
+                conflicting_evidence=[
+                    "No splice predictor produced a result for this variant, so a splice effect cannot be ruled out."
+                ],
+                evidence_sources=["transcript_cds"],
+                confidence="Low",
             )
 
         if mm_damaging or plugin_damaging:
             return CriterionResult(
-                "BP7", direction, strength, "not_triggered",
-                "Variant is synonymous at the protein level, but " + " and ".join(sources) +
-                " predicts a damaging splice effect, so BP7 (synonymous with no splice impact) does "
+                "BP7",
+                direction,
+                strength,
+                "not_triggered",
+                "Variant is synonymous at the protein level, but "
+                + " and ".join(sources)
+                + " predicts a damaging splice effect, so BP7 (synonymous with no splice impact) does "
                 "not apply.",
                 conflicting_evidence=conflicting,
-                evidence_sources=["transcript_cds"] + sources, confidence="Moderate",
+                evidence_sources=["transcript_cds"] + sources,
+                confidence="Moderate",
             )
 
         return CriterionResult(
-            "BP7", direction, strength, "triggered",
-            "Variant is synonymous at the protein level and splice-effect evidence from " +
-            ", ".join(sources) + " does not predict a significant splice-disrupting effect.",
+            "BP7",
+            direction,
+            strength,
+            "triggered",
+            "Variant is synonymous at the protein level and splice-effect evidence from "
+            + ", ".join(sources)
+            + " does not predict a significant splice-disrupting effect.",
             supporting_evidence=["Synonymous at the protein level."] + supporting,
             evidence_sources=["transcript_cds"] + sources,
             confidence="Moderate",
@@ -1241,7 +1524,7 @@ class ACMGRuleEngine:
     _VALIDITY_PREREQUISITE_FAILURES = ("Refuted", "Disputed", "No Known Disease Relationship")
 
     @staticmethod
-    def _pp1(clingen_result: Dict[str, Any]) -> CriterionResult:
+    def _pp1(clingen_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         PP1 (cosegregation with disease in multiple affected family
         members) requires per-family pedigree/linkage data -- GEPER
@@ -1266,14 +1549,25 @@ class ACMGRuleEngine:
         ingredient -- real segregation data -- still is.
         """
         direction, strength = _STRENGTH["PP1"]
-        if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error") or not clingen_result.get("found"):
-            return _not_evaluated("PP1", "requires family segregation data (not integrated); ClinGen gene-disease validity curation was also unavailable to check PP1's prerequisite.")
+        if (
+            not clingen_result
+            or clingen_result.get("skipped")
+            or clingen_result.get("error")
+            or not clingen_result.get("found")
+        ):
+            return _not_evaluated(
+                "PP1",
+                "requires family segregation data (not integrated); ClinGen gene-disease validity curation was also unavailable to check PP1's prerequisite.",
+            )
 
         classification = clingen_result.get("clinical_validity_summary")
         gene = clingen_result.get("gene_symbol") or "this gene"
         if classification in ACMGRuleEngine._VALIDITY_PREREQUISITE_FAILURES:
             return CriterionResult(
-                "PP1", direction, strength, "not_triggered",
+                "PP1",
+                direction,
+                strength,
+                "not_triggered",
                 f"PP1 requires cosegregation with disease in multiple affected family members, which "
                 f"presupposes an established gene-disease relationship. ClinGen curates {gene}'s "
                 f"gene-disease relationship as '{classification}', so PP1 cannot apply regardless of any "
@@ -1283,21 +1577,25 @@ class ACMGRuleEngine:
                 confidence="Moderate",
             )
         return CriterionResult(
-            "PP1", direction, strength, "not_evaluated",
+            "PP1",
+            direction,
+            strength,
+            "not_evaluated",
             f"Not evaluated: requires family segregation data, which this pipeline does not integrate "
             f"(no pedigree/linkage input). ClinGen's gene-disease clinical validity curation for {gene} "
             f"('{classification or 'no curation found'}') does not rule PP1 out, but cannot substitute "
             f"for actual segregation observations.",
             supporting_evidence=(
                 [f"ClinGen gene-disease clinical validity: {classification} (prerequisite for PP1 is satisfied)."]
-                if classification else []
+                if classification
+                else []
             ),
             evidence_sources=["ClinGen"],
             confidence="Low",
         )
 
     @staticmethod
-    def _bs4(clingen_result: Dict[str, Any]) -> CriterionResult:
+    def _bs4(clingen_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         BS4 (lack of segregation with disease) is PP1's benign-direction
         mirror and needs the same pedigree/linkage data GEPER never has
@@ -1309,14 +1607,25 @@ class ACMGRuleEngine:
         question BS4 asks is moot rather than merely unanswered.
         """
         direction, strength = _STRENGTH["BS4"]
-        if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error") or not clingen_result.get("found"):
-            return _not_evaluated("BS4", "requires family segregation data (not integrated); ClinGen gene-disease validity curation was also unavailable to check BS4's prerequisite.")
+        if (
+            not clingen_result
+            or clingen_result.get("skipped")
+            or clingen_result.get("error")
+            or not clingen_result.get("found")
+        ):
+            return _not_evaluated(
+                "BS4",
+                "requires family segregation data (not integrated); ClinGen gene-disease validity curation was also unavailable to check BS4's prerequisite.",
+            )
 
         classification = clingen_result.get("clinical_validity_summary")
         gene = clingen_result.get("gene_symbol") or "this gene"
         if classification in ACMGRuleEngine._VALIDITY_PREREQUISITE_FAILURES:
             return CriterionResult(
-                "BS4", direction, strength, "not_triggered",
+                "BS4",
+                direction,
+                strength,
+                "not_triggered",
                 f"BS4 requires observed lack of segregation with disease in family members, which "
                 f"presupposes an established gene-disease relationship to segregate (or fail to "
                 f"segregate) with. ClinGen curates {gene}'s gene-disease relationship as "
@@ -1326,7 +1635,10 @@ class ACMGRuleEngine:
                 confidence="Low",
             )
         return CriterionResult(
-            "BS4", direction, strength, "not_evaluated",
+            "BS4",
+            direction,
+            strength,
+            "not_evaluated",
             f"Not evaluated: requires family segregation data, which this pipeline does not integrate "
             f"(no pedigree/linkage input). ClinGen's gene-disease clinical validity curation for {gene} "
             f"('{classification or 'no curation found'}') does not rule BS4 out, but cannot substitute "
@@ -1336,7 +1648,7 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
-    def _bp1(is_missense: Optional[bool], clingen_result: Dict[str, Any]) -> CriterionResult:
+    def _bp1(is_missense: Optional[bool], clingen_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         BP1 (ACMG/AMP 2015): "Missense variant in a gene for which
         primarily truncating variants are known to cause disease" --
@@ -1378,9 +1690,11 @@ class ACMGRuleEngine:
             )
         if not is_missense:
             return CriterionResult(
-                "BP1", direction, strength, "not_triggered",
-                "Variant is not a missense substitution at the protein level (transcript-CDS-frame "
-                "consequence call).",
+                "BP1",
+                direction,
+                strength,
+                "not_triggered",
+                "Variant is not a missense substitution at the protein level (transcript-CDS-frame consequence call).",
                 evidence_sources=["transcript_cds"],
             )
 
@@ -1396,7 +1710,10 @@ class ACMGRuleEngine:
 
         if mechanism in (LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE):
             return CriterionResult(
-                "BP1", direction, strength, "triggered",
+                "BP1",
+                direction,
+                strength,
+                "triggered",
                 f"Variant is missense, and ClinGen curates {gene} as a gene where loss-of-function/"
                 "truncating variants are an established disease mechanism (read from the same ClinGen "
                 "dosage-sensitivity axis PVS1 uses). No gene-specific BP1 point calibration is "
@@ -1411,7 +1728,10 @@ class ACMGRuleEngine:
         # establish a primarily-truncating mechanism -- BP1's own
         # precondition fails, so this is a negative finding, not a gap.
         return CriterionResult(
-            "BP1", direction, strength, "not_triggered",
+            "BP1",
+            direction,
+            strength,
+            "not_triggered",
             f"Variant is missense, but ClinGen's dosage-sensitivity curation for {gene} does not "
             "establish loss-of-function/truncating variants as this gene's disease mechanism, so BP1's "
             "precondition is not met.",
@@ -1425,9 +1745,9 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _bp3(
-        variant_dict: Dict[str, Any] = None,
-        transcript_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
+        transcript_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         BP3 (ACMG/AMP 2015): "In-frame deletions/insertions in a
@@ -1449,9 +1769,14 @@ class ACMGRuleEngine:
 
         if detail is None or detail.category not in ACMGRuleEngine._PM4_REPEAT_ONLY_CATEGORIES:
             if transcript is None:
-                return _not_evaluated("BP3", "transcript structure was unavailable to classify this variant's coding consequence.")
+                return _not_evaluated(
+                    "BP3", "transcript structure was unavailable to classify this variant's coding consequence."
+                )
             return CriterionResult(
-                "BP3", direction, strength, "not_triggered",
+                "BP3",
+                direction,
+                strength,
+                "not_triggered",
                 "Predicted consequence is not an in-frame insertion/deletion." + (f" ({notes[-1]})" if notes else ""),
                 evidence_sources=["transcript_structure"],
             )
@@ -1467,7 +1792,10 @@ class ACMGRuleEngine:
 
         if checked is False:
             return CriterionResult(
-                "BP3", direction, strength, "not_triggered",
+                "BP3",
+                direction,
+                strength,
+                "not_triggered",
                 f"In-frame indel at codon {detail.codon_number} does not fall within a UniProt-"
                 "annotated repeat/compositional-bias region.",
                 supporting_evidence=list(notes),
@@ -1475,9 +1803,17 @@ class ACMGRuleEngine:
                 confidence="Moderate",
             )
 
+        # checked is True here by elimination (None and False both
+        # returned above) -- _pm4_repeat_region_hit only ever pairs
+        # checked=True with a real feature dict, an invariant mypy
+        # can't see across the two return values on its own.
+        assert repeat_feature is not None
         label = repeat_feature.get("description") or repeat_feature.get("feature_type")
         return CriterionResult(
-            "BP3", direction, strength, "triggered",
+            "BP3",
+            direction,
+            strength,
+            "triggered",
             f"In-frame {detail.category.replace('_', ' ')} at codon {detail.codon_number} falls within "
             f"a UniProt-annotated {repeat_feature.get('feature_type')} region ({label}, residues "
             f"{repeat_feature.get('begin')}-{repeat_feature.get('end')}), a repetitive region with no "
@@ -1485,17 +1821,26 @@ class ACMGRuleEngine:
             supporting_evidence=[
                 f"UniProt: {repeat_feature.get('feature_type')} ({label}), residues "
                 f"{repeat_feature.get('begin')}-{repeat_feature.get('end')}."
-            ] + list(notes),
+            ]
+            + list(notes),
             evidence_sources=["transcript_structure", "UniProt"],
             confidence="Moderate",
             details={
-                "variant_detail": {"category": detail.category, "codon_number": detail.codon_number, "residues_changed": detail.residues_changed},
+                "variant_detail": {
+                    "category": detail.category,
+                    "codon_number": detail.codon_number,
+                    "residues_changed": detail.residues_changed,
+                },
                 "notes": notes,
             },
         )
 
     _BP6_ACCEPTABLE_SIGNIFICANCE = ("benign", "likely benign")
-    _BP6_UNRELIABLE_REVIEW_STATUS = ("no assertion provided", "no assertion criteria provided", "no classification provided")
+    _BP6_UNRELIABLE_REVIEW_STATUS = (
+        "no assertion provided",
+        "no assertion criteria provided",
+        "no classification provided",
+    )
     _BP6_DEPRECATION_CAVEAT = (
         "Caveat: ClinGen's SVI Working Group (Biesecker & Harrison 2018) recommends against applying "
         "BP6 (and its pathogenic mirror, PP5) at all going forward, because deferring to another lab's "
@@ -1508,7 +1853,7 @@ class ACMGRuleEngine:
     )
 
     @staticmethod
-    def _clinvar_not_found_reason(clinvar_result: Dict[str, Any]) -> str:
+    def _clinvar_not_found_reason(clinvar_result: Optional[Dict[str, Any]]) -> str:
         """
         Honest "why is there no ClinVar evidence for this variant" text,
         distinguishing `database/clinvar_client.py::ClinVarMatchStatus`'s
@@ -1535,7 +1880,7 @@ class ACMGRuleEngine:
         return "no ClinVar record was found for this exact variant."
 
     @staticmethod
-    def _bp6(clinvar_result: Dict[str, Any]) -> CriterionResult:
+    def _bp6(clinvar_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         BP6 (ACMG/AMP 2015): "Reputable source recently reports variant
         as benign, but the evidence is not available to the laboratory
@@ -1568,34 +1913,46 @@ class ACMGRuleEngine:
 
         if review_status in ACMGRuleEngine._BP6_UNRELIABLE_REVIEW_STATUS:
             return CriterionResult(
-                "BP6", direction, strength, "not_triggered",
+                "BP6",
+                direction,
+                strength,
+                "not_triggered",
                 f"ClinVar record {accession} reports '{raw_significance}', but its review status "
                 f"('{raw_review_status}') carries no assertion criteria, too weak a source to treat as "
                 f"'reputable' even under BP6's own wording. {caveat}",
                 conflicting_evidence=[f"ClinVar {accession}: {raw_significance} ({raw_review_status})."],
-                evidence_sources=["ClinVar"], confidence="Low",
+                evidence_sources=["ClinVar"],
+                confidence="Low",
                 details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
             )
 
         if significance in ACMGRuleEngine._BP6_ACCEPTABLE_SIGNIFICANCE:
             return CriterionResult(
-                "BP6", direction, strength, "triggered",
+                "BP6",
+                direction,
+                strength,
+                "triggered",
                 f"ClinVar record {accession} reports '{raw_significance}' (review status: "
                 f"{raw_review_status}). {caveat}",
                 supporting_evidence=[f"ClinVar {accession}: {raw_significance} ({raw_review_status})."],
-                evidence_sources=["ClinVar"], confidence="Low",
+                evidence_sources=["ClinVar"],
+                confidence="Low",
                 details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
             )
 
         return CriterionResult(
-            "BP6", direction, strength, "not_triggered",
+            "BP6",
+            direction,
+            strength,
+            "not_triggered",
             f"ClinVar record {accession} reports '{raw_significance}', not Benign/Likely benign. {caveat}",
-            evidence_sources=["ClinVar"], confidence="Low",
+            evidence_sources=["ClinVar"],
+            confidence="Low",
             details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
         )
 
     @staticmethod
-    def _pp4(phenotype_result: Dict[str, Any], hpo_result: Dict[str, Any]) -> CriterionResult:
+    def _pp4(phenotype_result: Optional[Dict[str, Any]], hpo_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         PP4 (ACMG/AMP 2015): "Patient's phenotype or family history is
         highly specific for a disease with a single genetic etiology."
@@ -1676,28 +2033,44 @@ class ACMGRuleEngine:
 
         if specific_enough and single_etiology:
             return CriterionResult(
-                "PP4", direction, strength, "triggered",
+                "PP4",
+                direction,
+                strength,
+                "triggered",
                 f"{len(overlap)}/{len(patient_terms)} ({overlap_ratio:.0%}) of the patient's reported "
                 f"phenotype terms match {gene}'s HPO-curated phenotype set, and HPO curates {gene} "
                 f"against {len(distinct_diseases)} distinct disease entr{'y' if len(distinct_diseases) == 1 else 'ies'} "
                 "(heuristic proxy for a single genetic etiology -- see rationale caveat in source).",
-                supporting_evidence=[f"HPO: {len(overlap)} shared phenotype term(s) with {gene} ({', '.join(sorted(overlap)[:5])}{'...' if len(overlap) > 5 else ''})."],
-                evidence_sources=["HPO"], confidence="Low", details=details,
+                supporting_evidence=[
+                    f"HPO: {len(overlap)} shared phenotype term(s) with {gene} ({', '.join(sorted(overlap)[:5])}{'...' if len(overlap) > 5 else ''})."
+                ],
+                evidence_sources=["HPO"],
+                confidence="Low",
+                details=details,
             )
 
         reasons = []
         if not specific_enough:
-            reasons.append(f"phenotype overlap ({overlap_ratio:.0%}) is below the {cfg.PP4_OVERLAP_THRESHOLD:.0%} threshold")
+            reasons.append(
+                f"phenotype overlap ({overlap_ratio:.0%}) is below the {cfg.PP4_OVERLAP_THRESHOLD:.0%} threshold"
+            )
         if not single_etiology:
-            reasons.append(f"{gene} has {len(distinct_diseases)} distinct HPO-curated disease entries (above the {cfg.PP4_MAX_DISTINCT_DISEASES} threshold for 'single etiology')")
+            reasons.append(
+                f"{gene} has {len(distinct_diseases)} distinct HPO-curated disease entries (above the {cfg.PP4_MAX_DISTINCT_DISEASES} threshold for 'single etiology')"
+            )
         return CriterionResult(
-            "PP4", direction, strength, "not_triggered",
+            "PP4",
+            direction,
+            strength,
+            "not_triggered",
             f"Patient phenotype was compared against {gene}'s HPO-curated phenotype set: " + "; ".join(reasons) + ".",
-            evidence_sources=["HPO"], confidence="Low", details=details,
+            evidence_sources=["HPO"],
+            confidence="Low",
+            details=details,
         )
 
     @staticmethod
-    def _ps3(functional_evidence_result: Dict[str, Any]) -> CriterionResult:
+    def _ps3(functional_evidence_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         PS3 (ACMG/AMP 2015): "Well-established in vitro or in vivo
         functional studies supportive of a damaging effect on the gene
@@ -1763,7 +2136,10 @@ class ACMGRuleEngine:
             # questions from the same source, so PS3 not matching is
             # itself informative, not unknown).
             return CriterionResult(
-                "PS3", direction, strength, "not_triggered",
+                "PS3",
+                direction,
+                strength,
+                "not_triggered",
                 "Functional-evidence sources (ClinGen Evidence Repository and/or MaveDB) had a result for "
                 "this variant, but none of it supported a damaging (PS3) call -- see BS3 for whether it "
                 "instead supports a benign call.",
@@ -1774,7 +2150,7 @@ class ACMGRuleEngine:
         return ACMGRuleEngine._functional_evidence_criterion("PS3", direction, strength, records[0])
 
     @staticmethod
-    def _bs3(functional_evidence_result: Dict[str, Any]) -> CriterionResult:
+    def _bs3(functional_evidence_result: Optional[Dict[str, Any]]) -> CriterionResult:
         """
         BS3 (ACMG/AMP 2015): "Well-established in vitro or in vivo
         functional studies show no damaging effect on protein function
@@ -1806,7 +2182,10 @@ class ACMGRuleEngine:
             # record is a negative finding, not a gap -- see `_ps3`'s
             # comment for the full reasoning.
             return CriterionResult(
-                "BS3", direction, strength, "not_triggered",
+                "BS3",
+                direction,
+                strength,
+                "not_triggered",
                 "Functional-evidence sources (ClinGen Evidence Repository and/or MaveDB) had a result for "
                 "this variant, but none of it supported a benign (BS3) call -- see PS3 for whether it "
                 "instead supports a damaging call.",
@@ -1818,7 +2197,10 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _functional_evidence_criterion(
-        code: str, direction: str, default_strength: str, record: Dict[str, Any],
+        code: str,
+        direction: str,
+        default_strength: str,
+        record: Dict[str, Any],
     ) -> CriterionResult:
         """Shared `CriterionResult` construction for `_ps3`/`_bs3` -- both
         just filter `functional_evidence_result["records"]` for their own
@@ -1831,11 +2213,19 @@ class ACMGRuleEngine:
             rationale = (
                 f"ClinGen Evidence Repository: an expert panel{gene_clause} curated this variant "
                 f"({record.get('matched_hgvs')}) with '{code}: Met'"
-                + (f", classifying it as {record['classification_outcome']}" if record.get("classification_outcome") else "")
+                + (
+                    f", classifying it as {record['classification_outcome']}"
+                    if record.get("classification_outcome")
+                    else ""
+                )
                 + (f" for {record['condition']}" if record.get("condition") else "")
                 + "."
             )
-            supporting = [f"ClinGen ERepo {code}: Met" + (f" ({record['expert_panel']})" if record.get("expert_panel") else "") + "."]
+            supporting = [
+                f"ClinGen ERepo {code}: Met"
+                + (f" ({record['expert_panel']})" if record.get("expert_panel") else "")
+                + "."
+            ]
             evidence_sources = ["ClinGen Evidence Repository"]
             confidence = "High"
             details = {
@@ -1869,13 +2259,19 @@ class ACMGRuleEngine:
             }
 
         return CriterionResult(
-            code, direction, strength, "triggered", rationale,
-            supporting_evidence=supporting, evidence_sources=evidence_sources,
-            confidence=confidence, details=details,
+            code,
+            direction,
+            strength,
+            "triggered",
+            rationale,
+            supporting_evidence=supporting,
+            evidence_sources=evidence_sources,
+            confidence=confidence,
+            details=details,
         )
 
     @staticmethod
-    def _clinvar_crossref(clinvar_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _clinvar_crossref(clinvar_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Uses `primary_record` (the allele-matched ClinVar record), never
         `records[0]` -- a bare first-record read used to attribute a
@@ -1952,7 +2348,9 @@ class ACMGRuleEngine:
             # It is still reported in `all_criteria`/`triggered_criteria`
             # for transparency -- only excluded from scoring.
             if code == "BP6":
-                trace.append("BP6 triggered, but excluded from point totals (ClinGen SVI 2018 deprecation -- see _bp6).")
+                trace.append(
+                    "BP6 triggered, but excluded from point totals (ClinGen SVI 2018 deprecation -- see _bp6)."
+                )
                 continue
             pts = _POINTS.get(c.strength, 0)
             if c.direction == "pathogenic":

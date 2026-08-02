@@ -113,6 +113,7 @@ def _qc_status(metric_key: str, value: float) -> str:
 # Patient metadata parsing
 # ---------------------------------------------------------------------------
 
+
 def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> Dict[str, Any]:
     """
     Accepts a dict, a path to a JSON file, or None. Returns
@@ -179,6 +180,7 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
 # Sample ID / Run ID derivation
 # ---------------------------------------------------------------------------
 
+
 def _derive_sample_id(document: Dict[str, Any]) -> str:
     """
     GEPER's pipeline has no first-class "Sample ID" concept of its own
@@ -217,6 +219,7 @@ def _derive_run_id(document: Dict[str, Any], run_id: Optional[str]) -> str:
 # ---------------------------------------------------------------------------
 # Two-pass "Page X of Y" canvas
 # ---------------------------------------------------------------------------
+
 
 class _NumberedCanvas(Canvas):
     """
@@ -261,6 +264,7 @@ class _NumberedCanvas(Canvas):
 # ---------------------------------------------------------------------------
 # PDF bookmarks (outline/TOC)
 # ---------------------------------------------------------------------------
+
 
 class _Bookmark(Flowable):
     """
@@ -340,23 +344,46 @@ def _make_later_page_decoration(header_label: str):
 # Styles
 # ---------------------------------------------------------------------------
 
+
 def _build_stylesheet() -> Dict[str, ParagraphStyle]:
     base = getSampleStyleSheet()
     navy = colors.HexColor("#1a3c5e")
     return {
-        "ReportTitle": ParagraphStyle("GeperReportTitle", parent=base["Title"], fontSize=16, textColor=navy, spaceAfter=2),
-        "SectionHeading": ParagraphStyle("GeperSectionHeading", parent=base["Heading2"], fontSize=12, textColor=navy, spaceBefore=6, spaceAfter=3),
+        "ReportTitle": ParagraphStyle(
+            "GeperReportTitle", parent=base["Title"], fontSize=16, textColor=navy, spaceAfter=2
+        ),
+        "SectionHeading": ParagraphStyle(
+            "GeperSectionHeading", parent=base["Heading2"], fontSize=12, textColor=navy, spaceBefore=6, spaceAfter=3
+        ),
         "BodyText": ParagraphStyle("GeperBodyText", parent=base["BodyText"], fontSize=9.5, leading=13),
         "BulletText": ParagraphStyle("GeperBulletText", parent=base["BodyText"], fontSize=9, leading=12, leftIndent=10),
-        "TableHeader": ParagraphStyle("GeperTableHeader", parent=base["BodyText"], fontSize=9, textColor=colors.white, fontName="Helvetica-Bold"),
+        "TableHeader": ParagraphStyle(
+            "GeperTableHeader", parent=base["BodyText"], fontSize=9, textColor=colors.white, fontName="Helvetica-Bold"
+        ),
         "TableLabel": ParagraphStyle("GeperTableLabel", parent=base["BodyText"], fontSize=9, fontName="Helvetica-Bold"),
         "TableValue": ParagraphStyle("GeperTableValue", parent=base["BodyText"], fontSize=9),
         "TableValueSmall": ParagraphStyle("GeperTableValueSmall", parent=base["BodyText"], fontSize=8, leading=10),
-        "StatusPass": ParagraphStyle("GeperStatusPass", parent=base["BodyText"], fontSize=9, textColor=colors.HexColor("#1a7a35"), fontName="Helvetica-Bold"),
-        "StatusWarn": ParagraphStyle("GeperStatusWarn", parent=base["BodyText"], fontSize=9, textColor=colors.HexColor("#9a6a00"), fontName="Helvetica-Bold"),
-        "Footnote": ParagraphStyle("GeperFootnote", parent=base["BodyText"], fontSize=7.5, textColor=colors.grey, leading=10),
+        "StatusPass": ParagraphStyle(
+            "GeperStatusPass",
+            parent=base["BodyText"],
+            fontSize=9,
+            textColor=colors.HexColor("#1a7a35"),
+            fontName="Helvetica-Bold",
+        ),
+        "StatusWarn": ParagraphStyle(
+            "GeperStatusWarn",
+            parent=base["BodyText"],
+            fontSize=9,
+            textColor=colors.HexColor("#9a6a00"),
+            fontName="Helvetica-Bold",
+        ),
+        "Footnote": ParagraphStyle(
+            "GeperFootnote", parent=base["BodyText"], fontSize=7.5, textColor=colors.grey, leading=10
+        ),
         "SignoffTitle": ParagraphStyle("GeperSignoffTitle", parent=base["Heading3"], fontSize=10),
-        "Disclaimer": ParagraphStyle("GeperDisclaimer", parent=base["BodyText"], fontSize=7.5, textColor=colors.grey, leading=10),
+        "Disclaimer": ParagraphStyle(
+            "GeperDisclaimer", parent=base["BodyText"], fontSize=7.5, textColor=colors.grey, leading=10
+        ),
     }
 
 
@@ -366,6 +393,7 @@ _TABLE_GRID_COLOR = colors.HexColor("#cccccc")
 # ---------------------------------------------------------------------------
 # Flowable builders
 # ---------------------------------------------------------------------------
+
 
 def _resolve_logo_path(logo_path: Optional[str]) -> Optional[str]:
     """
@@ -489,14 +517,19 @@ def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphSt
         colWidths=[logo_column_width, content_width - logo_column_width],
         hAlign="LEFT",
     )
-    header_table.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 0),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-    ]))
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
     return [header_table]
+
 
 def _build_patient_header_table(
     patient: Dict[str, Any], sample_id: str, run_id: str, assembly: Optional[str], styles: Dict[str, ParagraphStyle]
@@ -525,14 +558,18 @@ def _build_patient_header_table(
     rows.append([Paragraph("Report Generated", lbl), Paragraph(format_ist(datetime.now(timezone.utc)), val)])
 
     table = Table(rows, colWidths=[55 * mm, 110 * mm], hAlign="LEFT")
-    table.setStyle(TableStyle([
-        ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2f6")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-    ]))
+    table.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eef2f6")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
     return table
 
 
@@ -559,12 +596,14 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
         threshold = _qc_threshold_pass_min(key)
         status = _qc_status(key, value)
         row_statuses.append(status)
-        rows.append([
-            Paragraph(_QC_METRIC_LABELS[key], styles["TableLabel"]),
-            Paragraph(f"{value:g}{unit}", styles["TableValue"]),
-            Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
-            Paragraph(status, styles["StatusPass"] if status == "PASS" else styles["StatusWarn"]),
-        ])
+        rows.append(
+            [
+                Paragraph(_QC_METRIC_LABELS[key], styles["TableLabel"]),
+                Paragraph(f"{value:g}{unit}", styles["TableValue"]),
+                Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
+                Paragraph(status, styles["StatusPass"] if status == "PASS" else styles["StatusWarn"]),
+            ]
+        )
 
     table = Table(rows, colWidths=[55 * mm, 35 * mm, 40 * mm, 30 * mm], hAlign="LEFT")
     style_cmds = [
@@ -583,12 +622,14 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
     flowables: List[Any] = [table]
     if is_mock:
         flowables.append(Spacer(1, 2 * mm))
-        flowables.append(Paragraph(
-            "Note: no run-level QC metrics were supplied to this report; the values above are "
-            "illustrative placeholders only, not a real sequencing QC result. Pass real values via "
-            "generate_pdf(qc_metrics={...}) from the upstream sequencing/alignment pipeline.",
-            styles["Footnote"],
-        ))
+        flowables.append(
+            Paragraph(
+                "Note: no run-level QC metrics were supplied to this report; the values above are "
+                "illustrative placeholders only, not a real sequencing QC result. Pass real values via "
+                "generate_pdf(qc_metrics={...}) from the upstream sequencing/alignment pipeline.",
+                styles["Footnote"],
+            )
+        )
     return flowables
 
 
@@ -611,6 +652,7 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
 # /`provenance` already computed -- nothing here re-derives ACMG
 # classification, confidence, or evidence, matching every other builder in
 # this module and in report/clinical_report_builder.py.
+
 
 def _normalize_evidence_text(item: Any) -> str:
     """Same `dict-or-plain-string` normalization `report/report_generator.py`'s
@@ -689,9 +731,7 @@ def _provenance_gap_sources(document: Dict[str, Any], variants: List[Dict[str, A
         return []
 
     prefixes = {
-        EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX[name]
-        for name in cited
-        if name in EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
+        EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX[name] for name in cited if name in EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
     }
     if not prefixes:
         return []
@@ -706,14 +746,39 @@ def _provenance_gap_sources(document: Dict[str, Any], variants: List[Dict[str, A
 
 def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[str, ParagraphStyle]) -> Table:
     val, small = styles["TableValue"], styles["TableValueSmall"]
-    header = [
-        Paragraph(h, styles["TableHeader"])
-        for h in ("#", "Variant / Gene", "Classification", "Confidence", "Top Evidence", "Attention")
-    ]
+
+    # Case-level phenotype ranking (pipeline/case_prioritization.py) is
+    # additive and only present when the patient supplied HPO terms
+    # this run -- when it's absent for every variant, this table
+    # renders exactly as it did before that feature existed (VCF
+    # order, no extra column). `idx` below is always the ORIGINAL
+    # 1-based finding number (matches the numbered "Finding N"
+    # sections further down the PDF) even when row DISPLAY order is
+    # reshuffled by case rank -- only the row's position in the table
+    # changes, never the number printed in its "#" cell, so a reader
+    # can always cross-reference a row back to its detailed section.
+    has_case_ranking = any(isinstance(vr.get("case_prioritization"), dict) for vr in variants)
+
+    indexed = list(enumerate(variants, start=1))
+    if has_case_ranking:
+
+        def _rank_key(pair):
+            idx, vr = pair
+            cp = vr.get("case_prioritization") or {}
+            rank = cp.get("case_rank")
+            return (rank is None, rank if rank is not None else 0, idx)
+
+        indexed.sort(key=_rank_key)
+
+    header_labels = ["#", "Variant / Gene", "Classification", "Confidence"]
+    if has_case_ranking:
+        header_labels.append("Phenotype Match")
+    header_labels += ["Top Evidence", "Attention"]
+    header = [Paragraph(h, styles["TableHeader"]) for h in header_labels]
     rows: List[List[Paragraph]] = [header]
     flag_rows: List[int] = []  # 1-based row indices (into `rows`) carrying at least one reviewer flag
 
-    for idx, variant_result in enumerate(variants, start=1):
+    for row_num, (idx, variant_result) in enumerate(indexed, start=1):
         variant = variant_result.get("variant", {})
         locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
         clinical = variant_result.get("clinical_report")
@@ -746,20 +811,48 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
         # box in the actual PDF, not just in a text-extraction tool.
         flags_text = "<br/>".join(f"! {f}" for f in flags) if flags else "—"
         if flags:
-            # `idx` (1-based variant number) already equals this row's
-            # position in `rows`, since `rows[0]` is the header row.
-            flag_rows.append(idx)
+            # `row_num` (1-based, into `rows`) is this row's actual
+            # table position -- NOT `idx`, which is the original
+            # finding number and may differ once rows are reordered
+            # by case rank above.
+            flag_rows.append(row_num)
 
-        rows.append([
+        row = [
             Paragraph(str(idx), val),
             Paragraph(gene_line, small),
             Paragraph(classification, small),
             Paragraph(confidence_text, small),
+        ]
+        if has_case_ranking:
+            cp = variant_result.get("case_prioritization") or {}
+            pm = cp.get("phenotype_match") or {}
+            pm_score = pm.get("score")
+            if pm_score is not None:
+                top_terms = sorted(
+                    (m for m in (pm.get("term_matches") or []) if m.get("similarity", 0) > 0),
+                    key=lambda m: -m.get("similarity", 0),
+                )[:2]
+                term_text = (
+                    "; ".join(
+                        f"{m.get('matched_gene_term_name') or m.get('matched_gene_term_id')} ({m['match_type']})"
+                        for m in top_terms
+                    )
+                    or "no term overlap"
+                )
+                pm_text = f"{pm_score:.0f}/100<br/>{term_text}"
+            else:
+                pm_text = "No HPO data<br/>for this gene"
+            row.append(Paragraph(pm_text, small))
+        row += [
             Paragraph(evidence_text, small),
             Paragraph(flags_text, styles["StatusWarn"] if flags else small),
-        ])
+        ]
+        rows.append(row)
 
-    col_widths = [8 * mm, 35 * mm, 30 * mm, 20 * mm, 53 * mm, 24 * mm]
+    if has_case_ranking:
+        col_widths = [8 * mm, 30 * mm, 25 * mm, 17 * mm, 30 * mm, 40 * mm, 20 * mm]
+    else:
+        col_widths = [8 * mm, 35 * mm, 30 * mm, 20 * mm, 53 * mm, 24 * mm]
     table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),
@@ -801,14 +894,19 @@ def _build_clinician_summary_flowables(
     variant ad hoc calling convention -- see that function's docstring)
     so this never has to special-case the input shape itself.
     """
+    has_case_ranking = any(isinstance(vr.get("case_prioritization"), dict) for vr in variants)
+    footnote_text = (
+        "Rows below are ordered by case-level phenotype-match rank (best explains the patient's "
+        "observed symptoms first), not VCF order -- the “#” column is each variant's original "
+        "finding number; see the matching numbered “Finding” section below for full detail. "
+        "This ranking is a triage aid only and does not affect ACMG classification."
+        if has_case_ranking
+        else "One row per variant finding; see the numbered “Finding” sections below for full detail on any of them."
+    )
     flow: List[Any] = [
         _Bookmark("bm_clinician_summary", "Clinician Summary"),
         Paragraph("Clinician Summary", styles["SectionHeading"]),
-        Paragraph(
-            "One row per variant finding; see the numbered “Finding” sections below for full detail "
-            "on any of them.",
-            styles["Footnote"],
-        ),
+        Paragraph(footnote_text, styles["Footnote"]),
         Spacer(1, 2 * mm),
     ]
 
@@ -844,7 +942,12 @@ def _build_clinician_summary_flowables(
     if attention_lines:
         flow.extend(Paragraph(f"! {line}", styles["BulletText"]) for line in attention_lines)
     else:
-        flow.append(Paragraph("No conflicts, ambiguous gene resolution, or evidence-provenance gaps flagged for this run.", styles["BodyText"]))
+        flow.append(
+            Paragraph(
+                "No conflicts, ambiguous gene resolution, or evidence-provenance gaps flagged for this run.",
+                styles["BodyText"],
+            )
+        )
 
     flow.append(PageBreak())
     return flow
@@ -863,11 +966,13 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     ]
 
     if not clinical:
-        flow.append(Paragraph(
-            "No clinical interpretation is available for this variant (the interpretation engine "
-            "did not produce a result for it). This is reported as a data gap, not a benign finding.",
-            styles["BodyText"],
-        ))
+        flow.append(
+            Paragraph(
+                "No clinical interpretation is available for this variant (the interpretation engine "
+                "did not produce a result for it). This is reported as a data gap, not a benign finding.",
+                styles["BodyText"],
+            )
+        )
         return flow
 
     flow.append(Paragraph(clinical["executive_summary"], styles["BodyText"]))
@@ -882,20 +987,32 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
 
     triggered = acmg.get("triggered_criteria") or []
     if triggered:
-        rows = [[Paragraph("Criterion", styles["TableHeader"]), Paragraph("Strength", styles["TableHeader"]), Paragraph("Rationale", styles["TableHeader"])]]
+        rows = [
+            [
+                Paragraph("Criterion", styles["TableHeader"]),
+                Paragraph("Strength", styles["TableHeader"]),
+                Paragraph("Rationale", styles["TableHeader"]),
+            ]
+        ]
         for crit in triggered:
-            rows.append([
-                Paragraph(str(crit.get("code") or ""), styles["TableValue"]),
-                Paragraph(str(crit.get("strength") or ""), styles["TableValue"]),
-                Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
-            ])
+            rows.append(
+                [
+                    Paragraph(str(crit.get("code") or ""), styles["TableValue"]),
+                    Paragraph(str(crit.get("strength") or ""), styles["TableValue"]),
+                    Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
+                ]
+            )
         table = Table(rows, colWidths=[22 * mm, 25 * mm, 113 * mm], hAlign="LEFT")
-        table.setStyle(TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.3, _TABLE_GRID_COLOR),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3c5e")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
+        table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.3, _TABLE_GRID_COLOR),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1a3c5e")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
         flow.append(Spacer(1, 2 * mm))
         flow.append(table)
 
@@ -933,25 +1050,32 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
         colWidths=[28 * mm, 137 * mm],
         hAlign="LEFT",
     )
-    sig_table.setStyle(TableStyle([
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
+    sig_table.setStyle(
+        TableStyle(
+            [
+                ("TOPPADDING", (0, 0), (-1, -1), 6),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
 
-    return KeepTogether([
-        _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
-        Spacer(1, 10 * mm),
-        Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
-        Spacer(1, 4 * mm),
-        sig_table,
-        Spacer(1, 8 * mm),
-        Paragraph(_DISCLAIMER_TEXT, styles["Disclaimer"]),
-    ])
+    return KeepTogether(
+        [
+            _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
+            Spacer(1, 10 * mm),
+            Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
+            Spacer(1, 4 * mm),
+            sig_table,
+            Spacer(1, 8 * mm),
+            Paragraph(_DISCLAIMER_TEXT, styles["Disclaimer"]),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def generate_pdf(
     document: Dict[str, Any],
@@ -1028,12 +1152,14 @@ def generate_pdf(
     story: List[Any] = list(_build_report_header(logo_path, styles))
     story.append(Spacer(1, 4 * mm))
     story.extend(_build_clinician_summary_flowables(document, variants, sample_id, resolved_run_id, assembly, styles))
-    story.extend([
-        _build_patient_header_table(patient, sample_id, resolved_run_id, assembly, styles),
-        Spacer(1, 6 * mm),
-        _Bookmark("bm_qc", "Sequencing Quality Control Metrics"),
-        Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),
-    ])
+    story.extend(
+        [
+            _build_patient_header_table(patient, sample_id, resolved_run_id, assembly, styles),
+            Spacer(1, 6 * mm),
+            _Bookmark("bm_qc", "Sequencing Quality Control Metrics"),
+            Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),
+        ]
+    )
     story.extend(_build_qc_flowables(qc_metrics, styles))
     story.append(Spacer(1, 4 * mm))
 

@@ -52,6 +52,8 @@ from pipeline.conservation.lookup import ConservationLookup
 from pipeline.gnomad.lookup import GnomadLookup
 from pipeline.gnomad.provider import dataset_id_for_build as gnomad_dataset_id_for_build
 from pipeline.interpretation import InterpretationEngine
+from pipeline.case_prioritization import rank_case
+from pipeline.hpo.ontology import get_shared_ontology
 from pipeline.interpro.lookup import InterProLookup
 from pipeline.models.ensemble import EnsembleManager
 from pipeline.models.manager import ModelManager
@@ -325,8 +327,7 @@ class GeperPipeline:
         unavailable = [k for k, ok in self._model_availability.items() if not ok]
         if unavailable:
             details = ", ".join(
-                f"{_MODEL_DISPLAY_NAMES.get(k, k)} ({MODEL_REGISTRY[k].unavailability_reason()})"
-                for k in unavailable
+                f"{_MODEL_DISPLAY_NAMES.get(k, k)} ({MODEL_REGISTRY[k].unavailability_reason()})" for k in unavailable
             )
             logger.warning(
                 f"The following model(s) are unavailable in this environment "
@@ -343,8 +344,7 @@ class GeperPipeline:
         # `MODEL_REGISTRY`'s own module docstring on why MMSplice needed
         # a separate extended dict for exactly this kind of collision).
         self._plugin_availability: Dict[str, bool] = {
-            key: self.model_registry.get(key).is_available()
-            for key in self.model_registry.keys()
+            key: self.model_registry.get(key).is_available() for key in self.model_registry.keys()
         }
         unavailable_plugins = [k for k, ok in self._plugin_availability.items() if not ok]
         if unavailable_plugins:
@@ -404,10 +404,14 @@ class GeperPipeline:
         try:
             ensembl = capture_ensembl_release()
             if ensembl.get("version"):
-                self.provenance.record("Ensembl", VersionStatus.VERSION_KNOWN, version=ensembl["version"], endpoint=ensembl["endpoint"])
+                self.provenance.record(
+                    "Ensembl", VersionStatus.VERSION_KNOWN, version=ensembl["version"], endpoint=ensembl["endpoint"]
+                )
             else:
                 self.provenance.record(
-                    "Ensembl", VersionStatus.UNKNOWN, endpoint=ensembl.get("endpoint"),
+                    "Ensembl",
+                    VersionStatus.UNKNOWN,
+                    endpoint=ensembl.get("endpoint"),
                     notes=f"Could not reach Ensembl's /info/data endpoint: {ensembl.get('error')}",
                 )
         except Exception as exc:  # noqa: BLE001 -- provenance capture must never break pipeline startup
@@ -419,19 +423,26 @@ class GeperPipeline:
                 self.provenance.record("BLAST", VersionStatus.VERSION_KNOWN, version=blast["version"])
             elif not self.ai_only:
                 self.provenance.record(
-                    "BLAST", VersionStatus.UNKNOWN,
+                    "BLAST",
+                    VersionStatus.UNKNOWN,
                     notes="No local BLAST+ tools found on PATH; remote NCBI BLAST exposes no queryable database version.",
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"BLAST tool-version provenance capture failed: {exc}")
 
         self._capture_bootstrapped_dataset_provenance(
-            "ClinGen (gene validity)", CONFIG.clingen.GENE_VALIDITY_LOCAL_FILE, clingen_bootstrap.gene_validity_cache_path()
+            "ClinGen (gene validity)",
+            CONFIG.clingen.GENE_VALIDITY_LOCAL_FILE,
+            clingen_bootstrap.gene_validity_cache_path(),
         )
         self._capture_bootstrapped_dataset_provenance(
-            "ClinGen (dosage sensitivity)", CONFIG.clingen.DOSAGE_SENSITIVITY_LOCAL_FILE, clingen_bootstrap.dosage_sensitivity_cache_path()
+            "ClinGen (dosage sensitivity)",
+            CONFIG.clingen.DOSAGE_SENSITIVITY_LOCAL_FILE,
+            clingen_bootstrap.dosage_sensitivity_cache_path(),
         )
-        self._capture_bootstrapped_dataset_provenance("HPO", CONFIG.hpo.LOCAL_FILE, hpo_bootstrap.genes_to_phenotype_cache_path())
+        self._capture_bootstrapped_dataset_provenance(
+            "HPO", CONFIG.hpo.LOCAL_FILE, hpo_bootstrap.genes_to_phenotype_cache_path()
+        )
         self._capture_bootstrapped_dataset_provenance("Orphanet", "", orphanet_bootstrap.gene_disorder_cache_path())
 
         # AlphaMissense: keyed by build ("hg38"/"hg19", not "GRCh38"/
@@ -441,12 +452,16 @@ class GeperPipeline:
         # reporting on a catalogue this run will never touch.
         if CONFIG.alphamissense.ENABLED:
             genome_label = "hg38" if (self.sequence_context_gen.assembly or "GRCh38") != "GRCh37" else "hg19"
-            configured_local = CONFIG.alphamissense.LOCAL_HG38_PATH if genome_label == "hg38" else CONFIG.alphamissense.LOCAL_HG19_PATH
+            configured_local = (
+                CONFIG.alphamissense.LOCAL_HG38_PATH if genome_label == "hg38" else CONFIG.alphamissense.LOCAL_HG19_PATH
+            )
             self._capture_bootstrapped_dataset_provenance(
                 "AlphaMissense catalogue", configured_local, alphamissense_catalogue_cache_path(genome_label)
             )
 
-    def _capture_bootstrapped_dataset_provenance(self, source: str, configured_local_file: str, auto_fetch_path: str) -> None:
+    def _capture_bootstrapped_dataset_provenance(
+        self, source: str, configured_local_file: str, auto_fetch_path: str
+    ) -> None:
         """
         Records whichever file this source will actually query from for
         this run: an explicitly deployer-configured local file (hashed
@@ -460,7 +475,9 @@ class GeperPipeline:
         auto-fetch hasn't happened on first use yet.
         """
         if configured_local_file:
-            self.provenance.record(**self._provenance_kwargs_from_dataclass(local_file_provenance(source, configured_local_file)))
+            self.provenance.record(
+                **self._provenance_kwargs_from_dataclass(local_file_provenance(source, configured_local_file))
+            )
             return
         sidecar = read_dataset_provenance_sidecar(auto_fetch_path)
         if sidecar is None:
@@ -472,20 +489,31 @@ class GeperPipeline:
         else:
             status = VersionStatus.TIMESTAMP_ONLY
         self.provenance.record(
-            source, status,
-            version=sidecar.get("version"), release_date=sidecar.get("release_date"),
-            content_hash=sidecar.get("content_hash"), hash_algorithm=sidecar.get("hash_algorithm"),
-            query_timestamp=sidecar.get("downloaded_at"), endpoint=sidecar.get("url"),
-            notes=None if status == VersionStatus.VERSION_KNOWN else "No release version published/parseable for this download; content hash and download timestamp recorded instead.",
+            source,
+            status,
+            version=sidecar.get("version"),
+            release_date=sidecar.get("release_date"),
+            content_hash=sidecar.get("content_hash"),
+            hash_algorithm=sidecar.get("hash_algorithm"),
+            query_timestamp=sidecar.get("downloaded_at"),
+            endpoint=sidecar.get("url"),
+            notes=None
+            if status == VersionStatus.VERSION_KNOWN
+            else "No release version published/parseable for this download; content hash and download timestamp recorded instead.",
         )
 
     @staticmethod
     def _provenance_kwargs_from_dataclass(record) -> Dict[str, Any]:
         return {
-            "source": record.source, "status": record.status, "version": record.version,
-            "release_date": record.release_date, "content_hash": record.content_hash,
-            "hash_algorithm": record.hash_algorithm, "query_timestamp": record.query_timestamp,
-            "endpoint": record.endpoint, "notes": record.notes,
+            "source": record.source,
+            "status": record.status,
+            "version": record.version,
+            "release_date": record.release_date,
+            "content_hash": record.content_hash,
+            "hash_algorithm": record.hash_algorithm,
+            "query_timestamp": record.query_timestamp,
+            "endpoint": record.endpoint,
+            "notes": record.notes,
         }
 
     def _timer(self, stage: str):
@@ -560,13 +588,10 @@ class GeperPipeline:
         # SequenceContextGenerator.prefetch_regions docstring).
         try:
             with self._timer("ensembl_prefetch"):
-                self.sequence_context_gen.prefetch_regions(
-                    variants, self.router.recommended_flank_size
-                )
+                self.sequence_context_gen.prefetch_regions(variants, self.router.recommended_flank_size)
         except Exception as exc:  # noqa: BLE001 - optimization only, must never block a run
             logger.warning(
-                f"Ensembl batch prefetch failed unexpectedly ({exc}); "
-                "continuing with normal per-variant fetching."
+                f"Ensembl batch prefetch failed unexpectedly ({exc}); continuing with normal per-variant fetching."
             )
 
         # --- BLAST batch prefetch (Phase 3 performance pass) ---------------
@@ -590,8 +615,7 @@ class GeperPipeline:
                     self._prefetch_blast_results(variants)
             except Exception as exc:  # noqa: BLE001 - optimization only, must never block a run
                 logger.warning(
-                    f"BLAST batch prefetch failed unexpectedly ({exc}); "
-                    "continuing with normal per-variant BLAST calls."
+                    f"BLAST batch prefetch failed unexpectedly ({exc}); continuing with normal per-variant BLAST calls."
                 )
 
         # --- MMSplice batch prefetch (execution-speed pass) -----------------
@@ -620,8 +644,12 @@ class GeperPipeline:
 
         # --- Resume-from-checkpoint (issue #8) ------------------------------
         result_builder = JSONResultBuilder(
-            input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples,
-            provenance_collector=self.provenance, code_version=self.geper_code_version, model_checkpoints=self.model_checkpoints,
+            input_vcf_path=vcf_path,
+            assembly=self.sequence_context_gen.assembly,
+            vcf_samples=parser.samples,
+            provenance_collector=self.provenance,
+            code_version=self.geper_code_version,
+            model_checkpoints=self.model_checkpoints,
         )
         completed_keys = set()
         stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
@@ -638,8 +666,7 @@ class GeperPipeline:
                     stats[self._classify_variant_result(prior_result)] += 1
                 if completed_keys:
                     logger.info(
-                        f"Resuming previous run: {len(completed_keys)} "
-                        f"variant(s) already completed in '{json_path}'."
+                        f"Resuming previous run: {len(completed_keys)} variant(s) already completed in '{json_path}'."
                     )
             except (OSError, ValueError) as exc:
                 logger.warning(
@@ -647,8 +674,12 @@ class GeperPipeline:
                     f"resume ({exc}); starting this run fresh instead."
                 )
                 result_builder = JSONResultBuilder(
-                    input_vcf_path=vcf_path, assembly=self.sequence_context_gen.assembly, vcf_samples=parser.samples,
-                    provenance_collector=self.provenance, code_version=self.geper_code_version, model_checkpoints=self.model_checkpoints,
+                    input_vcf_path=vcf_path,
+                    assembly=self.sequence_context_gen.assembly,
+                    vcf_samples=parser.samples,
+                    provenance_collector=self.provenance,
+                    code_version=self.geper_code_version,
+                    model_checkpoints=self.model_checkpoints,
                 )
                 completed_keys = set()
                 stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
@@ -684,6 +715,22 @@ class GeperPipeline:
             self._apply_priority_ranks(json_document.get("variants", []))
         except Exception:
             logger.exception("Batch priority ranking failed; priority_rank left unset for this run.")
+
+        # Case-level, HPO-phenotype-driven ranking (pipeline/case_prioritization.py)
+        # -- a SEPARATE, additive signal from Phase 4's priority_rank
+        # above; never touches ACMG classification, PP4, confidence,
+        # or priority_score (see that module's own docstring). Only
+        # runs at all when the patient actually supplied observed HPO
+        # terms this run (`--hpo-terms`/`--phenotype-file` ->
+        # `self.phenotype_result`) -- with none supplied, this feature
+        # simply does not run (no forced/fabricated ranking), exactly
+        # as `ACMGRuleEngine._pp4` already stays "not_evaluated" for
+        # the same reason.
+        if self.phenotype_result and self.phenotype_result.get("hpo_term_ids"):
+            try:
+                self._apply_case_phenotype_ranking(json_document.get("variants", []))
+            except Exception:
+                logger.exception("Case-level phenotype ranking failed; case_prioritization left unset for this run.")
 
         result_builder.write(json_path)
         self.report_generator.write(json_document, report_path)
@@ -938,6 +985,42 @@ class GeperPipeline:
             if target is not None:
                 target["priority_rank"] = rank
 
+    def _apply_case_phenotype_ranking(self, variant_results: List[Dict[str, Any]]) -> None:
+        """
+        Case-level, HPO-phenotype-driven ranking (see
+        `pipeline/case_prioritization.py` for the full design
+        rationale and why this is NOT the same thing as
+        `_apply_priority_ranks` above). Only called from `run()` when
+        `self.phenotype_result` actually carries patient-observed HPO
+        terms this run.
+
+        Writes each variant's result under a NEW, separate
+        `case_prioritization` top-level key -- deliberately not nested
+        inside `interpretation_result` (which `_apply_priority_ranks`
+        mutates) -- so it is visually and structurally obvious in the
+        JSON output that this signal never touched ACMG/PP4/confidence/
+        priority, matching the strict separation this feature's spec
+        requires.
+
+        Per-variant `hpo` results and `priority_score` are read
+        straight off each already-built `variant_results` entry
+        (`vr["hpo"]`, `vr["interpretation_result"]["priority_score"]`)
+        -- nothing here re-queries HPO or recomputes priority.
+        """
+        ontology = get_shared_ontology()
+        patient_term_ids = list(self.phenotype_result.get("hpo_term_ids") or [])
+
+        hpo_results: List[Optional[Dict[str, Any]]] = []
+        priority_scores: List[Optional[float]] = []
+        for vr in variant_results:
+            hpo_results.append(vr.get("hpo"))
+            ir = vr.get("interpretation_result")
+            priority_scores.append(ir.get("priority_score") if isinstance(ir, dict) and "error" not in ir else None)
+
+        results = rank_case(hpo_results, priority_scores, patient_term_ids, ontology)
+        for vr, result in zip(variant_results, results):
+            vr["case_prioritization"] = result.to_dict()
+
     @staticmethod
     def _classify_variant_result(variant_result: Dict[str, Any]) -> str:
         """
@@ -1138,8 +1221,12 @@ class GeperPipeline:
         )
 
         self._capture_stage_provenance(
-            clinvar_result=clinvar_result, dbsnp_result=dbsnp_result, gnomad_result=gnomad_result,
-            uniprot_result=uniprot_result, interpro_result=interpro_result, alphafold_result=alphafold_result,
+            clinvar_result=clinvar_result,
+            dbsnp_result=dbsnp_result,
+            gnomad_result=gnomad_result,
+            uniprot_result=uniprot_result,
+            interpro_result=interpro_result,
+            alphafold_result=alphafold_result,
             functional_evidence_result=functional_evidence_result,
         )
 
@@ -1200,10 +1287,13 @@ class GeperPipeline:
         try:
             if clinvar_result:
                 if clinvar_result.get("error"):
-                    self.provenance.record("ClinVar", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {clinvar_result['error']}")
+                    self.provenance.record(
+                        "ClinVar", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {clinvar_result['error']}"
+                    )
                 else:
                     self.provenance.record(
-                        "ClinVar", VersionStatus.TIMESTAMP_ONLY,
+                        "ClinVar",
+                        VersionStatus.TIMESTAMP_ONLY,
                         notes="ClinVar E-utilities exposes no database-wide release version; each matched record's own 'last_evaluated' date is captured in that record already.",
                     )
         except Exception as exc:  # noqa: BLE001
@@ -1215,7 +1305,9 @@ class GeperPipeline:
                 if build:
                     self.provenance.record("dbSNP", VersionStatus.VERSION_KNOWN, version=f"dbSNP build {build}")
                 elif dbsnp_result.get("error"):
-                    self.provenance.record("dbSNP", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {dbsnp_result['error']}")
+                    self.provenance.record(
+                        "dbSNP", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {dbsnp_result['error']}"
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"dbSNP provenance capture failed: {exc}")
 
@@ -1225,38 +1317,67 @@ class GeperPipeline:
                 if dataset_id:
                     self.provenance.record("gnomAD", VersionStatus.VERSION_KNOWN, version=dataset_id)
                 elif gnomad_result.get("error"):
-                    self.provenance.record("gnomAD", VersionStatus.UNKNOWN, notes=f"Query failed: {gnomad_result['error']}")
+                    self.provenance.record(
+                        "gnomAD", VersionStatus.UNKNOWN, notes=f"Query failed: {gnomad_result['error']}"
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"gnomAD provenance capture failed: {exc}")
 
         try:
             if uniprot_result and not uniprot_result.get("skipped"):
                 if uniprot_result.get("release"):
-                    self.provenance.record("UniProt", VersionStatus.VERSION_KNOWN, version=f"UniProt {uniprot_result['release']}", release_date=uniprot_result.get("release_date"))
+                    self.provenance.record(
+                        "UniProt",
+                        VersionStatus.VERSION_KNOWN,
+                        version=f"UniProt {uniprot_result['release']}",
+                        release_date=uniprot_result.get("release_date"),
+                    )
                 elif uniprot_result.get("error"):
-                    self.provenance.record("UniProt", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {uniprot_result['error']}")
+                    self.provenance.record(
+                        "UniProt", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {uniprot_result['error']}"
+                    )
                 elif uniprot_result.get("source") == "local_dataset":
-                    self.provenance.record("UniProt", VersionStatus.TIMESTAMP_ONLY, notes="Served from a locally-configured dataset this run, not the live REST API; no release header available.")
+                    self.provenance.record(
+                        "UniProt",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="Served from a locally-configured dataset this run, not the live REST API; no release header available.",
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"UniProt provenance capture failed: {exc}")
 
         try:
             if interpro_result and not interpro_result.get("skipped"):
                 if interpro_result.get("api_version"):
-                    self.provenance.record("InterPro", VersionStatus.VERSION_KNOWN, version=f"InterPro {interpro_result['api_version']}")
+                    self.provenance.record(
+                        "InterPro", VersionStatus.VERSION_KNOWN, version=f"InterPro {interpro_result['api_version']}"
+                    )
                 elif interpro_result.get("error"):
-                    self.provenance.record("InterPro", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {interpro_result['error']}")
+                    self.provenance.record(
+                        "InterPro", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {interpro_result['error']}"
+                    )
                 elif interpro_result.get("source") == "local_dataset":
-                    self.provenance.record("InterPro", VersionStatus.TIMESTAMP_ONLY, notes="Served from a locally-configured dataset this run, not the live REST API; no version header available.")
+                    self.provenance.record(
+                        "InterPro",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="Served from a locally-configured dataset this run, not the live REST API; no version header available.",
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"InterPro provenance capture failed: {exc}")
 
         try:
             if alphafold_result and not alphafold_result.get("skipped"):
                 if alphafold_result.get("model_version"):
-                    self.provenance.record("AlphaFold DB", VersionStatus.VERSION_KNOWN, version=f"AlphaFold DB v{alphafold_result['model_version']}")
+                    self.provenance.record(
+                        "AlphaFold DB",
+                        VersionStatus.VERSION_KNOWN,
+                        version=f"AlphaFold DB v{alphafold_result['model_version']}",
+                    )
                 elif alphafold_result.get("error"):
-                    self.provenance.record("AlphaFold DB", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {alphafold_result['error']}")
+                    self.provenance.record(
+                        "AlphaFold DB",
+                        VersionStatus.UNKNOWN,
+                        notes=f"Most recent query failed: {alphafold_result['error']}",
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"AlphaFold DB provenance capture failed: {exc}")
 
@@ -1264,9 +1385,17 @@ class GeperPipeline:
             if functional_evidence_result:
                 source = functional_evidence_result.get("source")
                 if source == "clingen_erepo":
-                    self.provenance.record("Functional evidence (ClinGen ERepo)", VersionStatus.TIMESTAMP_ONLY, notes="No source-wide API version exposed; individual records carry their own 'publishedDate'.")
+                    self.provenance.record(
+                        "Functional evidence (ClinGen ERepo)",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="No source-wide API version exposed; individual records carry their own 'publishedDate'.",
+                    )
                 elif source == "mavedb":
-                    self.provenance.record("Functional evidence (MaveDB)", VersionStatus.TIMESTAMP_ONLY, notes="No source-wide API version exposed; individual score sets carry their own 'publishedDate'/'modificationDate'.")
+                    self.provenance.record(
+                        "Functional evidence (MaveDB)",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="No source-wide API version exposed; individual score sets carry their own 'publishedDate'/'modificationDate'.",
+                    )
                 elif functional_evidence_result.get("error"):
                     # The composite provider doesn't disclose which of
                     # ERepo/MaveDB the failure was in -- honestly
@@ -1280,9 +1409,7 @@ class GeperPipeline:
     # ------------------------------------------------------------------
     # Individual stage helpers
     # ------------------------------------------------------------------
-    def _filter_available_models(
-        self, model_keys: List[str], variant: Variant, errors: List[str]
-    ) -> List[str]:
+    def _filter_available_models(self, model_keys: List[str], variant: Variant, errors: List[str]) -> List[str]:
         """
         Drop any routed model that isn't available in this environment
         (issue #2: HyenaDNA missing must never crash the pipeline --
@@ -1332,8 +1459,7 @@ class GeperPipeline:
         if not available and model_keys:
             if self._model_availability.get(HYENADNA, True):
                 logger.warning(
-                    f"{variant.chrom}:{variant.pos}: all routed models were "
-                    f"unavailable; falling back to HyenaDNA."
+                    f"{variant.chrom}:{variant.pos}: all routed models were unavailable; falling back to HyenaDNA."
                 )
                 available = [HYENADNA]
             else:
@@ -1514,7 +1640,9 @@ class GeperPipeline:
                     "message will not repeat for subsequent variants."
                 )
             return {
-                "supported": False, "predicted": False, "skip_reason": "MMSplice not available in this environment",
+                "supported": False,
+                "predicted": False,
+                "skip_reason": "MMSplice not available in this environment",
                 "interpretation": "MMSplice not available in this environment",
             }
 
@@ -1542,8 +1670,11 @@ class GeperPipeline:
             # `NOT_RUN` -- an even more misleading label for a crash,
             # since it implied the lookup succeeded.
             return {
-                "supported": False, "predicted": False, "skip_reason": str(exc)[:300],
-                "interpretation": str(exc)[:300], "error": str(exc)[:300],
+                "supported": False,
+                "predicted": False,
+                "skip_reason": str(exc)[:300],
+                "interpretation": str(exc)[:300],
+                "error": str(exc)[:300],
             }
 
     def _get_mmsplice_service(self) -> MMSpliceService:
@@ -1646,14 +1777,11 @@ class GeperPipeline:
         """
         service = self._get_mmsplice_service()
         logger.info(
-            f"MMSplice prefetch: batch-scoring up to {len(variants)} "
-            "variant(s) via MMSpliceService.predict_batch()."
+            f"MMSplice prefetch: batch-scoring up to {len(variants)} variant(s) via MMSpliceService.predict_batch()."
         )
         service.predict_batch(variants)
 
-    def _run_ensemble_stage(
-        self, variant: Variant, sequence_context, errors: List[str]
-    ) -> Dict[str, Any]:
+    def _run_ensemble_stage(self, variant: Variant, sequence_context, errors: List[str]) -> Dict[str, Any]:
         """
         Runs the Enformer + Borzoi splicing/regulatory AI ensemble
         (Objectives 3/4/7) via `self.ensemble_manager`, which in turn
@@ -1684,9 +1812,7 @@ class GeperPipeline:
             }
         try:
             with self._timer("model:ai_splicing_ensemble"):
-                return self.ensemble_manager.evaluate(
-                    sequence_context.ref_sequence, sequence_context.alt_sequence
-                )
+                return self.ensemble_manager.evaluate(sequence_context.ref_sequence, sequence_context.alt_sequence)
         except Exception as exc:  # noqa: BLE001 - never let ensemble evaluation crash a variant
             errors.append(f"AI splicing ensemble (Enformer/Borzoi) failed: {exc}")
             logger.error(errors[-1])
@@ -1702,9 +1828,7 @@ class GeperPipeline:
                 "reasoning": f"AI splicing ensemble raised an unexpected error: {exc}",
             }
 
-    def _run_standalone_splice_plugin_stage(
-        self, key: str, sequence_context, errors: List[str]
-    ) -> Dict[str, Any]:
+    def _run_standalone_splice_plugin_stage(self, key: str, sequence_context, errors: List[str]) -> Dict[str, Any]:
         """
         Runs one standalone splice-prediction plugin -- SpliceFormer or
         SpliceBERT -- directly through `self.model_manager`, for the
@@ -1736,7 +1860,8 @@ class GeperPipeline:
         """
         if sequence_context is None:
             return {
-                "available": False, "classification": None,
+                "available": False,
+                "classification": None,
                 "skip_reason": "No sequence context was available for this variant.",
             }
 
@@ -1758,7 +1883,11 @@ class GeperPipeline:
                 # Plugin is available but this specific call produced no
                 # result (e.g. a this-variant-only inference failure --
                 # already recorded in ModelManager.last_inference_errors()).
-                return {"available": True, "classification": None, "skip_reason": "No result produced for this variant."}
+                return {
+                    "available": True,
+                    "classification": None,
+                    "skip_reason": "No result produced for this variant.",
+                }
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth; ModelManager.predict should already catch everything
             errors.append(f"{_MODEL_DISPLAY_NAMES.get(key, key)} stage failed: {exc}")
@@ -1856,9 +1985,7 @@ class GeperPipeline:
             logger.error(errors[-1])
             return {"rsid": None, "found": False, "error": str(exc)}
 
-    def _run_clinvar_stage(
-        self, variant: Variant, dbsnp_result: Dict[str, Any], errors: List[str]
-    ) -> Dict[str, Any]:
+    def _run_clinvar_stage(self, variant: Variant, dbsnp_result: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
         rsid = dbsnp_result.get("rsid") if dbsnp_result else None
         assembly = self.sequence_context_gen.assembly
         try:
@@ -2003,21 +2130,32 @@ class GeperPipeline:
         abort the run, same policy as every other stage helper.
         """
         if not CONFIG.normalization.ENABLED:
-            return {"skipped": True, "reason": "Variant normalization disabled via GEPER_ENABLE_VARIANT_NORMALIZATION=false"}
+            return {
+                "skipped": True,
+                "reason": "Variant normalization disabled via GEPER_ENABLE_VARIANT_NORMALIZATION=false",
+            }
 
         fetch_base = None
         if CONFIG.normalization.LEFT_ALIGN_ENABLED:
+
             def fetch_base(chrom: str, pos: int) -> str:  # noqa: F811 - intentional shadow, this is the callback
                 return self.sequence_context_gen.fetch_reference_sequence(chrom, pos, pos)
 
         try:
             with self._timer("normalization"):
                 normalized = normalize_variant(
-                    variant.chrom, variant.pos, variant.ref, variant.alt,
-                    fetch_base=fetch_base, max_shift_bp=CONFIG.normalization.LEFT_ALIGN_MAX_SHIFT_BP,
+                    variant.chrom,
+                    variant.pos,
+                    variant.ref,
+                    variant.alt,
+                    fetch_base=fetch_base,
+                    max_shift_bp=CONFIG.normalization.LEFT_ALIGN_MAX_SHIFT_BP,
                 )
             hgvs_g = to_hgvs_g(
-                normalized.chrom, normalized.pos, normalized.ref, normalized.alt,
+                normalized.chrom,
+                normalized.pos,
+                normalized.ref,
+                normalized.alt,
                 assembly=self.sequence_context_gen.assembly or "GRCh38",
             )
             return {"skipped": False, "normalized": normalized.to_dict(), "hgvs_g": hgvs_g, "hgvs_c": None}
@@ -2097,9 +2235,7 @@ class GeperPipeline:
         gene_symbol = (clingen_result or {}).get("gene_symbol")
         try:
             with self._timer("transcript_structure"):
-                result = self.transcript_client.query_variant(
-                    variant, assembly=assembly, gene_symbol=gene_symbol
-                )
+                result = self.transcript_client.query_variant(variant, assembly=assembly, gene_symbol=gene_symbol)
             if result.get("error"):
                 errors.append(f"Transcript-structure stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
@@ -2131,13 +2267,17 @@ class GeperPipeline:
         transcript = transcript_from_result(transcript_result)
         if transcript is None:
             return {
-                "skipped": False, "found": False, "matches": [],
+                "skipped": False,
+                "found": False,
+                "matches": [],
                 "reason": "no transcript structure was available to determine this variant's codon.",
             }
         codon_number = transcript.codon_at(variant.pos)
         if codon_number is None:
             return {
-                "skipped": False, "found": False, "matches": [],
+                "skipped": False,
+                "found": False,
+                "matches": [],
                 "reason": "variant position does not fall within a coding codon of this transcript.",
             }
         try:
@@ -2186,7 +2326,9 @@ class GeperPipeline:
         try:
             with self._timer("functional_evidence"):
                 result = self.functional_evidence_client.query_variant(
-                    gene_symbol=gene_symbol, hgvs_g=hgvs_g, hgvs_c=hgvs_c,
+                    gene_symbol=gene_symbol,
+                    hgvs_g=hgvs_g,
+                    hgvs_c=hgvs_c,
                 )
             if result.get("error"):
                 errors.append(f"Functional-evidence (PS3/BS3) stage: {result['error']}")

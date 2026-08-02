@@ -67,9 +67,7 @@ def _load_yaml_config_overrides() -> None:
     if not isinstance(data, dict):
         from utils.logger import get_logger
 
-        get_logger(__name__).warning(
-            f"'{yaml_path}' does not contain a top-level mapping; ignoring it."
-        )
+        get_logger(__name__).warning(f"'{yaml_path}' does not contain a top-level mapping; ignoring it.")
         return
 
     # Dotted config.yaml key -> the environment variable name the
@@ -134,9 +132,7 @@ def _load_yaml_config_overrides() -> None:
     if applied:
         from utils.logger import get_logger
 
-        get_logger(__name__).info(
-            f"Loaded {len(applied)} setting(s) from '{yaml_path}': {sorted(applied)}."
-        )
+        get_logger(__name__).info(f"Loaded {len(applied)} setting(s) from '{yaml_path}': {sorted(applied)}.")
 
 
 _load_yaml_config_overrides()
@@ -153,9 +149,7 @@ class ModelConfig:
 
     # HyenaDNA is loaded from a local/downloaded checkpoint directory
     # rather than the HF hub in the reference snippet supplied.
-    HYENADNA_CHECKPOINT_DIR: str = os.environ.get(
-        "GEPER_HYENADNA_CKPT_DIR", "./checkpoints"
-    )
+    HYENADNA_CHECKPOINT_DIR: str = os.environ.get("GEPER_HYENADNA_CKPT_DIR", "./checkpoints")
     HYENADNA_MODEL_NAME: str = "hyenadna-medium-450k-seqlen"
     HYENADNA_MAX_LENGTH: int = 450_000
 
@@ -313,7 +307,10 @@ class AlphaMissenseConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_ALPHAMISSENSE", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # Official precomputed-score catalogue (Google Cloud Storage, public
@@ -349,7 +346,10 @@ class AlphaMissenseConfig:
     # Set to false to require an explicit LOCAL_HG38_PATH/LOCAL_HG19_PATH
     # instead (e.g. air-gapped deployments with an out-of-band copy).
     AUTO_DOWNLOAD: bool = os.environ.get("GEPER_ALPHAMISSENSE_AUTO_DOWNLOAD", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # Optional local, pre-downloaded + tabix-indexed copies (path to the
@@ -415,7 +415,10 @@ class MMSpliceConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_MMSPLICE", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # "auto" prefers GPU if TensorFlow reports one visible, else CPU.
@@ -435,9 +438,9 @@ class MMSpliceConfig:
     # model. Override via GEPER_MMSPLICE_VARIANT_TYPES (comma-separated)
     # if your use case needs them.
     SUPPORTED_VARIANT_TYPES: tuple = tuple(
-        t.strip() for t in os.environ.get(
-            "GEPER_MMSPLICE_VARIANT_TYPES", "SNV,insertion,deletion"
-        ).split(",") if t.strip()
+        t.strip()
+        for t in os.environ.get("GEPER_MMSPLICE_VARIANT_TYPES", "SNV,insertion,deletion").split(",")
+        if t.strip()
     )
 
     # How far (bp) into the intron on either side of an exon a variant
@@ -471,19 +474,13 @@ class MMSpliceConfig:
     # commonly cited MMSplice delta_logit_psi effect-size convention
     # (|delta_logit_psi| >= 2 treated as biologically meaningful in the
     # original publication's variant-effect analyses).
-    DELTA_LOGIT_PSI_MODERATE_THRESHOLD: float = float(
-        os.environ.get("GEPER_MMSPLICE_MODERATE_THRESHOLD", "2.0")
-    )
-    DELTA_LOGIT_PSI_STRONG_THRESHOLD: float = float(
-        os.environ.get("GEPER_MMSPLICE_STRONG_THRESHOLD", "5.0")
-    )
+    DELTA_LOGIT_PSI_MODERATE_THRESHOLD: float = float(os.environ.get("GEPER_MMSPLICE_MODERATE_THRESHOLD", "2.0"))
+    DELTA_LOGIT_PSI_STRONG_THRESHOLD: float = float(os.environ.get("GEPER_MMSPLICE_STRONG_THRESHOLD", "5.0"))
     # Per-site (donor/acceptor) delta magnitude beyond which a site is
     # called "lost" outright, regardless of the overall delta_logit_psi.
     SITE_LOSS_THRESHOLD: float = float(os.environ.get("GEPER_MMSPLICE_SITE_LOSS_THRESHOLD", "2.5"))
     EXON_SKIPPING_THRESHOLD: float = float(os.environ.get("GEPER_MMSPLICE_EXON_SKIPPING_THRESHOLD", "2.0"))
-    INTRON_RETENTION_THRESHOLD: float = float(
-        os.environ.get("GEPER_MMSPLICE_INTRON_RETENTION_THRESHOLD", "2.0")
-    )
+    INTRON_RETENTION_THRESHOLD: float = float(os.environ.get("GEPER_MMSPLICE_INTRON_RETENTION_THRESHOLD", "2.0"))
 
     # --- Ensemble / ACMG-evidence contribution weight ------------------
     # How much weight MMSplice's evidence contributes to the aggregate
@@ -495,7 +492,10 @@ class MMSpliceConfig:
 
     # --- Caching / batching (requirement #12) --------------------------
     CACHE_ENABLED: bool = os.environ.get("GEPER_MMSPLICE_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_MMSPLICE_CACHE_MAX_SIZE", "5000"))
     BATCH_SIZE: int = int(os.environ.get("GEPER_MMSPLICE_BATCH_SIZE", "16"))
@@ -512,9 +512,12 @@ class MMSpliceConfig:
     # pure cache hits; this changes only *how fast* MMSplice runs, not
     # what it returns. Off reverts to one `predict()` call per variant
     # inside the main loop, as before -- useful for isolating timing.
-    ENABLE_PREFETCH: bool = os.environ.get(
-        "GEPER_MMSPLICE_ENABLE_PREFETCH", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    ENABLE_PREFETCH: bool = os.environ.get("GEPER_MMSPLICE_ENABLE_PREFETCH", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 @dataclass(frozen=True)
@@ -535,7 +538,10 @@ class GnomadConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_GNOMAD", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     GRCH38_LOCAL_VCF: str = os.environ.get("GEPER_GNOMAD_GRCH38_LOCAL_VCF", "")
@@ -543,15 +549,16 @@ class GnomadConfig:
 
     TABIX_BINARY: str = os.environ.get("GEPER_GNOMAD_TABIX_BINARY", "tabix")
 
-    GRAPHQL_ENDPOINT: str = os.environ.get(
-        "GEPER_GNOMAD_GRAPHQL_ENDPOINT", "https://gnomad.broadinstitute.org/api"
-    )
+    GRAPHQL_ENDPOINT: str = os.environ.get("GEPER_GNOMAD_GRAPHQL_ENDPOINT", "https://gnomad.broadinstitute.org/api")
     ENABLE_GRAPHQL_FALLBACK: bool = os.environ.get(
         "GEPER_GNOMAD_ENABLE_GRAPHQL_FALLBACK", "true"
     ).strip().lower() not in ("0", "false", "no", "off")
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_GNOMAD_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # 45s, not the 30s most other API integrations in this file use:
@@ -569,7 +576,10 @@ class GnomadConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_GNOMAD_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_GNOMAD_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_GNOMAD_CACHE_MAX_SIZE", "20000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_GNOMAD_CACHE_TTL_HOURS", "6")) * 3600
@@ -579,9 +589,12 @@ class GnomadConfig:
     BA1_AF_THRESHOLD: float = float(os.environ.get("GEPER_GNOMAD_BA1_AF", "0.05"))
     BS1_AF_THRESHOLD: float = float(os.environ.get("GEPER_GNOMAD_BS1_AF", "0.01"))
     PM2_AF_THRESHOLD: float = float(os.environ.get("GEPER_GNOMAD_PM2_AF", "0.0001"))
-    USE_POPMAX_FOR_BA1_BS1: bool = os.environ.get(
-        "GEPER_GNOMAD_USE_POPMAX", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    USE_POPMAX_FOR_BA1_BS1: bool = os.environ.get("GEPER_GNOMAD_USE_POPMAX", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 @dataclass(frozen=True)
@@ -627,7 +640,10 @@ class ConservationConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_CONSERVATION", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     PHYLOP_GRCH38_LOCAL_BIGWIG: str = os.environ.get("GEPER_PHYLOP_GRCH38_LOCAL_BIGWIG", "")
@@ -658,7 +674,10 @@ class ConservationConfig:
     ).strip().lower() not in ("0", "false", "no", "off")
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_CONSERVATION_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_CONSERVATION_TIMEOUT", "30"))
@@ -666,7 +685,10 @@ class ConservationConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_CONSERVATION_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_CONSERVATION_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_CONSERVATION_CACHE_MAX_SIZE", "20000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_CONSERVATION_CACHE_TTL_HOURS", "6")) * 3600
@@ -723,7 +745,10 @@ class ClinGenConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_CLINGEN", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     GENE_VALIDITY_LOCAL_FILE: str = os.environ.get("GEPER_CLINGEN_GENE_VALIDITY_FILE", "")
@@ -731,11 +756,17 @@ class ClinGenConfig:
 
     API_ENDPOINT: str = os.environ.get("GEPER_CLINGEN_API_ENDPOINT", "https://search.clinicalgenome.org/api")
     API_ENABLED: bool = os.environ.get("GEPER_CLINGEN_API_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_CLINGEN_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_CLINGEN_TIMEOUT", "30"))
@@ -743,7 +774,10 @@ class ClinGenConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_CLINGEN_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_CLINGEN_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Gene-level curation changes far less often than population
     # frequencies, so this defaults to a much longer TTL than
@@ -775,12 +809,16 @@ class ClinGenConfig:
     # query locally" shape `GENE_VALIDITY_LOCAL_FILE` already commits
     # to, just self-provisioned instead of requiring a manual step.
     AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_CLINGEN_AUTO_FETCH", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # ClinGen's Gene-Disease Clinical Validity curated download (the
     # KB export backing https://search.clinicalgenome.org/kb/gene-validity).
     GENE_VALIDITY_DOWNLOAD_URL: str = os.environ.get(
-        "GEPER_CLINGEN_GENE_VALIDITY_URL", "https://search.clinicalgenome.org/kb/gene-validity/download",
+        "GEPER_CLINGEN_GENE_VALIDITY_URL",
+        "https://search.clinicalgenome.org/kb/gene-validity/download",
     )
     # ClinGen's Dosage Sensitivity curated download, numeric-score
     # format (the `ftp.clinicalgenome.org` mirror -- NOT
@@ -789,7 +827,8 @@ class ClinGenConfig:
     # 0/1/2/3/30/40 score `pipeline/clingen/models.py::
     # DOSAGE_SCORE_LABELS` and the PVS1 mechanism gate both key off).
     DOSAGE_SENSITIVITY_DOWNLOAD_URL: str = os.environ.get(
-        "GEPER_CLINGEN_DOSAGE_URL", "https://ftp.clinicalgenome.org/ClinGen_gene_curation_list_GRCh38.tsv",
+        "GEPER_CLINGEN_DOSAGE_URL",
+        "https://ftp.clinicalgenome.org/ClinGen_gene_curation_list_GRCh38.tsv",
     )
     # Curation changes on the order of weeks/months (see this class's
     # own docstring), so a daily refresh is already generous; default
@@ -828,18 +867,27 @@ class HPOConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_HPO", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     LOCAL_FILE: str = os.environ.get("GEPER_HPO_LOCAL_FILE", "")
 
     API_ENDPOINT: str = os.environ.get("GEPER_HPO_API_ENDPOINT", "https://ontology.jax.org/api")
     API_ENABLED: bool = os.environ.get("GEPER_HPO_API_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_HPO_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_HPO_TIMEOUT", "30"))
@@ -847,7 +895,10 @@ class HPOConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_HPO_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_HPO_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Gene-phenotype annotation changes on the order of HPO's periodic
     # releases (roughly monthly), far less often than population
@@ -859,14 +910,18 @@ class HPOConfig:
 
     # -- self-provisioning local dataset (see pipeline/hpo/bootstrap.py) --
     AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_HPO_AUTO_FETCH", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # HPO's official Gene-to-Phenotype annotation release file (part of
     # the same `hp/hpoa/` release directory as `phenotype.hpoa`), a
     # plain TSV with a single header row and no preamble to skip --
     # verified live: `ncbi_gene_id  gene_symbol  hpo_id  hpo_name  frequency  disease_id`.
     DOWNLOAD_URL: str = os.environ.get(
-        "GEPER_HPO_DOWNLOAD_URL", "http://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt",
+        "GEPER_HPO_DOWNLOAD_URL",
+        "http://purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt",
     )
     # HPO releases roughly monthly; a daily refresh check is already
     # generous (same reasoning as ClinGenConfig.AUTO_FETCH_TTL_HOURS).
@@ -886,6 +941,24 @@ class HPOConfig:
     # match this codebase's policy for every other ACMG threshold.
     PP4_OVERLAP_THRESHOLD: float = float(os.environ.get("GEPER_HPO_PP4_OVERLAP_THRESHOLD", "0.5"))
     PP4_MAX_DISTINCT_DISEASES: int = int(os.environ.get("GEPER_HPO_PP4_MAX_DISTINCT_DISEASES", "3"))
+
+    # -- ontology structure, for case-level phenotype-match semantic
+    # similarity only (see pipeline/hpo/ontology.py and
+    # pipeline/case_prioritization.py) -- entirely separate from the
+    # gene-annotation download above, and from PP4, which never
+    # consults this. `genes_to_phenotype.txt` (DOWNLOAD_URL above)
+    # carries no term parent-child structure at all -- confirmed by
+    # reading its own column list -- so ancestor-based partial-credit
+    # similarity needs HPO's own ontology release, not that file.
+    ONTOLOGY_LOCAL_FILE: str = os.environ.get("GEPER_HPO_ONTOLOGY_LOCAL_FILE", "")
+    # HPO's official Obograph-JSON ontology release -- same
+    # purl.obolibrary.org/obo/hp/ host and namespace as DOWNLOAD_URL
+    # above, the ontology-structure release rather than the
+    # gene-annotation one.
+    ONTOLOGY_DOWNLOAD_URL: str = os.environ.get(
+        "GEPER_HPO_ONTOLOGY_DOWNLOAD_URL",
+        "https://purl.obolibrary.org/obo/hp.json",
+    )
 
 
 @dataclass(frozen=True)
@@ -928,17 +1001,26 @@ class OrphanetConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_ORPHANET", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     LOCAL_FILE: str = os.environ.get("GEPER_ORPHANET_LOCAL_FILE", "")
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_ORPHANET_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_ORPHANET_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Gene-disorder association data changes on the order of Orphanet's
     # bi-annual releases -- same long-TTL reasoning as
@@ -949,7 +1031,10 @@ class OrphanetConfig:
 
     # -- self-provisioning local dataset (see pipeline/orphanet/bootstrap.py) --
     AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_ORPHANET_AUTO_FETCH", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Orphadata Science's official "genes associated with rare
     # diseases" release file -- verified live: root <JDBOR> with a
@@ -957,7 +1042,8 @@ class OrphanetConfig:
     # required citation), 4,245 <Disorder> entries as of the July 2026
     # release.
     DOWNLOAD_URL: str = os.environ.get(
-        "GEPER_ORPHANET_DOWNLOAD_URL", "https://www.orphadata.com/data/xml/en_product6.xml",
+        "GEPER_ORPHANET_DOWNLOAD_URL",
+        "https://www.orphadata.com/data/xml/en_product6.xml",
     )
     # Orphanet releases bi-annually (July/December); a daily refresh
     # check is already generous (same reasoning as
@@ -1007,23 +1093,34 @@ class FunctionalEvidenceConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_FUNCTIONAL_EVIDENCE", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # -- ClinGen Evidence Repository (primary) ------------------------
     EREPO_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_EREPO_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     EREPO_API_ENDPOINT: str = os.environ.get(
-        "GEPER_FUNCTIONAL_EVIDENCE_EREPO_ENDPOINT", "https://erepo.clinicalgenome.org/evrepo/api",
+        "GEPER_FUNCTIONAL_EVIDENCE_EREPO_ENDPOINT",
+        "https://erepo.clinicalgenome.org/evrepo/api",
     )
 
     # -- MaveDB (secondary) --------------------------------------------
     MAVEDB_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     MAVEDB_API_ENDPOINT: str = os.environ.get(
-        "GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_ENDPOINT", "https://api.mavedb.org/api/v1",
+        "GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_ENDPOINT",
+        "https://api.mavedb.org/api/v1",
     )
     # A gene like BRCA1 can have 60+ score sets (many are per-exon
     # replicate splits of the same underlying assay); fetching every
@@ -1035,7 +1132,10 @@ class FunctionalEvidenceConfig:
     MAVEDB_MAX_SCORE_SETS_PER_GENE: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_MAX_SCORE_SETS", "10"))
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_TIMEOUT", "30"))
@@ -1049,7 +1149,10 @@ class FunctionalEvidenceConfig:
     # rationale as ClinGen/HPO/Orphanet: published functional-assay
     # curation changes on the order of weeks/months, not per-request.
     CACHE_ENABLED: bool = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_MAX_SIZE", "5000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_CACHE_TTL_HOURS", "24")) * 3600
@@ -1068,8 +1171,12 @@ class FunctionalEvidenceConfig:
     # down from ERepo's, capped further to "supporting" when the
     # calibration is itself flagged research-use-only (MaveDB's own
     # `scoreCalibrations[].researchUseOnly` field).
-    MAVEDB_CLINICAL_GRADE_STRENGTH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_CLINICAL_STRENGTH", "moderate")
-    MAVEDB_RESEARCH_USE_ONLY_STRENGTH: str = os.environ.get("GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_RUO_STRENGTH", "supporting")
+    MAVEDB_CLINICAL_GRADE_STRENGTH: str = os.environ.get(
+        "GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_CLINICAL_STRENGTH", "moderate"
+    )
+    MAVEDB_RESEARCH_USE_ONLY_STRENGTH: str = os.environ.get(
+        "GEPER_FUNCTIONAL_EVIDENCE_MAVEDB_RUO_STRENGTH", "supporting"
+    )
 
 
 @dataclass(frozen=True)
@@ -1093,19 +1200,28 @@ class PVS1Config:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_PVS1", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # -- transcript-structure lookup (Ensembl REST) -------------------
     OFFLINE_MODE: bool = os.environ.get("GEPER_PVS1_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_PVS1_TIMEOUT", "30"))
     MAX_RETRIES: int = int(os.environ.get("GEPER_PVS1_MAX_RETRIES", "3"))
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_PVS1_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_PVS1_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_PVS1_CACHE_MAX_SIZE", "5000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_PVS1_CACHE_TTL_HOURS", "24")) * 3600
@@ -1161,7 +1277,10 @@ class PS1PM5Config:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_PS1_PM5", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_PS1_PM5_TIMEOUT", "30"))
@@ -1169,7 +1288,10 @@ class PS1PM5Config:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_PS1_PM5_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_PS1_PM5_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_PS1_PM5_CACHE_MAX_SIZE", "5000"))
     # ClinVar submissions accrue continuously (unlike ClinGen's
@@ -1225,7 +1347,10 @@ class UniProtConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_UNIPROT", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     LOCAL_DATASET_FILE: str = os.environ.get("GEPER_UNIPROT_LOCAL_FILE", "")
@@ -1233,11 +1358,17 @@ class UniProtConfig:
     API_BASE: str = os.environ.get("GEPER_UNIPROT_API_BASE", "https://rest.uniprot.org/uniprotkb")
     ORGANISM_ID: str = os.environ.get("GEPER_UNIPROT_ORGANISM_ID", "9606")  # Homo sapiens
     REVIEWED_ONLY: bool = os.environ.get("GEPER_UNIPROT_REVIEWED_ONLY", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_UNIPROT_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_UNIPROT_TIMEOUT", "30"))
@@ -1245,7 +1376,10 @@ class UniProtConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_UNIPROT_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_UNIPROT_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Reviewed protein annotations change infrequently -- a long TTL,
     # same order of magnitude as ClinGen's gene-level cache.
@@ -1276,7 +1410,10 @@ class InterProConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_INTERPRO", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     LOCAL_DATASET_FILE: str = os.environ.get("GEPER_INTERPRO_LOCAL_FILE", "")
@@ -1285,7 +1422,10 @@ class InterProConfig:
     PAGE_SIZE: int = int(os.environ.get("GEPER_INTERPRO_PAGE_SIZE", "200"))
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_INTERPRO_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_INTERPRO_TIMEOUT", "30"))
@@ -1293,7 +1433,10 @@ class InterProConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_INTERPRO_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_INTERPRO_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_INTERPRO_CACHE_MAX_SIZE", "5000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_INTERPRO_CACHE_TTL_HOURS", "24")) * 3600
@@ -1324,7 +1467,10 @@ class AlphaFoldConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_ALPHAFOLD", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     LOCAL_DATASET_FILE: str = os.environ.get("GEPER_ALPHAFOLD_LOCAL_FILE", "")
@@ -1338,13 +1484,19 @@ class AlphaFoldConfig:
     # network/time cost than a plain JSON lookup, so it's independently
     # toggleable; with it off, GEPER still reports the structural
     # reference (model URL, version) without per-residue confidence.
-    FETCH_STRUCTURE_FILE: bool = os.environ.get(
-        "GEPER_ALPHAFOLD_FETCH_STRUCTURE", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    FETCH_STRUCTURE_FILE: bool = os.environ.get("GEPER_ALPHAFOLD_FETCH_STRUCTURE", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
     MAX_STRUCTURE_FILE_BYTES: int = int(os.environ.get("GEPER_ALPHAFOLD_MAX_STRUCTURE_BYTES", str(20 * 1024 * 1024)))
 
     OFFLINE_MODE: bool = os.environ.get("GEPER_ALPHAFOLD_OFFLINE", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_ALPHAFOLD_TIMEOUT", "30"))
@@ -1352,7 +1504,10 @@ class AlphaFoldConfig:
     RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_ALPHAFOLD_RETRY_BACKOFF", "1.5"))
 
     CACHE_ENABLED: bool = os.environ.get("GEPER_ALPHAFOLD_CACHE_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_ALPHAFOLD_CACHE_MAX_SIZE", "2000"))
     CACHE_TTL_SECS: float = float(os.environ.get("GEPER_ALPHAFOLD_CACHE_TTL_HOURS", "24")) * 3600
@@ -1409,9 +1564,12 @@ class APIConfig:
     #   - concurrent submission of distinct sequences
     #   - automatic preference for a local blastn database when present
     # None of them change what a BLAST result contains.
-    BLAST_DISK_CACHE_ENABLED: bool = os.environ.get(
-        "GEPER_BLAST_DISK_CACHE", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    BLAST_DISK_CACHE_ENABLED: bool = os.environ.get("GEPER_BLAST_DISK_CACHE", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
     # Backend priority for BLASTClient when a caller doesn't explicitly
     # pass mode=... (e.g. the orchestrator/CLI default, or any direct
@@ -1429,11 +1587,7 @@ class APIConfig:
     # variable for this; `GEPER_BLAST_LOCAL_DB` and the standard NCBI
     # `BLASTDB` env var are still honored, in that priority order, for
     # backward compatibility with existing deployments/scripts.
-    BLAST_LOCAL_DB_PATH: str = (
-        os.environ.get("GEPER_BLAST_DATABASE")
-        or os.environ.get("GEPER_BLAST_LOCAL_DB")
-        or ""
-    )
+    BLAST_LOCAL_DB_PATH: str = os.environ.get("GEPER_BLAST_DATABASE") or os.environ.get("GEPER_BLAST_LOCAL_DB") or ""
 
     # Optional FASTA reference. If set and no prebuilt BLAST database
     # is found at BLAST_LOCAL_DB_PATH (or alongside the FASTA itself),
@@ -1447,9 +1601,7 @@ class APIConfig:
     # throughput dial); local has no such courtesy concern, since it's
     # our own machine, so it defaults to the CPU count instead.
     BLAST_MAX_CONCURRENT_REMOTE: int = int(os.environ.get("GEPER_BLAST_MAX_CONCURRENT_REMOTE", "3"))
-    BLAST_MAX_CONCURRENT_LOCAL: int = int(
-        os.environ.get("GEPER_BLAST_MAX_CONCURRENT_LOCAL", str(os.cpu_count() or 4))
-    )
+    BLAST_MAX_CONCURRENT_LOCAL: int = int(os.environ.get("GEPER_BLAST_MAX_CONCURRENT_LOCAL", str(os.cpu_count() or 4)))
 
     # Mirrors ENSEMBL_ENABLE_BATCH_PREFETCH above: gates the
     # orchestrator's pre-loop batch/concurrent BLAST submission (see
@@ -1459,9 +1611,12 @@ class APIConfig:
     # in-memory + disk caching, just without the up-front concurrent
     # submission), which is also useful for isolating before/after
     # timing comparisons.
-    BLAST_ENABLE_PREFETCH: bool = os.environ.get(
-        "GEPER_BLAST_ENABLE_PREFETCH", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    BLAST_ENABLE_PREFETCH: bool = os.environ.get("GEPER_BLAST_ENABLE_PREFETCH", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 
 @dataclass(frozen=True)
@@ -1579,6 +1734,51 @@ class PrioritizationConfig:
 
 
 @dataclass(frozen=True)
+class CasePrioritizationConfig:
+    """
+    Configuration for case-level, HPO-phenotype-driven variant ranking
+    (see `pipeline/case_prioritization.py`).
+
+    Answers a different question than Phase 4's `PrioritizationEngine`
+    above: not "how urgently does THIS variant deserve review" in
+    isolation, but "given the whole batch of variants from one VCF and
+    the PATIENT's observed symptoms, which ones best explain them" --
+    only meaningful case-wide, only runs when `--hpo-terms`/
+    `--phenotype-file` supplied patient terms (see
+    `pipeline/hpo/utils.py::build_phenotype_result`), and NEVER
+    influences ACMG classification or PP4 (see
+    `pipeline/acmg_rules.py::ACMGRuleEngine._pp4`'s own strict,
+    single-etiology-gated binary criterion, which this does not touch).
+
+    The combined case-rank score below deliberately reuses
+    `priority_score` as its non-phenotype input rather than ACMG
+    classification and confidence separately: `PrioritizationEngine`
+    already folds both of those in (`ACMG_WEIGHT`/`CONFIDENCE_WEIGHT`
+    above, among its 11 factors), so re-including them raw here would
+    double-count exactly those two signals. `priority_score` is
+    therefore read as "how strong/urgent is the evidence, independent
+    of phenotype" and combined with the new "does this variant explain
+    the patient's symptoms" signal -- two genuinely independent axes.
+    """
+
+    # Both normalized 0-1 against each other at scoring time (same
+    # discipline as PrioritizationConfig's own weights) -- equal
+    # default weight: neither axis is assumed more informative than
+    # the other without case-specific evidence one way or the other.
+    PHENOTYPE_MATCH_WEIGHT: float = float(os.environ.get("GEPER_CASE_RANK_PHENOTYPE_WEIGHT", "0.5"))
+    PRIORITY_WEIGHT: float = float(os.environ.get("GEPER_CASE_RANK_PRIORITY_WEIGHT", "0.5"))
+
+    # Minimum term-pair similarity (see
+    # `case_prioritization.py::_term_similarity`) for an ontology
+    # ancestor-based match to count as a genuine partial-credit hit
+    # rather than noise from two nearly-unrelated terms sharing only a
+    # very high-level common ancestor (e.g. "Phenotypic abnormality"
+    # itself, which is a parent of nearly everything in HPO and would
+    # otherwise give every term pair a nonzero score).
+    MIN_ANCESTOR_SIMILARITY: float = float(os.environ.get("GEPER_CASE_RANK_MIN_ANCESTOR_SIMILARITY", "0.15"))
+
+
+@dataclass(frozen=True)
 class ConflictConfig:
     """
     Configuration for the Phase 6 Conflict Resolution Engine (see
@@ -1641,10 +1841,16 @@ class VariantNormalizationConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_VARIANT_NORMALIZATION", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     LEFT_ALIGN_ENABLED: bool = os.environ.get("GEPER_NORMALIZATION_LEFT_ALIGN", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     # Safety bound on how many bases left-alignment will walk left
     # through the reference before giving up -- guards against an
@@ -1699,7 +1905,10 @@ class ReportBrandingConfig:
     """
 
     ENABLED: bool = os.environ.get("GEPER_REPORT_LOGO_ENABLED", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
     LOGO_PATH: str = os.environ.get(
         "GEPER_REPORT_LOGO_PATH",
@@ -1760,21 +1969,31 @@ class SplicingConfig:
         pipeline/models/spip_plugin.py for the full writeup.
     """
 
-    ENABLE_ENFORMER: bool = os.environ.get(
-        "GEPER_ENABLE_ENFORMER", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
-    ENABLE_BORZOI: bool = os.environ.get(
-        "GEPER_ENABLE_BORZOI", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
-    ENABLE_SPLICEFORMER: bool = os.environ.get(
-        "GEPER_ENABLE_SPLICEFORMER", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
-    ENABLE_SPLICEBERT: bool = os.environ.get(
-        "GEPER_ENABLE_SPLICEBERT", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
-    ENABLE_SPIP: bool = os.environ.get(
-        "GEPER_ENABLE_SPIP", "true"
-    ).strip().lower() not in ("0", "false", "no", "off")
+    ENABLE_ENFORMER: bool = os.environ.get("GEPER_ENABLE_ENFORMER", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    ENABLE_BORZOI: bool = os.environ.get("GEPER_ENABLE_BORZOI", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    ENABLE_SPLICEFORMER: bool = os.environ.get("GEPER_ENABLE_SPLICEFORMER", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    ENABLE_SPLICEBERT: bool = os.environ.get("GEPER_ENABLE_SPLICEBERT", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    ENABLE_SPIP: bool = os.environ.get("GEPER_ENABLE_SPIP", "true").strip().lower() not in ("0", "false", "no", "off")
 
     # -- Enformer --
     # `EleutherAI/enformer-official-rough` mirrors DeepMind's official
@@ -1783,9 +2002,7 @@ class SplicingConfig:
     # independently by third-party model documentation) in a PyTorch-
     # loadable HuggingFace repo. See pipeline/models/enformer_plugin.py
     # for the full license verification writeup.
-    ENFORMER_HF_REPO: str = os.environ.get(
-        "GEPER_ENFORMER_HF_REPO", "EleutherAI/enformer-official-rough"
-    )
+    ENFORMER_HF_REPO: str = os.environ.get("GEPER_ENFORMER_HF_REPO", "EleutherAI/enformer-official-rough")
 
     # -- Borzoi --
     # MUST stay under the `johahi/` HuggingFace namespace: those are
@@ -1795,9 +2012,7 @@ class SplicingConfig:
     # GCS) carry no equivalent explicit weight license and must NOT be
     # used here -- see pipeline/models/borzoi_plugin.py, which
     # enforces this at load time, not just by convention.
-    BORZOI_HF_REPO: str = os.environ.get(
-        "GEPER_BORZOI_HF_REPO", "johahi/borzoi-replicate-0"
-    )
+    BORZOI_HF_REPO: str = os.environ.get("GEPER_BORZOI_HF_REPO", "johahi/borzoi-replicate-0")
 
     # -- SpliceFormer --
     # Pinned to the v1.0.0 GitHub release tag (== the Zenodo-archived
@@ -1806,9 +2021,7 @@ class SplicingConfig:
     # a running deployment -- same rationale as ENFORMER_HF_REPO/
     # BORZOI_HF_REPO pinning a specific repo id above. See
     # pipeline/models/spliceformer/loader.py.
-    SPLICEFORMER_SOURCE_REF: str = os.environ.get(
-        "GEPER_SPLICEFORMER_SOURCE_REF", "v1.0.0"
-    )
+    SPLICEFORMER_SOURCE_REF: str = os.environ.get("GEPER_SPLICEFORMER_SOURCE_REF", "v1.0.0")
     # One of the ten official "transformer_encoder_45k_171022_*"
     # replicate checkpoints (replicate 0) shipped in the upstream
     # repository's Results/PyTorch_Models/ directory. See
@@ -1817,9 +2030,7 @@ class SplicingConfig:
     # average) is used by default, and pipeline/models/
     # spliceformer_plugin.py::SpliceFormerPlugin.metadata() for how
     # that's surfaced to a report/audit reader.
-    SPLICEFORMER_CHECKPOINT: str = os.environ.get(
-        "GEPER_SPLICEFORMER_CHECKPOINT", "transformer_encoder_40k_171022_0"
-    )
+    SPLICEFORMER_CHECKPOINT: str = os.environ.get("GEPER_SPLICEFORMER_CHECKPOINT", "transformer_encoder_40k_171022_0")
 
     # -- SpliceBERT --
     # Weights are published only on Zenodo (no GitHub release asset),
@@ -1827,17 +2038,13 @@ class SplicingConfig:
     # for the same never-silently-change-underneath-a-deployment
     # reason ENFORMER_HF_REPO/SPLICEFORMER_SOURCE_REF are pinned. See
     # pipeline/models/splicebert/loader.py.
-    SPLICEBERT_ZENODO_RECORD: str = os.environ.get(
-        "GEPER_SPLICEBERT_ZENODO_RECORD", "7995778"
-    )
+    SPLICEBERT_ZENODO_RECORD: str = os.environ.get("GEPER_SPLICEBERT_ZENODO_RECORD", "7995778")
     # One of the three checkpoints bundled in that record's
     # models.tar.gz (SpliceBERT.510nt / SpliceBERT-human.510nt /
     # SpliceBERT.1024nt) -- the 1024nt, all-vertebrate checkpoint is
     # the flagship/most general of the three. See
     # pipeline/models/splicebert/loader.py's module docstring.
-    SPLICEBERT_CHECKPOINT: str = os.environ.get(
-        "GEPER_SPLICEBERT_CHECKPOINT", "SpliceBERT.1024nt"
-    )
+    SPLICEBERT_CHECKPOINT: str = os.environ.get("GEPER_SPLICEBERT_CHECKPOINT", "SpliceBERT.1024nt")
     # Bounds `AutoModelForMaskedLM.from_pretrained`/`AutoTokenizer
     # .from_pretrained` (pipeline/models/splicebert/loader.py::
     # build_model_and_tokenizer) so a pathological `transformers`
@@ -1848,33 +2055,25 @@ class SplicingConfig:
     # TF as "available" since tensorflow is a required MMSplice
     # dependency) fails loudly with a clear, actionable error instead of
     # hanging silently -- observed as long as 2+ hours in one real run.
-    SPLICEBERT_LOAD_TIMEOUT_SECS: float = float(
-        os.environ.get("GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS", "180")
-    )
+    SPLICEBERT_LOAD_TIMEOUT_SECS: float = float(os.environ.get("GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS", "180"))
 
     # -- SPiP --
     # Genome build SPiP resolves variants/transcripts against --
     # SPiPv2.1_main.r itself defaults to hg19 and supports only hg19
     # or hg38 (see pipeline/models/spip/loader.py).
-    SPIP_GENOME_ASSEMBLY: str = os.environ.get(
-        "GEPER_SPIP_GENOME_ASSEMBLY", "hg19"
-    )
+    SPIP_GENOME_ASSEMBLY: str = os.environ.get("GEPER_SPIP_GENOME_ASSEMBLY", "hg19")
     # SPiP has no persistent process to warm up -- every call is a
     # fresh Rscript invocation that reloads its ~400MB combined
     # reference-data set from disk, so this needs real headroom (well
     # beyond every other plugin's own per-call cost). See
     # pipeline/models/spip/loader.py::run_spip's own docstring.
-    SPIP_TIMEOUT_SECONDS: int = int(os.environ.get(
-        "GEPER_SPIP_TIMEOUT_SECONDS", "600"
-    ))
+    SPIP_TIMEOUT_SECONDS: int = int(os.environ.get("GEPER_SPIP_TIMEOUT_SECONDS", "600"))
 
     # Directory the new plugin weight cache (pipeline/models/cache.py)
     # uses -- separate from CONFIG.CACHE_DIR (which predates this and
     # is used by BLAST/gnomAD/ClinGen result caches) so plugin weight
     # files are easy to find/clear independently of unrelated caches.
-    PLUGIN_CACHE_DIR: str = os.environ.get(
-        "GEPER_PLUGIN_CACHE_DIR", "./plugin_model_cache"
-    )
+    PLUGIN_CACHE_DIR: str = os.environ.get("GEPER_PLUGIN_CACHE_DIR", "./plugin_model_cache")
 
 
 @dataclass(frozen=True)
@@ -1897,6 +2096,7 @@ class GeperConfig:
     alphafold: AlphaFoldConfig = field(default_factory=AlphaFoldConfig)
     confidence: ConfidenceConfig = field(default_factory=ConfidenceConfig)
     prioritization: PrioritizationConfig = field(default_factory=PrioritizationConfig)
+    case_prioritization: CasePrioritizationConfig = field(default_factory=CasePrioritizationConfig)
     conflict: ConflictConfig = field(default_factory=ConflictConfig)
     splicing: SplicingConfig = field(default_factory=SplicingConfig)
     qc_report: QCReportConfig = field(default_factory=QCReportConfig)
@@ -1917,7 +2117,10 @@ class GeperConfig:
     # for interpretation. Useful when BLAST's remote-queue latency
     # isn't acceptable and no local BLAST+ database is available.
     AI_ONLY_MODE: bool = os.environ.get("GEPER_AI_ONLY", "false").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # Per-stage wall-clock profiling (sequence context, each model,
@@ -1926,7 +2129,10 @@ class GeperConfig:
     # written to `geper_benchmark.md` / `.json` in the output directory
     # at the end of every run. Never changes any prediction output.
     ENABLE_PROFILING: bool = os.environ.get("GEPER_ENABLE_PROFILING", "true").strip().lower() not in (
-        "0", "false", "no", "off",
+        "0",
+        "false",
+        "no",
+        "off",
     )
 
     # Codon table used by ProteinTranslator (standard genetic code).
@@ -1934,22 +2140,70 @@ class GeperConfig:
 
 
 _STANDARD_CODON_TABLE: Dict[str, str] = {
-    "UUU": "F", "UUC": "F", "UUA": "L", "UUG": "L",
-    "CUU": "L", "CUC": "L", "CUA": "L", "CUG": "L",
-    "AUU": "I", "AUC": "I", "AUA": "I", "AUG": "M",
-    "GUU": "V", "GUC": "V", "GUA": "V", "GUG": "V",
-    "UCU": "S", "UCC": "S", "UCA": "S", "UCG": "S",
-    "CCU": "P", "CCC": "P", "CCA": "P", "CCG": "P",
-    "ACU": "T", "ACC": "T", "ACA": "T", "ACG": "T",
-    "GCU": "A", "GCC": "A", "GCA": "A", "GCG": "A",
-    "UAU": "Y", "UAC": "Y", "UAA": "*", "UAG": "*",
-    "CAU": "H", "CAC": "H", "CAA": "Q", "CAG": "Q",
-    "AAU": "N", "AAC": "N", "AAA": "K", "AAG": "K",
-    "GAU": "D", "GAC": "D", "GAA": "E", "GAG": "E",
-    "UGU": "C", "UGC": "C", "UGA": "*", "UGG": "W",
-    "CGU": "R", "CGC": "R", "CGA": "R", "CGG": "R",
-    "AGU": "S", "AGC": "S", "AGA": "R", "AGG": "R",
-    "GGU": "G", "GGC": "G", "GGA": "G", "GGG": "G",
+    "UUU": "F",
+    "UUC": "F",
+    "UUA": "L",
+    "UUG": "L",
+    "CUU": "L",
+    "CUC": "L",
+    "CUA": "L",
+    "CUG": "L",
+    "AUU": "I",
+    "AUC": "I",
+    "AUA": "I",
+    "AUG": "M",
+    "GUU": "V",
+    "GUC": "V",
+    "GUA": "V",
+    "GUG": "V",
+    "UCU": "S",
+    "UCC": "S",
+    "UCA": "S",
+    "UCG": "S",
+    "CCU": "P",
+    "CCC": "P",
+    "CCA": "P",
+    "CCG": "P",
+    "ACU": "T",
+    "ACC": "T",
+    "ACA": "T",
+    "ACG": "T",
+    "GCU": "A",
+    "GCC": "A",
+    "GCA": "A",
+    "GCG": "A",
+    "UAU": "Y",
+    "UAC": "Y",
+    "UAA": "*",
+    "UAG": "*",
+    "CAU": "H",
+    "CAC": "H",
+    "CAA": "Q",
+    "CAG": "Q",
+    "AAU": "N",
+    "AAC": "N",
+    "AAA": "K",
+    "AAG": "K",
+    "GAU": "D",
+    "GAC": "D",
+    "GAA": "E",
+    "GAG": "E",
+    "UGU": "C",
+    "UGC": "C",
+    "UGA": "*",
+    "UGG": "W",
+    "CGU": "R",
+    "CGC": "R",
+    "CGA": "R",
+    "CGG": "R",
+    "AGU": "S",
+    "AGC": "S",
+    "AGA": "R",
+    "AGG": "R",
+    "GGU": "G",
+    "GGC": "G",
+    "GGA": "G",
+    "GGG": "G",
 }
 
 CONFIG = GeperConfig()

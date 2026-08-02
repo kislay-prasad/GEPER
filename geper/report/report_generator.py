@@ -6,12 +6,10 @@ for a researcher or clinician to skim, with embeddings and other raw
 numeric payloads deliberately summarized (not dumped) for readability.
 """
 
-from datetime import datetime
 from typing import Any, Dict, List
 
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
-from report.clinical_report_builder import build_clinical_report
 from pipeline.models.status import render_status_table_lines
 
 logger = get_logger(__name__)
@@ -49,6 +47,12 @@ class ReportGenerator:
         lines.extend(self._render_provenance(json_document))
         lines.append("---")
         lines.append("")
+
+        case_ranking = self._render_case_phenotype_ranking(json_document)
+        if case_ranking:
+            lines.extend(case_ranking)
+            lines.append("---")
+            lines.append("")
 
         for idx, variant_result in enumerate(json_document.get("variants", []), start=1):
             lines.extend(self._render_variant_section(idx, variant_result))
@@ -124,7 +128,9 @@ class ReportGenerator:
             if record.get("release_date"):
                 lines.append(f"  - Release date: {record['release_date']}")
             if record.get("content_hash"):
-                lines.append(f"  - Content hash ({record.get('hash_algorithm') or 'unknown algorithm'}): `{record['content_hash']}`")
+                lines.append(
+                    f"  - Content hash ({record.get('hash_algorithm') or 'unknown algorithm'}): `{record['content_hash']}`"
+                )
             if record.get("query_timestamp"):
                 lines.append(f"  - Query/download time (UTC): {record['query_timestamp']}")
             if record.get("endpoint"):
@@ -134,11 +140,92 @@ class ReportGenerator:
         lines.append("")
         return lines
 
+    @staticmethod
+    def _render_case_phenotype_ranking(json_document: Dict[str, Any]) -> List[str]:
+        """
+        Case-level, HPO-phenotype-driven variant ranking (see
+        `pipeline/case_prioritization.py`) -- run-level, like
+        Provenance above, so it's placed immediately after it and
+        before any per-variant section. Empty list (renders nothing)
+        whenever the patient supplied no HPO terms this run, or ranking
+        genuinely failed -- i.e. whenever no variant carries a
+        `case_prioritization` key at all -- so a report from a run
+        without `--hpo-terms`/`--phenotype-file` looks exactly as it
+        did before this feature existed.
+
+        Deliberately NOT titled/framed as ACMG or clinical evidence:
+        this table is a reviewer-triage aid only (which variant to
+        read first), never a classification signal -- the explicit
+        callout below says so, and `## Clinical Interpretation Report`
+        (per-variant, further down) is completely unaffected by
+        anything here.
+        """
+        variants = json_document.get("variants", [])
+        ranked = [
+            (idx, vr) for idx, vr in enumerate(variants, start=1) if isinstance(vr.get("case_prioritization"), dict)
+        ]
+        if not ranked:
+            return []
+
+        ranked.sort(
+            key=lambda pair: (
+                pair[1]["case_prioritization"].get("case_rank") is None,
+                pair[1]["case_prioritization"].get("case_rank") or 0,
+            )
+        )
+
+        lines = ["## Case-Level Phenotype-Driven Variant Ranking", ""]
+        lines.append(
+            "*Reviewer triage aid only -- ranks variants by how well their gene's HPO-curated "
+            "phenotype profile matches the patient's observed symptoms, combined with each "
+            "variant's existing priority score. This is a SEPARATE, additive signal: it never "
+            "influences ACMG classification, PP4, confidence, or priority score below -- see "
+            'each variant\'s own "Clinical Interpretation Report" section for those.*'
+        )
+        lines.append("")
+        lines.append("| Case Rank | Finding | Variant / Gene | Case Score | Phenotype Match | Why |")
+        lines.append("|---|---|---|---|---|---|")
+        for idx, vr in ranked:
+            cp = vr["case_prioritization"]
+            variant = vr.get("variant", {})
+            locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+            gene = (vr.get("interpretation_result") or {}).get("gene_symbol")
+            locus_gene = f"{locus} ({gene})" if gene else locus
+
+            case_rank = cp.get("case_rank")
+            rank_text = str(case_rank) if case_rank is not None else "unranked"
+            case_score = cp.get("case_rank_score")
+            score_text = f"{case_score:.1f}" if isinstance(case_score, (int, float)) else "n/a"
+
+            pm = cp.get("phenotype_match") or {}
+            pm_score = pm.get("score")
+            if pm_score is not None:
+                pm_text = f"{pm_score:.1f}/100"
+            else:
+                pm_text = "no HPO data for gene"
+
+            top_matches = [m for m in (pm.get("term_matches") or []) if m.get("similarity", 0) > 0]
+            top_matches.sort(key=lambda m: -m.get("similarity", 0))
+            if top_matches:
+                why = "; ".join(
+                    f"{m['patient_term_id']} -> {m.get('matched_gene_term_name') or m.get('matched_gene_term_id')} "
+                    f"({m['match_type']}, {m['similarity']:.2f})"
+                    for m in top_matches[:3]
+                )
+            else:
+                why = cp.get("reason") or "n/a"
+
+            lines.append(f"| {rank_text} | {idx} | {locus_gene} | {score_text} | {pm_text} | {why} |")
+        lines.append("")
+        return lines
+
     def _render_variant_section(self, idx: int, result: Dict[str, Any]) -> List[str]:
         variant = result.get("variant", {})
         lines: List[str] = []
 
-        header = f"## Variant {idx}: {variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+        header = (
+            f"## Variant {idx}: {variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+        )
         lines.append(header)
         lines.append("")
         lines.append(f"- **Type:** {variant.get('variant_type')}")
@@ -231,7 +318,9 @@ class ReportGenerator:
             lines.append("</details>")
             lines.append("")
         if acmg.get("not_evaluated_count"):
-            lines.append(f"*{acmg['not_evaluated_count']} additional ACMG criteria could not be evaluated (see Limitations).*")
+            lines.append(
+                f"*{acmg['not_evaluated_count']} additional ACMG criteria could not be evaluated (see Limitations).*"
+            )
             lines.append("")
 
         conf = clinical_report["confidence"]
@@ -240,15 +329,21 @@ class ReportGenerator:
         if conf.get("pending"):
             lines.append("*Confidence scoring did not complete for this variant.*")
         else:
-            score = conf.get('score')
-            lines.append(f"**{score:.1f}% -- {conf.get('label')}**" if isinstance(score, (int, float)) else f"**{score}% -- {conf.get('label')}**")
+            score = conf.get("score")
+            lines.append(
+                f"**{score:.1f}% -- {conf.get('label')}**"
+                if isinstance(score, (int, float))
+                else f"**{score}% -- {conf.get('label')}**"
+            )
             breakdown = (conf.get("breakdown") or {}).get("category_breakdown", [])
             if breakdown:
                 lines.append("")
                 lines.append("| Evidence Category | Weight | Presence | Quality | Contribution |")
                 lines.append("|---|---|---|---|---|")
                 for cat in breakdown:
-                    lines.append(f"| {cat['category']} | {cat['weight']} | {cat['presence']} | {cat['quality']} | {cat['contribution']} |")
+                    lines.append(
+                        f"| {cat['category']} | {cat['weight']} | {cat['presence']} | {cat['quality']} | {cat['contribution']} |"
+                    )
         lines.append("")
 
         pri = clinical_report["priority"]
@@ -258,7 +353,7 @@ class ReportGenerator:
             lines.append("*Priority scoring did not complete for this variant.*")
         else:
             rank_text = f" (rank {pri['rank']} in this run)" if pri.get("rank") is not None else ""
-            score = pri.get('score')
+            score = pri.get("score")
             score_text = f"{score:.1f}" if isinstance(score, (int, float)) else str(score)
             lines.append(f"**{pri.get('category')} -- score {score_text}{rank_text}**")
             if pri.get("explanation"):
@@ -293,9 +388,13 @@ class ReportGenerator:
         # additively below the existing free-text list above (which
         # Phase 5 already shipped) -- same underlying data, richer view.
         conflict_res = clinical_report.get("conflict_resolution") or {}
-        lines.append(f"**Overall assessment:** {conflict_res.get('summary') or 'No significant conflicting evidence detected.'}")
+        lines.append(
+            f"**Overall assessment:** {conflict_res.get('summary') or 'No significant conflicting evidence detected.'}"
+        )
         lines.append("")
-        real_conflicts = [c for c in (conflict_res.get("conflicts") or []) if c.get("severity") in ("Minor", "Moderate", "Major")]
+        real_conflicts = [
+            c for c in (conflict_res.get("conflicts") or []) if c.get("severity") in ("Minor", "Moderate", "Major")
+        ]
         if real_conflicts:
             lines.append(f"**Conflict score:** {conflict_res.get('score')} ({conflict_res.get('severity')})")
             lines.append("")
@@ -338,7 +437,9 @@ class ReportGenerator:
         # a real verdict, and a crash must never be silently absent
         # just because the other model's result is present.
         for err in model_errors:
-            lines.append(f"- **{err.get('source')}:** _lookup failed ({err.get('error')}) -- not evidence of no effect, see Annotation Detail below._")
+            lines.append(
+                f"- **{err.get('source')}:** _lookup failed ({err.get('error')}) -- not evidence of no effect, see Annotation Detail below._"
+            )
         context = ai.get("context_models_used") or []
         lines.append("")
         lines.append(
@@ -352,9 +453,13 @@ class ReportGenerator:
         lines.append("")
         if prot.get("uniprot_available"):
             u = prot["uniprot"]
-            lines.append(f"- **UniProt:** {u.get('protein_name') or 'n/a'} ({u.get('accession') or 'n/a'}, {'reviewed' if u.get('reviewed') else 'unreviewed'})")
+            lines.append(
+                f"- **UniProt:** {u.get('protein_name') or 'n/a'} ({u.get('accession') or 'n/a'}, {'reviewed' if u.get('reviewed') else 'unreviewed'})"
+            )
         elif prot.get("uniprot_error"):
-            lines.append(f"- **UniProt:** _lookup failed (external service issue: {prot['uniprot_error']}) -- not evidence of a missing entry, see Annotation Detail below._")
+            lines.append(
+                f"- **UniProt:** _lookup failed (external service issue: {prot['uniprot_error']}) -- not evidence of a missing entry, see Annotation Detail below._"
+            )
         else:
             lines.append("- **UniProt:** no entry resolved.")
         if prot.get("interpro_available"):
@@ -362,14 +467,22 @@ class ReportGenerator:
             position = prot["interpro"].get("protein_position")
             if domains:
                 names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed" for d in domains)
-                lines.append(f"- **InterPro/Pfam:** residue {position} (transcript-verified) overlaps {len(domains)} domain(s): {names}")
+                lines.append(
+                    f"- **InterPro/Pfam:** residue {position} (transcript-verified) overlaps {len(domains)} domain(s): {names}"
+                )
             elif domains is None:
-                lines.append("- **InterPro/Pfam:** annotation available, but this variant's residue position could not be determined "
-                              "from the transcript structure -- domain overlap was not checked.")
+                lines.append(
+                    "- **InterPro/Pfam:** annotation available, but this variant's residue position could not be determined "
+                    "from the transcript structure -- domain overlap was not checked."
+                )
             else:
-                lines.append(f"- **InterPro/Pfam:** annotation available; no domain overlap at residue {position} (transcript-verified).")
+                lines.append(
+                    f"- **InterPro/Pfam:** annotation available; no domain overlap at residue {position} (transcript-verified)."
+                )
         elif prot.get("interpro_error"):
-            lines.append(f"- **InterPro/Pfam:** _lookup failed (external service issue: {prot['interpro_error']}) -- not evidence of an absent domain, see Annotation Detail below._")
+            lines.append(
+                f"- **InterPro/Pfam:** _lookup failed (external service issue: {prot['interpro_error']}) -- not evidence of an absent domain, see Annotation Detail below._"
+            )
         else:
             lines.append("- **InterPro/Pfam:** no annotation available.")
         lines.append("")
@@ -383,11 +496,15 @@ class ReportGenerator:
                 if struct.get("confidence_band_is_residue_specific")
                 else "whole-protein mean (variant residue position unknown)"
             )
-            lines.append(f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' {band_label} (model {struct.get('model_version') or 'n/a'})")
+            lines.append(
+                f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' {band_label} (model {struct.get('model_version') or 'n/a'})"
+            )
             if struct.get("pdb_url"):
                 lines.append(f"  - Structure: {struct['pdb_url']}")
         elif struct.get("error"):
-            lines.append(f"*AlphaFold DB lookup failed (external service issue: {struct['error']}) -- not evidence of an unresolved structure, see Annotation Detail below.*")
+            lines.append(
+                f"*AlphaFold DB lookup failed (external service issue: {struct['error']}) -- not evidence of an unresolved structure, see Annotation Detail below.*"
+            )
         else:
             lines.append("*No AlphaFold DB structure resolved for this protein.*")
         lines.append("")
@@ -397,7 +514,9 @@ class ReportGenerator:
         lines.append("")
         g = pop["gnomad"]
         if g["queried"]:
-            lines.append(f"- **gnomAD:** {'found, AF=' + str(g['global_af']) if g['found'] else 'variant not found (absent from gnomAD)'}")
+            lines.append(
+                f"- **gnomAD:** {'found, AF=' + str(g['global_af']) if g['found'] else 'variant not found (absent from gnomAD)'}"
+            )
         else:
             lines.append("- **gnomAD:** lookup unavailable for this variant.")
         d = pop["dbsnp"]
@@ -409,9 +528,13 @@ class ReportGenerator:
         lines.append("")
         if clin.get("clinvar_available"):
             cv = clin["clinvar"]
-            lines.append(f"- **ClinVar:** {cv.get('clinical_significance') or 'n/a'} ({cv.get('review_status') or 'n/a'})")
+            lines.append(
+                f"- **ClinVar:** {cv.get('clinical_significance') or 'n/a'} ({cv.get('review_status') or 'n/a'})"
+            )
         elif clin.get("clinvar_error"):
-            lines.append(f"- **ClinVar:** _lookup failed (external service issue: {clin['clinvar_error']}) -- not evidence of an absent record, see Annotation Detail below._")
+            lines.append(
+                f"- **ClinVar:** _lookup failed (external service issue: {clin['clinvar_error']}) -- not evidence of an absent record, see Annotation Detail below._"
+            )
         elif clin.get("clinvar_co_located_count"):
             lines.append(
                 f"- **ClinVar:** no record found for this exact variant "
@@ -422,9 +545,13 @@ class ReportGenerator:
             lines.append("- **ClinVar:** no record found.")
         if clin.get("clingen_available"):
             cg = clin["clingen"]
-            lines.append(f"- **ClinGen:** {cg.get('gene_symbol') or 'n/a'} -- gene-disease validity: {cg.get('clinical_validity_summary') or 'n/a'}")
+            lines.append(
+                f"- **ClinGen:** {cg.get('gene_symbol') or 'n/a'} -- gene-disease validity: {cg.get('clinical_validity_summary') or 'n/a'}"
+            )
         elif clin.get("clingen_error"):
-            lines.append(f"- **ClinGen:** _lookup failed (external service issue: {clin['clingen_error']}) -- not evidence of an absent curation, see Annotation Detail below._")
+            lines.append(
+                f"- **ClinGen:** _lookup failed (external service issue: {clin['clingen_error']}) -- not evidence of an absent curation, see Annotation Detail below._"
+            )
         else:
             lines.append("- **ClinGen:** no curation found for this gene.")
         lines.append("")
@@ -435,7 +562,9 @@ class ReportGenerator:
         lines.append(f"- **Context models used:** {', '.join(seq.get('context_models_used') or []) or 'none'}")
         blast_error = seq["blast"].get("error")
         if blast_error:
-            lines.append(f"- **BLAST:** _lookup failed ({blast_error}) -- not evidence of no homology, see Annotation Detail below._")
+            lines.append(
+                f"- **BLAST:** _lookup failed ({blast_error}) -- not evidence of no homology, see Annotation Detail below._"
+            )
         else:
             lines.append(f"- **BLAST:** {seq['blast'].get('hit_count', 0)} homology hit(s)")
         lines.append(f"- *{seq.get('ensembl_note')}*")
@@ -520,14 +649,20 @@ class ReportGenerator:
             + (", ".join(f"{v.get('source')} ({v.get('prediction')})" for v in influential) if influential else "none")
         )
         contextual = explainability.get("ai_models_contextual_only") or []
-        lines.append(f"**AI models used for context only (no verdict):** {', '.join(contextual) if contextual else 'none'}")
+        lines.append(
+            f"**AI models used for context only (no verdict):** {', '.join(contextual) if contextual else 'none'}"
+        )
         lines.append("")
 
         hw = explainability.get("highest_weight_evidence") or {}
         if hw.get("confidence"):
-            lines.append(f"**Highest-weight evidence for confidence:** {hw['confidence']['category']} (contribution={hw['confidence']['contribution']})")
+            lines.append(
+                f"**Highest-weight evidence for confidence:** {hw['confidence']['category']} (contribution={hw['confidence']['contribution']})"
+            )
         if hw.get("priority"):
-            lines.append(f"**Highest-weight evidence for priority:** {hw['priority']['factor']} (contribution={hw['priority']['contribution']})")
+            lines.append(
+                f"**Highest-weight evidence for priority:** {hw['priority']['factor']} (contribution={hw['priority']['contribution']})"
+            )
         lines.append("")
 
         conflicts = explainability.get("conflicts_detected") or []
@@ -536,7 +671,9 @@ class ReportGenerator:
             for c in conflicts:
                 lines.append(f"- {c['conflict_type']} ({c['severity']})")
         lines.append("")
-        lines.append("**How conflicts were resolved:** " + explainability.get("conflicts_resolved", "No conflicts to resolve."))
+        lines.append(
+            "**How conflicts were resolved:** " + explainability.get("conflicts_resolved", "No conflicts to resolve.")
+        )
         lines.append("")
 
         uncertainties = explainability.get("remaining_uncertainties") or []
@@ -680,7 +817,9 @@ class ReportGenerator:
         # to 3 records about this variant" when some of them aren't.
         lines = ["### ClinVar", ""]
         if clinvar and clinvar.get("error"):
-            lines.append(f"_Failed: {clinvar['error']} -- not evidence ClinVar has no record, see the AI Model Status/Stage Warnings above._")
+            lines.append(
+                f"_Failed: {clinvar['error']} -- not evidence ClinVar has no record, see the AI Model Status/Stage Warnings above._"
+            )
             lines.append("")
             return lines
         if not clinvar or clinvar.get("match_status") != "position_only" and clinvar.get("match_status") != "matched":
@@ -698,7 +837,11 @@ class ReportGenerator:
             lines.append("")
         for record in clinvar.get("records", [])[:3]:
             match = record.get("variant_match")
-            label = "**this variant**" if match else ("_different variant at this position_" if match is False else "_match unconfirmed_")
+            label = (
+                "**this variant**"
+                if match
+                else ("_different variant at this position_" if match is False else "_match unconfirmed_")
+            )
             lines.append(
                 f"- {label} — **{record.get('clinical_significance', 'Unknown significance')}** "
                 f"({record.get('review_status', 'n/a')}) — "
@@ -732,7 +875,9 @@ class ReportGenerator:
             # skip -- distinguished via the `error` key
             # `pipeline/orchestrator.py::_run_rna_stage` now sets only
             # on its exception path (see that method's comment).
-            lines.append(f"_Failed: {rna_result['error']} -- not evidence RNA-FM was inapplicable, see the AI Model Status table above._")
+            lines.append(
+                f"_Failed: {rna_result['error']} -- not evidence RNA-FM was inapplicable, see the AI Model Status table above._"
+            )
         elif rna_result.get("skipped"):
             lines.append(f"_Skipped: {rna_result.get('reason', 'not applicable')}._")
         else:
@@ -750,7 +895,9 @@ class ReportGenerator:
         lines = ["### Protein / ESM-2 Analysis", ""]
         if protein_result.get("error"):
             # Same distinction as `_render_rna` -- see that method's comment.
-            lines.append(f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._")
+            lines.append(
+                f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._"
+            )
         elif protein_result.get("skipped"):
             lines.append(f"_Skipped: {protein_result.get('reason', 'not applicable')}._")
         else:
@@ -776,7 +923,9 @@ class ReportGenerator:
         lines = ["### AlphaMissense", ""]
         if am_result.get("error"):
             # Same distinction as `_render_rna` -- see that method's comment.
-            lines.append(f"_Failed: {am_result['error']} -- not evidence this variant lacks a catalogue entry, see the AI Model Status table above._")
+            lines.append(
+                f"_Failed: {am_result['error']} -- not evidence this variant lacks a catalogue entry, see the AI Model Status table above._"
+            )
             lines.append("")
             return lines
         if am_result.get("skipped"):
@@ -811,7 +960,9 @@ class ReportGenerator:
             # comment. Checked first: MMSplice's own "not scored"/
             # "skipped" branches below both key off `supported`/
             # `predicted`, which a genuine crash also leaves False.
-            lines.append(f"_Failed: {mmsplice_result['error']} -- not evidence of no splice effect, see the AI Model Status table above._")
+            lines.append(
+                f"_Failed: {mmsplice_result['error']} -- not evidence of no splice effect, see the AI Model Status table above._"
+            )
             lines.append("")
             return lines
         if not mmsplice_result.get("supported", False):
@@ -918,7 +1069,9 @@ class ReportGenerator:
         confidence = ensemble_result.get("confidence")
         confidence_str = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "n/a"
         agreement = ensemble_result.get("agreement_percentage")
-        agreement_str = f"{agreement}%" if agreement is not None else "n/a (single model -- agreement is not applicable)"
+        agreement_str = (
+            f"{agreement}%" if agreement is not None else "n/a (single model -- agreement is not applicable)"
+        )
         basis_label = {
             "single_model": "single-model result",
             "two_model_consensus": "two-model consensus",
@@ -973,7 +1126,9 @@ class ReportGenerator:
         lines.append(f"- **Global AF:** {_fmt_af(gnomad_result.get('global_af'))}")
         lines.append(f"- **Genome AF:** {_fmt_af(gnomad_result.get('genome_af'))}")
         lines.append(f"- **Exome AF:** {_fmt_af(gnomad_result.get('exome_af'))}")
-        lines.append(f"- **Allele count / number:** {gnomad_result.get('ac', 'n/a')} / {gnomad_result.get('an', 'n/a')}")
+        lines.append(
+            f"- **Allele count / number:** {gnomad_result.get('ac', 'n/a')} / {gnomad_result.get('an', 'n/a')}"
+        )
         lines.append(f"- **Homozygotes:** {gnomad_result.get('hom', 'n/a')}")
         if gnomad_result.get("hemi") is not None:
             lines.append(f"- **Hemizygotes:** {gnomad_result.get('hemi')}")
@@ -1201,7 +1356,9 @@ class ReportGenerator:
 
         lines.append(f"- **Model version:** {alphafold_result.get('model_version', 'n/a')}")
         lines.append(f"- **Model (PDB):** {alphafold_result.get('pdb_url', 'n/a')}")
-        lines.append(f"- **UniProt coverage:** {alphafold_result.get('uniprot_start', 'n/a')}-{alphafold_result.get('uniprot_end', 'n/a')}")
+        lines.append(
+            f"- **UniProt coverage:** {alphafold_result.get('uniprot_start', 'n/a')}-{alphafold_result.get('uniprot_end', 'n/a')}"
+        )
 
         mean_plddt = alphafold_result.get("mean_plddt")
         if mean_plddt is not None:
@@ -1245,8 +1402,7 @@ class ReportGenerator:
         else:
             for hit in hits[:5]:
                 lines.append(
-                    f"- {hit.get('title', hit.get('hit_id', 'unknown'))} "
-                    f"(E-value: {hit.get('e_value', 'n/a')})"
+                    f"- {hit.get('title', hit.get('hit_id', 'unknown'))} (E-value: {hit.get('e_value', 'n/a')})"
                 )
         lines.append("")
         return lines

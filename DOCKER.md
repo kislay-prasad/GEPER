@@ -53,7 +53,9 @@ docker compose run --rm geper \
 ```
 
 Results land in `./data/out/` on your host either way (bind mount) —
-`geper_results.json`, `geper_report.md`, `geper_report.pdf`.
+`geper_results.json`, `geper_report.md`, `geper_report_full.pdf` (the
+detailed clinical report), and `geper_report_short.pdf` (its one-page-style
+summary companion).
 
 ---
 

@@ -85,6 +85,7 @@ from pipeline.uniprot.lookup import UniProtLookup
 from pipeline.vcf_parser import Variant, VCFParser
 from report.json_builder import JSONResultBuilder, build_variant_result
 from report.summary import generate_pdf
+from report.summary_short import generate_short_pdf
 from report.report_generator import ReportGenerator
 from utils.exceptions import (
     AssemblyMismatchError,
@@ -742,17 +743,42 @@ class GeperPipeline:
         # `generate_pdf` itself already swallows a bad --patient-meta
         # file gracefully (see its docstring); this catches genuine
         # ReportLab/layout failures instead.
-        pdf_path = os.path.join(self.output_dir, "geper_report.pdf")
+        pdf_filename = "geper_report_full.pdf"
+        pdf_path = os.path.join(self.output_dir, pdf_filename)
         try:
             generate_pdf(json_document, pdf_path, patient_meta=self.patient_meta_path)
         except Exception as exc:  # noqa: BLE001 - additive output, must never fail an otherwise-successful run
             logger.error(f"Clinical PDF report generation failed ({exc}); JSON/Markdown outputs are unaffected.")
             pdf_path = None
 
+        # Short-form companion PDF (report/summary_short.py) -- a
+        # second rendering of this same `json_document`, no new
+        # evidence gathering, always written alongside the full report
+        # (no CLI flag: both are cheap pure-ReportLab renders of data
+        # already in memory, and a lab filing one usually wants both).
+        # Wrapped independently of the full report above so neither
+        # PDF's failure can suppress the other.
+        short_pdf_path = os.path.join(self.output_dir, "geper_report_short.pdf")
+        try:
+            generate_short_pdf(
+                json_document,
+                short_pdf_path,
+                patient_meta=self.patient_meta_path,
+                companion_filename=pdf_filename,
+            )
+        except Exception as exc:  # noqa: BLE001 - additive output, must never fail an otherwise-successful run
+            logger.error(f"Short-form PDF report generation failed ({exc}); other outputs are unaffected.")
+            short_pdf_path = None
+
         logger.info(
             f"GEPER run complete. {len(json_document['variants'])} variant(s) "
             f"total in output. JSON: '{json_path}', Report: '{report_path}'"
-            + (f", PDF: '{pdf_path}'." if pdf_path else " (PDF generation failed -- see error above).")
+            + (f", PDF: '{pdf_path}'" if pdf_path else " (full PDF generation failed -- see error above)")
+            + (
+                f", Short PDF: '{short_pdf_path}'."
+                if short_pdf_path
+                else " (short PDF generation failed -- see error above)."
+            )
         )
         self._log_run_summary(stats)
 

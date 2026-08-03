@@ -25,14 +25,17 @@ logger = get_logger(__name__)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="GEPER - Genetic Evaluation & Prediction Engine for Research"
-    )
+    parser = argparse.ArgumentParser(description="GEPER - Genetic Evaluation & Prediction Engine for Research")
     parser.add_argument("--vcf", required=True, help="Path to the input VCF file (.vcf or .vcf.gz)")
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Directory to write geper_results.json and geper_report.md (default: ./geper_output)",
+        help=(
+            "Directory to write geper_results.json, geper_report.md, and both "
+            "PDFs -- geper_report_full.pdf (detailed) and geper_report_short.pdf "
+            "(one-page-style clinical summary), generated from the same run "
+            "(default: ./geper_output)"
+        ),
     )
     parser.add_argument(
         "--blast-mode",
@@ -92,8 +95,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--no-profiling",
         action="store_true",
         help=(
-            "Disable per-stage wall-clock profiling and skip writing "
-            "geper_benchmark.json/.md at the end of the run."
+            "Disable per-stage wall-clock profiling and skip writing geper_benchmark.json/.md at the end of the run."
         ),
     )
     parser.add_argument("--species", default="human", help="Ensembl species name. Default: human.")
@@ -172,10 +174,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.blast_mode == "local" and not (args.blast_db or CONFIG.api.BLAST_LOCAL_DB_PATH):
-        parser.error(
-            "--blast-db is required when --blast-mode is 'local' "
-            "(or set GEPER_BLAST_DATABASE)."
-        )
+        parser.error("--blast-db is required when --blast-mode is 'local' (or set GEPER_BLAST_DATABASE).")
     if args.max_variants is not None and args.max_variants <= 0:
         parser.error("--max-variants must be a positive integer.")
 

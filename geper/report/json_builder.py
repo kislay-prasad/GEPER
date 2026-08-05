@@ -8,7 +8,7 @@ unified interpretation) into a single, stable JSON structure.
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from utils.logger import get_logger
 from report.clinical_report_builder import build_clinical_report
@@ -28,6 +28,7 @@ class JSONResultBuilder:
         provenance_collector: Any = None,
         code_version: str = None,
         model_checkpoints: Dict[str, str] = None,
+        patient_consent: Optional[Dict[str, Any]] = None,
     ):
         self.input_vcf_path = input_vcf_path
         # Genome reference build resolved by the orchestrator's assembly
@@ -59,6 +60,17 @@ class JSONResultBuilder:
         self.provenance_collector = provenance_collector
         self.code_version = code_version
         self.model_checkpoints = model_checkpoints or {}
+        # DPDP Act 2023 consent metadata (minimal, capture-only -- see
+        # report/summary.py::_parse_consent's docstring for exactly
+        # what this is and, more importantly, is NOT: no storage
+        # lifecycle, no erasure/withdrawal workflow, no audit trail).
+        # Already parsed by the orchestrator from the same
+        # --patient-meta file the PDF renderers use (never a new input
+        # path); `None` here (the default) means either no
+        # --patient-meta was given, or it was given without a usable
+        # "consent" object -- both render as an explicit `null` in the
+        # JSON output below, never a fabricated True/False.
+        self.patient_consent = patient_consent
 
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
@@ -85,6 +97,13 @@ class JSONResultBuilder:
             # source that was consulted but yielded no version
             # (`status: "unknown"`). See pipeline/provenance.py.
             "provenance": self.provenance_collector.to_list() if self.provenance_collector is not None else [],
+            # DPDP Act 2023 consent metadata (minimal, capture-only --
+            # see this class's __init__ docstring comment and
+            # report/summary.py::_parse_consent). Explicit `null` in
+            # the JSON output (not an omitted key, and never a
+            # fabricated default) whenever no consent object was
+            # actually supplied in --patient-meta.
+            "patient_consent": self.patient_consent,
         }
 
     def write(self, output_path: str) -> str:

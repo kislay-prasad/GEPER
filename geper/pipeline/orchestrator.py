@@ -85,7 +85,7 @@ from pipeline.sequence_context import SequenceContextGenerator
 from pipeline.uniprot.lookup import UniProtLookup
 from pipeline.vcf_parser import Variant, VCFParser
 from report.json_builder import JSONResultBuilder, build_variant_result
-from report.summary import generate_pdf
+from report.summary import _parse_patient_meta, generate_pdf
 from report.summary_short import generate_short_pdf
 from report.report_generator import ReportGenerator
 from utils.exceptions import (
@@ -649,6 +649,16 @@ class GeperPipeline:
             self._run_startup_validation()
             self._startup_validated = True
 
+        # DPDP Act 2023 consent metadata (minimal, capture-only -- see
+        # report/summary.py::_parse_consent's docstring). Parsed from
+        # the same --patient-meta file/dict the PDF renderers already
+        # use (`self.patient_meta_path`) -- no new input path. `None`
+        # when no --patient-meta was given, or it carried no usable
+        # "consent" object; `JSONResultBuilder` renders that as an
+        # explicit `null` in geper_results.json, never a fabricated
+        # True/False.
+        patient_consent = _parse_patient_meta(self.patient_meta_path).get("consent")
+
         # --- Resume-from-checkpoint (issue #8) ------------------------------
         result_builder = JSONResultBuilder(
             input_vcf_path=vcf_path,
@@ -657,6 +667,7 @@ class GeperPipeline:
             provenance_collector=self.provenance,
             code_version=self.geper_code_version,
             model_checkpoints=self.model_checkpoints,
+            patient_consent=patient_consent,
         )
         completed_keys = set()
         stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
@@ -687,6 +698,7 @@ class GeperPipeline:
                     provenance_collector=self.provenance,
                     code_version=self.geper_code_version,
                     model_checkpoints=self.model_checkpoints,
+                    patient_consent=patient_consent,
                 )
                 completed_keys = set()
                 stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}

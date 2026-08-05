@@ -3,5 +3,11 @@
   "patient_name": "Jane Doe",
   "dob": "1990-01-15",
   "gender": "Female",
-  "physician": "Dr. A. Sharma, MD"
+  "physician": "Dr. A. Sharma, MD",
+  "_consent_comment": "The 'consent' object below is OPTIONAL and independent of the fields above -- it is captured and surfaced verbatim (as 'patient_consent' in geper_results.json, and as extra rows in the clinical PDF/summary PDF headers when present) purely as METADATA. This is NOT a DPDP Act 2023 compliance guarantee: GEPER does not itself obtain, store, timestamp-verify, or manage withdrawal/erasure of consent -- it only records whatever this file states. The actual consent process (how/when/from whom consent was obtained), its durable storage, its retention period, and honoring any withdrawal request are entirely the deploying lab's responsibility, upstream of and outside GEPER. Omit 'consent' entirely (as in most real runs, e.g. a de-identified research sample) to leave 'patient_consent' explicitly null in the JSON output -- GEPER never fabricates a true/false consent value that wasn't actually stated.",
+  "consent": {
+    "clinical_reporting": true,
+    "research": false,
+    "timestamp": "2026-08-01T09:15:00+05:30"
+  }
 }

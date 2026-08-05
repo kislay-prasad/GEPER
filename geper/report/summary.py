@@ -176,10 +176,73 @@ def _qc_status(metric_key: str, value: float) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _parse_consent(raw_consent: Any) -> Optional[Dict[str, Any]]:
+    """
+    DPDP Act 2023 consent-metadata capture -- deliberately small: this
+    function only reads whatever `{"clinical_reporting": bool,
+    "research": bool, "timestamp": str}` object (if any) was supplied
+    under `patient_meta["consent"]` and hands it back verbatim
+    (type-validated field by field). It does NOT implement consent
+    storage, an erasure/withdrawal workflow, an IP-address/hash audit
+    trail, or any database -- those are real DPDP Act requirements, but
+    belong to a much larger patient-intake/storage-lifecycle system
+    that doesn't exist in GEPER yet and shouldn't be bolted on here
+    speculatively. This is metadata capture only, not a compliance
+    guarantee -- the actual consent process, its storage, and its
+    retention remain the deploying lab's responsibility (same framing
+    `_parse_patient_meta`'s own docstring already uses for
+    patient_name/dob/gender/physician).
+
+    Returns `None` -- never a fabricated `{"clinical_reporting": False,
+    ...}` -- whenever no usable consent object was supplied at all: no
+    `"consent"` key, a non-dict value, or a dict where every one of the
+    three fields was itself missing/malformed. Deliberately independent
+    of `patient_name`: unlike the DOB/Gender/Physician fields below
+    (which `_parse_patient_meta` only returns for a *named*, non-de-
+    identified patient), a de-identified research sample can still
+    carry a genuine, documented consent record -- consent tracking and
+    patient identification are two different DPDP Act concerns, and
+    conflating them would silently drop real consent data for GEPER's
+    own default "de-identified / research sample" framing (see this
+    module's own disclaimer text), the single most common case this
+    field needs to cover.
+
+    Each of `clinical_reporting`/`research` is independently `None`
+    (not coerced to `False`) when that one field wasn't stated as an
+    actual JSON boolean -- a stray string like `"true"` is a type
+    mismatch, not evidence of consent either way, so it is treated as
+    "not stated" rather than guessed. `timestamp` is passed through
+    exactly as supplied (GEPER never fabricates a "when consent was
+    given" value from its own render-time clock -- that would
+    misrepresent when the patient actually consented).
+    """
+    if not isinstance(raw_consent, dict):
+        return None
+
+    def _as_bool(value: Any) -> Optional[bool]:
+        return value if isinstance(value, bool) else None
+
+    def _as_str(value: Any) -> Optional[str]:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return None
+
+    clinical_reporting = _as_bool(raw_consent.get("clinical_reporting"))
+    research = _as_bool(raw_consent.get("research"))
+    timestamp = _as_str(raw_consent.get("timestamp"))
+
+    if clinical_reporting is None and research is None and timestamp is None:
+        return None  # a "consent" object was present but carried nothing usable -- same as absent
+
+    return {"clinical_reporting": clinical_reporting, "research": research, "timestamp": timestamp}
+
+
 def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> Dict[str, Any]:
     """
     Accepts a dict, a path to a JSON file, or None. Returns
-    {"patient_name", "dob", "gender", "physician", "deidentified"}.
+    {"patient_name", "dob", "gender", "physician", "deidentified",
+    "consent"}.
 
     Never raises: a missing file, a corrupt/malformed JSON body, or a
     body without a usable patient_name all fall back to the safe
@@ -188,6 +251,12 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
     parse failure is logged for operators; it is deliberately NOT
     surfaced in the rendered report itself (a clinical document should
     show the safe fallback state, not internal parsing diagnostics).
+
+    `consent`: see `_parse_consent`'s docstring -- resolved regardless
+    of whether `patient_name` was usable (consent tracking is
+    independent of patient identification), so it is computed once,
+    before the name-gate below, and threaded into both the de-
+    identified and named return shapes.
 
     India DPDP Act 2023 note (not HIPAA/GDPR -- this is an India-market
     product): patient_name/dob/gender/physician are "personal data"
@@ -203,12 +272,13 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
     deployment -- do not treat this comment, or the presence of a
     de-identified fallback, as that sign-off.
     """
-    defaults = {
+    defaults: Dict[str, Any] = {
         "patient_name": _DEIDENTIFIED_LABEL,
         "dob": None,
         "gender": None,
         "physician": None,
         "deidentified": True,
+        "consent": None,
     }
     if not patient_meta:
         return defaults
@@ -225,9 +295,16 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
         logger.warning(f"Could not parse patient metadata ({exc}); rendering the de-identified default instead.")
         return defaults
 
+    consent = _parse_consent(raw.get("consent"))
+
     name = (raw.get("patient_name") or "").strip()
     if not name:
-        return defaults  # no usable name -> treat exactly like "absent", per spec
+        # no usable name -> treat exactly like "absent", per spec --
+        # except `consent`, which is independent of identity (see
+        # `_parse_consent`'s docstring) and must still come through.
+        result = dict(defaults)
+        result["consent"] = consent
+        return result
 
     return {
         "patient_name": name,
@@ -235,6 +312,7 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
         "gender": (raw.get("gender") or "").strip() or None,
         "physician": (raw.get("physician") or "").strip() or None,
         "deidentified": False,
+        "consent": consent,
     }
 
 
@@ -627,6 +705,43 @@ def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphSt
     return [header_table]
 
 
+def _consent_value_label(value: Optional[bool]) -> str:
+    """ "Yes"/"No"/"Not stated" -- matches the "Not provided" convention `_build_patient_header_table` already uses for a missing DOB/Gender/Physician, applied to a tri-state (True/False/None) field instead of a missing string."""
+    if value is None:
+        return "Not stated"
+    return "Yes" if value else "No"
+
+
+def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphStyle) -> List[List[Paragraph]]:
+    """
+    DPDP Act 2023 consent-metadata rows -- shared by the full report's
+    `_build_patient_header_table` and the short report's
+    `_build_identity_block`-equivalent construction in
+    report/summary_short.py, both of which pass this the same `patient`
+    dict `_parse_patient_meta` already produced. Returns `[]` (no rows
+    at all -- not three "Not stated" rows) when no `consent` object was
+    supplied in `patient_meta`, matching `_parse_consent`'s "absent,
+    not fabricated" contract: a report with no consent data at all
+    should not manufacture the appearance of a compliance record where
+    none exists. Deliberately independent of `patient["deidentified"]`
+    -- see `_parse_consent`'s docstring for why a de-identified sample
+    can still carry a real, documented consent record.
+    """
+    consent = patient.get("consent")
+    if not consent:
+        return []
+    rows = [
+        [
+            Paragraph("Consent -- Clinical Reporting", lbl),
+            Paragraph(_consent_value_label(consent["clinical_reporting"]), val),
+        ],
+        [Paragraph("Consent -- Research Use", lbl), Paragraph(_consent_value_label(consent["research"]), val)],
+    ]
+    if consent.get("timestamp"):
+        rows.append([Paragraph("Consent Recorded", lbl), Paragraph(consent["timestamp"], val)])
+    return rows
+
+
 def _build_patient_header_table(
     patient: Dict[str, Any], sample_id: str, run_id: str, assembly: Optional[str], styles: Dict[str, ParagraphStyle]
 ) -> Table:
@@ -642,6 +757,8 @@ def _build_patient_header_table(
         rows.append([Paragraph("Date of Birth", lbl), Paragraph(patient["dob"] or "Not provided", val)])
         rows.append([Paragraph("Gender", lbl), Paragraph(patient["gender"] or "Not provided", val)])
         rows.append([Paragraph("Referring Physician", lbl), Paragraph(patient["physician"] or "Not provided", val)])
+
+    rows.extend(_consent_rows(patient, lbl, val))
 
     rows.append([Paragraph("Sample ID", lbl), Paragraph(sample_id, val)])
     rows.append([Paragraph("Run ID", lbl), Paragraph(run_id, val)])

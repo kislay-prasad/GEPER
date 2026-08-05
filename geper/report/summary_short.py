@@ -65,6 +65,7 @@ from report.summary import (
     _MARGIN,
     _PAGE_W,
     _NumberedCanvas,
+    _consent_value_label,
     _derive_run_id,
     _derive_sample_id,
     _icmr_ai_disclosure_footer_text,
@@ -327,6 +328,19 @@ def _build_identity_block(
         pairs.append(("Date of Birth", patient["dob"] or "Not provided"))
         pairs.append(("Gender", patient["gender"] or "Not provided"))
         pairs.append(("Referring Physician", patient["physician"] or "Not provided"))
+
+    consent = patient.get("consent")
+    if consent:
+        # DPDP Act 2023 consent-metadata rows -- same data, same "only
+        # shown when actually supplied" rule as the full report's
+        # `report/summary.py::_consent_rows` (deliberately independent
+        # of `patient["deidentified"]`; see `_parse_consent`'s
+        # docstring for why a de-identified sample can still carry a
+        # real consent record).
+        pairs.append(("Consent -- Clinical Reporting", _consent_value_label(consent["clinical_reporting"])))
+        pairs.append(("Consent -- Research Use", _consent_value_label(consent["research"])))
+        if consent.get("timestamp"):
+            pairs.append(("Consent Recorded", consent["timestamp"]))
 
     pairs.append(("Sample ID", sample_id))
     pairs.append(("Run ID", run_id))

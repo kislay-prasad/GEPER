@@ -31,6 +31,7 @@ hospital use -- see `_parse_patient_meta`'s docstring for specifics.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 from datetime import datetime, timezone
@@ -42,7 +43,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.lib.utils import ImageReader
+from reportlab.lib.utils import ImageReader, simpleSplit
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.platypus.flowables import Flowable
@@ -58,6 +59,18 @@ _DEIDENTIFIED_LABEL = "De-identified / Research Sample"
 
 _PAGE_W, _PAGE_H = A4
 _MARGIN = 20 * mm
+
+# Footer vertical layout, bottom-up: page number (bottom-most, right-
+# aligned) -- unchanged in spirit from before this feature -- then the
+# mandatory AI-disclosure line(s) above it, then the separating rule at
+# the top of the footer band. `_FOOTER_RULE_Y` sits well below every
+# caller's `bottomMargin` (see `generate_pdf`/`generate_short_pdf`) so
+# body flowables never collide with it; `_FOOTER_PAGE_NUM_Y` stays
+# comfortably below `_FOOTER_RULE_Y` even for a 3-line wrapped
+# disclosure (a physician string long enough to wrap that far is
+# already an edge case, but should still never overlap the page number).
+_FOOTER_RULE_Y = 22 * mm
+_FOOTER_PAGE_NUM_Y = 8 * mm
 
 # Header logo's height is derived at render time from the title
 # Paragraph's own measured height (see `_build_report_header`), not a
@@ -75,6 +88,55 @@ _DISCLAIMER_TEXT = (
     "should not be based solely on this report. All clinical decisions must be made by a "
     "qualified healthcare professional."
 )
+
+# Mandatory ICMR-style AI-disclosure footer, printed on EVERY page of
+# every GEPER clinical PDF (see `_icmr_ai_disclosure_footer_text` for
+# how the "reviewed" variant is built, and `_NumberedCanvas` for how it
+# is actually drawn on each page alongside the existing "Page X of Y").
+# Never gated behind any config flag -- there is no "skip footer" or
+# "minimal report" option anywhere in this codebase (confirmed by
+# reading `config.py` and every `generate_pdf`/`generate_short_pdf`
+# call site) for this to be accidentally exempted from; if one is ever
+# added, it must not apply here.
+_ICMR_DRAFT_FOOTER_TEXT = "DRAFT -- NOT FOR PATIENT USE. Awaiting clinical review."
+
+
+def _icmr_ai_disclosure_footer_text(patient: Dict[str, Any]) -> str:
+    """
+    The mandatory per-page AI-disclosure footer text for this report.
+
+    Reuses `patient["physician"]` -- the one reviewing-clinician field
+    `_parse_patient_meta` already parses out of `--patient-meta` (see
+    that function's docstring) -- as the sole signal for "has a
+    clinician actually reviewed this run", rather than inventing a new
+    input path GEPER doesn't otherwise have. GEPER has no separate
+    medical-registration-number or hospital/lab-name field anywhere in
+    `patient_meta` (see `patient_metadata.example.json`: `physician` is
+    the one free-text clinician field, e.g. "Dr. A. Sharma, MD"), so
+    rather than printing the requested template's
+    "[Medical Registration Number], [Hospital/Lab Name]" placeholders
+    as literal bracketed text that could be mistaken for real,
+    fabricated-looking identifiers, this renders only the identifying
+    string GEPER actually has. A deployment that wants those additional
+    identifiers rendered should supply them as part of `physician`
+    (e.g. "Dr. A. Sharma, MD, Reg. No. 12345, ABC Diagnostics") --
+    still exactly the same one input field, no new path.
+
+    Before any reviewing-clinician info exists at all (`physician` is
+    `None` -- `--patient-meta` omitted, a corrupt/malformed file, or a
+    file that supplies `patient_name` but not `physician`), this
+    returns `_ICMR_DRAFT_FOOTER_TEXT` instead: a report nobody has
+    attested to reviewing must never look indistinguishable, at a
+    glance, from one that's actually ready for clinical use.
+    """
+    physician = (patient or {}).get("physician")
+    if not physician:
+        return _ICMR_DRAFT_FOOTER_TEXT
+    return (
+        f"This report was generated using AI-assisted genomic interpretation and has been "
+        f"reviewed by {physician}. This is not a standalone diagnosis."
+    )
+
 
 # Mock QC metrics, used only when the caller supplies none. GEPER's
 # pipeline consumes an already-called VCF, not raw FASTQ/BAM, so it
@@ -235,11 +297,28 @@ class _NumberedCanvas(Canvas):
     varies by page (the persistent Sample ID header on later pages)
     once per page, before this class's `showPage()` buffers that
     already-drawn content -- the two drawing paths don't conflict.
+
+    `footer_text`: the mandatory ICMR-style AI-disclosure line drawn on
+    every page alongside "Page X of Y" (see
+    `_icmr_ai_disclosure_footer_text`) -- part of THIS class, not a
+    separate mechanism, precisely because this two-pass buffering is
+    what already guarantees "every single page, unconditionally" for
+    the pagination footer; reusing it is what gives the same guarantee
+    here rather than building a second, possibly-divergent page-decorator
+    path. Passed in via `functools.partial(_NumberedCanvas,
+    footer_text=...)` as the `canvasmaker` argument to
+    `SimpleDocTemplate.build()` (see `generate_pdf`/
+    `report/summary_short.py::generate_short_pdf`, both of which share
+    this one class) since `canvasmaker` is invoked as a plain callable,
+    not a pre-built instance -- `functools.partial` is the standard way
+    to bind that one extra argument without needing a bespoke subclass
+    per call site.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, footer_text: str = "", **kwargs):
         super().__init__(*args, **kwargs)
         self._saved_page_states: List[Dict[str, Any]] = []
+        self._icmr_footer_text = footer_text
 
     def showPage(self) -> None:
         self._saved_page_states.append(dict(self.__dict__))
@@ -254,11 +333,28 @@ class _NumberedCanvas(Canvas):
         super().save()
 
     def _draw_pagination_footer(self, total_pages: int) -> None:
+        content_width = _PAGE_W - 2 * _MARGIN
+        footer_font_size = 6.5
+        footer_line_height = 8
+
+        self.setStrokeColor(colors.lightgrey)
+        self.line(_MARGIN, _FOOTER_RULE_Y, _PAGE_W - _MARGIN, _FOOTER_RULE_Y)
+
+        # Mandatory AI-disclosure line(s) -- always drawn, on every
+        # page, unconditionally (see `_icmr_ai_disclosure_footer_text`'s
+        # docstring for why this can never be blank: even the "no
+        # reviewing clinician yet" state still returns real text).
+        self.setFont("Helvetica-Bold", footer_font_size)
+        self.setFillColor(colors.black)
+        lines = simpleSplit(self._icmr_footer_text, "Helvetica-Bold", footer_font_size, content_width)
+        y = _FOOTER_RULE_Y - footer_line_height
+        for line in lines:
+            self.drawCentredString(_PAGE_W / 2, y, line)
+            y -= footer_line_height
+
         self.setFont("Helvetica", 8)
         self.setFillColor(colors.grey)
-        self.drawRightString(_PAGE_W - _MARGIN, 12 * mm, f"Page {self._pageNumber} of {total_pages}")
-        self.setStrokeColor(colors.lightgrey)
-        self.line(_MARGIN, 16 * mm, _PAGE_W - _MARGIN, 16 * mm)
+        self.drawRightString(_PAGE_W - _MARGIN, _FOOTER_PAGE_NUM_Y, f"Page {self._pageNumber} of {total_pages}")
 
 
 # ---------------------------------------------------------------------------
@@ -1187,7 +1283,11 @@ def generate_pdf(
         output_path,
         pagesize=A4,
         topMargin=22 * mm,
-        bottomMargin=22 * mm,
+        # Bumped from 22mm: room for the mandatory ICMR AI-disclosure
+        # footer (see `_NumberedCanvas`/`_icmr_ai_disclosure_footer_text`)
+        # above the existing rule/page-number band, without body
+        # flowables ever reaching down into it.
+        bottomMargin=30 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
         title="GEPER Clinical Genomic Analysis Report",
@@ -1216,7 +1316,11 @@ def generate_pdf(
         story,
         onFirstPage=_make_first_page_decoration(),
         onLaterPages=_make_later_page_decoration(header_label),
-        canvasmaker=_NumberedCanvas,
+        # Mandatory ICMR AI-disclosure footer (see `_NumberedCanvas`'s
+        # docstring) -- bound in via `functools.partial` since
+        # `canvasmaker` is called as `canvasmaker(filename, **kwargs)`
+        # by ReportLab itself, not pre-instantiated by this function.
+        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient)),
     )
     logger.info(f"Wrote clinical PDF report to '{output_path}' ({len(variants)} variant finding(s)).")
     return output_path

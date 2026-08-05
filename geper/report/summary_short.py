@@ -47,6 +47,7 @@ India DPDP Act 2023's consent/retention requirements itself. See
 
 from __future__ import annotations
 
+import functools
 import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
@@ -66,6 +67,7 @@ from report.summary import (
     _NumberedCanvas,
     _derive_run_id,
     _derive_sample_id,
+    _icmr_ai_disclosure_footer_text,
     _load_cropped_logo_image,
     _parse_patient_meta,
     _resolve_logo_path,
@@ -545,7 +547,11 @@ def generate_short_pdf(
         output_path,
         pagesize=A4,
         topMargin=20 * mm,
-        bottomMargin=18 * mm,
+        # Bumped from 18mm: room for the mandatory ICMR AI-disclosure
+        # footer this report shares with the full report (both use
+        # `_NumberedCanvas` -- see that class's docstring in
+        # report/summary.py) above the existing rule/page-number band.
+        bottomMargin=28 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
         title="GEPER Clinical Genomic Summary Report",
@@ -568,6 +574,14 @@ def generate_short_pdf(
     story.append(_build_signoff_block(styles))
 
     decoration = _make_page_decoration(header_label)
-    doc.build(story, onFirstPage=decoration, onLaterPages=decoration, canvasmaker=_NumberedCanvas)
+    # Mandatory ICMR AI-disclosure footer (see `_NumberedCanvas`'s
+    # docstring in report/summary.py) -- same mechanism as the full
+    # report, so both output formats can never drift on this text.
+    doc.build(
+        story,
+        onFirstPage=decoration,
+        onLaterPages=decoration,
+        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient)),
+    )
     logger.info(f"Wrote short-form clinical PDF report to '{output_path}' ({len(variants)} variant finding(s)).")
     return output_path

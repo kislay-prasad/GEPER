@@ -953,6 +953,48 @@ def _build_clinician_summary_flowables(
     return flow
 
 
+def _build_indian_population_frequency_flowables(
+    clinical: Dict[str, Any], styles: Dict[str, ParagraphStyle]
+) -> List[Any]:
+    """
+    India-deployment feature: gnomAD South Asian (SAS) AF alongside
+    IndiGenomes' own India-specific cohort AF (see
+    `report/clinical_report_builder.py::_indian_population_frequency`
+    for where this dict comes from and why the two figures are never
+    merged into one number), plus a "Common in Indian populations"
+    flag when either exceeds the configured threshold. Renders nothing
+    at all when neither source has anything to say (both absent, no
+    priority-population data queried) -- an empty section header would
+    just be noise in a report already organized around "no fabricated
+    findings".
+    """
+    ipf = clinical.get("indian_population_frequency") or {}
+    gnomad_sas_af = ipf.get("gnomad_af_sas")
+    indigenomes_available = ipf.get("indigenomes_available")
+    if gnomad_sas_af is None and not indigenomes_available:
+        return []
+
+    flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Indian Population Frequency:</b>", styles["BodyText"])]
+    if gnomad_sas_af is not None:
+        flow.append(Paragraph(f"• gnomAD (South Asian, SAS): AF = {gnomad_sas_af:.2e}", styles["BulletText"]))
+    if indigenomes_available:
+        flow.append(
+            Paragraph(
+                f"• IndiGenomes: AF = {ipf.get('indigenomes_af'):.2e} "
+                f"(AC={ipf.get('indigenomes_ac')}, AN={ipf.get('indigenomes_an')})",
+                styles["BulletText"],
+            )
+        )
+    if ipf.get("common_in_indian_population"):
+        threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
+        flow.append(
+            Paragraph(
+                f"! Common in Indian populations (at or above the {threshold_pct} threshold).", styles["StatusWarn"]
+            )
+        )
+    return flow
+
+
 def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """Renders one variant's already-computed `clinical_report` dict (see report/clinical_report_builder.py) -- no evidence is re-derived here."""
     variant = variant_result.get("variant", {})
@@ -1021,6 +1063,8 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Supporting Evidence:</b>", styles["BodyText"]))
         flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in supporting)
+
+    flow.extend(_build_indian_population_frequency_flowables(clinical, styles))
 
     limitations = clinical.get("limitations") or []
     if limitations:

@@ -20,6 +20,8 @@ repeatedly."
 
 from typing import Any, Dict, List, Optional
 
+from config import CONFIG
+
 # Stable, well-known public-resource references for whichever sources
 # actually contributed evidence to this variant (via `evidence_sources`,
 # already computed by Phase 2 -- not re-derived here). These are fixed
@@ -59,9 +61,10 @@ def build_clinical_report(
     interpretation_result: Optional[Dict[str, Any]],
     variant_dict: Dict[str, Any] = None,
     raw_evidence: Optional[Dict[str, Any]] = None,
+    indigenomes_result: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Returns the 16-section clinical report dict, or `None` if
+    Returns the 17-section clinical report dict, or `None` if
     `interpretation_result` is missing/errored (e.g. the aggregation
     engine failed for this variant) -- callers must not fabricate a
     report when the underlying data isn't there.
@@ -93,6 +96,16 @@ def build_clinical_report(
     resolved accession two sections later). Kept optional and
     falling back to the old (broken-if-empty) behavior only so this
     isn't a breaking API change for any other future caller.
+
+    `indigenomes_result`: the raw IndiGenomes provider dict (see
+    `annotation/indigenomes.py::IndiGenomesLookup.query_variant`) for
+    the `indian_population_frequency` section below. Passed as its own
+    explicit parameter, NOT folded into `raw_evidence` -- that dict's
+    validated shape (`pipeline/stage_schemas.py::RawEvidenceBundle`)
+    has a fixed 11 fields and IndiGenomes is not one of them (an India-
+    deployment-only source, unlike gnomAD/ClinVar/etc.); adding an
+    unlisted key there would raise a `TypeError` at the schema
+    boundary rather than degrade gracefully.
     """
     if not interpretation_result or "error" in interpretation_result:
         return None
@@ -112,6 +125,7 @@ def build_clinical_report(
         "protein_knowledge": _protein_knowledge(raw),
         "structural_knowledge": _structural_knowledge(raw),
         "population_evidence": _population_evidence(raw),
+        "indian_population_frequency": _indian_population_frequency(raw, indigenomes_result),
         "clinical_evidence": _clinical_evidence(raw),
         "sequence_context": _sequence_context(ir, raw),
         "recommendations": ir.get("recommendations", []),
@@ -127,6 +141,7 @@ def build_clinical_report(
 # derivation happens here.
 # ----------------------------------------------------------------------
 
+
 def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) -> str:
     variant_dict = variant_dict or ir.get("variant") or {}
     locus = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')} {variant_dict.get('ref')}>{variant_dict.get('alt')}"
@@ -135,10 +150,16 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
 
     classification = ir.get("acmg_classification") or "not classified"
     conf_label = ir.get("confidence_label")
-    conf_clause = f" (confidence: {conf_label})" if conf_label and not ir.get("confidence_pending", True) else " (confidence not yet scored)"
+    conf_clause = (
+        f" (confidence: {conf_label})"
+        if conf_label and not ir.get("confidence_pending", True)
+        else " (confidence not yet scored)"
+    )
 
     priority_cat = ir.get("priority_category")
-    priority_clause = f" Assigned {priority_cat} review priority." if priority_cat and not ir.get("priority_pending", True) else ""
+    priority_clause = (
+        f" Assigned {priority_cat} review priority." if priority_cat and not ir.get("priority_pending", True) else ""
+    )
 
     n_triggered = len(ir.get("triggered_rules", []))
     n_not_evaluated = len(ir.get("not_evaluated_rules", []))
@@ -157,7 +178,12 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "classification": ir.get("acmg_classification"),
         "triggered_criteria": [
-            {"code": c.get("code"), "strength": c.get("strength"), "direction": c.get("direction"), "rationale": c.get("rationale")}
+            {
+                "code": c.get("code"),
+                "strength": c.get("strength"),
+                "direction": c.get("direction"),
+                "rationale": c.get("rationale"),
+            }
             for c in ir.get("triggered_rules", [])
         ],
         "combining_rule_trace": ir.get("combining_rule_trace", []),
@@ -311,6 +337,59 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             "found": bool(dbsnp.get("found")),
             "rsid": dbsnp.get("rsid") if dbsnp.get("found") else None,
         },
+    }
+
+
+def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    India-deployment feature: gnomAD's South Asian (SAS) subpopulation
+    allele frequency alongside IndiGenomes' own India-specific cohort
+    frequency (~1000+ genomes -- see `annotation/indigenomes.py`'s
+    module docstring for why this is a live per-variant query, not a
+    downloaded index), plus a single "common in Indian populations"
+    flag when either exceeds `CONFIG.indigenomes.COMMON_AF_THRESHOLD`
+    (default 1%).
+
+    The two figures are reported side by side, never merged into one
+    blended number -- they measure genuinely different cohorts
+    (gnomAD's global SAS reference population vs. IndiGenomes' India-
+    resident cohort) and a reviewer comparing a variant against
+    Indian-population background frequency should see both distinctly,
+    not a single number this pipeline invented by averaging or
+    preferring one over the other.
+
+    `gnomad_af_sas` is read from `raw["gnomad"]["population_breakdown"]`
+    (already computed by the gnomAD stage -- see
+    `pipeline/gnomad/models.py::POPULATIONS`), not re-queried here.
+    `indigenomes_*` distinguishes "not found" (`indigenomes_available
+    =False`, `indigenomes_error=None`) from a genuine query failure
+    (`indigenomes_error` set) and from the integration being disabled/
+    GRCh37-skipped (`indigenomes_skipped_reason` set) -- the same
+    found-vs-error distinction `_protein_knowledge`'s docstring
+    documents for UniProt/InterPro, applied here for the same reason.
+    """
+    gnomad = raw.get("gnomad") or {}
+    gnomad_sas = (gnomad.get("population_breakdown") or {}).get("sas") or {}
+    gnomad_sas_af = gnomad_sas.get("af")
+
+    indigenomes = indigenomes_result or {}
+    indigenomes_available = bool(indigenomes.get("found"))
+    indigenomes_af = indigenomes.get("af") if indigenomes_available else None
+
+    threshold = CONFIG.indigenomes.COMMON_AF_THRESHOLD
+    common_in_indian_population = any(af is not None and af >= threshold for af in (gnomad_sas_af, indigenomes_af))
+
+    return {
+        "gnomad_af_sas": gnomad_sas_af,
+        "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error")),
+        "indigenomes_available": indigenomes_available,
+        "indigenomes_af": indigenomes_af,
+        "indigenomes_ac": indigenomes.get("ac") if indigenomes_available else None,
+        "indigenomes_an": indigenomes.get("an") if indigenomes_available else None,
+        "indigenomes_error": indigenomes.get("error"),
+        "indigenomes_skipped_reason": indigenomes.get("reason") if indigenomes.get("skipped") else None,
+        "common_af_threshold": threshold,
+        "common_in_indian_population": common_in_indian_population,
     }
 
 

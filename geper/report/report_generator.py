@@ -274,7 +274,7 @@ class ReportGenerator:
     @staticmethod
     def _render_clinical_report(clinical_report: Dict[str, Any], legacy_interpretation: Dict[str, Any]) -> List[str]:
         """
-        Renders the Phase 5 clinician-facing report (16 sections) from
+        Renders the Phase 5 clinician-facing report (17 sections) from
         the shared `build_clinical_report()` dict -- the same dict
         `report/json_builder.py` emits under the `clinical_report` JSON
         key, so Markdown and JSON can never disagree about what GEPER
@@ -523,8 +523,35 @@ class ReportGenerator:
         lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
         lines.append("")
 
+        ipf = clinical_report.get("indian_population_frequency") or {}
+        lines.append("### 11. Indian Population Frequency")
+        lines.append("")
+        gnomad_sas_af = ipf.get("gnomad_af_sas")
+        if ipf.get("gnomad_sas_queried"):
+            lines.append(
+                f"- **gnomAD (South Asian, SAS):** {'AF=' + str(gnomad_sas_af) if gnomad_sas_af is not None else 'no South Asian subpopulation data for this variant'}"
+            )
+        else:
+            lines.append("- **gnomAD (South Asian, SAS):** lookup unavailable for this variant.")
+        if ipf.get("indigenomes_available"):
+            lines.append(
+                f"- **IndiGenomes:** AF={ipf.get('indigenomes_af')} (AC={ipf.get('indigenomes_ac')}, AN={ipf.get('indigenomes_an')})"
+            )
+        elif ipf.get("indigenomes_error"):
+            lines.append(
+                f"- **IndiGenomes:** _lookup failed (external service issue: {ipf['indigenomes_error']}) -- not evidence of an absent record._"
+            )
+        elif ipf.get("indigenomes_skipped_reason"):
+            lines.append(f"- **IndiGenomes:** not queried ({ipf['indigenomes_skipped_reason']}).")
+        else:
+            lines.append("- **IndiGenomes:** variant not found.")
+        threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
+        if ipf.get("common_in_indian_population"):
+            lines.append(f"- **⚠ Common in Indian populations** (at or above the {threshold_pct} threshold).")
+        lines.append("")
+
         clin = clinical_report["clinical_evidence"]
-        lines.append("### 11. Clinical Evidence")
+        lines.append("### 12. Clinical Evidence")
         lines.append("")
         if clin.get("clinvar_available"):
             cv = clin["clinvar"]
@@ -557,7 +584,7 @@ class ReportGenerator:
         lines.append("")
 
         seq = clinical_report["sequence_context"]
-        lines.append("### 12. Sequence Context")
+        lines.append("### 13. Sequence Context")
         lines.append("")
         lines.append(f"- **Context models used:** {', '.join(seq.get('context_models_used') or []) or 'none'}")
         blast_error = seq["blast"].get("error")
@@ -570,7 +597,7 @@ class ReportGenerator:
         lines.append(f"- *{seq.get('ensembl_note')}*")
         lines.append("")
 
-        lines.append("### 13. Recommendations")
+        lines.append("### 14. Recommendations")
         lines.append("")
         recs = clinical_report.get("recommendations") or []
         if recs:
@@ -580,13 +607,13 @@ class ReportGenerator:
             lines.append("*No specific recommendations generated.*")
         lines.append("")
 
-        lines.append("### 14. Limitations")
+        lines.append("### 15. Limitations")
         lines.append("")
         for lim in clinical_report.get("limitations") or []:
             lines.append(f"- {lim}")
         lines.append("")
 
-        lines.append("### 15. References")
+        lines.append("### 16. References")
         lines.append("")
         refs = clinical_report.get("references") or []
         if refs:
@@ -596,7 +623,7 @@ class ReportGenerator:
             lines.append("*No evidence sources contributed to this variant's interpretation.*")
         lines.append("")
 
-        lines.append("### 16. Evidence Sources")
+        lines.append("### 17. Evidence Sources")
         lines.append("")
         sources = clinical_report.get("evidence_sources") or []
         lines.append(", ".join(sources) if sources else "*none*")

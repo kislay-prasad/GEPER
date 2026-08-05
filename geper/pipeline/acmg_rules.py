@@ -37,6 +37,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
+from pipeline.gnomad.models import POPULATION_LABELS
 from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
 from pipeline.ps1_pm5.utils import matches_from_clinvar_codon_result
 from pipeline.pvs1.decision_tree import PVS1DecisionTree
@@ -587,6 +588,34 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
+    def _population_priority_context(gnomad_result: Dict[str, Any], cfg: Any) -> Optional[Dict[str, Any]]:
+        """
+        Resolves `CONFIG.gnomad.POPULATION_PRIORITY` (e.g. "sas") against
+        this variant's already-computed `gnomad_result["population_breakdown"]`
+        -- returns `None` when no priority population is configured at all
+        (the ordinary case; every rule falls through to its pre-existing
+        global/popmax behavior unchanged), or `{"code", "label", "af"}`
+        when one is: `af` is the priority population's own gnomAD AF, or
+        `None` when that population has no data for this variant (a real,
+        honest gap -- gnomAD's own population-level breakdown genuinely
+        doesn't cover every population for every variant/release). Callers
+        (`_pm2`, `_ba1_bs1`) are responsible for disclosing that gap in
+        their rationale rather than silently substituting global/popmax AF
+        for it -- this helper only resolves the data, it doesn't decide
+        the rule outcome.
+        """
+        priority = (getattr(cfg, "POPULATION_PRIORITY", "") or "").strip().lower()
+        if not priority:
+            return None
+        breakdown = gnomad_result.get("population_breakdown") or {}
+        entry = breakdown.get(priority) or {}
+        return {
+            "code": priority,
+            "label": POPULATION_LABELS.get(priority, priority.upper()),
+            "af": entry.get("af"),
+        }
+
+    @staticmethod
     def _pm2(gnomad_result: Optional[Dict[str, Any]]) -> CriterionResult:
         direction, strength = _STRENGTH["PM2"]
         if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
@@ -603,7 +632,48 @@ class ACMGRuleEngine:
                 evidence_sources=["gnomAD"],
                 confidence="Moderate",
             )
+
         global_af = gnomad_result.get("global_af")
+        priority = ACMGRuleEngine._population_priority_context(gnomad_result, cfg)
+        fallback_note = ""
+
+        if priority is not None:
+            if priority["af"] is not None:
+                af = priority["af"]
+                af_desc = f"gnomAD {priority['label']} population allele frequency (AF_{priority['code']}={af:.2e})"
+                if af <= cfg.PM2_AF_THRESHOLD:
+                    return CriterionResult(
+                        "PM2",
+                        direction,
+                        strength,
+                        "triggered",
+                        f"{af_desc} is at or below the PM2 rarity threshold ({cfg.PM2_AF_THRESHOLD:.2e}).",
+                        supporting_evidence=[f"{af_desc}."],
+                        evidence_sources=["gnomAD"],
+                        confidence="Moderate",
+                    )
+                global_note = (
+                    f" (global AF = {global_af:.2e})" if global_af is not None else " (global AF not available)"
+                )
+                return CriterionResult(
+                    "PM2",
+                    direction,
+                    strength,
+                    "not_triggered",
+                    f"{af_desc} exceeds the PM2 rarity threshold; variant is not rare enough for PM2 in the "
+                    f"prioritized population{global_note}.",
+                    evidence_sources=["gnomAD"],
+                    confidence="Moderate",
+                )
+            # Priority population configured but genuinely unavailable for
+            # this variant -- never silently substitute global AF for it;
+            # fall through to the global-only logic below with an explicit
+            # disclosure appended to whichever rationale it produces.
+            fallback_note = (
+                f" (population-priority '{priority['code']}' allele frequency was not available for this "
+                f"variant; falling back to gnomAD global allele frequency)"
+            )
+
         if global_af is not None and global_af <= cfg.PM2_AF_THRESHOLD:
             return CriterionResult(
                 "PM2",
@@ -611,7 +681,7 @@ class ACMGRuleEngine:
                 strength,
                 "triggered",
                 f"gnomAD global allele frequency ({global_af:.2e}) is at or below the PM2 rarity "
-                f"threshold ({cfg.PM2_AF_THRESHOLD:.2e}).",
+                f"threshold ({cfg.PM2_AF_THRESHOLD:.2e}).{fallback_note}",
                 supporting_evidence=[f"gnomAD global AF = {global_af:.2e}."],
                 evidence_sources=["gnomAD"],
                 confidence="Moderate",
@@ -622,7 +692,7 @@ class ACMGRuleEngine:
             strength,
             "not_triggered",
             f"gnomAD global allele frequency ({global_af if global_af is not None else 'n/a'}) exceeds "
-            f"the PM2 rarity threshold; variant is not rare enough for PM2.",
+            f"the PM2 rarity threshold; variant is not rare enough for PM2.{fallback_note}",
             evidence_sources=["gnomAD"],
             confidence="Moderate",
         )
@@ -1301,19 +1371,57 @@ class ACMGRuleEngine:
         global_af = gnomad_result.get("global_af")
         popmax_af = None
         for pop_freq in (gnomad_result.get("population_breakdown") or {}).values():
-            af = pop_freq.get("af")
-            if af is not None and (popmax_af is None or af > popmax_af):
-                popmax_af = af
-        af = popmax_af if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else global_af
+            pop_af = pop_freq.get("af")
+            if pop_af is not None and (popmax_af is None or pop_af > popmax_af):
+                popmax_af = pop_af
+
+        priority = ACMGRuleEngine._population_priority_context(gnomad_result, cfg)
+        fallback_note = ""
+        contrast_note = ""
+        af_label: Optional[str] = None
+
+        if priority is not None and priority["af"] is not None:
+            af = priority["af"]
+            af_label = f"{af:.2e} (AF_{priority['code']}, {priority['label']})"
+            # Only worth calling out when looking at global AF alone
+            # would have understated how common this allele actually is
+            # in the deployment's target population -- "rare" here means
+            # "below the more permissive of the two common-variant
+            # thresholds (BS1)", not merely "lower than the priority AF",
+            # so a global AF that's already well above BA1/BS1 on its own
+            # (just slightly lower than the priority population's) isn't
+            # misreported as "rare in the global population". See
+            # GnomadConfig.POPULATION_PRIORITY's docstring for why this
+            # gap exists (gnomAD's global AF pools every population,
+            # diluting one that's genuinely common in just one of them).
+            if global_af is not None and global_af < af and global_af < cfg.BS1_AF_THRESHOLD:
+                contrast_note = (
+                    f" Common in the {priority['label']} population (gnomAD AF_{priority['code']}={af:.2e}), "
+                    f"though rare in the global population (gnomAD global AF={global_af:.2e})."
+                )
+        elif priority is not None and priority["af"] is None:
+            # Priority population configured but genuinely unavailable for
+            # this variant -- never silently substitute; fall back to the
+            # pre-existing popmax/global logic with an explicit disclosure.
+            af = popmax_af if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else global_af
+            source_label = "popmax" if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else "global"
+            af_label = f"{af:.2e} ({source_label})" if af is not None else None
+            fallback_note = (
+                f" (population-priority '{priority['code']}' allele frequency was not available for this "
+                f"variant; used gnomAD {source_label} AF instead)"
+            )
+        else:
+            af = popmax_af if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else global_af
+            af_label = (
+                f"{af:.2e}" + (" (popmax)" if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else " (global)")
+                if af is not None
+                else None
+            )
 
         if af is None:
             na = _not_evaluated("BA1", "gnomAD record found but no allele frequency reported.")
             nb = _not_evaluated("BS1", "gnomAD record found but no allele frequency reported.")
             return na, nb
-
-        af_label = f"{af:.2e}" + (
-            " (popmax)" if (cfg.USE_POPMAX_FOR_BA1_BS1 and popmax_af is not None) else " (global)"
-        )
 
         if af >= cfg.BA1_AF_THRESHOLD:
             ba1 = CriterionResult(
@@ -1322,7 +1430,8 @@ class ACMGRuleEngine:
                 ba1_strength,
                 "triggered",
                 f"Allele frequency {af_label} is at or above the BA1 stand-alone-benign threshold "
-                f"({cfg.BA1_AF_THRESHOLD:.2e}), too common to be a rare-disease-causing variant.",
+                f"({cfg.BA1_AF_THRESHOLD:.2e}), too common to be a rare-disease-causing variant."
+                f"{contrast_note}{fallback_note}",
                 supporting_evidence=[f"gnomAD allele frequency = {af_label}."],
                 evidence_sources=["gnomAD"],
                 confidence="High",
@@ -1342,7 +1451,7 @@ class ACMGRuleEngine:
             ba1_dir,
             ba1_strength,
             "not_triggered",
-            f"Allele frequency {af_label} is below the BA1 threshold.",
+            f"Allele frequency {af_label} is below the BA1 threshold.{fallback_note}",
             evidence_sources=["gnomAD"],
         )
 
@@ -1353,7 +1462,7 @@ class ACMGRuleEngine:
                 bs1_strength,
                 "triggered",
                 f"Allele frequency {af_label} exceeds the expected frequency for the disorder "
-                f"(BS1 threshold {cfg.BS1_AF_THRESHOLD:.2e}).",
+                f"(BS1 threshold {cfg.BS1_AF_THRESHOLD:.2e}).{contrast_note}{fallback_note}",
                 supporting_evidence=[f"gnomAD allele frequency = {af_label}."],
                 evidence_sources=["gnomAD"],
                 confidence="Moderate",
@@ -1364,7 +1473,7 @@ class ACMGRuleEngine:
                 bs1_dir,
                 bs1_strength,
                 "not_triggered",
-                f"Allele frequency {af_label} is below the BS1 threshold.",
+                f"Allele frequency {af_label} is below the BS1 threshold.{fallback_note}",
                 evidence_sources=["gnomAD"],
             )
         return ba1, bs1

@@ -118,6 +118,7 @@ def build_variant_result(
     alphamissense_result: Dict[str, Any] = None,
     mmsplice_result: Dict[str, Any] = None,
     gnomad_result: Dict[str, Any] = None,
+    indigenomes_result: Dict[str, Any] = None,
     conservation_result: Dict[str, Any] = None,
     clingen_result: Dict[str, Any] = None,
     uniprot_result: Dict[str, Any] = None,
@@ -181,8 +182,12 @@ def build_variant_result(
     # dicts -- falling back to a validated-but-blank result on failure
     # would silently reintroduce the exact "empty raw_evidence" bug
     # this schema exists to catch, just one layer further in.
-    _variant_ref = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
-    build_raw_evidence_bundle(variant_ref=_variant_ref, **{f"{k}_result": v for k, v in raw_evidence_for_report.items()})
+    _variant_ref = (
+        f"{variant_dict.get('chrom')}:{variant_dict.get('pos')}{variant_dict.get('ref')}>{variant_dict.get('alt')}"
+    )
+    build_raw_evidence_bundle(
+        variant_ref=_variant_ref, **{f"{k}_result": v for k, v in raw_evidence_for_report.items()}
+    )
     validate_interpretation_result_for_report(resolved_interpretation_result, variant_ref=_variant_ref)
     result = {
         "variant": variant_dict,
@@ -202,6 +207,17 @@ def build_variant_result(
         # existing caller of `build_variant_result` that doesn't pass
         # this kwarg still gets a fully backward-compatible result dict.
         "gnomad": gnomad_result if gnomad_result is not None else {"skipped": True, "found": False},
+        # New, additive key (India-deployment feature: IndiGenomes
+        # population-frequency evidence -- see annotation/indigenomes.py).
+        # Defaults to None exactly like `gnomad_result` above, so any
+        # existing caller of `build_variant_result` that doesn't pass
+        # this kwarg still gets a fully backward-compatible result dict.
+        # Deliberately NOT routed through `raw_evidence_for_report`/
+        # `RawEvidenceBundle` below (that schema's 11 fields are fixed
+        # and validated as a whole -- see pipeline/stage_schemas.py);
+        # passed to `build_clinical_report` as its own explicit
+        # parameter instead.
+        "indigenomes": indigenomes_result if indigenomes_result is not None else {"skipped": True, "found": False},
         # New, additive key (evolutionary-conservation evidence:
         # PhyloP now, PhastCons/GERP++ to follow the same pattern --
         # see pipeline/conservation/) -- defaults to None exactly like
@@ -237,7 +253,9 @@ def build_variant_result(
         # `transcript_result` above, so any existing caller that
         # doesn't pass this kwarg still gets a fully backward-
         # compatible result dict.
-        "clinvar_codon_matches": clinvar_codon_result if clinvar_codon_result is not None else {"skipped": True, "found": False},
+        "clinvar_codon_matches": clinvar_codon_result
+        if clinvar_codon_result is not None
+        else {"skipped": True, "found": False},
         # New, additive key (HPO gene-phenotype annotation -- see
         # pipeline/hpo/). Defaults to None exactly like
         # `clinvar_codon_result` above, so any existing caller that
@@ -255,7 +273,9 @@ def build_variant_result(
         # like `orphanet_result` above, so any existing caller that
         # doesn't pass this kwarg still gets a fully backward-
         # compatible result dict.
-        "functional_evidence": functional_evidence_result if functional_evidence_result is not None else {"skipped": True, "found": False},
+        "functional_evidence": functional_evidence_result
+        if functional_evidence_result is not None
+        else {"skipped": True, "found": False},
         # New, additive key (variant normalization + HGVS notation --
         # see pipeline/variant_normalization.py, pipeline/hgvs_utils.py).
         # Defaults to None exactly like `orphanet_result` above, so any
@@ -269,8 +289,12 @@ def build_variant_result(
         # "unavailable" shape rather than None so a report reader always
         # sees why, matching every other additive key's backward-
         # compatible default above.
-        "spliceformer": spliceformer_result if spliceformer_result is not None else {"available": False, "classification": None},
-        "splicebert": splicebert_result if splicebert_result is not None else {"available": False, "classification": None},
+        "spliceformer": spliceformer_result
+        if spliceformer_result is not None
+        else {"available": False, "classification": None},
+        "splicebert": splicebert_result
+        if splicebert_result is not None
+        else {"available": False, "classification": None},
         "blast": blast_result,
         "clinvar": clinvar_result,
         "dbsnp": dbsnp_result,
@@ -293,7 +317,12 @@ def build_variant_result(
         # anything from the raw provider dicts a second time. `None`
         # when interpretation_result itself is missing/errored, never
         # fabricated.
-        "clinical_report": build_clinical_report(resolved_interpretation_result, variant_dict, raw_evidence=raw_evidence_for_report),
+        "clinical_report": build_clinical_report(
+            resolved_interpretation_result,
+            variant_dict,
+            raw_evidence=raw_evidence_for_report,
+            indigenomes_result=indigenomes_result,
+        ),
         # New, additive key (Objective 6: AI model status reporting).
         # Unlike `ai_splicing_ensemble` below, this key is ALWAYS
         # present -- never conditionally omitted -- because the whole

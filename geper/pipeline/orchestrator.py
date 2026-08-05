@@ -49,6 +49,7 @@ from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.hpo.lookup import HPOLookup
 from pipeline.orphanet.lookup import OrphanetLookup
 from pipeline.conservation.lookup import ConservationLookup
+from annotation.indigenomes import IndiGenomesLookup
 from pipeline.gnomad.lookup import GnomadLookup
 from pipeline.gnomad.provider import dataset_id_for_build as gnomad_dataset_id_for_build
 from pipeline.interpretation import InterpretationEngine
@@ -213,6 +214,11 @@ class GeperPipeline:
         self.clinvar_client = ClinVarClient()
         self.dbsnp_client = DbSNPClient()
         self.gnomad_client = GnomadLookup()
+        # India-deployment feature: IndiGenomes (~1000+ Indian genomes,
+        # CSIR-IGIB) population-frequency evidence -- see
+        # annotation/indigenomes.py's module docstring for why this is
+        # a live-query-only integration (no local-index counterpart).
+        self.indigenomes_client = IndiGenomesLookup()
         self.conservation_client = ConservationLookup()
         self.clingen_client = ClinGenLookup()
         # HPO gene-phenotype annotation (see pipeline/hpo/). Gene-level,
@@ -1176,6 +1182,7 @@ class GeperPipeline:
         dbsnp_result = self._run_dbsnp_stage(variant, errors)
         clinvar_result = self._run_clinvar_stage(variant, dbsnp_result, errors)
         gnomad_result = self._run_gnomad_stage(variant, errors)
+        indigenomes_result = self._run_indigenomes_stage(variant, errors)
         conservation_result = self._run_conservation_stage(variant, errors)
         hpo_result = self._run_hpo_stage(clingen_result, errors)
         orphanet_result = self._run_orphanet_stage(clingen_result, errors)
@@ -1268,6 +1275,7 @@ class GeperPipeline:
             clinvar_result=clinvar_result,
             dbsnp_result=dbsnp_result,
             gnomad_result=gnomad_result,
+            indigenomes_result=indigenomes_result,
             conservation_result=conservation_result,
             clingen_result=clingen_result,
             uniprot_result=uniprot_result,
@@ -2042,6 +2050,30 @@ class GeperPipeline:
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"gnomAD stage failed: {exc}")
+            logger.error(errors[-1])
+            return {"found": False, "skipped": False, "error": str(exc)}
+
+    def _run_indigenomes_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
+        """
+        IndiGenomes population-frequency evidence (India-deployment
+        feature -- see `annotation/indigenomes.py`'s module docstring).
+        `IndiGenomesLookup` already never raises (it reports a
+        genuinely unavailable/GRCh37-run/disabled state, or a query
+        failure, inside the returned dict's `skipped`/`error` fields
+        instead) -- this wrapper only guards against a genuinely
+        unexpected bug in the module itself, exactly like every other
+        stage helper's defense-in-depth `except Exception` (e.g.
+        `_run_gnomad_stage`).
+        """
+        assembly = self.sequence_context_gen.assembly
+        try:
+            with self._timer("indigenomes"):
+                result = self.indigenomes_client.query_variant(variant, assembly=assembly)
+            if result.get("error"):
+                errors.append(f"IndiGenomes stage: {result['error']}")
+            return result
+        except Exception as exc:  # noqa: BLE001 - final defense-in-depth
+            errors.append(f"IndiGenomes stage failed: {exc}")
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc)}
 

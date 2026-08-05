@@ -596,6 +596,76 @@ class GnomadConfig:
         "off",
     )
 
+    # India-deployment feature: when set to one of
+    # `pipeline.gnomad.models.POPULATIONS` (e.g. "sas" for South
+    # Asian), `ACMGRuleEngine._pm2`/`_ba1_bs1` check that population's
+    # own gnomAD allele frequency FIRST, before falling back to global
+    # (or, for BA1/BS1, popmax) AF -- so a variant that looks rare
+    # globally but is actually common within the deployment's target
+    # ancestry (frequency diluted by every other population gnomAD
+    # pools into "global") is not miscalled PM2-moderate-pathogenic
+    # just because the global figure looked rare. Empty string (the
+    # default) disables this entirely -- every rule falls back to its
+    # pre-existing global/popmax-only behavior, unchanged. Never
+    # silently substitutes: when this is set but the priority
+    # population's AF is genuinely unavailable for a given variant
+    # (not every gnomAD release/endpoint exposes subpopulation data),
+    # both rules fall back to global AF and say so explicitly in the
+    # rationale -- see `pipeline/acmg_rules.py::ACMGRuleEngine
+    # ._population_priority_context`'s docstring.
+    POPULATION_PRIORITY: str = os.environ.get("GEPER_GNOMAD_POPULATION_PRIORITY", "").strip().lower()
+
+
+@dataclass(frozen=True)
+class IndiGenomesConfig:
+    """
+    Configuration for the IndiGenomes population-frequency evidence
+    source (see `geper/annotation/indigenomes.py`) -- CSIR-IGIB's
+    public resource of genetic variants from 1000+ Indian genomes
+    (Jain et al. 2020, NAR, PMID 33095885,
+    https://clingen.igib.res.in/indigen/).
+
+    Unlike `GnomadConfig`, there is no local-index option here: this
+    integration was originally scoped as "download a frequency file and
+    tabix-index it", matching gnomAD's own site-VCF distribution model,
+    but that assumption was checked against the live site before
+    writing any code and turned out to be false -- IndiGenomes' only
+    bulk download (`IndiGenomes_Variants.vcf.gz`, confirmed live: 200
+    OK, ~137MB, plain gzip) carries variant positions and type only, no
+    AC/AF/AN. The only place this resource actually exposes allele
+    frequency is a live per-variant JSON endpoint its own web frontend
+    calls (confirmed live and documented in
+    `geper/annotation/indigenomes.py`'s module docstring), so this is a
+    live-query-only integration, matching `GraphQLGnomadProvider`'s
+    retry/backoff/timeout shape without a local-index counterpart.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_INDIGENOMES", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    ENDPOINT: str = os.environ.get("GEPER_INDIGENOMES_ENDPOINT", "https://clingen.igib.res.in/indigen/data.php")
+
+    QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_INDIGENOMES_TIMEOUT", "30"))
+    MAX_RETRIES: int = int(os.environ.get("GEPER_INDIGENOMES_MAX_RETRIES", "3"))
+    RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_INDIGENOMES_RETRY_BACKOFF", "1.5"))
+
+    # In-process, in-memory only (no disk tier, unlike GnomadCache) --
+    # IndiGenomes is a single small public research server, not a
+    # production API with its own CDN/caching; this only exists to
+    # avoid re-querying the same variant twice within one run.
+    CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_INDIGENOMES_CACHE_MAX_SIZE", "20000"))
+
+    # "Common in Indian populations" report-flag threshold (task point:
+    # "a 'Common in Indian populations' flag when either exceeds 1%"),
+    # shared between the gnomAD-SAS and IndiGenomes AF figures in the
+    # report's Indian Population Frequency section (see
+    # `report/clinical_report_builder.py::_indian_population_frequency`).
+    COMMON_AF_THRESHOLD: float = float(os.environ.get("GEPER_INDIAN_POPULATION_COMMON_AF", "0.01"))
+
 
 @dataclass(frozen=True)
 class ConservationConfig:
@@ -2084,6 +2154,7 @@ class GeperConfig:
     alphamissense: AlphaMissenseConfig = field(default_factory=AlphaMissenseConfig)
     mmsplice: MMSpliceConfig = field(default_factory=MMSpliceConfig)
     gnomad: GnomadConfig = field(default_factory=GnomadConfig)
+    indigenomes: IndiGenomesConfig = field(default_factory=IndiGenomesConfig)
     conservation: ConservationConfig = field(default_factory=ConservationConfig)
     clingen: ClinGenConfig = field(default_factory=ClinGenConfig)
     hpo: HPOConfig = field(default_factory=HPOConfig)

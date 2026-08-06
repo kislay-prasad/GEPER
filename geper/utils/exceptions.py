@@ -60,3 +60,15 @@ class AssemblyMismatchError(GeperError):
 
 class PipelineError(GeperError):
     """Raised for orchestration-level failures that halt processing."""
+
+
+class SignoffError(GeperError):
+    """
+    Raised by `geper/review/signoff.py` for a clinician review-workflow
+    failure that must stop the command (e.g. no `geper_results.json` in
+    the given `--output-dir`, or `override`'s `--variant` not matching
+    any variant in that run) -- fatal by design, same reasoning as
+    `VCFParsingError`: this always means the command has nothing valid
+    to act on, so it must not proceed and silently do something
+    partial to a clinical record.
+    """

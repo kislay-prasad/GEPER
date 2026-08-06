@@ -1456,3 +1456,139 @@ counterpart, exercising the real, unmocked provider code against
 `erepo.clinicalgenome.org`/`api.mavedb.org` directly (15/15 checks
 passing as of this integration).
 
+## 25. Clinician Review Workflow
+
+A minimal, filesystem-only mechanism (`geper/review/`) that lets a
+clinician move a completed run from **DRAFT** to **REVIEWED**, and
+layer a classification override on top of GEPER's own ACMG result —
+without a database, an IP-address/hash audit trail, or an erasure/
+withdrawal workflow. Those are real DPDP Act 2023 obligations, but
+belong to a much larger patient-intake/storage-lifecycle system that
+doesn't exist in GEPER yet; this module deliberately does not bolt
+them on speculatively (see `geper/review/signoff.py`'s module
+docstring, and `report/summary.py::_parse_consent`'s docstring for the
+same discipline applied to consent metadata — see
+`patient_metadata.example.json`).
+
+**Design note — reuses the existing draft/reviewed mechanism, doesn't
+invent a second one.** "DRAFT" vs "REVIEWED" is not a file-location
+choice anywhere in GEPER — every clinical PDF (`geper_report_full.pdf`,
+`geper_report_short.pdf`) is stamped with a mandatory ICMR-style AI-
+disclosure footer on every page, decided purely by whether the
+`patient_meta` passed to `generate_pdf`/`generate_short_pdf` has a
+non-empty `physician` field (see
+`report/summary.py::_icmr_ai_disclosure_footer_text`): absent →
+`"DRAFT -- NOT FOR PATIENT USE. Awaiting clinical review."`; present →
+`"...reviewed by {physician}. This is not a standalone diagnosis."`
+`physician` is deliberately independent of `patient_name` (see
+`_parse_patient_meta`'s docstring) so a de-identified/research
+run — GEPER's stated default — can still be reviewed and signed off
+by a named clinician without a patient name ever being attached.
+`approve` below works entirely by writing that one field and
+**re-invoking `generate_pdf`/`generate_short_pdf`** — the same
+functions `pipeline/orchestrator.py::run` already calls — never a new
+rendering path, PDF-editing library, or watermark-removal code.
+
+### Commands
+
+Run from inside the `geper/` directory, matching `main.py`'s own
+invocation convention (there is no installed `geper` console script,
+and this codebase uses plain `argparse` throughout, not Click):
+
+```bash
+# Approve: regenerates both PDFs with the clinician's identity in the
+# footer, writes a SHA-256-checksummed manifest.
+python review/cli.py approve \
+  --output-dir ./geper_output \
+  --clinician-name "Dr. Rajesh Sharma" \
+  --reg-number "MCI-12345" \
+  --hospital "AIIMS Delhi"
+
+# Override: layers a clinician's classification on top of one variant's
+# GEPER-derived result -- never replaces it -- and regenerates all
+# three report formats.
+python review/cli.py override \
+  --output-dir ./geper_output \
+  --variant "17:43106534:C>A" \
+  --new-classification "Likely Pathogenic" \
+  --reason "Additional family history of early-onset breast cancer" \
+  --clinician-id "rajesh.sharma@aiims.edu"
+
+# List every run under a directory tree and its DRAFT/REVIEWED status
+# (DRAFT only by default; --all to also show REVIEWED).
+python review/cli.py list-pending --search-root ./geper_output_root --all
+```
+
+Both `--output-dir` arguments above must already contain a
+`geper_results.json` from a completed GEPER run
+(`python main.py --vcf ...`) — `approve`/`override` error clearly,
+without doing anything, if it's missing.
+
+### What `approve` does
+
+1. Confirms `geper_results.json` exists in `--output-dir`.
+2. Writes/updates `geper_patient_meta.json` in that same directory,
+   folding `--clinician-name`/`--reg-number`/`--hospital` into the
+   existing `physician` field (e.g. `"Dr. Rajesh Sharma, Reg. No.
+   MCI-12345, AIIMS Delhi"`) — merging into, never clobbering, any
+   `patient_name`/`dob`/`gender`/`consent` a lab already stored there.
+3. Re-invokes `generate_pdf`/`generate_short_pdf` against the
+   unchanged `geper_results.json`, overwriting `geper_report_full.pdf`/
+   `geper_report_short.pdf` in place — this is what actually flips the
+   footer to "reviewed by ...".
+4. Computes SHA-256 of both regenerated PDFs plus `geper_results.json`.
+5. Writes `geper_signoff_manifest.json`: the three checksums,
+   clinician identity, `approved_at` (ISO 8601), and one
+   `{variant_id, gene, final_classification, confidence}` entry per
+   variant (`final_classification` reflects an active clinician
+   override when one exists — see below — otherwise GEPER's own call).
+6. Appends one JSON-Lines record to `geper_signoff_audit.log`.
+
+### What `override` does
+
+1. Parses `--variant` (`chrom:pos:ref>alt`) and finds the matching
+   variant in `geper_results.json` by position **and** allele — never
+   position alone.
+2. **Never overwrites GEPER's own classification.** Appends
+   `{variant_id, original_classification, new_classification, reason,
+   clinician_id, timestamp}` to that variant's `"overrides"` list (full
+   history, most recent last), and sets
+   `clinical_report["acmg_classification"]["clinician_override"]` to
+   that same record — a convenience pointer the report renderers read.
+3. Regenerates `geper_report.md`, `geper_report_full.pdf`, and
+   `geper_report_short.pdf` from the updated document (same
+   `ReportGenerator`/`generate_pdf`/`generate_short_pdf` any run
+   already uses). Every renderer shows both classifications explicitly
+   — e.g. *"GEPER classification: Uncertain significance; Clinician
+   override: Likely Pathogenic — Additional family history..."* —
+   never one silently standing in for the other.
+4. Does **not** touch `geper_patient_meta.json`. A not-yet-approved
+   run stays DRAFT after an override; an already-approved run stays
+   REVIEWED (the footer mechanism's state is untouched either way).
+5. Appends one JSON-Lines record to `geper_signoff_audit.log`.
+
+### What `list-pending` does
+
+Recursively finds every `geper_results.json` under `--search-root` and
+prints `output_dir | report_date | num_variants |
+has_conflicting_evidence | status`. Status is REVIEWED if a
+`geper_signoff_manifest.json` sits alongside that run's results (i.e.
+a successful `approve` has run), DRAFT otherwise.
+`has_conflicting_evidence` reads the existing Conflict Resolution
+Engine output (`clinical_report["conflict_resolution"]["severity"]`,
+Phase 6) already computed for each variant — never recalculated here.
+A corrupt `geper_results.json` under the search root is skipped with a
+warning, not a fatal error.
+
+**Testing:** `tests/test_signoff.py` (36 tests) uses synthetic
+3-variant fixtures (Pathogenic / VUS-with-a-conflict / Likely Benign)
+built via the real `report/clinical_report_builder.py
+::build_clinical_report()` — not a hand-rolled partial dict — so they
+carry every key the real report renderers expect. No model weights, no
+real pipeline run. Covers: the reviewed footer appearing on every page
+after `approve` (pypdf text extraction), manifest/file SHA-256
+agreement, `override` preserving the original classification while
+regenerating all three formats, `list-pending` distinguishing DRAFT
+from REVIEWED across multiple runs, and the CLI's argument parsing and
+exit codes.
+

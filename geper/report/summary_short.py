@@ -434,6 +434,21 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         Paragraph(_short_interpretation(clinical), styles["BodyText"]),
     ]
 
+    # Clinician override (geper/review/signoff.py's "override" command) --
+    # layered on top of, never substituting for, GEPER's own
+    # classification in the strip above: both are shown, explicitly
+    # labelled. Absent for every variant no clinician has overridden.
+    override = ((clinical or {}).get("acmg_classification") or {}).get("clinician_override")
+    if override:
+        flow.append(Spacer(1, 1 * mm))
+        flow.append(
+            Paragraph(
+                f"Clinician override -- GEPER: {override.get('original_classification') or 'Not classified'}; "
+                f"Override: {override.get('new_classification')} -- {override.get('reason')}",
+                styles["Flag"],
+            )
+        )
+
     # Same flag detection the full report's summary page uses, so the
     # two documents can never disagree about which findings need a
     # reviewer's attention. "!" rather than a warning-sign glyph for

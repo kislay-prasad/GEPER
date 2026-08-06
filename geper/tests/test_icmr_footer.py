@@ -115,17 +115,34 @@ class TestFullReportFooterOnEveryPage(unittest.TestCase):
                 self.assertIn("not a standalone diagnosis", text, f"page {i} missing reviewed footer")
                 self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite patient_meta")
 
-    def test_patient_meta_with_no_usable_name_still_gets_draft_footer(self):
-        # No usable patient_name -> _parse_patient_meta falls back to
-        # the de-identified default (physician is dropped too, per its
-        # documented "treat exactly like absent" behavior) -- footer
-        # must still be the DRAFT warning, not the reviewed text.
+    def test_no_usable_name_and_no_physician_still_gets_draft_footer(self):
+        # An empty/insufficient patient_meta (no patient_name, no
+        # physician either) must still produce the DRAFT footer -- this
+        # is the genuine "nothing to review yet" state.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "report.pdf")
+            generate_pdf(_document(2), out, patient_meta={})
+            texts = _all_page_texts(out)
+            for text in texts:
+                self.assertIn("DRAFT", text)
+
+    def test_deidentified_run_with_physician_gets_reviewed_footer(self):
+        # `physician` is intentionally decoupled from `patient_name`
+        # (see `_parse_patient_meta`'s docstring): a de-identified/
+        # research sample -- GEPER's stated default -- can still be
+        # reviewed and signed off by a named clinician without a
+        # patient name ever being attached. This is the exact
+        # behavior `geper/review/signoff.py`'s `approve` command
+        # depends on, so it's asserted directly here, not just implied
+        # by the removal of the old (now-incorrect) DRAFT assertion.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
             generate_pdf(_document(2), out, patient_meta={"physician": "Dr. A. Sharma, MD"})
             texts = _all_page_texts(out)
-            for text in texts:
-                self.assertIn("DRAFT", text)
+            for i, text in enumerate(texts):
+                self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
+                self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
+                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite physician")
 
     def test_corrupt_patient_meta_file_still_gets_draft_footer(self):
         with tempfile.TemporaryDirectory() as tmp:

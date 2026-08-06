@@ -303,6 +303,19 @@ class ReportGenerator:
         lines.append("")
         lines.append(f"**Classification:** {acmg.get('classification') or 'Not classified'}")
         lines.append("")
+        # Clinician override (geper/review/signoff.py's "override" command)
+        # -- layered on top of, never substituting for, GEPER's own
+        # classification above: both are shown, explicitly labelled,
+        # so a reader can never mistake one for the other. Absent for
+        # every variant no clinician has overridden (the common case).
+        override = acmg.get("clinician_override")
+        if override:
+            lines.append(
+                f"> **Clinician override:** GEPER classification: {override.get('original_classification') or 'Not classified'}; "
+                f"Clinician override: **{override.get('new_classification')}** -- {override.get('reason')} "
+                f"(by {override.get('clinician_id')}, {override.get('timestamp')})"
+            )
+            lines.append("")
         if acmg.get("triggered_criteria"):
             lines.append("| Criterion | Strength | Direction | Rationale |")
             lines.append("|---|---|---|---|")

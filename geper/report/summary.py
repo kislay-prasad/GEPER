@@ -252,11 +252,31 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
     surfaced in the rendered report itself (a clinical document should
     show the safe fallback state, not internal parsing diagnostics).
 
-    `consent`: see `_parse_consent`'s docstring -- resolved regardless
-    of whether `patient_name` was usable (consent tracking is
-    independent of patient identification), so it is computed once,
-    before the name-gate below, and threaded into both the de-
-    identified and named return shapes.
+    `consent` and `physician`: resolved regardless of whether
+    `patient_name` was usable, so both are computed before the name-gate
+    below and threaded into both the de-identified and named return
+    shapes. Two independent reasons this matters, one per field:
+
+      - `consent` (see `_parse_consent`'s docstring): consent tracking
+        is independent of patient identification -- a de-identified
+        research sample can still carry a real, documented consent
+        record.
+      - `physician`: REVIEWING-CLINICIAN identity is a different
+        concern from PATIENT identity. GEPER's stated default is a
+        de-identified/research sample (see this module's own
+        disclaimer text) -- that must remain the common case a lab can
+        stay in while still having a named clinician review and sign
+        off on a report (see `_icmr_ai_disclosure_footer_text`, which
+        reads exactly this field to decide "DRAFT" vs "reviewed by
+        {physician}"). Coupling `physician` to `patient_name` would
+        force a lab to fabricate or attach a real patient name purely
+        to unlock sign-off on an otherwise-intentionally-de-identified
+        run -- backwards from what de-identification is for. (Earlier
+        versions of this function dropped `physician` in the de-
+        identified branch, matching every other identity field; that
+        turned out to be wrong for exactly this reason once a real
+        sign-off workflow needed to depend on it -- see
+        `geper/review/signoff.py`'s `approve` command.)
 
     India DPDP Act 2023 note (not HIPAA/GDPR -- this is an India-market
     product): patient_name/dob/gender/physician are "personal data"
@@ -296,21 +316,25 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
         return defaults
 
     consent = _parse_consent(raw.get("consent"))
+    physician = (raw.get("physician") or "").strip() or None
 
     name = (raw.get("patient_name") or "").strip()
     if not name:
-        # no usable name -> treat exactly like "absent", per spec --
-        # except `consent`, which is independent of identity (see
-        # `_parse_consent`'s docstring) and must still come through.
+        # no usable name -> treat exactly like "absent" for every
+        # PATIENT-identity field (dob/gender), per spec -- except
+        # `consent` and `physician`, both independent of patient
+        # identity (see this function's docstring), which must still
+        # come through.
         result = dict(defaults)
         result["consent"] = consent
+        result["physician"] = physician
         return result
 
     return {
         "patient_name": name,
         "dob": (raw.get("dob") or "").strip() or None,
         "gender": (raw.get("gender") or "").strip() or None,
-        "physician": (raw.get("physician") or "").strip() or None,
+        "physician": physician,
         "deidentified": False,
         "consent": consent,
     }
@@ -1235,6 +1259,21 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     acmg = clinical.get("acmg_classification") or {}
     if acmg.get("classification"):
         flow.append(Paragraph(f"<b>ACMG/AMP Classification:</b> {acmg['classification']}", styles["BodyText"]))
+
+    # Clinician override (geper/review/signoff.py's "override" command) --
+    # layered on top of, never substituting for, GEPER's own
+    # classification above: both are shown, explicitly labelled. Absent
+    # for every variant no clinician has overridden (the common case).
+    override = acmg.get("clinician_override")
+    if override:
+        flow.append(
+            Paragraph(
+                f"<b>Clinician Override:</b> GEPER classification: {override.get('original_classification') or 'Not classified'}; "
+                f"Clinician override: <b>{override.get('new_classification')}</b> -- {override.get('reason')} "
+                f"(by {override.get('clinician_id')}, {override.get('timestamp')})",
+                styles["StatusWarn"],
+            )
+        )
 
     confidence = clinical.get("confidence") or {}
     if not confidence.get("pending") and confidence.get("label"):

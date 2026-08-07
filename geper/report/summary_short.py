@@ -239,6 +239,12 @@ def _short_interpretation(clinical: Optional[Dict[str, Any]]) -> str:
     return " ".join(sentences[:_INTERPRETATION_SENTENCES]).rstrip() + " [...]"
 
 
+_ORDERING_NOTE_TEXT = (
+    "Findings below are ordered by case-level phenotype-match rank, not VCF order -- each "
+    "“Finding N” label is still the variant's original finding number."
+)
+
+
 def _ordered_variants(variants: List[Dict[str, Any]]) -> List[tuple]:
     """
     `(original_finding_number, variant_result)` pairs, ordered exactly
@@ -462,7 +468,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     return flow
 
 
-def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
+def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
     Dual sign-off: Clinical Scientist and Consultant Clinical
     Scientist, side by side -- the two-signature convention diagnostic
@@ -470,6 +476,18 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
     authorising consultant). Distinct from the full report's single
     "Chief Pathologist / Medical Director" block; both are unsigned
     rule/date lines, neither asserts that anyone has actually signed.
+
+    Only the heading + signature table are wrapped in `KeepTogether`
+    (so a signature line itself never splits across a page break); the
+    trailing disclaimer paragraph is intentionally left outside that
+    atomic unit. It is plain legal boilerplate that reads fine even if
+    it starts on the next page or word-wraps across a page boundary,
+    and folding it into the same KeepTogether as the signature table
+    was inflating the block's "must all fit together" height by the
+    disclaimer's own ~40pt for no visual benefit -- on a page with
+    genuine but tight remaining room (e.g. a 5-variant run), that was
+    enough to push the whole block, disclaimer included, onto an
+    otherwise near-empty next page.
     """
     line = "_" * 32
     lbl, val = styles["SignoffRole"], styles["TableValue"]
@@ -494,15 +512,17 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
             ]
         )
     )
-    return KeepTogether(
-        [
-            Spacer(1, 4 * mm),
-            Paragraph("Authorisation", styles["SectionHeading"]),
-            table,
-            Spacer(1, 3 * mm),
-            Paragraph(_DISCLAIMER_TEXT, styles["Footnote"]),
-        ]
-    )
+    return [
+        KeepTogether(
+            [
+                Spacer(1, 4 * mm),
+                Paragraph("Authorisation", styles["SectionHeading"]),
+                table,
+            ]
+        ),
+        Spacer(1, 3 * mm),
+        Paragraph(_DISCLAIMER_TEXT, styles["Footnote"]),
+    ]
 
 
 def _make_page_decoration(header_label: str):
@@ -592,6 +612,13 @@ def generate_short_pdf(
     story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph("Result", styles["SectionHeading"]))
+    if any(isinstance(vr.get("case_prioritization"), dict) for vr in variants):
+        # Same reordering the full report's Clinician Summary table
+        # applies and explains (report/summary.py::_build_clinician_summary_table);
+        # reusing its wording so a reader who has seen one report
+        # recognizes the other's explanation for the same behaviour.
+        story.append(Paragraph(_ORDERING_NOTE_TEXT, styles["Footnote"]))
+        story.append(Spacer(1, 1.5 * mm))
     if variants:
         for idx, variant_result in _ordered_variants(variants):
             story.append(KeepTogether(_build_variant_block(idx, variant_result, styles)))
@@ -600,7 +627,7 @@ def generate_short_pdf(
 
     story.append(Spacer(1, 2 * mm))
     story.append(Paragraph(_COMPANION_NOTE.format(companion=companion_filename), styles["Footnote"]))
-    story.append(_build_signoff_block(styles))
+    story.extend(_build_signoff_block(styles))
 
     decoration = _make_page_decoration(header_label)
     # Mandatory ICMR AI-disclosure footer (see `_NumberedCanvas`'s

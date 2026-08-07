@@ -239,6 +239,44 @@ class TestGenerateShortPdf(unittest.TestCase):
             self.assertIn("geper_report_full.pdf", text)  # companion note
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_offline_source_caveat_appears_near_companion_note(self):
+        """Short report deliberately omits per-finding limitations (see
+        module docstring), so the offline-source caveat must appear as
+        a single run-level line near the companion note instead -- not
+        silently dropped just because this report stays minimal."""
+        from unittest import mock
+
+        from utils.service_health import ServiceCheck, ServiceHealthRegistry, ServiceStatus
+
+        registry = ServiceHealthRegistry()
+        fake_config = mock.Mock()
+        fake_config.health_check.ENABLED = True
+        fake_config.health_check.TIMEOUT_SECS = 1.0
+        with mock.patch("utils.service_health.CONFIG", fake_config):
+            registry.run_startup_checks([ServiceCheck("IndiGenomes", lambda: (ServiceStatus.OFFLINE, "Timeout"))])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            # `_offline_sources_caveat_text` is imported by reference
+            # into `report.summary_short`'s namespace but its body still
+            # runs in `report.summary`'s module scope, so patching
+            # `report.summary.HEALTH` is enough -- no need to patch the
+            # imported name itself.
+            with mock.patch("report.summary.HEALTH", registry):
+                generate_short_pdf(_document(), out, companion_filename="geper_report_full.pdf")
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertIn("IndiGenomes", text)
+        self.assertIn("unreachable during this analysis run and were not queried", text)
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_no_offline_caveat_when_all_sources_healthy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            generate_short_pdf(_document(), out, companion_filename="geper_report_full.pdf")
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertNotIn("unreachable during this analysis run and were not queried", text)
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
     def test_omits_the_full_reports_detail_sections(self):
         # The short report must not be a condensed copy of the long
         # one: no QC table, no ACMG criteria table, no supporting-

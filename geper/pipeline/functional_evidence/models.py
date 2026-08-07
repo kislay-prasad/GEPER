@@ -80,6 +80,16 @@ class FunctionalEvidenceResult:
     found: bool = False
     records: List[FunctionalEvidenceRecord] = field(default_factory=list)
     error: Optional[str] = None
+    # Names ("ClinGen ERepo" / "MaveDB") of sources that were skipped
+    # this run because `utils/service_health.py::HEALTH` had already
+    # confirmed them offline, as opposed to a source that was actually
+    # queried and simply failed/found nothing -- see `lookup.py`'s
+    # `_match_erepo`/`_match_mavedb`, the only place this is populated.
+    # A clinician reading "not evaluated" for PS3/BS3 needs to be able
+    # to tell "neither source had data for this variant" apart from
+    # "this source was never queried this run" -- they are not the
+    # same finding.
+    unavailable_sources: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +98,7 @@ class FunctionalEvidenceResult:
             "gene_symbol": self.gene_symbol,
             "records": [r.to_dict() for r in self.records],
             "error": self.error,
+            "unavailable_sources": list(self.unavailable_sources),
         }
 
     @staticmethod

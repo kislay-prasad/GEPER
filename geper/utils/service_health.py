@@ -181,6 +181,19 @@ class ServiceHealthRegistry:
     def is_offline(self, name: str) -> bool:
         return self._get(name).startup_status == ServiceStatus.OFFLINE
 
+    def offline_services(self) -> List[str]:
+        """
+        Names of every service confirmed offline at startup for this
+        run, in probe order. Read by the report layer (see
+        `report/summary.py`/`report/summary_short.py`) to print a
+        single run-level caveat distinguishing "this source was
+        skipped this run" from "this source was queried and found
+        nothing" -- the two must never look identical in a report a
+        clinician might rely on.
+        """
+        with self._lock:
+            return [record.name for record in self._records.values() if record.startup_status == ServiceStatus.OFFLINE]
+
     def note_skip(self, name: str) -> None:
         """
         Call from a client's retry loop instead of retrying, once it

@@ -35,7 +35,7 @@ from unittest import mock
 
 import requests
 
-from pipeline.acmg_rules import ACMGRuleEngine
+from pipeline.acmg_rules import ACMGRuleEngine, _functional_evidence_not_evaluated_reason
 from pipeline.functional_evidence.erepo_provider import ErepoFunctionalEvidenceProvider
 from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.functional_evidence.mavedb_provider import MaveDBFunctionalEvidenceProvider
@@ -46,8 +46,22 @@ from pipeline.functional_evidence.utils import (
     parse_evidence_code_strength,
 )
 from utils.exceptions import ExternalAPIError
+from utils.service_health import ServiceCheck, ServiceHealthRegistry, ServiceStatus
 
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
+
+
+def _offline_registry(*names: str) -> ServiceHealthRegistry:
+    """A `ServiceHealthRegistry` with `names` pre-marked OFFLINE, same
+    shape `tests/test_service_health.py` uses -- for tests that need to
+    simulate a service already confirmed unreachable at startup."""
+    registry = ServiceHealthRegistry()
+    fake_config = mock.Mock()
+    fake_config.health_check.ENABLED = True
+    fake_config.health_check.TIMEOUT_SECS = 1.0
+    with mock.patch("utils.service_health.CONFIG", fake_config):
+        registry.run_startup_checks([ServiceCheck(name, lambda: (ServiceStatus.OFFLINE, "Timeout")) for name in names])
+    return registry
 
 
 def _load_json_fixture(name: str):
@@ -75,6 +89,7 @@ def _fake_response(json_payload=None, text_payload=None, status_code=200):
 # Small pure-logic helpers
 # ---------------------------------------------------------------------------
 
+
 class TestUtils(unittest.TestCase):
     def test_bare_evidence_code_strips_strength_suffix(self):
         self.assertEqual(bare_evidence_code("PS3_Moderate"), "PS3")
@@ -101,11 +116,15 @@ class TestUtils(unittest.TestCase):
 # ErepoFunctionalEvidenceProvider -- real BRCA1/TP53/CFTR fixture data
 # ---------------------------------------------------------------------------
 
+
 class TestErepoProvider(unittest.TestCase):
     def test_real_brca1_ps3_met_variant_is_found(self):
         payload = _load_json_fixture("ps3_bs3_erepo_brca1.json")
         provider = ErepoFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.erepo_provider.requests.get", return_value=_fake_response(json_payload=payload)):
+        with mock.patch(
+            "pipeline.functional_evidence.erepo_provider.requests.get",
+            return_value=_fake_response(json_payload=payload),
+        ):
             index = provider.fetch_gene_index("BRCA1")
 
         hgvs_g = "NC_000017.11:g.43106534C>A"
@@ -122,14 +141,20 @@ class TestErepoProvider(unittest.TestCase):
         payload = _load_json_fixture("ps3_bs3_erepo_cftr.json")
         self.assertEqual(payload.get("variantInterpretations"), [])
         provider = ErepoFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.erepo_provider.requests.get", return_value=_fake_response(json_payload=payload)):
+        with mock.patch(
+            "pipeline.functional_evidence.erepo_provider.requests.get",
+            return_value=_fake_response(json_payload=payload),
+        ):
             index = provider.fetch_gene_index("CFTR")
         self.assertEqual(index, {})
 
     def test_real_tp53_gene_has_both_ps3_and_bs3_met_records(self):
         payload = _load_json_fixture("ps3_bs3_erepo_tp53.json")
         provider = ErepoFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.erepo_provider.requests.get", return_value=_fake_response(json_payload=payload)):
+        with mock.patch(
+            "pipeline.functional_evidence.erepo_provider.requests.get",
+            return_value=_fake_response(json_payload=payload),
+        ):
             index = provider.fetch_gene_index("TP53")
 
         all_records = [r for records in index.values() for r in records]
@@ -138,14 +163,21 @@ class TestErepoProvider(unittest.TestCase):
 
     def test_404_response_is_treated_as_empty_not_an_error(self):
         provider = ErepoFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.erepo_provider.requests.get", return_value=_fake_response(status_code=404)):
+        with mock.patch(
+            "pipeline.functional_evidence.erepo_provider.requests.get", return_value=_fake_response(status_code=404)
+        ):
             index = provider.fetch_gene_index("NOTAREALGENE")
         self.assertEqual(index, {})
 
     def test_repeated_request_failure_raises_external_api_error(self):
         provider = ErepoFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.erepo_provider.requests.get", side_effect=requests.exceptions.ConnectionError("boom")), \
-             mock.patch("pipeline.functional_evidence.erepo_provider.time.sleep"):
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.erepo_provider.requests.get",
+                side_effect=requests.exceptions.ConnectionError("boom"),
+            ),
+            mock.patch("pipeline.functional_evidence.erepo_provider.time.sleep"),
+        ):
             with self.assertRaises(ExternalAPIError):
                 provider.fetch_gene_index("BRCA1")
 
@@ -153,6 +185,7 @@ class TestErepoProvider(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # MaveDBFunctionalEvidenceProvider -- real BRCA1 SGE fixture data
 # ---------------------------------------------------------------------------
+
 
 class TestMaveDBProvider(unittest.TestCase):
     def _provider_with_fixtures(self):
@@ -179,8 +212,13 @@ class TestMaveDBProvider(unittest.TestCase):
 
     def test_real_normal_classified_variant_produces_bs3_record(self):
         provider, search_payload, fake_get = self._provider_with_fixtures()
-        with mock.patch("pipeline.functional_evidence.mavedb_provider.requests.post", return_value=_fake_response(json_payload=search_payload)), \
-             mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get):
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=search_payload),
+            ),
+            mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get),
+        ):
             index = provider.fetch_gene_index("BRCA1")
 
         key = normalize_hgvs_c("NM_007294.3:c.5565A>T")
@@ -195,8 +233,13 @@ class TestMaveDBProvider(unittest.TestCase):
 
     def test_abnormal_classified_variant_produces_ps3_record(self):
         provider, search_payload, fake_get = self._provider_with_fixtures()
-        with mock.patch("pipeline.functional_evidence.mavedb_provider.requests.post", return_value=_fake_response(json_payload=search_payload)), \
-             mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get):
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=search_payload),
+            ),
+            mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get),
+        ):
             index = provider.fetch_gene_index("BRCA1")
 
         abnormal_records = [r for r in index.values() if r.functional_classification == "abnormal"]
@@ -211,8 +254,13 @@ class TestMaveDBProvider(unittest.TestCase):
         is not usable PS3/BS3 evidence), rather than silently defaulting
         to one direction."""
         provider, search_payload, fake_get = self._provider_with_fixtures()
-        with mock.patch("pipeline.functional_evidence.mavedb_provider.requests.post", return_value=_fake_response(json_payload=search_payload)), \
-             mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get):
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=search_payload),
+            ),
+            mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get),
+        ):
             index = provider.fetch_gene_index("BRCA1")
 
         for record in index.values():
@@ -229,16 +277,31 @@ class TestMaveDBProvider(unittest.TestCase):
 
     def test_search_failure_raises_external_api_error(self):
         provider = MaveDBFunctionalEvidenceProvider()
-        with mock.patch("pipeline.functional_evidence.mavedb_provider.requests.post", side_effect=requests.exceptions.ConnectionError("boom")), \
-             mock.patch("pipeline.functional_evidence.mavedb_provider.time.sleep"):
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                side_effect=requests.exceptions.ConnectionError("boom"),
+            ),
+            mock.patch("pipeline.functional_evidence.mavedb_provider.time.sleep"),
+        ):
             with self.assertRaises(ExternalAPIError):
                 provider.fetch_gene_index("BRCA1")
 
     def test_score_set_missing_calibration_is_skipped_gracefully(self):
         provider = MaveDBFunctionalEvidenceProvider()
-        search_payload = {"scoreSets": [{"urn": "urn:mavedb:00099999-a-1", "numVariants": 10, "targetGenes": [{"name": "BRCA1"}]}]}
-        with mock.patch("pipeline.functional_evidence.mavedb_provider.requests.post", return_value=_fake_response(json_payload=search_payload)), \
-             mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", return_value=_fake_response(json_payload={"scoreCalibrations": []})):
+        search_payload = {
+            "scoreSets": [{"urn": "urn:mavedb:00099999-a-1", "numVariants": 10, "targetGenes": [{"name": "BRCA1"}]}]
+        }
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=search_payload),
+            ),
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.get",
+                return_value=_fake_response(json_payload={"scoreCalibrations": []}),
+            ),
+        ):
             index = provider.fetch_gene_index("BRCA1")
         self.assertEqual(index, {})
 
@@ -246,6 +309,7 @@ class TestMaveDBProvider(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # FunctionalEvidenceLookup -- composite primary/secondary fallback logic
 # ---------------------------------------------------------------------------
+
 
 class TestFunctionalEvidenceLookupComposite(unittest.TestCase):
     def _record(self, call: str, source: str = "clingen_erepo") -> FunctionalEvidenceRecord:
@@ -334,10 +398,60 @@ class TestFunctionalEvidenceLookupComposite(unittest.TestCase):
         self.assertEqual(erepo.fetch_gene_index.call_count, 1)
         self.assertEqual(mavedb.fetch_gene_index.call_count, 1)
 
+    def test_erepo_offline_is_skipped_and_recorded_distinct_from_a_generic_error(self):
+        """When `HEALTH` already confirmed ClinGen ERepo offline this
+        run, the provider must never even be called (no wasted retry
+        budget -- the whole point of `utils/service_health.py`), and
+        the result must say *which* source was unavailable so the
+        report layer (`acmg_rules.py::_functional_evidence_not_evaluated_reason`)
+        can tell this apart from "both sources were genuinely
+        checked"."""
+        erepo = mock.Mock()
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+        mavedb.fetch_gene_index.return_value = {}
+
+        offline = _offline_registry("ClinGen ERepo")
+        with mock.patch("pipeline.functional_evidence.lookup.HEALTH", offline):
+            lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+            result = lookup.query_variant("BRCA1", hgvs_g="NC_000017.11:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        erepo.fetch_gene_index.assert_not_called()
+        mavedb.fetch_gene_index.assert_called_once()
+        self.assertFalse(result["found"])
+        self.assertEqual(result["unavailable_sources"], ["ClinGen ERepo"])
+
+    def test_both_sources_offline_are_both_recorded(self):
+        erepo = mock.Mock()
+        mavedb = mock.Mock()
+
+        offline = _offline_registry("ClinGen ERepo", "MaveDB")
+        with mock.patch("pipeline.functional_evidence.lookup.HEALTH", offline):
+            lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+            result = lookup.query_variant("BRCA1", hgvs_g="NC_000017.11:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        erepo.fetch_gene_index.assert_not_called()
+        mavedb.fetch_gene_index.assert_not_called()
+        self.assertEqual(sorted(result["unavailable_sources"]), ["ClinGen ERepo", "MaveDB"])
+
+    def test_genuine_no_data_result_has_no_unavailable_sources(self):
+        erepo = mock.Mock()
+        erepo.is_available.return_value = True
+        erepo.fetch_gene_index.return_value = {}
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+        mavedb.fetch_gene_index.return_value = {}
+
+        lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+        result = lookup.query_variant("CFTR", hgvs_g="NC_000007.14:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        self.assertEqual(result["unavailable_sources"], [])
+
 
 # ---------------------------------------------------------------------------
 # PS3/BS3 -- ACMGRuleEngine, through real fixture-derived evidence
 # ---------------------------------------------------------------------------
+
 
 class TestPS3BS3Rules(unittest.TestCase):
     def test_no_functional_evidence_is_not_evaluated(self):
@@ -353,13 +467,20 @@ class TestPS3BS3Rules(unittest.TestCase):
 
     def test_real_erepo_ps3_met_record_triggers_ps3(self):
         functional_evidence_result = {
-            "found": True, "source": "clingen_erepo", "gene_symbol": "BRCA1",
-            "records": [{
-                "source": "clingen_erepo", "call": "PS3", "strength": "strong",
-                "matched_hgvs": "NC_000017.11:g.43106534C>A",
-                "expert_panel": "ENIGMA BRCA1 and BRCA2 VCEP",
-                "classification_outcome": "Pathogenic", "condition": "BRCA1-related cancer predisposition",
-            }],
+            "found": True,
+            "source": "clingen_erepo",
+            "gene_symbol": "BRCA1",
+            "records": [
+                {
+                    "source": "clingen_erepo",
+                    "call": "PS3",
+                    "strength": "strong",
+                    "matched_hgvs": "NC_000017.11:g.43106534C>A",
+                    "expert_panel": "ENIGMA BRCA1 and BRCA2 VCEP",
+                    "classification_outcome": "Pathogenic",
+                    "condition": "BRCA1-related cancer predisposition",
+                }
+            ],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
         self.assertEqual(ps3.status, "triggered")
@@ -377,7 +498,9 @@ class TestPS3BS3Rules(unittest.TestCase):
 
     def test_erepo_evidence_code_with_strength_suffix_is_honored(self):
         functional_evidence_result = {
-            "found": True, "source": "clingen_erepo", "gene_symbol": "TP53",
+            "found": True,
+            "source": "clingen_erepo",
+            "gene_symbol": "TP53",
             "records": [{"source": "clingen_erepo", "call": "PS3", "strength": "moderate", "matched_hgvs": "x"}],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
@@ -385,14 +508,22 @@ class TestPS3BS3Rules(unittest.TestCase):
 
     def test_mavedb_abnormal_record_triggers_ps3_at_moderate_strength(self):
         functional_evidence_result = {
-            "found": True, "source": "mavedb", "gene_symbol": "BRCA1",
-            "records": [{
-                "source": "mavedb", "call": "PS3", "strength": "moderate",
-                "matched_hgvs": "NM_007294.3:c.1A>T", "raw_score": -2.5,
-                "score_set_urn": "urn:mavedb:00000097-0-2",
-                "functional_classification": "abnormal", "research_use_only": False,
-                "publication": "Findlay et al. 2018",
-            }],
+            "found": True,
+            "source": "mavedb",
+            "gene_symbol": "BRCA1",
+            "records": [
+                {
+                    "source": "mavedb",
+                    "call": "PS3",
+                    "strength": "moderate",
+                    "matched_hgvs": "NM_007294.3:c.1A>T",
+                    "raw_score": -2.5,
+                    "score_set_urn": "urn:mavedb:00000097-0-2",
+                    "functional_classification": "abnormal",
+                    "research_use_only": False,
+                    "publication": "Findlay et al. 2018",
+                }
+            ],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
         self.assertEqual(ps3.status, "triggered")
@@ -402,14 +533,22 @@ class TestPS3BS3Rules(unittest.TestCase):
 
     def test_mavedb_normal_record_triggers_bs3(self):
         functional_evidence_result = {
-            "found": True, "source": "mavedb", "gene_symbol": "BRCA1",
-            "records": [{
-                "source": "mavedb", "call": "BS3", "strength": "moderate",
-                "matched_hgvs": "NM_007294.3:c.5565A>T", "raw_score": -0.0153,
-                "score_set_urn": "urn:mavedb:00000097-0-2",
-                "functional_classification": "normal", "research_use_only": False,
-                "publication": "Findlay et al. 2018",
-            }],
+            "found": True,
+            "source": "mavedb",
+            "gene_symbol": "BRCA1",
+            "records": [
+                {
+                    "source": "mavedb",
+                    "call": "BS3",
+                    "strength": "moderate",
+                    "matched_hgvs": "NM_007294.3:c.5565A>T",
+                    "raw_score": -0.0153,
+                    "score_set_urn": "urn:mavedb:00000097-0-2",
+                    "functional_classification": "normal",
+                    "research_use_only": False,
+                    "publication": "Findlay et al. 2018",
+                }
+            ],
         }
         bs3 = ACMGRuleEngine._bs3(functional_evidence_result)
         self.assertEqual(bs3.status, "triggered")
@@ -417,13 +556,21 @@ class TestPS3BS3Rules(unittest.TestCase):
 
     def test_mavedb_research_use_only_calibration_is_capped_at_supporting_confidence(self):
         functional_evidence_result = {
-            "found": True, "source": "mavedb", "gene_symbol": "SOMEGENE",
-            "records": [{
-                "source": "mavedb", "call": "PS3", "strength": "supporting",
-                "matched_hgvs": "NM_1.1:c.1A>T", "raw_score": -3.0,
-                "score_set_urn": "urn:mavedb:00099999-a-1",
-                "functional_classification": "abnormal", "research_use_only": True,
-            }],
+            "found": True,
+            "source": "mavedb",
+            "gene_symbol": "SOMEGENE",
+            "records": [
+                {
+                    "source": "mavedb",
+                    "call": "PS3",
+                    "strength": "supporting",
+                    "matched_hgvs": "NM_1.1:c.1A>T",
+                    "raw_score": -3.0,
+                    "score_set_urn": "urn:mavedb:00099999-a-1",
+                    "functional_classification": "abnormal",
+                    "research_use_only": True,
+                }
+            ],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
         self.assertEqual(ps3.strength, "supporting")
@@ -436,7 +583,9 @@ class TestPS3BS3Rules(unittest.TestCase):
         (2026-07-31): this is a checked negative (the evidence source
         was consulted and doesn't support PS3), not an unchecked gap."""
         functional_evidence_result = {
-            "found": True, "source": "mavedb", "gene_symbol": "BRCA1",
+            "found": True,
+            "source": "mavedb",
+            "gene_symbol": "BRCA1",
             "records": [{"source": "mavedb", "call": "BS3", "strength": "moderate", "matched_hgvs": "x"}],
         }
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
@@ -452,12 +601,67 @@ class TestPS3BS3Rules(unittest.TestCase):
         self.assertEqual(ps3.status, "not_evaluated")
         self.assertEqual(bs3.status, "not_evaluated")
 
+    def test_genuine_gap_rationale_says_both_were_checked(self):
+        """No `unavailable_sources` at all -- both sources really were
+        queried and had nothing, so the rationale should say exactly
+        that (the pre-existing wording, unchanged for this case)."""
+        functional_evidence_result = {"found": False, "source": "none", "gene_symbol": "CFTR", "records": []}
+        ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
+        self.assertIn("were both checked", ps3.rationale)
+        self.assertNotIn("unreachable", ps3.rationale)
+
+    def test_one_source_offline_rationale_names_it_and_the_other(self):
+        """Regression test for the offline-vs-no-data distinction this
+        feature adds: when ClinGen ERepo was confirmed offline this run
+        (per `utils/service_health.py`) but MaveDB genuinely had
+        nothing, the rationale must say ERepo was unreachable and only
+        MaveDB was actually checked -- never the old "both were
+        checked" wording, which would misrepresent a data-collection
+        gap as a completed negative search."""
+        functional_evidence_result = {
+            "found": False,
+            "source": "none",
+            "gene_symbol": "SOMEGENE",
+            "records": [],
+            "unavailable_sources": ["ClinGen ERepo"],
+        }
+        ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
+        self.assertEqual(ps3.status, "not_evaluated")
+        self.assertIn("ClinGen Evidence Repository", ps3.rationale)
+        self.assertIn("unreachable", ps3.rationale)
+        self.assertIn("only MaveDB was checked", ps3.rationale)
+        self.assertNotIn("were both checked", ps3.rationale)
+
+        bs3 = ACMGRuleEngine._bs3(functional_evidence_result)
+        self.assertIn("unreachable", bs3.rationale)
+
+    def test_both_sources_offline_rationale_says_neither_was_queried(self):
+        functional_evidence_result = {
+            "found": False,
+            "source": "none",
+            "gene_symbol": "SOMEGENE",
+            "records": [],
+            "unavailable_sources": ["ClinGen ERepo", "MaveDB"],
+        }
+        ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
+        self.assertIn("neither source could be queried", ps3.rationale)
+        self.assertIn("data-collection gap", ps3.rationale)
+        self.assertNotIn("were both checked", ps3.rationale)
+
+    def test_functional_evidence_not_evaluated_reason_handles_none(self):
+        # `functional_evidence_result` can be None (no gene resolved) --
+        # must fall back to the genuine-gap wording, not crash.
+        reason = _functional_evidence_not_evaluated_reason(None)
+        self.assertIn("were both checked", reason)
+
     def test_ps3_bs3_registered_in_full_engine_evaluate(self):
         """Confirms PS3/BS3 are wired into `evaluate()` itself (not
         just callable as standalone static methods) and no longer fall
         into the old blanket 'not integrated' stub message."""
         functional_evidence_result = {
-            "found": True, "source": "clingen_erepo", "gene_symbol": "BRCA1",
+            "found": True,
+            "source": "clingen_erepo",
+            "gene_symbol": "BRCA1",
             "records": [{"source": "clingen_erepo", "call": "PS3", "strength": "strong", "matched_hgvs": "x"}],
         }
         result = ACMGRuleEngine().evaluate(functional_evidence_result=functional_evidence_result)
@@ -477,14 +681,22 @@ class TestPS3BS3Rules(unittest.TestCase):
 # report/json_builder.py -- backward compatibility for the new key
 # ---------------------------------------------------------------------------
 
+
 class TestJsonBuilderFunctionalEvidenceBackwardCompatibility(unittest.TestCase):
     def test_omitting_functional_evidence_result_still_produces_a_complete_record(self):
         from report.json_builder import build_variant_result
 
         result = build_variant_result(
             variant_dict={"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-            sequence_context={}, dna_model_results={}, rna_result={}, protein_result={},
-            blast_result={}, clinvar_result={}, dbsnp_result={}, interpretation={}, errors=[],
+            sequence_context={},
+            dna_model_results={},
+            rna_result={},
+            protein_result={},
+            blast_result={},
+            clinvar_result={},
+            dbsnp_result={},
+            interpretation={},
+            errors=[],
         )
         self.assertIn("functional_evidence", result)
         self.assertEqual(result["functional_evidence"], {"skipped": True, "found": False})
@@ -495,8 +707,15 @@ class TestJsonBuilderFunctionalEvidenceBackwardCompatibility(unittest.TestCase):
         payload = {"skipped": False, "found": True, "source": "clingen_erepo", "records": []}
         result = build_variant_result(
             variant_dict={"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-            sequence_context={}, dna_model_results={}, rna_result={}, protein_result={},
-            blast_result={}, clinvar_result={}, dbsnp_result={}, interpretation={}, errors=[],
+            sequence_context={},
+            dna_model_results={},
+            rna_result={},
+            protein_result={},
+            blast_result={},
+            clinvar_result={},
+            dbsnp_result={},
+            interpretation={},
+            errors=[],
             functional_evidence_result=payload,
         )
         self.assertEqual(result["functional_evidence"], payload)
@@ -507,14 +726,28 @@ class TestJsonBuilderFunctionalEvidenceBackwardCompatibility(unittest.TestCase):
         clingen_payload = {"skipped": False, "found": True, "gene_symbol": "BRCA1"}
         result = build_variant_result(
             variant_dict={"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-            sequence_context={}, dna_model_results={}, rna_result={}, protein_result={},
-            blast_result={}, clinvar_result={}, dbsnp_result={}, interpretation={}, errors=[],
+            sequence_context={},
+            dna_model_results={},
+            rna_result={},
+            protein_result={},
+            blast_result={},
+            clinvar_result={},
+            dbsnp_result={},
+            interpretation={},
+            errors=[],
             clingen_result=clingen_payload,
         )
         self.assertEqual(result["clingen"], clingen_payload)
         self.assertEqual(result["functional_evidence"], {"skipped": True, "found": False})
         for expected_key in (
-            "variant", "blast", "clinvar", "dbsnp", "clingen", "functional_evidence", "interpretation", "errors",
+            "variant",
+            "blast",
+            "clinvar",
+            "dbsnp",
+            "clingen",
+            "functional_evidence",
+            "interpretation",
+            "errors",
         ):
             self.assertIn(expected_key, result)
 
@@ -522,6 +755,7 @@ class TestJsonBuilderFunctionalEvidenceBackwardCompatibility(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # pipeline/orchestrator.py -- stage wiring
 # ---------------------------------------------------------------------------
+
 
 class TestOrchestratorFunctionalEvidenceStage(unittest.TestCase):
     """
@@ -553,12 +787,18 @@ class TestOrchestratorFunctionalEvidenceStage(unittest.TestCase):
         pipeline = self._make_bare_pipeline()
         pipeline.functional_evidence_client = mock.Mock()
         pipeline.functional_evidence_client.query_variant.return_value = {
-            "found": True, "skipped": False, "source": "clingen_erepo", "records": [],
+            "found": True,
+            "skipped": False,
+            "source": "clingen_erepo",
+            "records": [],
         }
         with mock.patch("pipeline.orchestrator.transcript_from_result", return_value=None):
             errors: list = []
             result = pipeline._run_functional_evidence_stage(
-                self._variant(), {"gene_symbol": "BRCA1"}, {}, errors,
+                self._variant(),
+                {"gene_symbol": "BRCA1"},
+                {},
+                errors,
             )
         self.assertEqual(result["source"], "clingen_erepo")
         self.assertEqual(errors, [])
@@ -571,7 +811,10 @@ class TestOrchestratorFunctionalEvidenceStage(unittest.TestCase):
     def test_stage_records_error_without_raising_when_client_reports_error(self):
         pipeline = self._make_bare_pipeline()
         pipeline.functional_evidence_client = mock.Mock()
-        pipeline.functional_evidence_client.query_variant.return_value = {"found": False, "error": "network unreachable"}
+        pipeline.functional_evidence_client.query_variant.return_value = {
+            "found": False,
+            "error": "network unreachable",
+        }
         with mock.patch("pipeline.orchestrator.transcript_from_result", return_value=None):
             errors: list = []
             result = pipeline._run_functional_evidence_stage(self._variant(), {}, {}, errors)

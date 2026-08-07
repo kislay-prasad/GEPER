@@ -49,6 +49,7 @@ from pipeline.functional_evidence.mavedb_provider import MaveDBFunctionalEvidenc
 from pipeline.functional_evidence.models import FunctionalEvidenceRecord, FunctionalEvidenceResult
 from pipeline.functional_evidence.utils import normalize_hgvs_c
 from utils.logger import get_logger
+from utils.service_health import HEALTH
 
 logger = get_logger(__name__)
 
@@ -89,33 +90,51 @@ class FunctionalEvidenceLookup:
 
         if not gene_symbol:
             return {
-                "skipped": False, "found": False, "gene_symbol": None, "error": None, "records": [],
+                "skipped": False,
+                "found": False,
+                "gene_symbol": None,
+                "error": None,
+                "records": [],
                 "reason": "no gene symbol was resolved for this variant.",
             }
 
         errors: List[str] = []
+        unavailable_sources: List[str] = []
 
-        erepo_records = self._match_erepo(gene_symbol, hgvs_g, errors)
+        erepo_records = self._match_erepo(gene_symbol, hgvs_g, errors, unavailable_sources)
         if erepo_records:
             return FunctionalEvidenceResult(
-                gene_symbol=gene_symbol, source="clingen_erepo", found=True, records=erepo_records,
+                gene_symbol=gene_symbol,
+                source="clingen_erepo",
+                found=True,
+                records=erepo_records,
             ).to_dict()
 
-        mavedb_record = self._match_mavedb(gene_symbol, hgvs_c, errors)
+        mavedb_record = self._match_mavedb(gene_symbol, hgvs_c, errors, unavailable_sources)
         if mavedb_record:
             return FunctionalEvidenceResult(
-                gene_symbol=gene_symbol, source="mavedb", found=True, records=[mavedb_record],
+                gene_symbol=gene_symbol,
+                source="mavedb",
+                found=True,
+                records=[mavedb_record],
             ).to_dict()
 
         result = FunctionalEvidenceResult.not_found(gene_symbol, "none")
         if errors:
             result.error = "; ".join(errors)
+        if unavailable_sources:
+            result.unavailable_sources = unavailable_sources
         return result.to_dict()
 
     # -- ClinGen ERepo (primary) ----------------------------------------
 
-    def _match_erepo(self, gene_symbol: str, hgvs_g: Optional[str], errors: List[str]) -> List[FunctionalEvidenceRecord]:
+    def _match_erepo(
+        self, gene_symbol: str, hgvs_g: Optional[str], errors: List[str], unavailable_sources: List[str]
+    ) -> List[FunctionalEvidenceRecord]:
         if not hgvs_g:
+            return []
+        if HEALTH.is_offline("ClinGen ERepo"):
+            unavailable_sources.append("ClinGen ERepo")
             return []
         try:
             index = self._erepo_gene_index(gene_symbol)
@@ -141,9 +160,14 @@ class FunctionalEvidenceLookup:
 
     # -- MaveDB (secondary) ----------------------------------------------
 
-    def _match_mavedb(self, gene_symbol: str, hgvs_c: Optional[str], errors: List[str]) -> Optional[FunctionalEvidenceRecord]:
+    def _match_mavedb(
+        self, gene_symbol: str, hgvs_c: Optional[str], errors: List[str], unavailable_sources: List[str]
+    ) -> Optional[FunctionalEvidenceRecord]:
         key = normalize_hgvs_c(hgvs_c)
         if key is None:
+            return None
+        if HEALTH.is_offline("MaveDB"):
+            unavailable_sources.append("MaveDB")
             return None
         try:
             index = self._mavedb_gene_index(gene_symbol)

@@ -70,6 +70,7 @@ from report.summary import (
     _derive_sample_id,
     _icmr_ai_disclosure_footer_text,
     _load_cropped_logo_image,
+    _offline_sources_caveat_text,
     _parse_patient_meta,
     _resolve_logo_path,
     _variant_reviewer_flags,
@@ -626,6 +627,10 @@ def generate_short_pdf(
         story.append(Paragraph("No variants were analysed in this run; no findings are reported.", styles["BodyText"]))
 
     story.append(Spacer(1, 2 * mm))
+    offline_caveat = _offline_sources_caveat_text()
+    if offline_caveat:
+        story.append(Paragraph("! " + offline_caveat, styles["Flag"]))
+        story.append(Spacer(1, 1.5 * mm))
     story.append(Paragraph(_COMPANION_NOTE.format(companion=companion_filename), styles["Footnote"]))
     story.extend(_build_signoff_block(styles))
 

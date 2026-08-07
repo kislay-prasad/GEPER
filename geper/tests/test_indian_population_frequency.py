@@ -18,6 +18,7 @@ from unittest import mock
 from report.clinical_report_builder import _indian_population_frequency, build_clinical_report
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
+from utils.service_health import ServiceCheck, ServiceHealthRegistry, ServiceStatus
 
 try:
     from pypdf import PdfReader
@@ -58,6 +59,20 @@ def _patch_threshold(value=0.01):
     fake_config = patcher.start()
     fake_config.indigenomes.COMMON_AF_THRESHOLD = value
     return patcher
+
+
+def _offline_registry(*names: str) -> ServiceHealthRegistry:
+    """A `ServiceHealthRegistry` with `names` pre-marked OFFLINE, for
+    simulating a service `utils/service_health.py::HEALTH` already
+    confirmed unreachable at startup -- same shape
+    `tests/test_service_health.py` uses."""
+    registry = ServiceHealthRegistry()
+    fake_config = mock.Mock()
+    fake_config.health_check.ENABLED = True
+    fake_config.health_check.TIMEOUT_SECS = 1.0
+    with mock.patch("utils.service_health.CONFIG", fake_config):
+        registry.run_startup_checks([ServiceCheck(name, lambda: (ServiceStatus.OFFLINE, "Timeout")) for name in names])
+    return registry
 
 
 class TestIndianPopulationFrequencySection(unittest.TestCase):
@@ -111,6 +126,39 @@ class TestIndianPopulationFrequencySection(unittest.TestCase):
             raw, {"skipped": True, "found": False, "reason": "IndiGenomes is GRCh38-only; ..."}
         )
         self.assertIn("GRCh38-only", section["indigenomes_skipped_reason"])
+
+    def test_indigenomes_offline_distinct_from_generic_error(self):
+        """The core distinction this feature adds: an `error` string
+        caused by IndiGenomes being confirmed offline this run (per
+        `utils/service_health.py::HEALTH`) must set `indigenomes_offline
+        =True`, separate from a generic lookup failure (malformed
+        response, unexpected exception) that leaves it `False` even
+        though `indigenomes_error` is set in both cases."""
+        _patch_threshold(0.01)
+        offline = _offline_registry("IndiGenomes")
+        raw = {"gnomad": {}}
+        with mock.patch("report.clinical_report_builder.HEALTH", offline):
+            section = _indian_population_frequency(
+                raw,
+                {
+                    "skipped": False,
+                    "found": False,
+                    "error": "IndiGenomes request to '...' skipped: IndiGenomes was confirmed offline at startup.",
+                },
+            )
+        self.assertTrue(section["indigenomes_offline"])
+        self.assertIsNotNone(section["indigenomes_error"])
+
+    def test_generic_error_is_not_flagged_offline(self):
+        _patch_threshold(0.01)
+        not_offline = ServiceHealthRegistry()  # never probed -- nothing OFFLINE
+        raw = {"gnomad": {}}
+        with mock.patch("report.clinical_report_builder.HEALTH", not_offline):
+            section = _indian_population_frequency(
+                raw, {"skipped": False, "found": False, "error": "malformed JSON response"}
+            )
+        self.assertFalse(section["indigenomes_offline"])
+        self.assertEqual(section["indigenomes_error"], "malformed JSON response")
 
     def test_indigenomes_result_none_handled(self):
         _patch_threshold(0.01)
@@ -189,6 +237,20 @@ class TestMarkdownRendering(unittest.TestCase):
         md = ReportGenerator().generate(doc)
         self.assertIn("IndiGenomes:** variant not found", md)
 
+    def test_indigenomes_offline_renders_distinct_text_from_not_found(self):
+        """Regression test for the offline-vs-not-found ambiguity this
+        feature fixes: confirmed-offline text must not collapse into
+        the same "variant not found" wording a genuine absence gets."""
+        offline = _offline_registry("IndiGenomes")
+        with mock.patch("report.clinical_report_builder.HEALTH", offline):
+            doc = self._document(
+                {"skipped": False, "found": False, "error": "IndiGenomes was confirmed offline at startup."}
+            )
+        md = ReportGenerator().generate(doc)
+        self.assertIn("IndiGenomes was unreachable during this analysis run", md)
+        self.assertIn("not evidence of an absent record", md)
+        self.assertNotIn("IndiGenomes:** variant not found", md)
+
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
 class TestPdfRendering(unittest.TestCase):
@@ -256,6 +318,107 @@ class TestPdfRendering(unittest.TestCase):
             generate_pdf(document, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
         self.assertNotIn("Indian Population Frequency", text)
+
+    def test_offline_and_genuine_not_found_render_distinctly_in_one_pdf(self):
+        """
+        End-to-end verification (real ReportLab generation + pypdf text
+        extraction, per this feature's stated verification requirement):
+        a two-variant run where Finding 1's IndiGenomes lookup was
+        skipped because IndiGenomes was confirmed offline this run, and
+        Finding 2's IndiGenomes lookup genuinely ran and found nothing.
+        The PDF text for these two must never be the same string --
+        that identical-looking gap is exactly the ambiguity a clinician
+        must not be exposed to.
+        """
+        _patch_threshold(0.01)
+        offline = _offline_registry("IndiGenomes")
+
+        raw_with_gnomad = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
+        with mock.patch("report.clinical_report_builder.HEALTH", offline):
+            cr_offline = build_clinical_report(
+                _ir(variant={"chrom": "1", "pos": 100, "ref": "A", "alt": "T"}),
+                raw_evidence=raw_with_gnomad,
+                indigenomes_result={
+                    "skipped": False,
+                    "found": False,
+                    "error": "IndiGenomes request skipped: IndiGenomes was confirmed offline at startup.",
+                },
+            )
+        cr_not_found = build_clinical_report(
+            _ir(variant={"chrom": "2", "pos": 200, "ref": "G", "alt": "C"}),
+            raw_evidence=raw_with_gnomad,
+            indigenomes_result={"skipped": False, "found": False},
+        )
+
+        document = {
+            "geper_version": "t",
+            "generated_at": "2026-01-01T00:00:00Z",
+            "input_vcf": "x.vcf",
+            "assembly": "GRCh38",
+            "vcf_samples": ["S1"],
+            "variant_count": 2,
+            "variants": [
+                {
+                    "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
+                    "interpretation": {},
+                    "clinical_report": cr_offline,
+                    "ai_model_status": {},
+                    "errors": [],
+                },
+                {
+                    "variant": {"chrom": "2", "pos": 200, "ref": "G", "alt": "C"},
+                    "interpretation": {},
+                    "clinical_report": cr_not_found,
+                    "ai_model_status": {},
+                    "errors": [],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "r.pdf")
+            with mock.patch("report.summary.HEALTH", offline):
+                generate_pdf(document, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+
+        # Finding 1: offline -- explicit, not a silent gap, not the
+        # same wording as a genuine absence.
+        self.assertIn("IndiGenomes was unreachable during this analysis run", text)
+        self.assertIn("data-collection gap for this run", text)
+        # Finding 2: genuinely queried, nothing found -- still present
+        # (not swallowed by the fact Finding 1 also mentions IndiGenomes).
+        self.assertIn("IndiGenomes: variant not found", text)
+        # Run-level caveat (Reviewer Attention) names the offline source.
+        self.assertIn("IndiGenomes", text)
+        self.assertIn("unreachable during this analysis run and were not queried for any variant", text)
+
+    def test_all_sources_healthy_prints_no_offline_caveat(self):
+        healthy = ServiceHealthRegistry()  # nothing ever marked offline
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
+        cr = build_clinical_report(_ir(), raw_evidence=raw, indigenomes_result={"skipped": False, "found": False})
+        document = {
+            "geper_version": "t",
+            "generated_at": "2026-01-01T00:00:00Z",
+            "input_vcf": "x.vcf",
+            "assembly": "GRCh38",
+            "vcf_samples": ["S1"],
+            "variant_count": 1,
+            "variants": [
+                {
+                    "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
+                    "interpretation": {},
+                    "clinical_report": cr,
+                    "ai_model_status": {},
+                    "errors": [],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "r.pdf")
+            with mock.patch("report.summary.HEALTH", healthy):
+                generate_pdf(document, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertNotIn("unreachable during this analysis run and were not queried", text)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ from reportlab.platypus.flowables import Flowable
 from config import CONFIG
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from utils.logger import get_logger
+from utils.service_health import HEALTH
 from utils.timezone_utils import format_ist
 
 logger = get_logger(__name__)
@@ -981,6 +982,31 @@ def _provenance_gap_sources(document: Dict[str, Any], variants: List[Dict[str, A
     return gaps
 
 
+def _offline_sources_caveat_text() -> Optional[str]:
+    """
+    Run-level, not per-finding: which external evidence sources (see
+    `utils/service_health.py`) were confirmed offline at startup and
+    therefore skipped for every variant in this run, rather than
+    genuinely queried and found to have nothing. Read once here so any
+    "not evaluated" or "not found" text for one of these sources
+    elsewhere in the report is not mistaken for a completed, negative
+    search -- the same reasoning
+    `report/clinical_report_builder.py::_indian_population_frequency`
+    documents for the per-finding IndiGenomes case. Returns `None` when
+    every configured source was reachable at startup (the common case,
+    no caveat needed).
+    """
+    offline = HEALTH.offline_services()
+    if not offline:
+        return None
+    return (
+        "The following data source(s) were unreachable during this analysis run and were not queried for "
+        "any variant in this report: " + ", ".join(offline) + '. Any finding reported as "not evaluated" '
+        "or lacking data from these sources reflects a data-collection gap for this run, not a confirmed "
+        "absence -- it should not be treated as a negative result."
+    )
+
+
 def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[str, ParagraphStyle]) -> Table:
     val, small = styles["TableValue"], styles["TableValueSmall"]
 
@@ -1174,6 +1200,9 @@ def _build_clinician_summary_flowables(
         attention_lines.append(
             "Data-source version not determinable for cited evidence from: " + ", ".join(sorted(gap_sources)) + "."
         )
+    offline_caveat = _offline_sources_caveat_text()
+    if offline_caveat:
+        attention_lines.append(offline_caveat)
 
     # Heading + its first line of content are wrapped in `KeepTogether` so
     # the heading can never be stranded alone at the bottom of a page with
@@ -1222,15 +1251,29 @@ def _build_indian_population_frequency_flowables(
     for where this dict comes from and why the two figures are never
     merged into one number), plus a "Common in Indian populations"
     flag when either exceeds the configured threshold. Renders nothing
-    at all when neither source has anything to say (both absent, no
-    priority-population data queried) -- an empty section header would
-    just be noise in a report already organized around "no fabricated
-    findings".
+    at all only when there is truly no signal from either source --
+    gnomAD SAS has no figure and IndiGenomes was genuinely queried
+    with no matching record (a real, meaningful absence). Any other
+    IndiGenomes outcome (confirmed offline this run, a genuine lookup
+    error, or disabled/GRCh37-skipped) is always rendered explicitly,
+    even when gnomAD alone would otherwise fill the section --
+    silently omitting IndiGenomes in those cases would look identical
+    to "queried, nothing found" to a reader, which is exactly the
+    ambiguity this section must not create (see
+    `report/clinical_report_builder.py::_indian_population_frequency`
+    for where `indigenomes_offline`/`indigenomes_error`/
+    `indigenomes_skipped_reason` come from).
     """
     ipf = clinical.get("indian_population_frequency") or {}
     gnomad_sas_af = ipf.get("gnomad_af_sas")
     indigenomes_available = ipf.get("indigenomes_available")
-    if gnomad_sas_af is None and not indigenomes_available:
+    indigenomes_offline = ipf.get("indigenomes_offline")
+    indigenomes_error = ipf.get("indigenomes_error")
+    indigenomes_skipped_reason = ipf.get("indigenomes_skipped_reason")
+    indigenomes_flagged = bool(
+        indigenomes_available or indigenomes_offline or indigenomes_error or indigenomes_skipped_reason
+    )
+    if gnomad_sas_af is None and not indigenomes_flagged:
         return []
 
     flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Indian Population Frequency:</b>", styles["BodyText"])]
@@ -1244,6 +1287,30 @@ def _build_indian_population_frequency_flowables(
                 styles["BulletText"],
             )
         )
+    elif indigenomes_offline:
+        flow.append(
+            Paragraph(
+                "• IndiGenomes: not evaluated -- IndiGenomes was unreachable during this analysis run "
+                "(not queried). This is a data-collection gap for this run, not evidence of an absent record.",
+                styles["BulletText"],
+            )
+        )
+    elif indigenomes_error:
+        flow.append(
+            Paragraph(
+                f"• IndiGenomes: lookup failed (external service issue: {indigenomes_error}) -- "
+                "not evidence of an absent record.",
+                styles["BulletText"],
+            )
+        )
+    elif indigenomes_skipped_reason:
+        flow.append(Paragraph(f"• IndiGenomes: not queried ({indigenomes_skipped_reason}).", styles["BulletText"]))
+    elif gnomad_sas_af is not None:
+        # gnomAD had a figure but IndiGenomes was genuinely queried
+        # with no matching record -- stated explicitly rather than
+        # left silent, so its absence here is never mistaken for
+        # "not checked".
+        flow.append(Paragraph("• IndiGenomes: variant not found.", styles["BulletText"]))
     if ipf.get("common_in_indian_population"):
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         flow.append(

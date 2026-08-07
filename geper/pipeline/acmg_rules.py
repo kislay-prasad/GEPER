@@ -138,6 +138,48 @@ class CriterionResult:
         return payload
 
 
+def _functional_evidence_not_evaluated_reason(functional_evidence_result: Optional[Dict[str, Any]]) -> str:
+    """
+    Honest PS3/BS3 "not evaluated" rationale -- distinguishes a source
+    that was actually queried and had nothing for this exact variant
+    from one that was skipped this run because `utils/service_health
+    .py::HEALTH` had already confirmed it offline (see
+    `pipeline/functional_evidence/lookup.py`'s `unavailable_sources`).
+    Reporting "both sources were checked" when one was never queried
+    would misrepresent a data-collection gap as a completed,
+    negative-for-nothing search -- a clinician reading this text needs
+    to know which one actually happened.
+    """
+    unavailable = list((functional_evidence_result or {}).get("unavailable_sources") or [])
+    all_sources = ["ClinGen Evidence Repository", "MaveDB"]
+    unavailable_full = {"ClinGen ERepo": "ClinGen Evidence Repository", "MaveDB": "MaveDB"}
+    unavailable_names = [unavailable_full.get(name, name) for name in unavailable]
+    checked_names = [name for name in all_sources if name not in unavailable_names]
+
+    if not unavailable_names:
+        return (
+            "requires published functional/experimental assay results for this exact variant; the "
+            "ClinGen Evidence Repository and MaveDB were both checked (see pipeline/functional_evidence/) "
+            "but neither had a curated/calibrated result for it."
+        )
+    if not checked_names:
+        return (
+            "requires published functional/experimental assay results for this exact variant; neither "
+            "source could be queried this run -- " + " and ".join(unavailable_names) + " were confirmed "
+            "unreachable during this analysis run (see the report's data-availability caveat). This is a "
+            "data-collection gap for this run, not a confirmed absence of functional evidence."
+        )
+    return (
+        "requires published functional/experimental assay results for this exact variant; "
+        + " and ".join(unavailable_names)
+        + " could not be queried this run (confirmed unreachable during this analysis run -- see the "
+        "report's data-availability caveat), so only "
+        + " and ".join(checked_names)
+        + " was checked, and it had no curated/calibrated result for this variant. This is not the same "
+        "as both sources having been checked."
+    )
+
+
 def _not_evaluated(code: str, reason: str) -> CriterionResult:
     direction, strength = _STRENGTH[code]
     return CriterionResult(
@@ -2224,12 +2266,7 @@ class ACMGRuleEngine:
             or functional_evidence_result.get("error")
             or not functional_evidence_result.get("found")
         ):
-            return _not_evaluated(
-                "PS3",
-                "requires published functional/experimental assay results for this exact variant; the "
-                "ClinGen Evidence Repository and MaveDB were both checked (see pipeline/functional_evidence/) "
-                "but neither had a curated/calibrated result for it.",
-            )
+            return _not_evaluated("PS3", _functional_evidence_not_evaluated_reason(functional_evidence_result))
 
         records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "PS3"]
         if not records:
@@ -2277,12 +2314,7 @@ class ACMGRuleEngine:
             or functional_evidence_result.get("error")
             or not functional_evidence_result.get("found")
         ):
-            return _not_evaluated(
-                "BS3",
-                "requires published functional/experimental assay results for this exact variant; the "
-                "ClinGen Evidence Repository and MaveDB were both checked (see pipeline/functional_evidence/) "
-                "but neither had a curated/calibrated result for it.",
-            )
+            return _not_evaluated("BS3", _functional_evidence_not_evaluated_reason(functional_evidence_result))
 
         records = [r for r in (functional_evidence_result.get("records") or []) if r.get("call") == "BS3"]
         if not records:

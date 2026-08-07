@@ -21,6 +21,7 @@ repeatedly."
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
+from utils.service_health import HEALTH
 
 # Stable, well-known public-resource references for whichever sources
 # actually contributed evidence to this variant (via `evidence_sources`,
@@ -363,7 +364,10 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
     `pipeline/gnomad/models.py::POPULATIONS`), not re-queried here.
     `indigenomes_*` distinguishes "not found" (`indigenomes_available
     =False`, `indigenomes_error=None`) from a genuine query failure
-    (`indigenomes_error` set) and from the integration being disabled/
+    (`indigenomes_error` set, `indigenomes_offline=False`) from a
+    skipped-because-confirmed-offline run (`indigenomes_error` set
+    *and* `indigenomes_offline=True`, per `utils/service_health.py`'s
+    HEALTH registry) and from the integration being disabled/
     GRCh37-skipped (`indigenomes_skipped_reason` set) -- the same
     found-vs-error distinction `_protein_knowledge`'s docstring
     documents for UniProt/InterPro, applied here for the same reason.
@@ -376,6 +380,15 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
     indigenomes_available = bool(indigenomes.get("found"))
     indigenomes_af = indigenomes.get("af") if indigenomes_available else None
 
+    # Distinguishes "queried, no record" from "skipped this run because
+    # IndiGenomes was confirmed offline at startup" (see
+    # `utils/service_health.py`) -- the two must never look identical
+    # in a report a clinician might rely on. `indigenomes_error` alone
+    # can't tell them apart (both surface as an error string), so this
+    # cross-checks the run-level HEALTH registry rather than
+    # string-matching the error text.
+    indigenomes_offline = bool(indigenomes.get("error")) and HEALTH.is_offline("IndiGenomes")
+
     threshold = CONFIG.indigenomes.COMMON_AF_THRESHOLD
     common_in_indian_population = any(af is not None and af >= threshold for af in (gnomad_sas_af, indigenomes_af))
 
@@ -387,6 +400,7 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
         "indigenomes_ac": indigenomes.get("ac") if indigenomes_available else None,
         "indigenomes_an": indigenomes.get("an") if indigenomes_available else None,
         "indigenomes_error": indigenomes.get("error"),
+        "indigenomes_offline": indigenomes_offline,
         "indigenomes_skipped_reason": indigenomes.get("reason") if indigenomes.get("skipped") else None,
         "common_af_threshold": threshold,
         "common_in_indian_population": common_in_indian_population,

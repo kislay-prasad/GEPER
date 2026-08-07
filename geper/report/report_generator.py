@@ -550,6 +550,11 @@ class ReportGenerator:
             lines.append(
                 f"- **IndiGenomes:** AF={ipf.get('indigenomes_af')} (AC={ipf.get('indigenomes_ac')}, AN={ipf.get('indigenomes_an')})"
             )
+        elif ipf.get("indigenomes_offline"):
+            lines.append(
+                "- **IndiGenomes:** _not evaluated -- IndiGenomes was unreachable during this analysis run "
+                "(not queried); this is a data-collection gap for this run, not evidence of an absent record._"
+            )
         elif ipf.get("indigenomes_error"):
             lines.append(
                 f"- **IndiGenomes:** _lookup failed (external service issue: {ipf['indigenomes_error']}) -- not evidence of an absent record._"

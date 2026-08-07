@@ -72,8 +72,8 @@ import requests
 
 from config import CONFIG
 from pipeline.clingen.models import DosageSensitivity, GeneDiseaseValidity
-from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -105,9 +105,9 @@ class GeneResolutionStatus(str, enum.Enum):
     resources with independent failure/ambiguity shapes.
     """
 
-    NOT_FOUND = "not_found"    # no protein-coding gene overlaps this position, and no VCF GENE= hint
-    AMBIGUOUS = "ambiguous"    # multiple candidate genes overlap and could not be disambiguated
-    RESOLVED = "resolved"      # exactly one gene determined
+    NOT_FOUND = "not_found"  # no protein-coding gene overlaps this position, and no VCF GENE= hint
+    AMBIGUOUS = "ambiguous"  # multiple candidate genes overlap and could not be disambiguated
+    RESOLVED = "resolved"  # exactly one gene determined
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,9 @@ class GeneResolution:
 
     status: GeneResolutionStatus
     gene_symbol: Optional[str]
-    source: str  # "vcf_gene_info" | "ensembl_single_candidate" | "ensembl_cds_containment" | "ensembl_mane_select" | "none"
+    source: (
+        str  # "vcf_gene_info" | "ensembl_single_candidate" | "ensembl_cds_containment" | "ensembl_mane_select" | "none"
+    )
     reason: str
     candidates: List[str] = field(default_factory=list)  # every viable candidate symbol seen, populated for AMBIGUOUS
 
@@ -137,6 +139,10 @@ def _fetch_overlapping_genes(chrom: str, pos: int, build: str) -> Optional[List[
     url = f"{base_url}/overlap/region/{_species_for_build(build)}/{bare_chrom}:{pos}-{pos}"
     params = {"feature": "gene", "content-type": "application/json"}
 
+    if HEALTH.is_offline("Ensembl"):
+        HEALTH.note_skip("Ensembl")
+        return None
+
     last_error: Optional[Exception] = None
     for attempt in range(1, CONFIG.clingen.MAX_RETRIES + 1):
         try:
@@ -148,12 +154,16 @@ def _fetch_overlapping_genes(chrom: str, pos: int, build: str) -> Optional[List[
             )
             response.raise_for_status()
             features = response.json()
+            HEALTH.note_success("Ensembl")
             return features if isinstance(features, list) else []
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             logger.warning(f"Ensembl gene-overlap lookup attempt {attempt} failed for {bare_chrom}:{pos}: {exc}")
+            if not is_transient_http_error(exc):
+                break
             if attempt < CONFIG.clingen.MAX_RETRIES:
                 time.sleep(CONFIG.clingen.RETRY_BACKOFF_SECS * attempt)
+    HEALTH.note_failure("Ensembl")
     logger.warning(
         f"Ensembl gene-overlap lookup failed for {bare_chrom}:{pos} after "
         f"{CONFIG.clingen.MAX_RETRIES} attempts: {last_error}"
@@ -162,7 +172,10 @@ def _fetch_overlapping_genes(chrom: str, pos: int, build: str) -> Optional[List[
 
 
 def resolve_gene_symbol_detail(
-    chrom: str, pos: int, build: str = "GRCh38", vcf_gene_hint: Optional[str] = None,
+    chrom: str,
+    pos: int,
+    build: str = "GRCh38",
+    vcf_gene_hint: Optional[str] = None,
 ) -> GeneResolution:
     """
     Full-detail gene resolution -- see this module's docstring for the
@@ -176,16 +189,22 @@ def resolve_gene_symbol_detail(
     hint = normalize_gene_symbol(vcf_gene_hint)
     if hint:
         return GeneResolution(
-            GeneResolutionStatus.RESOLVED, hint, "vcf_gene_info",
+            GeneResolutionStatus.RESOLVED,
+            hint,
+            "vcf_gene_info",
             reason=f"Used the VCF's own GENE={hint} annotation directly; no Ensembl overlap lookup was needed.",
         )
 
     if CONFIG.clingen.OFFLINE_MODE:
-        return GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="offline mode; no gene-overlap lookup performed.")
+        return GeneResolution(
+            GeneResolutionStatus.NOT_FOUND, None, "none", reason="offline mode; no gene-overlap lookup performed."
+        )
 
     features = _fetch_overlapping_genes(chrom, pos, build)
     if features is None:
-        return GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="Ensembl gene-overlap lookup failed.")
+        return GeneResolution(
+            GeneResolutionStatus.NOT_FOUND, None, "none", reason="Ensembl gene-overlap lookup failed."
+        )
     if not features:
         return GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="no gene overlaps this position.")
 
@@ -203,10 +222,14 @@ def resolve_gene_symbol_detail(
             symbols.append(symbol)
 
     if not symbols:
-        return GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="no protein-coding gene overlaps this position.")
+        return GeneResolution(
+            GeneResolutionStatus.NOT_FOUND, None, "none", reason="no protein-coding gene overlaps this position."
+        )
     if len(symbols) == 1:
         return GeneResolution(
-            GeneResolutionStatus.RESOLVED, symbols[0], "ensembl_single_candidate",
+            GeneResolutionStatus.RESOLVED,
+            symbols[0],
+            "ensembl_single_candidate",
             reason=f"Exactly one protein-coding gene ({symbols[0]}) overlaps this position.",
         )
 
@@ -253,7 +276,9 @@ def _disambiguate_overlapping_genes(symbols: List[str], pos: int, build: str) ->
     if len(cds_hits) == 1:
         others = ", ".join(s for s in symbols if s != cds_hits[0])
         return GeneResolution(
-            GeneResolutionStatus.RESOLVED, cds_hits[0], "ensembl_cds_containment",
+            GeneResolutionStatus.RESOLVED,
+            cds_hits[0],
+            "ensembl_cds_containment",
             reason=(
                 f"Position falls within {cds_hits[0]}'s coding sequence but not the other overlapping "
                 f"candidate('s) canonical transcript ({others})."
@@ -265,13 +290,17 @@ def _disambiguate_overlapping_genes(symbols: List[str], pos: int, build: str) ->
     mane_in_pool = [s for s in mane_hits if s in tie_pool]
     if len(mane_in_pool) == 1:
         return GeneResolution(
-            GeneResolutionStatus.RESOLVED, mane_in_pool[0], "ensembl_mane_select",
+            GeneResolutionStatus.RESOLVED,
+            mane_in_pool[0],
+            "ensembl_mane_select",
             reason=f"{mane_in_pool[0]} is the MANE Select gene among the tied candidates ({', '.join(tie_pool)}).",
             candidates=symbols,
         )
 
     return GeneResolution(
-        GeneResolutionStatus.AMBIGUOUS, None, "none",
+        GeneResolutionStatus.AMBIGUOUS,
+        None,
+        "none",
         reason=(
             f"{len(symbols)} protein-coding genes genuinely overlap this position ({', '.join(symbols)}) "
             "and could not be disambiguated by CDS containment or MANE Select status."
@@ -345,11 +374,15 @@ _DOSAGE_COLUMNS = {
     "gene_symbol": ("GENE SYMBOL", "Gene Symbol", "gene_symbol"),
     "haploinsufficiency_score": ("HAPLOINSUFFICIENCY SCORE", "Haploinsufficiency Score", "haploinsufficiency_score"),
     "haploinsufficiency_description": (
-        "HAPLOINSUFFICIENCY DESCRIPTION", "Haploinsufficiency Description", "haploinsufficiency_description",
+        "HAPLOINSUFFICIENCY DESCRIPTION",
+        "Haploinsufficiency Description",
+        "haploinsufficiency_description",
     ),
     "triplosensitivity_score": ("TRIPLOSENSITIVITY SCORE", "Triplosensitivity Score", "triplosensitivity_score"),
     "triplosensitivity_description": (
-        "TRIPLOSENSITIVITY DESCRIPTION", "Triplosensitivity Description", "triplosensitivity_description",
+        "TRIPLOSENSITIVITY DESCRIPTION",
+        "Triplosensitivity Description",
+        "triplosensitivity_description",
     ),
 }
 

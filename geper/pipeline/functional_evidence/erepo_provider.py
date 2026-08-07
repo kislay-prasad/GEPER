@@ -38,6 +38,7 @@ from pipeline.functional_evidence.models import FunctionalEvidenceRecord
 from pipeline.functional_evidence.utils import bare_evidence_code, parse_evidence_code_strength
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -92,7 +93,8 @@ class ErepoFunctionalEvidenceProvider:
                     if bare not in _RELEVANT_CODES or status != "Met":
                         continue
                     strength = parse_evidence_code_strength(
-                        label, CONFIG.functional_evidence.EREPO_DEFAULT_STRENGTH,
+                        label,
+                        CONFIG.functional_evidence.EREPO_DEFAULT_STRENGTH,
                     )
                     records.append(
                         FunctionalEvidenceRecord(
@@ -110,21 +112,36 @@ class ErepoFunctionalEvidenceProvider:
 
     def _get(self, gene_symbol: str) -> Dict[str, Any]:
         url = f"{self.endpoint}/classifications"
+
+        if HEALTH.is_offline("ClinGen ERepo"):
+            HEALTH.note_skip("ClinGen ERepo")
+            raise ExternalAPIError(
+                f"ClinGen ERepo request to '{url}' skipped: ClinGen ERepo was confirmed offline at startup."
+            )
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
             try:
                 response = requests.get(
-                    url, params={"gene": gene_symbol}, timeout=CONFIG.functional_evidence.QUERY_TIMEOUT_SECS,
+                    url,
+                    params={"gene": gene_symbol},
+                    timeout=CONFIG.functional_evidence.QUERY_TIMEOUT_SECS,
                 )
                 if response.status_code == 404:
+                    HEALTH.note_success("ClinGen ERepo")
                     return {"variantInterpretations": []}
                 response.raise_for_status()
-                return response.json()
+                result = response.json()
+                HEALTH.note_success("ClinGen ERepo")
+                return result
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"ClinGen ERepo request attempt {attempt} failed for gene '{gene_symbol}': {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
+        HEALTH.note_failure("ClinGen ERepo")
         raise ExternalAPIError(
             f"ClinGen ERepo request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
         )

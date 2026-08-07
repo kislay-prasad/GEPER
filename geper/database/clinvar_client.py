@@ -82,6 +82,7 @@ from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -98,9 +99,9 @@ class ClinVarMatchStatus(str, enum.Enum):
     module's docstring for the real BRCA1 case that motivated it).
     """
 
-    NOT_FOUND = "not_found"        # esearch returned nothing at this position at all
+    NOT_FOUND = "not_found"  # esearch returned nothing at this position at all
     POSITION_ONLY = "position_only"  # record(s) exist at this position, but none match this allele
-    MATCHED = "matched"            # at least one record's allele (and position) matches the query variant
+    MATCHED = "matched"  # at least one record's allele (and position) matches the query variant
 
 
 class ClinVarClient:
@@ -213,6 +214,7 @@ class ClinVarClient:
         show). Records with an unparseable/missing date sort last
         rather than raising or silently winning a tie.
         """
+
         def sort_key(record: Dict[str, Any]) -> datetime:
             raw = record.get("last_evaluated")
             if not raw:
@@ -300,9 +302,7 @@ class ClinVarClient:
                     "review_status": germline.get("review_status"),
                     "last_evaluated": germline.get("last_evaluated"),
                     "condition": [
-                        trait.get("trait_name")
-                        for trait in germline.get("trait_set", [])
-                        if isinstance(trait, dict)
+                        trait.get("trait_name") for trait in germline.get("trait_set", []) if isinstance(trait, dict)
                     ],
                     "accession": entry.get("accession"),
                     "variant_match": self._variant_match(entry, variant, assembly),
@@ -311,9 +311,7 @@ class ClinVarClient:
         return records
 
     @staticmethod
-    def _variant_match(
-        entry: Dict[str, Any], variant: Optional[Variant], assembly: Optional[str]
-    ) -> Optional[bool]:
+    def _variant_match(entry: Dict[str, Any], variant: Optional[Variant], assembly: Optional[str]) -> Optional[bool]:
         """
         Whether this ClinVar record's allele is actually the queried
         variant -- checked on BOTH ref/alt and genomic position, not
@@ -426,6 +424,10 @@ class ClinVarClient:
         this is a data-layer quirk to route around, not a failure to
         retry into oblivion.
         """
+        if HEALTH.is_offline("ClinVar"):
+            HEALTH.note_skip("ClinVar")
+            raise ExternalAPIError(f"ClinVar request to '{url}' skipped: ClinVar was confirmed offline at startup.")
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
@@ -442,12 +444,17 @@ class ClinVarClient:
                         time.sleep(wait)
                     continue
                 response.raise_for_status()
-                return lenient_json_loads(response.text, source=url)
+                result = lenient_json_loads(response.text, source=url)
+                HEALTH.note_success("ClinVar")
+                return result
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"ClinVar request attempt {attempt} failed: {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
+        HEALTH.note_failure("ClinVar")
         raise ExternalAPIError(
             f"ClinVar request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
         )

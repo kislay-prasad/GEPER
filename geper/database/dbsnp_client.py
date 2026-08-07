@@ -50,6 +50,7 @@ from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -57,9 +58,9 @@ logger = get_logger(__name__)
 class DbSNPMatchStatus(str, enum.Enum):
     """Mirrors `database/clinvar_client.py::ClinVarMatchStatus` -- see this module's docstring for why it's a separate type."""
 
-    NOT_FOUND = "not_found"          # esearch returned nothing at this position at all
+    NOT_FOUND = "not_found"  # esearch returned nothing at this position at all
     POSITION_ONLY = "position_only"  # rsID(s) exist at this position, but none match this allele
-    MATCHED = "matched"              # at least one rsID's allele (and position) matches the query variant
+    MATCHED = "matched"  # at least one rsID's allele (and position) matches the query variant
 
 
 class DbSNPClient:
@@ -108,10 +109,16 @@ class DbSNPClient:
             detail = self._fetch_variation_detail(rsid)
             record = {"rsid": rsid, "variant_match": None}
             return {
-                "rsid": rsid, "found": True, "match_status": DbSNPMatchStatus.MATCHED.value,
-                "source": "vcf_id_column", "detail": detail,
-                "record_count": 1, "matched_record_count": 1,
-                "records": [record], "matched_records": [record], "primary_record": record,
+                "rsid": rsid,
+                "found": True,
+                "match_status": DbSNPMatchStatus.MATCHED.value,
+                "source": "vcf_id_column",
+                "detail": detail,
+                "record_count": 1,
+                "matched_record_count": 1,
+                "records": [record],
+                "matched_records": [record],
+                "primary_record": record,
             }
 
         chrom = variant.chrom.replace("chr", "")
@@ -122,10 +129,16 @@ class DbSNPClient:
         if not uids:
             logger.info(f"No dbSNP record found for '{term}'.")
             return {
-                "rsid": None, "found": False, "match_status": DbSNPMatchStatus.NOT_FOUND.value,
-                "source": "esearch", "detail": None,
-                "record_count": 0, "matched_record_count": 0,
-                "records": [], "matched_records": [], "primary_record": None,
+                "rsid": None,
+                "found": False,
+                "match_status": DbSNPMatchStatus.NOT_FOUND.value,
+                "source": "esearch",
+                "detail": None,
+                "record_count": 0,
+                "matched_record_count": 0,
+                "records": [],
+                "matched_records": [],
+                "primary_record": None,
             }
 
         candidates = self._esummary(uids, variant)
@@ -176,6 +189,7 @@ class DbSNPClient:
         into it, so this is the closest available proxy for "the
         current one," not an arbitrary pick.
         """
+
         def sort_key(record: Dict[str, Any]) -> int:
             digits = (record.get("rsid") or "rs0").lstrip("rs")
             return int(digits) if digits.isdigit() else 0
@@ -338,6 +352,10 @@ class DbSNPClient:
         `response.json()`'s strict parser, for the same
         control-character reason documented there.
         """
+        if HEALTH.is_offline("dbSNP"):
+            HEALTH.note_skip("dbSNP")
+            raise ExternalAPIError(f"dbSNP request to '{url}' skipped: dbSNP was confirmed offline at startup.")
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
@@ -354,12 +372,15 @@ class DbSNPClient:
                         time.sleep(wait)
                     continue
                 response.raise_for_status()
-                return lenient_json_loads(response.text, source=url)
+                result = lenient_json_loads(response.text, source=url)
+                HEALTH.note_success("dbSNP")
+                return result
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"dbSNP request attempt {attempt} failed: {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(
-            f"dbSNP request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
-        )
+        HEALTH.note_failure("dbSNP")
+        raise ExternalAPIError(f"dbSNP request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}")

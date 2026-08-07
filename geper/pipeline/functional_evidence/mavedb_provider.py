@@ -48,6 +48,7 @@ from pipeline.functional_evidence.models import FunctionalEvidenceRecord
 from pipeline.functional_evidence.utils import normalize_hgvs_c
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -92,19 +93,33 @@ class MaveDBFunctionalEvidenceProvider:
 
     def _search_score_sets(self, gene_symbol: str) -> List[Dict[str, Any]]:
         url = f"{self.endpoint}/score-sets/search"
+
+        if HEALTH.is_offline("MaveDB"):
+            HEALTH.note_skip("MaveDB")
+            raise ExternalAPIError(
+                f"MaveDB search request to '{url}' skipped: MaveDB was confirmed offline at startup."
+            )
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
             try:
                 response = requests.post(
-                    url, json={"text": gene_symbol}, timeout=CONFIG.functional_evidence.QUERY_TIMEOUT_SECS,
+                    url,
+                    json={"text": gene_symbol},
+                    timeout=CONFIG.functional_evidence.QUERY_TIMEOUT_SECS,
                 )
                 response.raise_for_status()
-                return response.json().get("scoreSets", []) or []
+                result = response.json().get("scoreSets", []) or []
+                HEALTH.note_success("MaveDB")
+                return result
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"MaveDB search attempt {attempt} failed for gene '{gene_symbol}': {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
+        HEALTH.note_failure("MaveDB")
         raise ExternalAPIError(
             f"MaveDB search request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
         )
@@ -139,7 +154,6 @@ class MaveDBFunctionalEvidenceProvider:
         if calibration is None:
             return  # no calibrated classification available -- nothing usable from this score set
 
-        license_info = metadata.get("license") or {}
         publication = _first_publication(metadata)
         research_use_only = bool(calibration.get("researchUseOnly"))
         strength = (
@@ -194,18 +208,28 @@ class MaveDBFunctionalEvidenceProvider:
         return response.text
 
     def _get(self, url: str) -> "requests.Response":
+        if HEALTH.is_offline("MaveDB"):
+            HEALTH.note_skip("MaveDB")
+            raise ExternalAPIError(f"MaveDB request to '{url}' skipped: MaveDB was confirmed offline at startup.")
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
             try:
                 response = requests.get(url, timeout=CONFIG.functional_evidence.QUERY_TIMEOUT_SECS)
                 response.raise_for_status()
+                HEALTH.note_success("MaveDB")
                 return response
             except requests.RequestException as exc:
                 last_error = exc
                 logger.warning(f"MaveDB request attempt {attempt} failed for '{url}': {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"MaveDB request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}")
+        HEALTH.note_failure("MaveDB")
+        raise ExternalAPIError(
+            f"MaveDB request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
+        )
 
 
 def _first_publication(metadata: Dict[str, Any]) -> Optional[str]:
@@ -226,13 +250,17 @@ def _best_calibration(calibrations: Optional[List[Dict[str, Any]]]) -> Optional[
 
 def _bucket_score(score: float, calibration: Dict[str, Any]) -> Optional[str]:
     for bucket in calibration.get("functionalClassifications") or []:
-        low, high = (bucket.get("range") or [None, None])
-        if _in_range(score, low, high, bucket.get("inclusiveLowerBound", True), bucket.get("inclusiveUpperBound", True)):
+        low, high = bucket.get("range") or [None, None]
+        if _in_range(
+            score, low, high, bucket.get("inclusiveLowerBound", True), bucket.get("inclusiveUpperBound", True)
+        ):
             return bucket.get("functionalClassification")
     return None
 
 
-def _in_range(score: float, low: Optional[float], high: Optional[float], inclusive_lower: bool, inclusive_upper: bool) -> bool:
+def _in_range(
+    score: float, low: Optional[float], high: Optional[float], inclusive_lower: bool, inclusive_upper: bool
+) -> bool:
     if low is not None:
         if not (score >= low if inclusive_lower else score > low):
             return False

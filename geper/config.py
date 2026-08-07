@@ -1690,6 +1690,32 @@ class APIConfig:
 
 
 @dataclass(frozen=True)
+class HealthCheckConfig:
+    """
+    Startup reachability probe for external services (Ensembl, NCBI
+    eutils/dbSNP, IndiGenomes, ClinGen ERepo, MaveDB) -- see
+    `utils/service_health.py`. Purely a fast up-front signal (printed
+    as a table before the first variant) plus a runtime skip hint for
+    services already confirmed offline; it never changes what a client
+    ultimately returns, only how long it spends finding that out.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_HEALTH_CHECK_ENABLED", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    # Deliberately much shorter than any client's own REQUEST_TIMEOUT_SECS
+    # (30s) -- this only needs to tell "up" from "down/slow", not complete
+    # a real query. Run in parallel across services (see
+    # `service_health.run_startup_checks`), so total startup overhead is
+    # bounded by this single timeout, not the sum of all services.
+    TIMEOUT_SECS: float = float(os.environ.get("GEPER_HEALTH_CHECK_TIMEOUT", "4.0"))
+
+
+@dataclass(frozen=True)
 class ConfidenceConfig:
     """
     Configuration for the Phase 3 Confidence Scoring Engine
@@ -2173,6 +2199,7 @@ class GeperConfig:
     qc_report: QCReportConfig = field(default_factory=QCReportConfig)
     report_branding: ReportBrandingConfig = field(default_factory=ReportBrandingConfig)
     normalization: VariantNormalizationConfig = field(default_factory=VariantNormalizationConfig)
+    health_check: HealthCheckConfig = field(default_factory=HealthCheckConfig)
 
     OUTPUT_DIR: str = os.environ.get("GEPER_OUTPUT_DIR", "./geper_output")
     CACHE_DIR: str = os.environ.get("GEPER_CACHE_DIR", "./model_cache")

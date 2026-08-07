@@ -76,6 +76,7 @@ from pipeline.gnomad.utils import normalize_build
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -152,9 +153,16 @@ def _post(name: str) -> Dict[str, Any]:
     the server evidently expects it, confirmed by a direct `curl`
     reproduction).
     """
+    endpoint = CONFIG.indigenomes.ENDPOINT
+
+    if HEALTH.is_offline("IndiGenomes"):
+        HEALTH.note_skip("IndiGenomes")
+        raise ExternalAPIError(
+            f"IndiGenomes request to '{endpoint}' skipped: IndiGenomes was confirmed offline at startup."
+        )
+
     last_error: Optional[Exception] = None
     body = json.dumps({"Name": name})
-    endpoint = CONFIG.indigenomes.ENDPOINT
     for attempt in range(1, CONFIG.indigenomes.MAX_RETRIES + 1):
         try:
             response = requests.post(
@@ -164,12 +172,17 @@ def _post(name: str) -> Dict[str, Any]:
                 timeout=CONFIG.indigenomes.QUERY_TIMEOUT_SECS,
             )
             response.raise_for_status()
-            return cast(Dict[str, Any], response.json())
+            result = cast(Dict[str, Any], response.json())
+            HEALTH.note_success("IndiGenomes")
+            return result
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             logger.warning(f"IndiGenomes request attempt {attempt} failed: {exc}")
+            if not is_transient_http_error(exc):
+                break
             if attempt < CONFIG.indigenomes.MAX_RETRIES:
                 time.sleep(CONFIG.indigenomes.RETRY_BACKOFF_SECS * attempt)
+    HEALTH.note_failure("IndiGenomes")
     raise ExternalAPIError(
         f"IndiGenomes request to '{endpoint}' failed after {CONFIG.indigenomes.MAX_RETRIES} attempts: {last_error}"
     )

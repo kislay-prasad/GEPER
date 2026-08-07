@@ -20,6 +20,7 @@ from pipeline.hpo.utils import build_phenotype_result
 from pipeline.orchestrator import GeperPipeline
 from utils.exceptions import PipelineError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, default_service_checks
 
 logger = get_logger(__name__)
 
@@ -194,6 +195,8 @@ def main() -> int:
         phenotype_result=phenotype_result,
     )
 
+    HEALTH.run_startup_checks(default_service_checks())
+
     try:
         pipeline.run(args.vcf, max_variants=args.max_variants, resume=not args.no_resume)
     except PipelineError as exc:
@@ -202,6 +205,8 @@ def main() -> int:
     except KeyboardInterrupt:
         logger.warning("Interrupted by user.")
         return 130
+    finally:
+        HEALTH.print_summary()
 
     return 0
 

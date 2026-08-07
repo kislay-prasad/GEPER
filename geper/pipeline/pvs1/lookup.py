@@ -36,6 +36,7 @@ from pipeline.pvs1.cache import TranscriptCache
 from pipeline.pvs1.utils import transcript_context_from_ensembl
 from pipeline.vcf_parser import Variant
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -161,6 +162,11 @@ class TranscriptLookup:
         url = f"{self._rest_base(build).rstrip('/')}/lookup/symbol/homo_sapiens/{gene_symbol}"
         params = {"expand": "1", "content-type": "application/json"}
 
+        if HEALTH.is_offline("Ensembl"):
+            HEALTH.note_skip("Ensembl")
+            message = f"Ensembl transcript lookup for {gene_symbol} skipped: Ensembl was confirmed offline at startup."
+            return {"skipped": False, "found": False, "gene_symbol": gene_symbol, "transcript": None, "error": message}
+
         payload = None
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.pvs1.MAX_RETRIES + 1):
@@ -174,6 +180,7 @@ class TranscriptLookup:
                 if response.status_code == 400:
                     # Ensembl answers an unknown symbol with 400, which is
                     # a definitive "no such gene", not a transient failure.
+                    HEALTH.note_success("Ensembl")
                     return {
                         "skipped": False,
                         "found": False,
@@ -183,14 +190,18 @@ class TranscriptLookup:
                     }
                 response.raise_for_status()
                 payload = response.json()
+                HEALTH.note_success("Ensembl")
                 break
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(f"Ensembl transcript lookup attempt {attempt} failed for {gene_symbol}: {exc}")
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.pvs1.MAX_RETRIES:
                     time.sleep(CONFIG.pvs1.RETRY_BACKOFF_SECS * attempt)
 
         if payload is None:
+            HEALTH.note_failure("Ensembl")
             message = f"Ensembl transcript lookup failed for {gene_symbol} after {CONFIG.pvs1.MAX_RETRIES} attempts: {last_error}"
             logger.warning(message)
             return {"skipped": False, "found": False, "gene_symbol": gene_symbol, "transcript": None, "error": message}
@@ -242,6 +253,9 @@ class TranscriptLookup:
         """
         if not transcript_id or CONFIG.pvs1.OFFLINE_MODE:
             return None
+        if HEALTH.is_offline("Ensembl"):
+            HEALTH.note_skip("Ensembl")
+            return None
         url = f"{self._rest_base(build).rstrip('/')}/sequence/id/{transcript_id}"
         try:
             response = requests.get(
@@ -252,6 +266,7 @@ class TranscriptLookup:
             )
             response.raise_for_status()
             sequence = (response.json() or {}).get("seq")
+            HEALTH.note_success("Ensembl")
             return sequence.upper() if isinstance(sequence, str) and sequence else None
         except (requests.RequestException, ValueError) as exc:
             logger.warning(
@@ -271,8 +286,7 @@ class TranscriptLookup:
         than none.
         """
         coding = [
-            t for t in transcripts
-            if t.get("biotype") == "protein_coding" and t.get("Translation") and t.get("Exon")
+            t for t in transcripts if t.get("biotype") == "protein_coding" and t.get("Translation") and t.get("Exon")
         ]
         if not coding:
             return None

@@ -22,6 +22,7 @@ from config import CONFIG
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError, SequenceGenerationError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -91,7 +92,7 @@ class SequenceContextGenerator:
         variant_offset = variant.pos - start
         ref_len = len(variant.ref)
 
-        window_ref_allele = reference_window[variant_offset: variant_offset + ref_len]
+        window_ref_allele = reference_window[variant_offset : variant_offset + ref_len]
         if window_ref_allele.upper() != variant.ref.upper():
             logger.warning(
                 f"Reference mismatch for {variant.chrom}:{variant.pos} "
@@ -100,11 +101,7 @@ class SequenceContextGenerator:
                 f"build matches your VCF (e.g. GRCh37 vs GRCh38)."
             )
 
-        alt_sequence = (
-            reference_window[:variant_offset]
-            + variant.alt
-            + reference_window[variant_offset + ref_len:]
-        )
+        alt_sequence = reference_window[:variant_offset] + variant.alt + reference_window[variant_offset + ref_len :]
 
         return SequenceContext(
             chrom=chrom,
@@ -191,10 +188,7 @@ class SequenceContextGenerator:
                 flank = flank_lookup(variant)
                 key = self.compute_window(variant, flank)
             except Exception as exc:  # noqa: BLE001 - never let prefetch block a run
-                logger.warning(
-                    f"Skipping prefetch window computation for "
-                    f"{variant.chrom}:{variant.pos}: {exc}"
-                )
+                logger.warning(f"Skipping prefetch window computation for {variant.chrom}:{variant.pos}: {exc}")
                 continue
             if key not in self._region_cache:
                 needed[key] = None
@@ -204,7 +198,7 @@ class SequenceContextGenerator:
 
         keys = list(needed.keys())
         batch_size = max(1, CONFIG.api.ENSEMBL_BATCH_SIZE)
-        batches = [keys[i:i + batch_size] for i in range(0, len(keys), batch_size)]
+        batches = [keys[i : i + batch_size] for i in range(0, len(keys), batch_size)]
 
         logger.info(
             f"Prefetching {len(keys)} distinct reference window(s) from "
@@ -230,6 +224,10 @@ class SequenceContextGenerator:
         any failure just means this batch contributes zero cache hits
         and every one of its variants falls back to a normal GET.
         """
+        if HEALTH.is_offline("Ensembl"):
+            HEALTH.note_skip("Ensembl")
+            return 0
+
         region_strings = [f"{chrom}:{start}..{end}" for chrom, start, end in batch]
         url = f"{self.base_url}/sequence/region/{self.species}"
         params = {"content-type": "application/json"}
@@ -248,8 +246,7 @@ class SequenceContextGenerator:
             payload = response.json()
         except (requests.RequestException, ValueError) as exc:
             logger.warning(
-                f"Batch prefetch of {len(batch)} region(s) failed "
-                f"({exc}); these will be fetched individually instead."
+                f"Batch prefetch of {len(batch)} region(s) failed ({exc}); these will be fetched individually instead."
             )
             return 0
 
@@ -290,29 +287,34 @@ class SequenceContextGenerator:
         if self.assembly:
             params["coord_system_version"] = self.assembly
 
+        if HEALTH.is_offline("Ensembl"):
+            HEALTH.note_skip("Ensembl")
+            raise ExternalAPIError(
+                f"Fetch of reference sequence for '{region}' skipped: Ensembl was confirmed offline at startup."
+            )
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
-                response = self._session.get(
-                    url, params=params, timeout=CONFIG.api.REQUEST_TIMEOUT_SECS
-                )
+                response = self._session.get(url, params=params, timeout=CONFIG.api.REQUEST_TIMEOUT_SECS)
                 response.raise_for_status()
                 payload = response.json()
                 sequence = payload.get("seq")
                 if not sequence:
-                    raise SequenceGenerationError(
-                        f"Ensembl returned no sequence for region '{region}'."
-                    )
+                    raise SequenceGenerationError(f"Ensembl returned no sequence for region '{region}'.")
+                HEALTH.note_success("Ensembl")
                 return sequence.upper()
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 logger.warning(
-                    f"Attempt {attempt}/{CONFIG.api.MAX_RETRIES} to fetch "
-                    f"region '{region}' from Ensembl failed: {exc}"
+                    f"Attempt {attempt}/{CONFIG.api.MAX_RETRIES} to fetch region '{region}' from Ensembl failed: {exc}"
                 )
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
 
+        HEALTH.note_failure("Ensembl")
         raise ExternalAPIError(
             f"Failed to fetch reference sequence for '{region}' from Ensembl "
             f"after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"

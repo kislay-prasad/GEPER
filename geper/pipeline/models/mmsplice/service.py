@@ -35,6 +35,7 @@ from pipeline.sequence_context import SequenceContextGenerator
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
+from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
 
@@ -83,15 +84,11 @@ class MMSpliceService:
         # public `build_context` computes, so this deliberately calls
         # its underlying `_get_region_cached` directly (same module
         # family: `pipeline.sequence_context`).
-        self._seq_ctx = sequence_context_generator or SequenceContextGenerator(
-            species=species, assembly=assembly
-        )
+        self._seq_ctx = sequence_context_generator or SequenceContextGenerator(species=species, assembly=assembly)
         self._session = self._seq_ctx._session  # reuse the same connection pool
 
         self.cache = (
-            MMSplicePredictionCache(max_size=CONFIG.mmsplice.CACHE_MAX_SIZE)
-            if CONFIG.mmsplice.CACHE_ENABLED
-            else None
+            MMSplicePredictionCache(max_size=CONFIG.mmsplice.CACHE_MAX_SIZE) if CONFIG.mmsplice.CACHE_ENABLED else None
         )
         # Per-run cache of exon annotations by queried region, so a VCF
         # with many nearby variants doesn't refetch overlapping exon
@@ -112,7 +109,8 @@ class MMSpliceService:
                 f"{variant.chrom}:{variant.pos}{variant.ref}>{variant.alt}: {exc}"
             )
             return _null_result(
-                supported=False, predicted=False,
+                supported=False,
+                predicted=False,
                 reason=f"internal error during MMSplice prediction: {exc}",
                 runtime_ms=(time.time() - start) * 1000.0,
             )
@@ -190,7 +188,8 @@ class MMSpliceService:
         """
         if variant.variant_type not in CONFIG.mmsplice.SUPPORTED_VARIANT_TYPES:
             return _null_result(
-                supported=False, predicted=False,
+                supported=False,
+                predicted=False,
                 reason=(
                     f"variant_type '{variant.variant_type}' is not supported "
                     f"(supported: {', '.join(CONFIG.mmsplice.SUPPORTED_VARIANT_TYPES)})"
@@ -201,12 +200,13 @@ class MMSpliceService:
         exons = self._fetch_overlapping_exons(variant)
         if not exons:
             return _null_result(
-                supported=False, predicted=False,
+                supported=False,
+                predicted=False,
                 reason="no exon annotation found near this variant (Ensembl overlap/region returned none)",
                 runtime_ms=(time.time() - start) * 1000.0,
             )
 
-        best_exon, best_eligibility, best_distance = None, None, None
+        best_exon, _, best_distance = None, None, None
         fallback_reason = None
         for exon in exons:
             dist_acceptor, dist_donor = distances_to_exon_boundaries(variant.pos, exon)
@@ -219,17 +219,22 @@ class MMSpliceService:
                 intron_window=CONFIG.mmsplice.INTRON_WINDOW,
                 exon_near_splice_window=CONFIG.mmsplice.EXON_NEAR_SPLICE_WINDOW,
             )
-            distance = min(
-                d for d in (dist_acceptor, dist_donor) if d is not None
-            ) if (dist_acceptor is not None or dist_donor is not None) else None
-            if eligibility.eligible and (best_distance is None or (distance is not None and abs(distance) < abs(best_distance))):
-                best_exon, best_eligibility, best_distance = exon, eligibility, distance
+            distance = (
+                min(d for d in (dist_acceptor, dist_donor) if d is not None)
+                if (dist_acceptor is not None or dist_donor is not None)
+                else None
+            )
+            if eligibility.eligible and (
+                best_distance is None or (distance is not None and abs(distance) < abs(best_distance))
+            ):
+                best_exon, _, best_distance = exon, eligibility, distance
             if not eligibility.eligible:
                 fallback_reason = eligibility.reason
 
         if best_exon is None:
             return _null_result(
-                supported=False, predicted=False,
+                supported=False,
+                predicted=False,
                 reason=fallback_reason or "no overlapping exon fell within the configured splice window",
                 runtime_ms=(time.time() - start) * 1000.0,
             )
@@ -247,7 +252,8 @@ class MMSpliceService:
             ref_window, alt_window, overhang = self._build_windows(variant, best_exon)
         except ExternalAPIError as exc:
             return _null_result(
-                supported=True, predicted=False,
+                supported=True,
+                predicted=False,
                 reason=f"reference sequence fetch failed: {exc}",
                 runtime_ms=(time.time() - start) * 1000.0,
             )
@@ -304,6 +310,11 @@ class MMSpliceService:
         if self.assembly:
             params["coord_system_version"] = self.assembly
 
+        if HEALTH.is_offline("Ensembl"):
+            HEALTH.note_skip("Ensembl")
+            self._exon_region_cache[key] = []
+            return []
+
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
             try:
@@ -313,6 +324,7 @@ class MMSpliceService:
                 exons = [self._parse_exon_feature(chrom, feature) for feature in payload]
                 exons = [e for e in exons if e is not None]
                 self._exon_region_cache[key] = exons
+                HEALTH.note_success("Ensembl")
                 return exons
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
@@ -320,9 +332,12 @@ class MMSpliceService:
                     f"Attempt {attempt}/{CONFIG.api.MAX_RETRIES} to fetch exon annotation "
                     f"for {chrom}:{region_start}-{region_end} failed: {exc}"
                 )
+                if not is_transient_http_error(exc):
+                    break
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
 
+        HEALTH.note_failure("Ensembl")
         logger.error(
             f"Failed to fetch exon annotation for {chrom}:{region_start}-{region_end} "
             f"after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
@@ -362,9 +377,7 @@ class MMSpliceService:
 
         variant_offset = variant.pos - genomic_start
         ref_len = len(variant.ref)
-        genomic_alt_seq = (
-            genomic_ref_seq[:variant_offset] + variant.alt + genomic_ref_seq[variant_offset + ref_len:]
-        )
+        genomic_alt_seq = genomic_ref_seq[:variant_offset] + variant.alt + genomic_ref_seq[variant_offset + ref_len :]
 
         upstream_overhang = exon.start - genomic_start  # acceptor-side intron bp actually present
         downstream_overhang = genomic_end - exon.end  # donor-side intron bp actually present

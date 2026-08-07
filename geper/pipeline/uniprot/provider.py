@@ -35,9 +35,9 @@ README.md already advises for ClinGen's live API path.
 from __future__ import annotations
 
 import json
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -65,23 +65,50 @@ class UniProtProviderBase:
 
 
 class LocalDatasetUniProtProvider(UniProtProviderBase):
-    """Queries a local, gene-symbol-indexed JSON-lines dataset of pre-fetched UniProt entries."""
+    """
+    Queries a local, gene-symbol-indexed JSON-lines dataset of
+    pre-fetched UniProt entries -- either a deployer-provisioned
+    `dataset_path`, or (when none is given) self-fetched and cached by
+    `pipeline/uniprot/bootstrap.py` on first use, the same auto-fetch
+    shape `pipeline/mane/provider.py::LocalDatasetMANEProvider` and
+    `pipeline/hpo/provider.py::LocalDatasetHPOProvider` already use.
+    `auto_fetch=False` exists for tests that want a fully offline,
+    deterministic provider (same reasoning as those two).
+    """
 
     name = "local_dataset"
 
-    def __init__(self, dataset_path: Optional[str] = None):
+    def __init__(self, dataset_path: Optional[str] = None, auto_fetch: bool = True):
         self.dataset_path = dataset_path
+        self._auto_fetch = auto_fetch and dataset_path is None
+        self._lock = Lock()
+        self._loaded = False
         self._index: Optional[Dict[str, Dict[str, Any]]] = None
 
     def is_available(self) -> bool:
-        return bool(self.dataset_path) and os.path.exists(self.dataset_path)
+        if self.dataset_path:
+            return True
+        return self._auto_fetch and CONFIG.uniprot.AUTO_FETCH_ENABLED and not CONFIG.uniprot.OFFLINE_MODE
 
-    def _load(self) -> Dict[str, Dict[str, Any]]:
-        if self._index is not None:
-            return self._index
+    def _ensure_loaded(self) -> None:
+        if self._loaded:
+            return
+        with self._lock:
+            if self._loaded:  # re-check inside the lock
+                return
+            path = self.dataset_path
+            if self._auto_fetch and CONFIG.uniprot.AUTO_FETCH_ENABLED and not CONFIG.uniprot.OFFLINE_MODE and not path:
+                from pipeline.uniprot import bootstrap as uniprot_bootstrap
+
+                path = uniprot_bootstrap.ensure_dataset_file()
+            if path:
+                self._load(path)
+            self._loaded = True
+
+    def _load(self, path: str) -> None:
         index: Dict[str, Dict[str, Any]] = {}
         try:
-            with open(self.dataset_path, "r", encoding="utf-8") as fh:
+            with open(path, "r", encoding="utf-8") as fh:
                 for line in fh:
                     line = line.strip()
                     if not line:
@@ -94,15 +121,16 @@ class LocalDatasetUniProtProvider(UniProtProviderBase):
                     if gene and record.get("entry"):
                         index[gene] = record["entry"]
         except OSError as exc:
-            logger.warning(f"Could not read local UniProt dataset '{self.dataset_path}': {exc}")
+            logger.warning(f"Could not read local UniProt dataset '{path}': {exc}")
         self._index = index
-        return index
+        logger.info(f"Loaded {len(index)} UniProt gene entries from '{path}'.")
 
     def query(self, gene_symbol: str) -> Optional[UniProtAnnotation]:
         if not self.is_available():
             return None
+        self._ensure_loaded()
         gene = normalize_gene_symbol(gene_symbol)
-        entry = self._load().get(gene or "")
+        entry = (self._index or {}).get(gene or "")
         if entry is None:
             return UniProtAnnotation.not_found(gene_symbol, self.name)
         try:
@@ -176,7 +204,9 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
                 logger.warning(f"UniProt REST API request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.uniprot.MAX_RETRIES:
                     time.sleep(CONFIG.uniprot.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"UniProt REST API request to '{url}' failed after {CONFIG.uniprot.MAX_RETRIES} attempts: {last_error}")
+        raise ExternalAPIError(
+            f"UniProt REST API request to '{url}' failed after {CONFIG.uniprot.MAX_RETRIES} attempts: {last_error}"
+        )
 
 
 class CompositeUniProtProvider:
@@ -188,7 +218,9 @@ class CompositeUniProtProvider:
         api_provider: Optional[LiveAPIUniProtProvider] = None,
         max_concurrent: Optional[int] = None,
     ):
-        self.local_provider = local_provider or LocalDatasetUniProtProvider(dataset_path=CONFIG.uniprot.LOCAL_DATASET_FILE or None)
+        self.local_provider = local_provider or LocalDatasetUniProtProvider(
+            dataset_path=CONFIG.uniprot.LOCAL_DATASET_FILE or None
+        )
         self.api_provider = api_provider or LiveAPIUniProtProvider()
         self.max_concurrent = max_concurrent or 8
 
@@ -199,14 +231,34 @@ class CompositeUniProtProvider:
                 return result
             return UniProtAnnotation.from_error(gene_symbol, "offline mode: no local UniProt dataset configured")
 
+        # Falls through to the live API on a clean local "not_found",
+        # not just on local being altogether unavailable/erroring --
+        # now that `local_provider` can be a self-fetched, auto-
+        # populated dataset (see `pipeline/uniprot/bootstrap.py`)
+        # rather than only an explicit, deployer-curated file, a clean
+        # miss from it is NOT authoritative on its own: the reference
+        # proteome the bootstrap fetches doesn't claim 100% gene-symbol
+        # coverage (alias mismatches, very recently characterized
+        # genes). A local *error* (an exception, or `.error` set) is
+        # kept as a terminal result exactly as before -- matching the
+        # `CompositeClinGenProvider`/`CompositeGnomadProvider`
+        # convention `test_provider_exception_is_caught_gracefully`
+        # documents: a provider that raises reports a definite failure,
+        # not a "try the next one" signal.
         result = self._try(self.local_provider, gene_symbol)
-        if result is not None:
+        if result is not None and (result.found or result.error):
             return result
 
-        result = self._try(self.api_provider, gene_symbol)
+        api_result = self._try(self.api_provider, gene_symbol)
+        if api_result is not None:
+            return api_result
+
+        # Local answered cleanly (found nothing, no error) but the API
+        # was unavailable/disabled -- prefer local's clean "not found"
+        # over fabricating a fresh one, so callers keep whatever source
+        # attribution it carried.
         if result is not None:
             return result
-
         return UniProtAnnotation.not_found(gene_symbol, "none")
 
     @staticmethod

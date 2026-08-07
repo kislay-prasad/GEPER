@@ -46,6 +46,7 @@ from pipeline.clingen.lookup import ClinGenLookup
 import pipeline.hpo.bootstrap as hpo_bootstrap
 import pipeline.mane.bootstrap as mane_bootstrap
 import pipeline.orphanet.bootstrap as orphanet_bootstrap
+import pipeline.uniprot.bootstrap as uniprot_bootstrap
 from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.hpo.lookup import HPOLookup
 from pipeline.orphanet.lookup import OrphanetLookup
@@ -401,7 +402,7 @@ class GeperPipeline:
         (one lightweight `/info/data` call), local BLAST+ tool versions,
         and whatever's already on disk for the bootstrapped/cached
         datasets (ClinGen gene-validity/dosage, HPO, Orphanet, MANE
-        Select, AlphaMissense) -- reading their provenance sidecars, never
+        Select, UniProt, AlphaMissense) -- reading their provenance sidecars, never
         triggering a fresh download here. Never raises: every capture is
         independently wrapped so one failing source can't prevent the
         rest (or pipeline startup itself) from proceeding.
@@ -454,6 +455,16 @@ class GeperPipeline:
         self._capture_bootstrapped_dataset_provenance("Orphanet", "", orphanet_bootstrap.gene_disorder_cache_path())
         self._capture_bootstrapped_dataset_provenance(
             "MANE Select (NCBI)", CONFIG.mane.LOCAL_FILE, mane_bootstrap.summary_cache_path()
+        )
+        # UniProt also has a per-variant provenance capture further
+        # below (from the live REST API's `X-UniProt-Release` header,
+        # when that path is actually used) -- this startup capture and
+        # that one can never conflict: `RunProvenanceCollector.record`
+        # only ever upgrades a source's recorded status, never
+        # downgrades it (see that method's own docstring), so whichever
+        # of the two observes the more informative signal wins.
+        self._capture_bootstrapped_dataset_provenance(
+            "UniProt", CONFIG.uniprot.LOCAL_DATASET_FILE, uniprot_bootstrap.dataset_cache_path()
         )
 
         # AlphaMissense: keyed by build ("hg38"/"hg19", not "GRCh38"/

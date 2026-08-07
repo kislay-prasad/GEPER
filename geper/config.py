@@ -1491,11 +1491,31 @@ class UniProtConfig:
 
     Two independent, configurable query sources, mirroring
     `GnomadConfig`/`ClinGenConfig`'s local-first/API-fallback shape:
-      - An optional local JSON-lines dataset (`gene_symbol` ->
-        UniProt entry JSON), for offline/deterministic use.
+      - A local JSON-lines dataset (`gene_symbol` -> UniProt entry
+        JSON), for offline/deterministic use -- either a deployer-
+        provisioned `LOCAL_DATASET_FILE`, or (when none is set) self-
+        fetched and cached by `pipeline/uniprot/bootstrap.py`, the
+        same "download once, query locally" shape `pipeline/mane/`
+        and `pipeline/hpo/` already use.
       - UniProt's public REST API (`rest.uniprot.org`), used
-        automatically when no local file is configured or the gene
-        isn't present in it, unless OFFLINE_MODE is set.
+        automatically when no local file is available (or a specific
+        gene isn't in it), unless OFFLINE_MODE is set.
+
+    Bootstrap source: UniProt's human reference proteome (`UP000005640`)
+    Swiss-Prot flat file, reachable via UniProt's own stable
+    `current_release` alias (confirmed live 2026-08-08:
+    `.../current_release/knowledgebase/reference_proteomes/Eukaryota/
+    UP000005640/UP000005640_9606.dat.gz`, ~128MB, release version
+    "2026_02" -- unlike NCBI's MANE directory, UniProt also publishes a
+    clean `RELEASE.metalink` XML manifest right alongside the data file
+    itself, with an explicit `<version>` tag, so `bootstrap.py` reads
+    that for the version signal rather than parsing directory-listing
+    HTML). The reference proteome's own `.gene2acc` mapping file was
+    considered and NOT used -- it carries only accession<->external-ID
+    cross-references, no function/disease/feature annotation, so it
+    cannot answer this integration's actual queries; the gene symbol
+    needed to index each entry is already present in the `.dat` file's
+    own GN (gene name) line, making a second download unnecessary.
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_UNIPROT", "true").strip().lower() not in (
@@ -1506,6 +1526,31 @@ class UniProtConfig:
     )
 
     LOCAL_DATASET_FILE: str = os.environ.get("GEPER_UNIPROT_LOCAL_FILE", "")
+
+    # -- self-provisioning local dataset (see pipeline/uniprot/bootstrap.py) --
+    AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_UNIPROT_AUTO_FETCH", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    # UniProt's stable "current release" directory for the human
+    # reference proteome -- filenames here are NOT version-suffixed
+    # (unlike NCBI's MANE directory), so no directory-listing discovery
+    # step is needed; only the RELEASE.metalink manifest is read, for
+    # the version string.
+    AUTO_FETCH_DIR_URL: str = os.environ.get(
+        "GEPER_UNIPROT_AUTO_FETCH_DIR_URL",
+        "https://ftp.uniprot.org/pub/databases/uniprot/current_release/"
+        "knowledgebase/reference_proteomes/Eukaryota/UP000005640/",
+    )
+    # UniProt's own release cadence is ~8 weeks (confirmed live: 6
+    # releases/year via ftp.uniprot.org/.../previous_releases/) -- a
+    # weekly refresh check is already generous, same reasoning as
+    # `MANEConfig.AUTO_FETCH_TTL_HOURS`.
+    AUTO_FETCH_TTL_HOURS: float = float(os.environ.get("GEPER_UNIPROT_AUTO_FETCH_TTL_HOURS", "168"))
+    AUTO_FETCH_LOCAL_DIR: str = os.environ.get("GEPER_UNIPROT_AUTO_FETCH_DIR", "")  # "" -> "<CACHE_DIR>/uniprot"
+    AUTO_FETCH_TIMEOUT_SECS: int = int(os.environ.get("GEPER_UNIPROT_AUTO_FETCH_TIMEOUT", "180"))
 
     API_BASE: str = os.environ.get("GEPER_UNIPROT_API_BASE", "https://rest.uniprot.org/uniprotkb")
     ORGANISM_ID: str = os.environ.get("GEPER_UNIPROT_ORGANISM_ID", "9606")  # Homo sapiens

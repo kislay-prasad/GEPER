@@ -1175,14 +1175,36 @@ def _build_clinician_summary_flowables(
             "Data-source version not determinable for cited evidence from: " + ", ".join(sorted(gap_sources)) + "."
         )
 
-    flow.append(Paragraph("Reviewer Attention", styles["SectionHeading"]))
+    # Heading + its first line of content are wrapped in `KeepTogether` so
+    # the heading can never be stranded alone at the bottom of a page with
+    # its content starting fresh on the next one (reproduced with a
+    # 12-variant run: the heading alone was the last line of page 1, every
+    # bullet started page 2). Only the first line is included -- not the
+    # whole (open-ended) attention list -- so a long list still flows
+    # normally across a page break rather than being forced, as a block,
+    # onto a near-empty new page the way the sign-off block used to be
+    # (see `_build_signoff_block`'s docstring for that failure mode).
     if attention_lines:
-        flow.extend(Paragraph(f"! {line}", styles["BulletText"]) for line in attention_lines)
+        first, rest = attention_lines[0], attention_lines[1:]
+        flow.append(
+            KeepTogether(
+                [
+                    Paragraph("Reviewer Attention", styles["SectionHeading"]),
+                    Paragraph(f"! {first}", styles["BulletText"]),
+                ]
+            )
+        )
+        flow.extend(Paragraph(f"! {line}", styles["BulletText"]) for line in rest)
     else:
         flow.append(
-            Paragraph(
-                "No conflicts, ambiguous gene resolution, or evidence-provenance gaps flagged for this run.",
-                styles["BodyText"],
+            KeepTogether(
+                [
+                    Paragraph("Reviewer Attention", styles["SectionHeading"]),
+                    Paragraph(
+                        "No conflicts, ambiguous gene resolution, or evidence-provenance gaps flagged for this run.",
+                        styles["BodyText"],
+                    ),
+                ]
             )
         )
 
@@ -1296,7 +1318,18 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
                     Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
                 ]
             )
-        table = Table(rows, colWidths=[22 * mm, 25 * mm, 113 * mm], hAlign="LEFT")
+        # `repeatRows=1` -- same as `_build_clinician_summary_table`'s table
+        # -- so that if a wide rationale forces ReportLab to split this
+        # table between two of its rows, the "Criterion / Strength /
+        # Rationale" header repeats on the continuation page instead of
+        # being strandable alone on the page before it (reproduced without
+        # this: with enough preceding content, the header could be the
+        # last thing on a page while every data row started fresh on the
+        # next one, with no header to explain them). ReportLab's default
+        # table split is already row-atomic -- a single row's cells always
+        # move to the next page together, never mid-sentence -- so this is
+        # about the header's company, not about a row itself splitting.
+        table = Table(rows, colWidths=[22 * mm, 25 * mm, 113 * mm], hAlign="LEFT", repeatRows=1)
         table.setStyle(
             TableStyle(
                 [
@@ -1327,15 +1360,24 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     return flow
 
 
-def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
+def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
     Signature + date lines, followed immediately by the standard legal
-    disclaimer. Wrapped in `KeepTogether` so the two never split across
-    a page break -- ReportLab's flowable layout flows top-down and has
-    no first-class "pin to the bottom of the last page" primitive, so
-    this is the idiomatic way to say "keep this block intact and let it
-    land wherever it naturally falls" rather than a false promise of
-    exact bottom-of-page placement.
+    disclaimer.
+
+    Only the heading + signature table are wrapped in `KeepTogether` (a
+    signature line split from its own "Signature:"/"Date:" labels would
+    be unreadable). The disclaimer paragraph that follows is
+    deliberately left outside that atomic unit: it's ordinary body text
+    with no layout requirement to stay glued to the table, and folding
+    it into the same `KeepTogether` was inflating the group's "must all
+    fit together" height by the disclaimer's own extra lines for no
+    visual benefit -- on a run where the sign-off would otherwise have
+    landed on a page with genuine but tight remaining room, that was
+    enough to push the whole block, disclaimer included, onto an
+    otherwise near-empty next page. Splitting it out lets the heading
+    and table land wherever they naturally fit, with the disclaimer
+    flowing right after -- same as any other paragraph.
     """
     line = "_" * 45
     sig_table = Table(
@@ -1355,17 +1397,19 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> KeepTogether:
         )
     )
 
-    return KeepTogether(
-        [
-            _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
-            Spacer(1, 10 * mm),
-            Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
-            Spacer(1, 4 * mm),
-            sig_table,
-            Spacer(1, 8 * mm),
-            Paragraph(_DISCLAIMER_TEXT, styles["Disclaimer"]),
-        ]
-    )
+    return [
+        KeepTogether(
+            [
+                _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
+                Spacer(1, 10 * mm),
+                Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
+                Spacer(1, 4 * mm),
+                sig_table,
+            ]
+        ),
+        Spacer(1, 8 * mm),
+        Paragraph(_DISCLAIMER_TEXT, styles["Disclaimer"]),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -1466,7 +1510,7 @@ def generate_pdf(
     for idx, variant_result in enumerate(variants, start=1):
         story.extend(_build_variant_section(idx, variant_result, styles))
 
-    story.append(_build_signoff_block(styles))
+    story.extend(_build_signoff_block(styles))
 
     doc.build(
         story,

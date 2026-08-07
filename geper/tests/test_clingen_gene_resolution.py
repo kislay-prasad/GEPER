@@ -31,7 +31,14 @@ _STK11_POS = 1228350  # inside STK11's real last coding exon, and CBARP's real f
 
 
 def _gene_feature(name, start, end, strand, biotype="protein_coding"):
-    return {"external_name": name, "gene_id": f"ENSG_{name}", "start": start, "end": end, "strand": strand, "biotype": biotype}
+    return {
+        "external_name": name,
+        "gene_id": f"ENSG_{name}",
+        "start": start,
+        "end": end,
+        "strand": strand,
+        "biotype": biotype,
+    }
 
 
 # Real, live-confirmed overlap (see module docstring).
@@ -125,8 +132,13 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
             record = stk11_transcript if symbol == "STK11" else cbarp_transcript
             return {"skipped": False, "found": True, "transcript": record}
 
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE, _CBARP_FEATURE]), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene):
+        with (
+            mock.patch(
+                "pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE, _CBARP_FEATURE]
+            ),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
 
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
@@ -145,8 +157,11 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
             return {"skipped": False, "found": True, "transcript": record}
 
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
 
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
@@ -165,8 +180,11 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
             return {"skipped": False, "found": True, "transcript": record}
 
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
 
         self.assertEqual(resolution.status, GeneResolutionStatus.AMBIGUOUS)
@@ -188,8 +206,11 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
             return {"skipped": False, "found": True, "transcript": record}
 
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
 
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
@@ -198,9 +219,106 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
 
     def test_transcript_lookup_failure_does_not_crash_falls_through_to_ambiguous(self):
         features = [_STK11_FEATURE, _CBARP_FEATURE]
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=RuntimeError("network boom")):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=RuntimeError("network boom")),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
+        self.assertEqual(resolution.status, GeneResolutionStatus.AMBIGUOUS)
+
+
+class TestRealManeDatasetBreaksTheTie(unittest.TestCase):
+    """
+    End-to-end verification that `pipeline/mane/provider.py`'s dataset
+    lookup -- not just the pre-existing (permanently-inert-in-production,
+    since Ensembl's `lookup/id` response never carries a MANE field)
+    `transcript.is_mane_select` flag -- actually breaks a tie. Mocks
+    `pipeline.clingen.utils.mane_select_transcript_id` directly (the
+    same seam `TestOverlappingGeneDisambiguation`'s other tests already
+    patch to `None`), simulating the real dataset having an answer for
+    exactly one of two tied candidates.
+    """
+
+    def test_mane_dataset_resolves_a_tie_the_ensembl_flag_alone_cannot(self):
+        # Both candidates report is_mane_select=False (the real,
+        # always-false-in-production Ensembl-payload state) -- if the
+        # wiring only consulted that flag, this would stay AMBIGUOUS
+        # exactly as it did before this feature. GENEA's own transcript_id
+        # ("ENST_GENEA", see `_transcript_record`) matches what the
+        # (mocked) MANE dataset reports as GENEA's MANE Select
+        # transcript; GENEB's does not.
+        gene_a = _transcript_record("GENEA", 1177558, 1230000, 1, is_mane_select=False)
+        gene_b = _transcript_record("GENEB", 1228000, 1239465, -1, is_mane_select=False)
+
+        def fake_query_gene(symbol, build="GRCh38"):
+            record = gene_a if symbol == "GENEA" else gene_b
+            return {"skipped": False, "found": True, "transcript": record}
+
+        def fake_mane_lookup(symbol):
+            return "ENST_GENEA" if symbol == "GENEA" else None
+
+        features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", side_effect=fake_mane_lookup),
+        ):
+            resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
+
+        self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
+        self.assertEqual(resolution.gene_symbol, "GENEA")
+        self.assertEqual(resolution.source, "ensembl_mane_select")
+
+    def test_mane_answer_that_does_not_match_this_candidates_own_transcript_does_not_count(self):
+        """The MANE dataset having *an* entry for a gene isn't enough --
+        it must match the specific transcript TranscriptLookup returned
+        for that gene. A mismatched transcript ID (e.g. TranscriptLookup
+        resolved a different, non-MANE transcript for this gene) must
+        not be treated as a MANE Select hit."""
+        gene_a = _transcript_record("GENEA", 1177558, 1230000, 1, is_mane_select=False)
+        gene_b = _transcript_record("GENEB", 1228000, 1239465, -1, is_mane_select=False)
+
+        def fake_query_gene(symbol, build="GRCh38"):
+            record = gene_a if symbol == "GENEA" else gene_b
+            return {"skipped": False, "found": True, "transcript": record}
+
+        # MANE's real transcript for GENEA is some other ID entirely --
+        # not the one TranscriptLookup happened to return here.
+        def fake_mane_lookup(symbol):
+            return "ENST_SOME_OTHER_TRANSCRIPT" if symbol == "GENEA" else None
+
+        features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", side_effect=fake_mane_lookup),
+        ):
+            resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
+
+        self.assertEqual(resolution.status, GeneResolutionStatus.AMBIGUOUS)
+
+    def test_gene_absent_from_mane_dataset_still_falls_through_to_ambiguous(self):
+        """Honest degradation: when neither tied candidate has any
+        MANE Select entry at all (mitochondrial-gene-style gap, e.g.
+        the real MT-ATP8/MT-ATP6 overlap -- confirmed live absent from
+        the real MANE dataset), the tie-break must fall through to
+        AMBIGUOUS exactly as it did before this dataset was wired in,
+        never guess."""
+        gene_a = _transcript_record("GENEA", 1177558, 1230000, 1, is_mane_select=False)
+        gene_b = _transcript_record("GENEB", 1228000, 1239465, -1, is_mane_select=False)
+
+        def fake_query_gene(symbol, build="GRCh38"):
+            record = gene_a if symbol == "GENEA" else gene_b
+            return {"skipped": False, "found": True, "transcript": record}
+
+        features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
+            resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
+
         self.assertEqual(resolution.status, GeneResolutionStatus.AMBIGUOUS)
 
 
@@ -218,8 +336,11 @@ class TestBackwardCompatibleWrapper(unittest.TestCase):
             return {"skipped": False, "found": True, "transcript": record}
 
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features), \
-             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
+            mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
+        ):
             self.assertIsNone(resolve_gene_symbol("19", _STK11_POS, build="GRCh38"))
 
 

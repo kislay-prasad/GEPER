@@ -44,6 +44,7 @@ from pipeline.alphafold.lookup import AlphaFoldLookup
 import pipeline.clingen.bootstrap as clingen_bootstrap
 from pipeline.clingen.lookup import ClinGenLookup
 import pipeline.hpo.bootstrap as hpo_bootstrap
+import pipeline.mane.bootstrap as mane_bootstrap
 import pipeline.orphanet.bootstrap as orphanet_bootstrap
 from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
 from pipeline.hpo.lookup import HPOLookup
@@ -399,8 +400,8 @@ class GeperPipeline:
         identifiers already known to config, Ensembl's current release
         (one lightweight `/info/data` call), local BLAST+ tool versions,
         and whatever's already on disk for the bootstrapped/cached
-        datasets (ClinGen gene-validity/dosage, HPO, Orphanet,
-        AlphaMissense) -- reading their provenance sidecars, never
+        datasets (ClinGen gene-validity/dosage, HPO, Orphanet, MANE
+        Select, AlphaMissense) -- reading their provenance sidecars, never
         triggering a fresh download here. Never raises: every capture is
         independently wrapped so one failing source can't prevent the
         rest (or pipeline startup itself) from proceeding.
@@ -451,6 +452,9 @@ class GeperPipeline:
             "HPO", CONFIG.hpo.LOCAL_FILE, hpo_bootstrap.genes_to_phenotype_cache_path()
         )
         self._capture_bootstrapped_dataset_provenance("Orphanet", "", orphanet_bootstrap.gene_disorder_cache_path())
+        self._capture_bootstrapped_dataset_provenance(
+            "MANE Select (NCBI)", CONFIG.mane.LOCAL_FILE, mane_bootstrap.summary_cache_path()
+        )
 
         # AlphaMissense: keyed by build ("hg38"/"hg19", not "GRCh38"/
         # "GRCh37" -- see `models/alphamissense.py::catalogue_cache_path`),

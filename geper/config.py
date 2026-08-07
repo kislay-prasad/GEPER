@@ -909,6 +909,88 @@ class ClinGenConfig:
 
 
 @dataclass(frozen=True)
+class MANEConfig:
+    """
+    Configuration for NCBI's MANE (Matched Annotation from NCBI and
+    EBI) Select gene->transcript dataset (see `pipeline/mane/`): which
+    single Ensembl transcript NCBI and EMBL-EBI jointly designate as
+    "the" representative transcript for a protein-coding gene. Used
+    solely as the second-stage tie-break in
+    `pipeline/clingen/utils.py::_disambiguate_overlapping_genes`, when
+    two genes' gene bodies (or even coding sequences) genuinely overlap
+    a queried position -- Ensembl's own `lookup/id` REST response
+    never populates a MANE field (verified live), so without this,
+    that tie-break step was always inert and every such case fell
+    straight through to AMBIGUOUS.
+
+    Same "download once, query locally, refresh on a TTL" self-
+    provisioning shape as `ClinGenConfig`/`HPOConfig` above, not a new
+    live per-request API dependency -- see
+    `pipeline/mane/bootstrap.py`. NCBI's MANE `current/` directory
+    (https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/current/) is a
+    stable alias, but the actual filenames inside it embed the release
+    version (e.g. `MANE.GRCh38.v1.5.summary.txt.gz`, confirmed live
+    2026-08-08) -- `INDEX_URL` below is that stable directory, fetched
+    and parsed at bootstrap time to discover the exact current
+    filename, rather than hardcoding a version number that goes stale
+    at the next MANE release. The `.summary.txt.gz` file (~1.1MB
+    compressed, ~3.6MB decompressed, ~19,400 rows, one per MANE Select/
+    MANE Plus Clinical transcript) is the lightest-weight file that
+    carries the gene-symbol -> transcript mapping GEPER needs; the
+    alternative GFF3/GTF/FASTA files in the same directory are 7-83MB
+    each and carry full genomic-feature annotation this integration
+    has no use for.
+
+    Mitochondrial genes (MT-*) and a small number of other genes have
+    no MANE Select transcript at all (confirmed live: neither MT-ATP8
+    nor MT-ATP6 appear in the dataset) -- this is a genuine, disclosed
+    NCBI/EBI scope limitation, not a GEPER gap; such genes simply
+    aren't in `_by_gene_symbol`, and the tie-break degrades honestly to
+    its existing AMBIGUOUS fallback exactly as it did before this
+    dataset was wired in.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_MANE", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    LOCAL_FILE: str = os.environ.get("GEPER_MANE_LOCAL_FILE", "")
+
+    OFFLINE_MODE: bool = os.environ.get("GEPER_MANE_OFFLINE", "false").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    # -- self-provisioning local dataset (see pipeline/mane/bootstrap.py) --
+    AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_MANE_AUTO_FETCH", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    # NCBI's stable "current release" directory index -- parsed at
+    # bootstrap time to discover the exact current summary filename
+    # (see this class's own docstring for why).
+    INDEX_URL: str = os.environ.get(
+        "GEPER_MANE_INDEX_URL",
+        "https://ftp.ncbi.nlm.nih.gov/refseq/MANE/MANE_human/current/",
+    )
+    # MANE releases roughly every few months (v1.4 -> v1.5 was ~4
+    # months apart, per NCBI's own release history) -- a weekly refresh
+    # check is already generous, same reasoning as
+    # ClinGenConfig.AUTO_FETCH_TTL_HOURS's daily check for a
+    # faster-moving source.
+    AUTO_FETCH_TTL_HOURS: float = float(os.environ.get("GEPER_MANE_AUTO_FETCH_TTL_HOURS", "168"))
+    AUTO_FETCH_DIR: str = os.environ.get("GEPER_MANE_AUTO_FETCH_DIR", "")  # "" -> "<CACHE_DIR>/mane"
+    AUTO_FETCH_TIMEOUT_SECS: int = int(os.environ.get("GEPER_MANE_AUTO_FETCH_TIMEOUT", "60"))
+
+
+@dataclass(frozen=True)
 class HPOConfig:
     """
     Configuration for the Human Phenotype Ontology (HPO) gene-phenotype
@@ -2183,6 +2265,7 @@ class GeperConfig:
     indigenomes: IndiGenomesConfig = field(default_factory=IndiGenomesConfig)
     conservation: ConservationConfig = field(default_factory=ConservationConfig)
     clingen: ClinGenConfig = field(default_factory=ClinGenConfig)
+    mane: MANEConfig = field(default_factory=MANEConfig)
     hpo: HPOConfig = field(default_factory=HPOConfig)
     orphanet: OrphanetConfig = field(default_factory=OrphanetConfig)
     functional_evidence: FunctionalEvidenceConfig = field(default_factory=FunctionalEvidenceConfig)

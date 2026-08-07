@@ -39,6 +39,11 @@ in `pipeline/orchestrator.py` for where each of these was confirmed):
       filename embeds the release date (verified:
       "Clingen-Gene-Disease-Summary-2026-07-31.csv") in addition to
       `Last-Modified`.
+    - MANE Select summary download: the release version is embedded in
+      the downloaded file's own name on NCBI's directory listing
+      (verified live 2026-08-08: "MANE.GRCh38.v1.5.summary.txt.gz" ->
+      "MANE 1.5"), parsed at bootstrap time -- see
+      `pipeline/mane/bootstrap.py`.
     - BLAST (local mode): `database/blast_client.py::get_blast_tool_versions`
       already captures each local blast+ CLI tool's own `-version`
       output -- no change needed here, just surfaced.
@@ -109,7 +114,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from config import CONFIG
 from utils.logger import get_logger
@@ -138,11 +143,11 @@ class VersionStatus(str, enum.Enum):
     real version).
     """
 
-    NOT_CONSULTED = "not_consulted"   # never queried this run
-    UNKNOWN = "unknown"               # queried, but no version/hash/anything beyond a timestamp was obtainable
+    NOT_CONSULTED = "not_consulted"  # never queried this run
+    UNKNOWN = "unknown"  # queried, but no version/hash/anything beyond a timestamp was obtainable
     TIMESTAMP_ONLY = "timestamp_only"  # queried; only a query/download time is meaningful (kept distinct from UNKNOWN: this is the honest floor every consulted source gets)
-    HASH_ONLY = "hash_only"           # no release version, but a content hash of the actual bytes used is known
-    VERSION_KNOWN = "version_known"   # a real, source-published version/release/build identifier is known
+    HASH_ONLY = "hash_only"  # no release version, but a content hash of the actual bytes used is known
+    VERSION_KNOWN = "version_known"  # a real, source-published version/release/build identifier is known
 
 
 _STATUS_PRIORITY = {
@@ -166,13 +171,19 @@ class DataSourceProvenance(BaseModel):
 
     source: str
     status: VersionStatus
-    version: Optional[str] = None          # e.g. "gnomad_r4", "InterPro 109.0", "dbSNP build 157", "UniProt 2026_02"
-    release_date: Optional[str] = None     # ISO date/string if the source publishes one (Orphanet's `date`, ClinGen's filename date, UniProt's release date, ...)
-    content_hash: Optional[str] = None     # sha256 (or a server-provided hash, e.g. GCS's ETag) of the actual bytes used, when applicable
-    hash_algorithm: Optional[str] = None   # "sha256" | "gcs-etag-md5" | ... -- which of the above `content_hash` is
+    version: Optional[str] = None  # e.g. "gnomad_r4", "InterPro 109.0", "dbSNP build 157", "UniProt 2026_02"
+    release_date: Optional[str] = (
+        None  # ISO date/string if the source publishes one (Orphanet's `date`, ClinGen's filename date, UniProt's release date, ...)
+    )
+    content_hash: Optional[str] = (
+        None  # sha256 (or a server-provided hash, e.g. GCS's ETag) of the actual bytes used, when applicable
+    )
+    hash_algorithm: Optional[str] = None  # "sha256" | "gcs-etag-md5" | ... -- which of the above `content_hash` is
     query_timestamp: Optional[str] = None  # UTC ISO -- when GEPER consulted this source THIS run (first successful use)
-    endpoint: Optional[str] = None         # URL/endpoint queried or downloaded
-    notes: Optional[str] = None            # required explanation whenever status is UNKNOWN/TIMESTAMP_ONLY -- see `RunProvenanceCollector.record`
+    endpoint: Optional[str] = None  # URL/endpoint queried or downloaded
+    notes: Optional[str] = (
+        None  # required explanation whenever status is UNKNOWN/TIMESTAMP_ONLY -- see `RunProvenanceCollector.record`
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +302,9 @@ def local_file_provenance(source: str, path: Optional[str], *, endpoint: Optiona
     """
     if not path or not os.path.exists(path):
         return DataSourceProvenance(
-            source=source, status=VersionStatus.UNKNOWN, endpoint=endpoint,
+            source=source,
+            status=VersionStatus.UNKNOWN,
+            endpoint=endpoint,
             query_timestamp=_utc_now_iso(),
             notes="Configured local file path does not exist; cannot hash or version it.",
         )
@@ -299,13 +312,18 @@ def local_file_provenance(source: str, path: Optional[str], *, endpoint: Optiona
         content_hash = compute_file_sha256(path)
     except OSError as exc:
         return DataSourceProvenance(
-            source=source, status=VersionStatus.UNKNOWN, endpoint=path,
+            source=source,
+            status=VersionStatus.UNKNOWN,
+            endpoint=path,
             query_timestamp=_utc_now_iso(),
             notes=f"Could not hash local file: {exc}",
         )
     return DataSourceProvenance(
-        source=source, status=VersionStatus.HASH_ONLY, endpoint=path,
-        content_hash=content_hash, hash_algorithm="sha256",
+        source=source,
+        status=VersionStatus.HASH_ONLY,
+        endpoint=path,
+        content_hash=content_hash,
+        hash_algorithm="sha256",
         query_timestamp=_utc_now_iso(),
         notes="Deployer-provisioned local file with no tracked download; no release version is known to GEPER, only its content hash.",
     )
@@ -330,14 +348,22 @@ def get_geper_code_version() -> str:
     repo_dir = os.path.dirname(os.path.abspath(__file__))
     try:
         sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True, text=True, timeout=10,
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if sha.returncode != 0:
             return "unknown (not a git checkout, or git unavailable)"
         commit = sha.stdout.strip()
 
         dirty = subprocess.run(
-            ["git", "status", "--porcelain"], cwd=repo_dir, capture_output=True, text=True, timeout=10,
+            ["git", "status", "--porcelain"],
+            cwd=repo_dir,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if dirty.returncode == 0 and dirty.stdout.strip():
             return f"{commit}+dirty"
@@ -366,7 +392,9 @@ def get_model_checkpoint_identifiers() -> Dict[str, str]:
     if CONFIG.mmsplice.ENABLED:
         identifiers["mmsplice"] = "mmsplice==2.4.0 (pinned, see requirements.txt)"
     if CONFIG.alphamissense.ENABLED:
-        identifiers["alphamissense_catalogue_source"] = "see 'AlphaMissense catalogue' in the data-source provenance list, not a model checkpoint"
+        identifiers["alphamissense_catalogue_source"] = (
+            "see 'AlphaMissense catalogue' in the data-source provenance list, not a model checkpoint"
+        )
     if getattr(CONFIG.splicing, "ENABLE_SPLICEFORMER", False):
         identifiers["spliceformer"] = "spliceformer (see pipeline/models/spliceformer_plugin.py for checkpoint URL)"
     if getattr(CONFIG.splicing, "ENABLE_SPLICEBERT", False):
@@ -389,11 +417,24 @@ def get_model_checkpoint_identifiers() -> Dict[str, str]:
 # output as NOT_CONSULTED, rather than being silently absent -- the
 # structural distinction point 6 of this module's task required.
 KNOWN_SOURCES = (
-    "ClinVar", "dbSNP", "gnomAD", "ClinGen (gene validity)", "ClinGen (dosage sensitivity)",
-    "HPO", "Orphanet", "UniProt", "InterPro", "AlphaFold DB", "BLAST",
-    "AlphaMissense catalogue", "Ensembl", "Conservation (PhyloP/PhastCons, UCSC)",
-    "Conservation (GERP++, MyVariant.info)", "Functional evidence (ClinGen ERepo)",
+    "ClinVar",
+    "dbSNP",
+    "gnomAD",
+    "ClinGen (gene validity)",
+    "ClinGen (dosage sensitivity)",
+    "HPO",
+    "Orphanet",
+    "UniProt",
+    "InterPro",
+    "AlphaFold DB",
+    "BLAST",
+    "AlphaMissense catalogue",
+    "Ensembl",
+    "Conservation (PhyloP/PhastCons, UCSC)",
+    "Conservation (GERP++, MyVariant.info)",
+    "Functional evidence (ClinGen ERepo)",
     "Functional evidence (MaveDB)",
+    "MANE Select (NCBI)",
 )
 
 # Evidence-source short names, exactly as recorded in a variant's
@@ -436,8 +477,7 @@ class RunProvenanceCollector:
 
     def __init__(self) -> None:
         self._records: Dict[str, DataSourceProvenance] = {
-            name: DataSourceProvenance(source=name, status=VersionStatus.NOT_CONSULTED)
-            for name in KNOWN_SOURCES
+            name: DataSourceProvenance(source=name, status=VersionStatus.NOT_CONSULTED) for name in KNOWN_SOURCES
         }
 
     def record(
@@ -465,15 +505,23 @@ class RunProvenanceCollector:
         with an ad hoc, uncatalogued entry.
         """
         if source not in KNOWN_SOURCES:
-            logger.warning(f"RunProvenanceCollector.record: unrecognized source '{source}' -- not in KNOWN_SOURCES, ignoring.")
+            logger.warning(
+                f"RunProvenanceCollector.record: unrecognized source '{source}' -- not in KNOWN_SOURCES, ignoring."
+            )
             return
         existing = self._records[source]
         if _STATUS_PRIORITY[status] < _STATUS_PRIORITY[existing.status]:
             return
         self._records[source] = DataSourceProvenance(
-            source=source, status=status, version=version, release_date=release_date,
-            content_hash=content_hash, hash_algorithm=hash_algorithm,
-            query_timestamp=query_timestamp or _utc_now_iso(), endpoint=endpoint, notes=notes,
+            source=source,
+            status=status,
+            version=version,
+            release_date=release_date,
+            content_hash=content_hash,
+            hash_algorithm=hash_algorithm,
+            query_timestamp=query_timestamp or _utc_now_iso(),
+            endpoint=endpoint,
+            notes=notes,
         )
 
     def get(self, source: str) -> Optional[DataSourceProvenance]:
@@ -517,7 +565,9 @@ def capture_ensembl_release(endpoint: str = "https://rest.ensembl.org", timeout_
     import requests
 
     try:
-        response = requests.get(f"{endpoint}/info/data", params={"content-type": "application/json"}, timeout=timeout_secs)
+        response = requests.get(
+            f"{endpoint}/info/data", params={"content-type": "application/json"}, timeout=timeout_secs
+        )
         response.raise_for_status()
         payload = response.json()
         releases = payload.get("releases") or []
@@ -541,7 +591,9 @@ def capture_blast_local_tool_versions() -> Dict[str, Any]:
 
     try:
         versions = get_blast_tool_versions()
-        found = {tool: v for tool, v in versions.items() if v and not v.startswith("error") and "not found" not in (v or "")}
+        found = {
+            tool: v for tool, v in versions.items() if v and not v.startswith("error") and "not found" not in (v or "")
+        }
         if not found:
             return {"version": None, "tools": versions, "error": None}
         version = "; ".join(f"{tool} {v}" for tool, v in sorted(found.items()))

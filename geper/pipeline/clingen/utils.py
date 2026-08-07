@@ -72,6 +72,7 @@ import requests
 
 from config import CONFIG
 from pipeline.clingen.models import DosageSensitivity, GeneDiseaseValidity
+from pipeline.mane.provider import mane_select_transcript_id
 from utils.logger import get_logger
 from utils.service_health import HEALTH, is_transient_http_error
 
@@ -251,6 +252,16 @@ def _disambiguate_overlapping_genes(symbols: List[str], pos: int, build: str) ->
     between `pipeline.clingen` and `pipeline.pvs1` (pvs1 itself has no
     reverse dependency on clingen, so this is a one-way, non-circular
     reuse, not a cycle).
+
+    MANE Select status itself is checked two ways: `transcript.is_mane_select`
+    (populated straight from whatever Ensembl's `lookup/id` response
+    says -- which, verified live, never actually carries a MANE field,
+    making this branch permanently False in production) OR a match
+    against `pipeline/mane/provider.py`'s own bootstrapped NCBI MANE
+    dataset (real data, keyed by gene symbol -> MANE Select transcript
+    ID). The Ensembl-payload check is kept, not removed, in case a
+    future Ensembl release or a test fixture does populate it; the MANE
+    dataset lookup is what actually supplies real data today.
     """
     from pipeline.pvs1.lookup import TranscriptLookup
     from pipeline.pvs1.utils import transcript_context_from_dict
@@ -270,7 +281,9 @@ def _disambiguate_overlapping_genes(symbols: List[str], pos: int, build: str) ->
             continue
         if transcript.cds_position(pos) is not None:
             cds_hits.append(symbol)
-        if transcript.is_mane_select:
+        mane_transcript_id = mane_select_transcript_id(symbol)
+        transcript_bare_id = (transcript.transcript_id or "").split(".")[0]
+        if transcript.is_mane_select or (mane_transcript_id and mane_transcript_id == transcript_bare_id):
             mane_hits.append(symbol)
 
     if len(cds_hits) == 1:

@@ -339,6 +339,10 @@ class ReportGenerator:
         conf = clinical_report["confidence"]
         lines.append("### 3. Confidence Score")
         lines.append("")
+        lines.append(
+            "*Confidence reflects how complete the available evidence is, not how certain this classification is.*"
+        )
+        lines.append("")
         if conf.get("pending"):
             lines.append("*Confidence scoring did not complete for this variant.*")
         else:

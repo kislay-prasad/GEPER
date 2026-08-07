@@ -613,6 +613,13 @@ def generate_short_pdf(
     story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph("Result", styles["SectionHeading"]))
+    if variants:
+        story.append(
+            Paragraph(
+                "Confidence reflects how complete the available evidence is, not how certain each classification is.",
+                styles["Footnote"],
+            )
+        )
     if any(isinstance(vr.get("case_prioritization"), dict) for vr in variants):
         # Same reordering the full report's Clinician Summary table
         # applies and explains (report/summary.py::_build_clinician_summary_table);

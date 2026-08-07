@@ -1183,6 +1183,12 @@ def _build_clinician_summary_flowables(
 
     if variants:
         flow.append(_build_clinician_summary_table(variants, styles))
+        flow.append(
+            Paragraph(
+                "Confidence reflects how complete the available evidence is, not how certain each classification is.",
+                styles["Footnote"],
+            )
+        )
     else:
         flow.append(Paragraph("No variants were analyzed in this run.", styles["BodyText"]))
     flow.append(Spacer(1, 3 * mm))
@@ -1367,6 +1373,12 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     confidence = clinical.get("confidence") or {}
     if not confidence.get("pending") and confidence.get("label"):
         flow.append(Paragraph(f"<b>Confidence:</b> {confidence['label']}", styles["BodyText"]))
+        flow.append(
+            Paragraph(
+                "Confidence reflects how complete the available evidence is, not how certain this classification is.",
+                styles["Footnote"],
+            )
+        )
 
     triggered = acmg.get("triggered_criteria") or []
     if triggered:

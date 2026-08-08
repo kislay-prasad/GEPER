@@ -146,9 +146,10 @@ class TestBorzoiLoadImpl(unittest.TestCase):
 
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeBorzoiModel(value=1.0)
-        with mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model):
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
+        ):
             self.instance._load_impl()
 
         self.assertIs(self.instance.model, fake_model)
@@ -156,11 +157,12 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.assertTrue(fake_model.eval_called)
 
     def test_network_failure_is_sanitized(self):
-        with mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "borzoi_pytorch.Borzoi.from_pretrained",
-            side_effect=ConnectionError("could not reach huggingface.co"),
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "borzoi_pytorch.Borzoi.from_pretrained",
+                side_effect=ConnectionError("could not reach huggingface.co"),
+            ),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -168,9 +170,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.assertNotIn("huggingface.co", str(ctx.exception))
 
     def test_missing_package_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=False
-        ):
+        with mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=False):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("borzoi-pytorch", str(ctx.exception))
@@ -187,9 +187,10 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         fake_model = _FakeBorzoiModel(value=1.0)
         with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
             mock_config.splicing.BORZOI_HF_REPO = "johahi/borzoi-replicate-2"
-            with mock.patch(
-                "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-            ), mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model):
+            with (
+                mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+                mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
+            ):
                 self.instance._load_impl()
         self.assertIs(self.instance.model, fake_model)
 
@@ -204,7 +205,18 @@ class TestBorzoiMetadataAndAvailability(unittest.TestCase):
     def test_metadata_reports_commercial_use_allowed(self):
         meta = BorzoiPlugin.metadata()
         self.assertTrue(meta.commercial_use_allowed)
-        self.assertIn("MIT", meta.license_name)
+        self.assertIn("Apache-2.0", meta.license_name)
+        self.assertIn("CC-BY-4.0", meta.license_name)
+
+    def test_metadata_does_not_leak_the_old_incorrect_mit_label(self):
+        """Regression: both the code and weights license labels were
+        corrected from MIT to Apache-2.0 (code) / CC-BY-4.0 (weights) on
+        2026-08-08 (the previous MIT claim, cited to wording in the
+        Flashzoi paper, did not match either primary source directly --
+        see LICENSE_AUDIT.md). Guards against that incorrect label
+        silently creeping back in."""
+        meta = BorzoiPlugin.metadata()
+        self.assertNotIn("MIT", meta.license_name)
 
     def test_disabled_by_default(self):
         with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:

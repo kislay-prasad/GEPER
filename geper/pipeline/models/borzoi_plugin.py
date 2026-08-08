@@ -17,19 +17,31 @@ and so the constraint below is enforced in code, not just documented):
     for Enformer. GEPER MUST NOT use these files -- see the guard in
     `_load_impl` below, which enforces this rather than relying on
     convention alone.
-  - The PyTorch port's weights (github.com/johahi/borzoi-pytorch,
-    mirrored to HuggingFace under the `johahi` org): explicitly MIT
-    licensed, per the peer-reviewed Flashzoi paper (Bioinformatics,
-    Oxford Academic): "Model weights for all four Flashzoi and Borzoi
-    replicates are available at huggingface.co/johahi under the MIT
-    license." The port's own README additionally states these weights
-    were "ported with permission" from Calico.
-  - Net result: GEPER integrates Borzoi exclusively through this MIT
-    path (`borzoi-pytorch` + a `johahi/...` HuggingFace repo id).
-    `CONFIG.splicing.BORZOI_HF_REPO` defaults to a `johahi/` repo, and
-    `_load_impl` refuses to load anything outside that namespace, so
-    a misconfiguration can't silently point this at an unverified
-    weight source.
+  - The PyTorch port (github.com/johahi/borzoi-pytorch): confirmed
+    directly against the repo's own license badge and raw `LICENSE`
+    file -- **Apache-2.0**, not MIT. (CORRECTED 2026-08-08: an earlier
+    version of this note claimed MIT here, cited to wording in the
+    peer-reviewed Flashzoi paper -- that wording does not match either
+    primary source directly; see LICENSE_AUDIT.md's "Full-catalogue
+    re-verification" section for the full re-trace.)
+  - The PyTorch port's weights (mirrored to HuggingFace under the
+    `johahi` org, e.g. `johahi/borzoi-replicate-0`): confirmed
+    directly against that repo's own HuggingFace model-card
+    frontmatter -- **CC-BY-4.0**, not MIT either. The peer-reviewed
+    Flashzoi paper (Bioinformatics, Oxford Academic) additionally
+    confirms these weights were "ported with permission" from Calico,
+    which is still accurate and unaffected by the license-label
+    correction above.
+  - Net result: GEPER integrates Borzoi exclusively through this
+    verified path (`borzoi-pytorch`, Apache-2.0, + a `johahi/...`
+    HuggingFace repo id, CC-BY-4.0). Both are commercially usable and
+    redistributable (Apache-2.0: notice/attribution preservation;
+    CC-BY-4.0: attribution wherever the weights, or predictions
+    derived from them, are redistributed -- the `license_notes` on
+    `metadata()` below IS that attribution). `CONFIG.splicing.BORZOI_HF_REPO`
+    defaults to a `johahi/` repo, and `_load_impl` refuses to load
+    anything outside that namespace, so a misconfiguration can't
+    silently point this at an unverified weight source.
 --------------------------------------------------------------------
 """
 
@@ -58,17 +70,17 @@ _NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
 
 class BorzoiLicenseGuardError(RuntimeError):
     """Raised if `CONFIG.splicing.BORZOI_HF_REPO` is ever pointed
-    somewhere other than the verified MIT-licensed `johahi/` weight
-    mirror -- a configuration mistake, not a network failure, so it
-    is intentionally not treated as "gracefully skip and retry
-    later"."""
+    somewhere other than the verified `johahi/` weight mirror (CC-BY-4.0)
+    -- a configuration mistake, not a network failure, so it is
+    intentionally not treated as "gracefully skip and retry later"."""
 
 
 class BorzoiPlugin(PluginModel):
     """Real Borzoi integration. Disabled by default
     (`CONFIG.splicing.ENABLE_BORZOI`); once enabled, this loads ONLY
-    the MIT-licensed `johahi` HuggingFace weight mirror via the
-    `borzoi-pytorch` package -- never Calico's original `.h5` files."""
+    the CC-BY-4.0-licensed `johahi` HuggingFace weight mirror via the
+    Apache-2.0-licensed `borzoi-pytorch` package -- never Calico's
+    original `.h5` files."""
 
     @classmethod
     def metadata(cls) -> ModelMetadata:
@@ -76,17 +88,30 @@ class BorzoiPlugin(PluginModel):
             name="borzoi",
             version=f"borzoi-pytorch;weights={CONFIG.splicing.BORZOI_HF_REPO}",
             source="https://github.com/johahi/borzoi-pytorch",
-            license_name="MIT (wrapper code and johahi-mirrored weights only)",
+            license_name="Apache-2.0 (wrapper code) / CC-BY-4.0 (johahi-mirrored weights)",
             license_url="https://github.com/johahi/borzoi-pytorch/blob/main/LICENSE",
             commercial_use_allowed=True,
             license_notes=(
-                "Verified against the peer-reviewed Flashzoi paper "
-                "(Bioinformatics, Oxford Academic), which states the "
-                "johahi-mirrored Borzoi/Flashzoi weights on HuggingFace are "
-                "MIT licensed and were ported with Calico's permission. "
-                "Calico's own original .h5 checkpoints (GCS-hosted) have no "
-                "equivalent explicit weight license and are never used by "
-                "this plugin -- enforced in _load_impl, not just documented."
+                "Verified directly against primary sources: "
+                "johahi/borzoi-pytorch's own GitHub license badge and raw "
+                "LICENSE file (Apache-2.0); the johahi-mirrored weight "
+                "repo's own HuggingFace model-card frontmatter (e.g. "
+                "johahi/borzoi-replicate-0, 'license: cc-by-4.0'). "
+                "CORRECTED 2026-08-08: an earlier version of this note "
+                "claimed MIT for both, cited to wording in the "
+                "peer-reviewed Flashzoi paper (Bioinformatics, Oxford "
+                "Academic) -- that wording does not match either primary "
+                "source directly; see LICENSE_AUDIT.md's 'Full-catalogue "
+                "re-verification' section for the full re-trace. The "
+                "paper's separate claim that these weights were 'ported "
+                "with Calico's permission' is still accurate and "
+                "unaffected by this correction. CC-BY-4.0 requires "
+                "attribution wherever the weights, or predictions derived "
+                "from them, are redistributed -- this note IS that "
+                "attribution. Calico's own original .h5 checkpoints "
+                "(GCS-hosted) have no equivalent explicit weight license "
+                "and are never used by this plugin -- enforced in "
+                "_load_impl, not just documented."
             ),
         )
 
@@ -101,10 +126,7 @@ class BorzoiPlugin(PluginModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_BORZOI:
-            return (
-                "disabled via CONFIG.splicing.ENABLE_BORZOI "
-                "(set GEPER_ENABLE_BORZOI=true to enable)"
-            )
+            return "disabled via CONFIG.splicing.ENABLE_BORZOI (set GEPER_ENABLE_BORZOI=true to enable)"
         return "the 'borzoi-pytorch' package is not installed and automatic installation has not been attempted yet"
 
     def __init__(self):
@@ -116,7 +138,7 @@ class BorzoiPlugin(PluginModel):
         if not repo_id.startswith(_ALLOWED_BORZOI_HF_NAMESPACE):
             raise BorzoiLicenseGuardError(
                 f"CONFIG.splicing.BORZOI_HF_REPO='{repo_id}' is outside the "
-                f"verified MIT-licensed '{_ALLOWED_BORZOI_HF_NAMESPACE}' "
+                f"verified CC-BY-4.0-licensed '{_ALLOWED_BORZOI_HF_NAMESPACE}' "
                 "namespace. Calico's original weights have no equivalent "
                 "explicit commercial license, so this plugin refuses to "
                 "load anything else. See this module's docstring."
@@ -137,8 +159,7 @@ class BorzoiPlugin(PluginModel):
             model = borzoi_pytorch.Borzoi.from_pretrained(repo_id, cache_dir=str(cache_dir))
         except _NETWORK_ERROR_TYPES as exc:
             self.logger.debug(
-                f"Borzoi weight fetch for '{repo_id}' failed "
-                f"({exc.__class__.__name__}): {exc}",
+                f"Borzoi weight fetch for '{repo_id}' failed ({exc.__class__.__name__}): {exc}",
                 exc_info=True,
             )
             raise RuntimeError("Borzoi model unavailable") from exc
@@ -214,8 +235,7 @@ class BorzoiPlugin(PluginModel):
                 "max_abs_delta": max_abs_delta,
                 "num_tracks": ref_out.shape[1],
                 "calibration_status": (
-                    "uncalibrated -- raw Borzoi track-delta summary, not "
-                    "validated against clinical ground truth"
+                    "uncalibrated -- raw Borzoi track-delta summary, not validated against clinical ground truth"
                 ),
             },
         }

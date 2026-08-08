@@ -15,18 +15,26 @@ from GEPER entirely (see below) as part of this change.
 
 ## Models GEPER loads and runs
 
-| Model | Version / weights used | Repository | License | Commercial use permitted | Redistribution permitted | Notes |
+Code license and weights license are listed **separately** because they
+can differ (confirmed to actually differ, not just hypothetically, for
+several rows below -- see "Full-catalogue re-verification" for the
+primary-source fetch behind every cell). "Version/weights used" is the
+literal source URL/repo id GEPER's own loader code downloads from,
+grepped from that code, not inferred from the project's README.
+
+| Model | Version / weights used | Repository | Code license | Weights license | Commercial use permitted | Notes |
 |---|---|---|---|---|---|---|
-| HyenaDNA | `hyenadna-medium-450k-seqlen` (LongSafari HF mirror) | github.com/HazyResearch/hyena-dna | **BSD-3-Clause** | Yes | Yes (BSD-3-Clause: attribution + retained notice) | Confirmed on the model's own Hugging Face card (`LongSafari/hyenadna-*-hf`, `License: bsd-3-clause`). |
-| Evo 2 | 7B checkpoint (arcinstitute/evo2_7b) | github.com/ArcInstitute/evo2 | **Apache-2.0** (code and weights) | Yes | Yes (Apache-2.0: attribution + NOTICE + state changes) | Confirmed via the repo's own `LICENSE`/`NOTICE` files and the HF model card (`arcinstitute/evo2_7b`, `License: apache-2.0`). No practical CPU inference path -- GEPER already treats it as CUDA-only and skips it gracefully otherwise (`models/evo2.py`). |
-| RNA-FM | Official `ml4bio/RNA-FM` (via the `rna-fm` PyPI package) | github.com/ml4bio/RNA-FM | **MIT** | Yes | Yes | GEPER deliberately integrates the *official* `rna-fm` package, not the `multimolecule` mirror, which is **AGPL-3.0-or-later** and was rejected for exactly this reason (see `MIGRATION_RNA_FM.md`, `models/rna_fm.py`). Residual operational risk: the official weights are hosted on a single, non-mirrored CUHK download endpoint that occasionally 403s -- a licensing non-issue, but see the TODOs below. |
-| ESM-2 | `esm2_t33_650M_UR50D` (Meta FAIR) | github.com/facebookresearch/esm | **MIT** | Yes | Yes | Confirmed via the repo's own `LICENSE`/`setup.py`/source-file headers. (The separate ESM Metagenomic Atlas *dataset* is CC-BY-4.0 and is not used by GEPER.) |
-| AlphaMissense | Precomputed pathogenicity catalogue (DeepMind) | github.com/google-deepmind/alphamissense | **CC BY 4.0** (predictions) | Yes | Yes (attribution required) | The predictions were originally CC BY-NC-SA 4.0 (non-commercial only); DeepMind **relicensed them to CC BY 4.0 on 13 March 2024**, lifting the non-commercial restriction (confirmed on DeepMind's own announcement page and the repo's `README.md`/data license notice). GEPER uses an indexed `tabix` lookup against this catalogue, not the model weights (`models/alphamissense.py`). |
-| MMSplice | `mmsplice` PyPI package + Keras submodels | github.com/gagneurlab/MMSplice_MTSplice | **MIT** | Yes | Yes | Confirmed in the MMSplice paper's own data-availability statement ("available ... under the MIT License") and the repo itself. |
-| Enformer | `enformer-pytorch` wrapper + `EleutherAI/enformer-official-rough` weights | github.com/lucidrains/enformer-pytorch | **MIT** (wrapper) / **Apache-2.0** (official DeepMind weights) | Yes | Yes | See `pipeline/models/enformer_plugin.py::EnformerPlugin.metadata()` for the full sourcing note (Kaggle Models license field for `deepmind/enformer`, corroborated by third-party model documentation). Disabled by default (`CONFIG.splicing.ENABLE_ENFORMER=false`); see TODOs. |
-| Borzoi | `borzoi-pytorch` (johahi) wrapper + `johahi/borzoi-replicate-0` weights | github.com/johahi/borzoi-pytorch | **MIT** (wrapper and johahi-mirrored weights only) | Yes | Yes | See `pipeline/models/borzoi_plugin.py::BorzoiPlugin.metadata()`. The plugin deliberately never touches Calico's original `.h5` checkpoints (no equivalent explicit weight license) -- enforced in `_load_impl`, not just documented. Disabled by default (`CONFIG.splicing.ENABLE_BORZOI=false`); see TODOs. |
-| SpliceFormer | Vendored official source (`Code/src/model.py`/`weight_init.py`) + one official pretrained replicate checkpoint (`transformer_encoder_45k_171022_0`), pinned to release tag `v1.0.0` | github.com/benniatli/Spliceformer | **MIT** (code and weights -- confirmed via the repo's own `LICENSE` file) | Yes | Yes | See `pipeline/models/spliceformer_plugin.py::SpliceFormerPlugin.metadata()`, including the note distinguishing the code's own MIT `LICENSE` from the Zenodo archive deposit's separate, archive-level CC-BY-4.0 metadata tag. Not added to `pipeline/models/ensemble.py`'s Enformer+Borzoi consensus and not wired into ACMG evaluation or report generation -- see that module's docstring. Enabled by default (`CONFIG.splicing.ENABLE_SPLICEFORMER=true`); gated on `einops` (already an unconditional GEPER dependency -- see requirements.txt) being importable. |
-| SpliceBERT | Official pretrained checkpoint (`SpliceBERT.1024nt`) fetched from the author's own Zenodo archive (DOI 10.5281/zenodo.7995778, `models.tar.gz`) | github.com/biomed-AI/SpliceBERT | **BSD-3-Clause** (code) / **CC-BY-4.0** (Zenodo-hosted weights) | Yes | Yes (CC-BY-4.0 requires attribution, carried through in `SpliceBERTPlugin.metadata().license_notes`) | **Re-verified 2026-08-08 in response to a specific licensing concern** -- see "SpliceBERT source verification" below for the full trace. GEPER downloads exclusively from `zenodo.org/record/7995778/...`, the same URL the official repo's own `download.sh` fetches; it never touches `huggingface.co/multimolecule/...`, which distributes a *different*, AGPL-3.0-licensed re-hosting of SpliceBERT under the same model name. `multimolecule` is not a dependency anywhere in `requirements.txt` (a required package to load that distribution's checkpoint format, so its absence independently rules out that code path). Enabled by default (`CONFIG.splicing.ENABLE_SPLICEBERT=true`); not wired into ensemble/ACMG evaluation, same as SpliceFormer above. |
+| HyenaDNA | `hyenadna-medium-450k-seqlen` (`huggingface.co/LongSafari/hyenadna-medium-450k-seqlen-hf`, git-lfs clone -- `models/hyenadna.py`) | github.com/HazyResearch/hyena-dna | **Apache-2.0** | **BSD-3-Clause** | Yes | Corrected 2026-08-08: the code repo's own license badge/LICENSE is Apache-2.0, distinct from the LongSafari HF weights card's `license: bsd-3-clause` tag -- the previous row only listed the weights license as if it covered both. Both permissive, no conflict. |
+| Evo 2 | 7B checkpoint (`arcinstitute/evo2_7b`, loaded via the official `evo2` pip package -- `models/evo2.py`) | github.com/ArcInstitute/evo2 | **Apache-2.0** (composite: repo's `LICENSE` bundles Apache-2.0 as the primary terms plus BSD-3-Clause-licensed NVIDIA code and MIT-licensed Facebook/fairseq code carried in from upstream dependencies, all permissive) | **Apache-2.0** | Yes | Confirmed via the repo's own composite `LICENSE` file and the HF model card (`arcinstitute/evo2_7b`, frontmatter `license: apache-2.0`). No practical CPU inference path -- GEPER already treats it as CUDA-only and skips it gracefully otherwise. |
+| RNA-FM | Official `ml4bio/RNA-FM`; weights tried in order: (1) official HF mirror `huggingface.co/cuhkaih/rnafm`, (2) upstream CUHK endpoint as last-resort fallback -- both the same authors' own official distribution (`models/rna_fm.py`) | github.com/ml4bio/RNA-FM | **MIT** | **Apache-2.0** (`cuhkaih/rnafm` HF frontmatter, confirmed directly) | Yes | GEPER deliberately integrates the *official* `rna-fm` package, not the `multimolecule` mirror (**AGPL-3.0-or-later**, confirmed rejected -- see `MIGRATION_RNA_FM.md`). Both weight sources checked here are the RNA-FM authors' own (no third-party mirror involved), so this rules out the SpliceBERT/multimolecule pattern for RNA-FM too. |
+| ESM-2 | `esm2_t33_650M_UR50D` (Meta FAIR, via `transformers.from_pretrained`) | github.com/facebookresearch/esm | **MIT** | **MIT** (`facebook/esm2_t33_650M_UR50D` HF frontmatter, confirmed directly) | Yes | Confirmed via the repo's own `LICENSE` and the HF model card. (The separate ESM Metagenomic Atlas *dataset* is CC-BY-4.0 and is not used by GEPER.) |
+| AlphaMissense | Precomputed pathogenicity catalogue, downloaded directly from `storage.googleapis.com/dm_alphamissense/AlphaMissense_hg{19,38}.tsv.gz` (`models/alphamissense.py`) | github.com/google-deepmind/alphamissense | **Apache-2.0** (code; GEPER does not use the code, lookup-only) | **CC BY 4.0** | Yes | **Genuine internal discrepancy flagged in `config.py::AlphaMissenseConfig`'s own docstring, now resolved -- see "Full-catalogue re-verification" below.** GEPER uses an indexed `tabix` lookup against the catalogue file itself, not the model weights (none are published). |
+| MMSplice | `mmsplice` PyPI package (`--no-deps` install, `.h5` files + `layers.py` loaded directly, `mmsplice/__init__.py` never executed -- see `pipeline/models/mmsplice/loader.py`) | github.com/gagneurlab/MMSplice_MTSplice | **MIT** | **MIT** | Yes | Confirmed directly against the repo's own `LICENSE` (Jun Cheng, 2018) and the MMSplice paper's own data-availability statement. |
+| Enformer | `enformer-pytorch` wrapper (`CONFIG.splicing.ENFORMER_HF_REPO`, default `EleutherAI/enformer-official-rough`, loaded via `enformer_pytorch.from_pretrained` -- `pipeline/models/enformer_plugin.py`) | github.com/lucidrains/enformer-pytorch | **MIT** | **CC BY 4.0** | Yes | **Corrected 2026-08-08** -- see "Full-catalogue re-verification" below: the exact HF repo GEPER downloads from declares `license: cc-by-4.0` in its own frontmatter, not Apache-2.0 (the previous row's Apache-2.0 claim cited Kaggle's separately-hosted `deepmind/enformer` listing, a different distribution channel than the one GEPER's code actually points at). Still fully permissive/commercial-safe; the correction is about which permissive license applies, not a new risk. Enabled by default (`CONFIG.splicing.ENABLE_ENFORMER=true`). |
+| Borzoi | `borzoi-pytorch` wrapper (`CONFIG.splicing.BORZOI_HF_REPO`, default `johahi/borzoi-replicate-0`, `_load_impl` hard-refuses any repo id outside the `johahi/` namespace -- `pipeline/models/borzoi_plugin.py`) | github.com/johahi/borzoi-pytorch | **Apache-2.0** | **CC BY 4.0** | Yes | **Corrected 2026-08-08** -- see "Full-catalogue re-verification" below: both the `johahi/borzoi-pytorch` GitHub `LICENSE` and the `johahi/borzoi-replicate-0` HF frontmatter were fetched directly; neither says MIT (the previous row's MIT claim, cited to the Flashzoi paper's wording, does not match either primary source directly). Still fully permissive/commercial-safe. The code-level guard restricting weight loads to the `johahi/` namespace (never Calico's unlicensed original `.h5` files) is unaffected by this correction and was independently confirmed still in place. |
+| SpliceFormer | Vendored official source (`Code/src/model.py`/`weight_init.py`) + one official pretrained replicate checkpoint (`transformer_encoder_45k_171022_0`), pinned to release tag `v1.0.0` | github.com/benniatli/Spliceformer | **MIT** | **MIT** | Yes | Confirmed directly against the repo's own `LICENSE` (Benedikt Atli Jónsson, 2024). Distinct from the Zenodo archive deposit's separate, archive-level CC-BY-4.0 metadata tag (deposit metadata, not the operative code license). Enabled by default (`CONFIG.splicing.ENABLE_SPLICEFORMER=true`). |
+| SpliceBERT | Official pretrained checkpoint (`SpliceBERT.1024nt`) fetched from the author's own Zenodo archive (DOI 10.5281/zenodo.7995778, `models.tar.gz`) | github.com/biomed-AI/SpliceBERT | **BSD-3-Clause** | **CC-BY-4.0** (confirmed directly via Zenodo's own record API, not inferred from the GitHub repo) | Yes | **Verified 2026-08-08 in response to a specific licensing concern** -- see "SpliceBERT source verification" below. GEPER downloads exclusively from `zenodo.org/record/7995778/...`, the same URL the official repo's own `download.sh` fetches; never touches `huggingface.co/multimolecule/...` (a different, AGPL-3.0-licensed re-hosting under the same model name). `multimolecule` is not a dependency anywhere in `requirements.txt`. Enabled by default (`CONFIG.splicing.ENABLE_SPLICEBERT=true`). |
+| SPiP | Vendored official, unmodified R source (`SPiPv2.1_main.r`, run as an `Rscript` subprocess) + reference data (trained randomForest model, RefSeq transcript annotation, genome sequence) from the official repo/its linked SourceForge host (`pipeline/models/spip_plugin.py`, `pipeline/models/spip/loader.py`) | github.com/LBGC-CFB/SPiP (mirrored at github.com/raphaelleman/SPiP, same content, primary author's own account) | **MIT** | N/A -- reference data (NCBI RefSeq transcript annotation + hg19/hg38 genome sequence), not a third party's trained model weights; public-domain/unrestricted, same category as the RefSeq/genome-coordinate data every other GEPER stage already reads | Yes | **Added to this audit 2026-08-08 -- was missing from the table entirely, same gap SpliceBERT had before today.** Confirmed directly against `raphaelleman/SPiP`'s own `LICENSE` (raphaelleman, 2020). Enabled by default (`CONFIG.splicing.ENABLE_SPIP=true`); not wired into ensemble/ACMG evaluation, same as SpliceFormer/SpliceBERT. |
 
 ## Models evaluated and explicitly not integrated
 
@@ -35,6 +43,128 @@ from GEPER entirely (see below) as part of this change.
 | OpenSpliceAI | github.com/Kuanhao-Chao/OpenSpliceAI | **GPL-3.0** (code and bundled pretrained models) | **No** (for a proprietary commercial codebase) | Linking GPL-3.0 code/weights into GEPER's proprietary codebase would require distributing the combined work under GPL-3.0. Was registered as a hard-disabled placeholder (`pipeline/models/pending_plugins.py::OpenSpliceAIPlugin`) so it reported **Disabled** in every report rather than silently not existing; that placeholder was removed from the codebase entirely (no longer revisited -- SpliceFormer, SpliceBERT, and MMSplice already cover splice prediction). Listed here for audit-trail completeness only. |
 | DNABERT-2 | github.com/MAGICS-LAB/DNABERT_2 | Apache-2.0 (permissive) | Yes (was) | **Removed from GEPER entirely as part of this change** -- not a licensing rejection. HyenaDNA now serves as the universal default DNA model in its place (see `pipeline/router.py`). Listed here only for audit-trail completeness, since it was present in the codebase before this change. |
 | SpliceAI (Illumina) | github.com/Illumina/SpliceAI | **GPL-3.0** (code) / **CC BY-NC 4.0** (pretrained models, as of Illumina's Dec 2023 relicense) | **No** | Evaluated in an earlier audit (see `PERFORMANCE_REPORT.md` / project memory); both the GPL-3.0 code license and the CC BY-NC 4.0 model license are commercial blockers. Never integrated into GEPER. Not the same project as OpenSpliceAI (a different, GPL-3.0-only reimplementation, above) -- listed separately to avoid conflating the two. |
+
+## Full-catalogue re-verification (2026-08-08)
+
+Following the SpliceBERT investigation above (which found LICENSE_AUDIT.md
+had been incomplete -- SpliceBERT was missing from the table entirely),
+every other model GEPER loads was re-verified against primary sources with
+the same rigor: fetching the actual `LICENSE` file / HF model-card
+frontmatter directly, confirming which exact source URL GEPER's own loader
+code downloads from (not just the project's README), and explicitly
+checking each weight source for a same-content-different-license mirror
+(the SpliceBERT/multimolecule pattern) -- not just re-typing prior claims.
+
+Model registry cross-checked against `pipeline/orchestrator.py`
+(`MODEL_REGISTRY`, `_MODEL_LABELS`) and `pipeline/models/pending_plugins.py`
+(`build_default_registry`): confirmed complete, and found one
+previously-undocumented model (**SPiP**) that this audit had never listed.
+
+**No AGPL/GPL/non-commercial code path was found for any model.** Three
+real inaccuracies in the *previous* version of this audit were found and
+corrected (table above); none of them change the commercial-use verdict,
+but all three are worth stating plainly since the whole point of this
+exercise is not softening or burying what's actually found:
+
+1. **Enformer's weights license was wrong.** The previous row cited
+   Apache-2.0 via Google's Kaggle Models listing for `deepmind/enformer`.
+   But GEPER's actual code (`CONFIG.splicing.ENFORMER_HF_REPO`, default
+   `EleutherAI/enformer-official-rough`) downloads from a *different*
+   distribution channel than that Kaggle listing. Fetched
+   `huggingface.co/EleutherAI/enformer-official-rough/raw/main/README.md`
+   directly: frontmatter reads `license: cc-by-4.0`. The model card body
+   confirms these are "the official weights released by Deepmind, ported
+   over to Pytorch" -- so this is still officially DeepMind's own weights,
+   just under CC-BY-4.0 (attribution required) at this specific host,
+   not Apache-2.0. Still fully commercial-safe; the correction is which
+   permissive license's attribution terms actually apply.
+2. **Borzoi's code AND weights licenses were both wrong.** The previous
+   row claimed MIT for both, cited to wording in the Flashzoi paper.
+   Fetched `github.com/johahi/borzoi-pytorch`'s own license badge and its
+   raw `LICENSE` file directly: **Apache-2.0**, not MIT (confirmed twice,
+   via two independent fetches of the same repo). Fetched
+   `huggingface.co/johahi/borzoi-replicate-0/raw/main/README.md`
+   directly: frontmatter reads `license: cc-by-4.0`, not MIT. Both are
+   still fully permissive and commercially usable -- but Apache-2.0
+   carries a NOTICE-preservation obligation MIT doesn't, and CC-BY-4.0
+   carries an attribution-on-redistribution obligation, neither of which
+   `BorzoiPlugin.metadata()`'s current `license_name="MIT..."` field
+   would prompt anyone to think about. The code-level guard in
+   `BorzoiPlugin._load_impl` that refuses any HF repo id outside the
+   `johahi/` namespace (never Calico's unlicensed original `.h5` files)
+   is a separate, correct control and is unaffected by this correction.
+3. **HyenaDNA's code license was missing, not wrong.** The previous row
+   listed only BSD-3-Clause, sourced from the LongSafari HF weights
+   card. That's correct for the *weights*, but the previous row didn't
+   separately check the *code* repo (`github.com/HazyResearch/hyena-dna`,
+   which GEPER `git clone`s directly in `models/hyenadna.py`) -- fetched
+   its GitHub license badge directly: **Apache-2.0**, a different
+   (still permissive) license than the weights.
+
+**AlphaMissense's discrepancy, already flagged by GEPER's own code, is
+now resolved with direct primary-source confirmation:**
+`config.py::AlphaMissenseConfig`'s docstring already stated this
+honestly as "a genuine, unresolved discrepancy" -- the official GitHub
+repo says predictions are CC BY 4.0, but the Ensembl VEP plugin docs, the
+EBI announcement, and a HuggingFace dataset mirror all instead described
+CC BY-NC-SA 4.0 (non-commercial only), and GEPER's own comment said it
+did not know which currently governs. Investigated directly:
+  - `github.com/google-deepmind/alphamissense`'s current README: CC BY
+    4.0 for predictions, Apache-2.0 for code.
+  - `Ensembl/VEP_plugins`' **current `main` branch** `AlphaMissense.pm`:
+    CC BY 4.0 -- but the **`release/110` tag** (an older snapshot) still
+    reads CC BY-NC-SA 4.0. This is the source of the apparent conflict:
+    the VEP plugin was updated after DeepMind's relicense, and the older
+    tagged release simply predates it.
+  - `huggingface.co/datasets/katielink/dm_alphamissense` (a third-party,
+    unofficial mirror, not DeepMind's own): still reads CC BY-NC-SA 4.0
+    -- consistent with an unofficial mirror that was never updated after
+    the relicense, not evidence of an ongoing dual license.
+  - **Decisive check: the actual GCS bucket GEPER downloads from.**
+    Listed `storage.googleapis.com/dm_alphamissense/` directly (the
+    exact host `AlphaMissenseConfig.HG38_URL`/`HG19_URL` point at): its
+    `README.pdf` is dated **13 March 2024** -- the exact date of
+    DeepMind's public relicense -- and fetched that PDF directly: "The
+    AlphaMissense predictions data files in this bucket are available
+    under the Creative Commons Attribution 4.0 International License,"
+    linking `creativecommons.org/licenses/by/4.0/legalcode`. This is a
+    primary-source confirmation from the literal bucket GEPER's own
+    `models/alphamissense.py` downloads from, not an inference from the
+    GitHub repo or a secondhand announcement.
+  - **Conclusion: CC BY 4.0 governs the files GEPER actually downloads.**
+    The discrepancy `config.py` flagged was real (a genuinely stale
+    third-party mirror and an outdated tagged VEP release both do say
+    CC BY-NC-SA 4.0), but the exact bucket/files GEPER's code points at
+    carry a same-dated CC BY 4.0 README, resolving the "which one
+    applies to what I actually download" question the code comment left
+    open. `config.py::AlphaMissenseConfig`'s docstring still recommends
+    independent legal/DeepMind confirmation before commercial reliance,
+    which remains sound practice regardless of this finding -- this
+    audit entry does not remove that recommendation, only adds a
+    stronger primary-source data point to it.
+
+**Models confirmed matching the previous audit's claims exactly** (code
+and weights license both independently re-fetched and re-confirmed, no
+correction needed): Evo 2, RNA-FM, ESM-2, MMSplice, SpliceFormer,
+SpliceBERT.
+
+**Same-content-different-license mirror explicitly checked and ruled out
+for every model**, not just SpliceBERT: RNA-FM (official HF mirror
+`cuhkaih/rnafm`, Apache-2.0, confirmed to be the *same authors'* own
+distribution, not the AGPL `multimolecule/rnafm` reimplementation);
+Enformer (`EleutherAI/enformer-official-rough` confirmed to be an
+authorized PyTorch port of DeepMind's own official weights, not a
+third-party retrain); Borzoi (`johahi/` namespace confirmed via the
+peer-reviewed Flashzoi paper to be ported with Calico's own permission,
+and the code-level namespace guard was independently re-confirmed
+in `_load_impl`); HyenaDNA, ESM-2, MMSplice, SpliceFormer, SpliceBERT,
+SPiP (each has exactly one official distribution channel for its weights
+-- no alternate mirror exists to check).
+
+**Re-verify this section if:** any model's loader/plugin download logic
+changes (a new fallback source, a changed default HF repo id, a changed
+Zenodo/GCS record), a new model plugin is added, or as part of general
+periodic license-compliance review before a commercial release.
 
 ## SpliceBERT source verification (2026-08-08)
 
@@ -141,18 +271,35 @@ earlier project audits (see `VALIDATION_REPORT.md`).
 1. **Independent legal review.** This audit was compiled by
    cross-referencing each project's own `LICENSE`/`NOTICE` files,
    official model cards, and (for AlphaMissense) DeepMind's own
-   relicensing announcement -- not by outside counsel. Before a
-   commercial release, GEPER's actual legal/compliance team should
-   independently verify each row, particularly AlphaMissense's 2024
-   relicense (make sure the *specific* catalogue file GEPER's
-   `tabix` index points at was published under the new CC BY 4.0
-   terms, not an older CC BY-NC-SA-licensed mirror) and Borzoi's
-   johahi-mirrored-weights provenance claim.
-2. **Attribution/NOTICE compliance.** Apache-2.0 (Evo 2, Enformer's
-   DeepMind weights) and CC BY 4.0 (AlphaMissense) both require
-   attribution in the shipped product; GEPER does not yet have a
-   consolidated third-party-notices file for the AI layer. This
+   relicensing announcement and the exact GCS bucket's own README --
+   not by outside counsel. Before a commercial release, GEPER's actual
+   legal/compliance team should independently verify each row.
+2. ~~`BorzoiPlugin.metadata()` and `EnformerPlugin.metadata()`'s
+   in-code `license_name` fields are inaccurate.`~~ **Fixed 2026-08-08.**
+   Corrected in `pipeline/models/enformer_plugin.py` and
+   `pipeline/models/borzoi_plugin.py` (`metadata()`, module docstrings,
+   and -- for Borzoi -- the `BorzoiLicenseGuardError` message, which
+   also echoed the old "MIT-licensed" claim to anyone who mis-configured
+   `BORZOI_HF_REPO`) to match this table: Borzoi's code is now labeled
+   Apache-2.0, its weights CC BY 4.0; Enformer's weights are now
+   labeled CC BY 4.0. Confirmed no other module reads `license_name`/
+   `license_notes` downstream (grepped the whole repo -- neither
+   `status.py`'s "AI Models" table nor `provenance.py` surfaces these
+   fields; only the plugin files themselves and their own tests do), so
+   fixing `metadata()` alone was sufficient, with no propagation gap.
+   Regression coverage added: `tests/test_enformer_plugin.py::
+   TestEnformerMetadataAndAvailability::
+   test_metadata_does_not_leak_the_old_incorrect_weights_license` and
+   `tests/test_borzoi_plugin.py::TestBorzoiMetadataAndAvailability::
+   test_metadata_does_not_leak_the_old_incorrect_mit_label` each assert
+   the old, wrong license substring is now absent, so it can't silently
+   regress.
+3. **Attribution/NOTICE compliance.** Apache-2.0 (Evo 2, RNA-FM's HF
+   mirror, HyenaDNA's and Borzoi's code) and CC BY 4.0 (AlphaMissense,
+   Enformer's weights, Borzoi's weights, SpliceBERT's weights) all
+   require attribution in the shipped product; GEPER does not yet have
+   a consolidated third-party-notices file for the AI layer. This
    audit should be linked from (or merged into) that file once it
    exists.
-3. **RNA-FM's single download endpoint** is a licensing non-issue but
+4. **RNA-FM's single download endpoint** is a licensing non-issue but
    an operational one -- see the TODOs list in the final summary.

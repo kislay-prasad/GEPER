@@ -182,9 +182,10 @@ class TestEnformerLoadImpl(unittest.TestCase):
 
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeEnformerModel(ref_value=0.0, alt_value=1.0)
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch("enformer_pytorch.from_pretrained", return_value=fake_model):
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("enformer_pytorch.from_pretrained", return_value=fake_model),
+        ):
             self.instance._load_impl()
 
         self.assertIs(self.instance.model, fake_model)
@@ -192,10 +193,11 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.assertTrue(fake_model.eval_called)
 
     def test_network_failure_is_sanitized(self):
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "enformer_pytorch.from_pretrained", side_effect=ConnectionError("could not reach huggingface.co")
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "enformer_pytorch.from_pretrained", side_effect=ConnectionError("could not reach huggingface.co")
+            ),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -204,9 +206,7 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.assertNotIn("huggingface.co", str(ctx.exception))
 
     def test_missing_package_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=False
-        ):
+        with mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=False):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("enformer-pytorch", str(ctx.exception))
@@ -214,10 +214,9 @@ class TestEnformerLoadImpl(unittest.TestCase):
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):
         # Exercise through PluginModel.load() (not _load_impl directly)
         # to confirm the base class's own wrapping still applies.
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "enformer_pytorch.from_pretrained", side_effect=OSError("network unreachable")
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("enformer_pytorch.from_pretrained", side_effect=OSError("network unreachable")),
         ):
             with self.assertRaises(ModelLoadError):
                 self.instance.load()
@@ -228,7 +227,17 @@ class TestEnformerMetadataAndAvailability(unittest.TestCase):
         meta = EnformerPlugin.metadata()
         self.assertTrue(meta.commercial_use_allowed)
         self.assertIn("MIT", meta.license_name)
-        self.assertIn("Apache-2.0", meta.license_name)
+        self.assertIn("CC-BY-4.0", meta.license_name)
+
+    def test_metadata_does_not_leak_the_old_incorrect_weights_license(self):
+        """Regression: the weights license label was corrected from
+        Apache-2.0 to CC-BY-4.0 on 2026-08-08 (the previous claim cited
+        a distribution channel -- Kaggle's deepmind/enformer listing --
+        different from the one this plugin actually downloads from, see
+        LICENSE_AUDIT.md). Guards against that incorrect label silently
+        creeping back in."""
+        meta = EnformerPlugin.metadata()
+        self.assertNotIn("Apache-2.0", meta.license_name)
 
     def test_disabled_by_default(self):
         with mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config:

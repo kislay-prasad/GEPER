@@ -9,20 +9,29 @@ file is self-contained):
   - Wrapper code (`enformer-pytorch`, github.com/lucidrains/
     enformer-pytorch): MIT license, confirmed via its own LICENSE
     file, setup.py, and PyPI page.
-  - Weights: DeepMind's official Enformer weights are Apache-2.0, per
-    Google's own Kaggle Models license field for `deepmind/enformer`
-    (the current official successor to the old tfhub.dev listing),
-    corroborated independently by third-party model documentation
-    (CREsted) stating "The original model is licensed under the
-    Apache License, version 2.0." This is distinct from the
+  - Weights: DeepMind's official Enformer weights, as hosted at the
+    exact repo this plugin downloads from
+    (`CONFIG.splicing.ENFORMER_HF_REPO`, default
+    `EleutherAI/enformer-official-rough`), are CC-BY-4.0 -- confirmed
+    directly against that repo's own HuggingFace model-card
+    frontmatter (`license: cc-by-4.0`), whose body also states these
+    are "the official weights released by Deepmind, ported over to
+    Pytorch." (CORRECTED 2026-08-08: an earlier version of this note
+    instead cited Google's own Kaggle Models license field for
+    `deepmind/enformer`, Apache-2.0 -- that is a *different*
+    distribution channel than the one this plugin's code actually
+    points at; see LICENSE_AUDIT.md's "Full-catalogue re-verification"
+    section for the full re-trace.) This is distinct from the
     enformer/README.md's "model predictions...CC-BY 4.0" line, which
     refers specifically to DeepMind's separately-published precomputed
-    1000-Genomes variant-effect-score dataset, not the network
-    weights GEPER loads and runs here.
+    1000-Genomes variant-effect-score dataset -- a different artifact
+    that happens to share the same license, not the same citation.
   - Net result: both code and weights are commercially usable and
-    redistributable (Apache-2.0 requires only notice/attribution
-    preservation; MIT is even less restrictive). No GPL-style
-    copyleft concern.
+    redistributable (CC-BY-4.0 requires attribution wherever the
+    weights, or predictions derived from them, are redistributed --
+    the `license_notes` on `metadata()` below IS that attribution;
+    MIT requires only notice/attribution preservation). No GPL-style
+    copyleft concern either way.
 
 Weights are loaded via `enformer_pytorch.from_pretrained`, which is a
 thin wrapper over HuggingFace's standard `PreTrainedModel.from_pretrained`
@@ -32,9 +41,7 @@ reimplementing HuggingFace's own caching.
 --------------------------------------------------------------------
 """
 
-import time
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import torch
 
@@ -61,7 +68,7 @@ _NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
 class EnformerPlugin(PluginModel):
     """Real Enformer integration. Disabled by default
     (`CONFIG.splicing.ENABLE_ENFORMER`); once enabled, this loads
-    DeepMind's official (Apache-2.0) weights via the MIT-licensed
+    DeepMind's official (CC-BY-4.0) weights via the MIT-licensed
     `enformer-pytorch` wrapper."""
 
     @classmethod
@@ -70,17 +77,29 @@ class EnformerPlugin(PluginModel):
             name="enformer",
             version=f"enformer-pytorch;weights={CONFIG.splicing.ENFORMER_HF_REPO}",
             source="https://github.com/lucidrains/enformer-pytorch",
-            license_name="MIT (wrapper code) / Apache-2.0 (official DeepMind weights)",
+            license_name="MIT (wrapper code) / CC-BY-4.0 (official DeepMind weights)",
             license_url="https://github.com/lucidrains/enformer-pytorch/blob/main/LICENSE",
             commercial_use_allowed=True,
             license_notes=(
                 "Verified against primary sources: enformer-pytorch's own "
-                "LICENSE (MIT); Google's official Kaggle Models license "
-                "field for deepmind/enformer (Apache-2.0); corroborated by "
-                "third-party model documentation (CREsted). The CC-BY 4.0 "
-                "notice in DeepMind's enformer/README.md refers to a "
-                "separate precomputed variant-score dataset, not these "
-                "weights."
+                "LICENSE (MIT); the exact weight repo this plugin downloads "
+                "(CONFIG.splicing.ENFORMER_HF_REPO, default "
+                "'EleutherAI/enformer-official-rough') states 'license: "
+                "cc-by-4.0' in its own HuggingFace model-card frontmatter, "
+                "and its own model card confirms these are 'the official "
+                "weights released by Deepmind, ported over to Pytorch'. "
+                "(An earlier version of this note cited Google's Kaggle "
+                "Models license field for deepmind/enformer, Apache-2.0 -- "
+                "that is a different distribution channel than the one "
+                "this plugin actually downloads from; corrected 2026-08-08, "
+                "see LICENSE_AUDIT.md's 'Full-catalogue re-verification' "
+                "section.) CC-BY-4.0 requires attribution wherever these "
+                "weights or predictions derived from them are "
+                "redistributed -- this note IS that attribution. The "
+                "separate CC-BY-4.0 notice in DeepMind's own "
+                "enformer/README.md refers to a precomputed variant-score "
+                "dataset, not these weights -- a different thing that "
+                "happens to share the same license, not the same citation."
             ),
         )
 
@@ -100,10 +119,7 @@ class EnformerPlugin(PluginModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_ENFORMER:
-            return (
-                "disabled via CONFIG.splicing.ENABLE_ENFORMER "
-                "(set GEPER_ENABLE_ENFORMER=true to enable)"
-            )
+            return "disabled via CONFIG.splicing.ENABLE_ENFORMER (set GEPER_ENABLE_ENFORMER=true to enable)"
         return "the 'enformer-pytorch' package is not installed and automatic installation has not been attempted yet"
 
     def __init__(self):
@@ -147,8 +163,7 @@ class EnformerPlugin(PluginModel):
             model = enformer_pytorch.from_pretrained(repo_id, cache_dir=str(cache_dir))
         except _NETWORK_ERROR_TYPES as exc:
             self.logger.debug(
-                f"Enformer weight fetch for '{repo_id}' failed "
-                f"({exc.__class__.__name__}): {exc}",
+                f"Enformer weight fetch for '{repo_id}' failed ({exc.__class__.__name__}): {exc}",
                 exc_info=True,
             )
             raise RuntimeError("Enformer model unavailable") from exc
@@ -230,7 +245,7 @@ class EnformerPlugin(PluginModel):
             outputs = self.model(input_tensor, head=head)
 
         ref_tracks, alt_tracks = outputs[0], outputs[1]
-        delta = (alt_tracks - ref_tracks)
+        delta = alt_tracks - ref_tracks
         mean_abs_delta = delta.abs().mean().item()
         max_abs_delta = delta.abs().max().item()
 
@@ -255,8 +270,7 @@ class EnformerPlugin(PluginModel):
                 "max_abs_delta": max_abs_delta,
                 "num_tracks": ref_tracks.shape[-1],
                 "calibration_status": (
-                    "uncalibrated -- raw Enformer track-delta summary, "
-                    "not validated against clinical ground truth"
+                    "uncalibrated -- raw Enformer track-delta summary, not validated against clinical ground truth"
                 ),
             },
         }

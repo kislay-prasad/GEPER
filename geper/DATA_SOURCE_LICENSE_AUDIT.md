@@ -128,10 +128,10 @@ explicitly where it applies).
 | HPO (Human Phenotype Ontology) | CC BY 4.0 -- confirmed via multiple corroborating sources (search-engine-indexed HPO documentation and academic citations); the specific `hpo.jax.org/app/license` URL attempted returned 404 (URL structure may have changed), so this is sourced via corroborating secondary confirmation rather than one direct primary fetch, weaker than most other rows here and worth a follow-up direct check. | `https://hpo.jax.org/` (license sub-page URL attempted returned 404; not independently re-verified via a single direct fetch) | **CC BY 4.0** (moderate confidence -- see note) | **Yes, if confirmed** | **Real attribution gap: HPO does not appear anywhere in `report/clinical_report_builder.py::_REFERENCES`**, despite being a genuine, reachable evidence source -- confirmed `"HPO"` is emitted as a literal `evidence_sources` value by PP4 in `pipeline/acmg_rules.py` (lines ~2212, ~2232), which the pipeline's PP4 criterion returns whenever `--hpo-terms`/`--phenotype-file` is passed (see project memory on the HPO+PP4 integration). If CC-BY-4.0 is confirmed, this is a real, fixable citation gap, not fixed here per this investigation's scope. |
 | Orphanet / Orphadata | "Users are free to copy, distribute, display and make commercial use of this data in all legislations, provided they cite the provenance." Explicitly CC BY 4.0, "Open Science compatible." Already corroborated in this repo's own `DATA_PROVENANCE.md` (`en_product6.xml`, "CC BY 4.0"). | `https://www.orphadata.com/legal-notice/` (fetched via search-engine index; not independently re-fetched directly in this pass, but corroborates the repo's own prior finding) | **CC BY 4.0** | **Yes** | **Same attribution gap as HPO: Orphanet does not appear in `_REFERENCES`.** GEPER's own `pipeline/orphanet/bootstrap.py` downloads and caches Orphanet's gene-disorder data live (confirmed working in `DATA_PROVENANCE.md`'s own live-verification pass), so this is a real, reachable gap, not a theoretical one. |
 
-## Source with a residual, code-unenforced risk (smaller than IndiGenomes, still worth flagging)
+## MaveDB's residual runtime-license risk -- **FIXED 2026-08-08**
 
-**MaveDB** -- `pipeline/functional_evidence/mavedb_provider.py`'s own
-docstring states: "License: verified live during development -- every
+**Original finding**: `pipeline/functional_evidence/mavedb_provider.py`'s
+own docstring stated: "License: verified live during development -- every
 BRCA1/TP53 score set inspected returned `"license": {"shortName": "CC0"}`
 or `"CC BY 4.0"`, both commercial-use-compatible (MaveDB relicensed its
 corpus from the earlier non-commercial CC-BY-NC-SA specifically to remove
@@ -139,25 +139,44 @@ that restriction)." Independently confirmed via search: "MaveDB has
 relicensed **nearly all** datasets to the Creative Commons CC0 public
 domain license" (`www.mavedb.org/docs/mavedb/data_licensing.html`) --
 **"nearly all," not "all."** MaveDB's own data model lets each individual
-score set's submitter choose its own license (CC0, CC-BY, or others,
-including historically CC-BY-NC-SA), recorded per-score-set, not
-platform-wide. GEPER's provider code reads the score data but was
-**confirmed by grep to never read or filter on the `license` field at
-runtime** -- unlike `BorzoiPlugin`'s code-level namespace guard (see
-`LICENSE_AUDIT.md`), there is no equivalent enforcement here; the "both
-commercial-use-compatible" conclusion rests on a two-gene manual spot
-check performed once during development, not a standing runtime check.
-For genes beyond BRCA1/TP53 (which GEPER queries dynamically, on demand,
-for whatever gene a variant under analysis falls in), a still-CC-BY-NC-SA
-score set could in principle be returned and used as PS3/BS3 evidence
-without GEPER's own code noticing. Not classified as a hard "genuine
-conflict" the way IndiGenomes is (MaveDB's platform-wide default is now
-permissive, and no CC-BY-NC-SA score set has actually been observed by
-this or the prior audit), but flagged as a real, currently-unenforced gap
-worth a deliberate follow-up decision (e.g. adding the same kind of
-code-level license check `BorzoiPlugin._load_impl` already does for
-Borzoi) rather than left as an unverified assumption. No code changed
-here, per this investigation's scope.
+score set's submitter choose its own license (CC0, CC-BY, CC-BY-SA, or
+others, including historically CC-BY-NC-SA), recorded per-score-set, not
+platform-wide. GEPER's provider code read the score data but never read
+or filtered on the `license` field at runtime -- unlike `BorzoiPlugin`'s
+code-level namespace guard (see `LICENSE_AUDIT.md`), there was no
+equivalent enforcement here; the "both commercial-use-compatible"
+conclusion rested on a two-gene manual spot check performed once during
+development, not a standing runtime check.
+
+**Fix**: `pipeline/functional_evidence/mavedb_provider.py::_index_one_score_set`
+now checks every score set's own `license.shortName` field before using
+its data as evidence, following the same "verify before trust, at the
+point of use" principle `BorzoiPlugin`'s guard already applies (adapted
+to a per-record soft skip + logged warning, not a hard plugin-load
+failure, since one score set's license has no bearing on any other --
+matching the file's pre-existing "one bad score set must not lose every
+other candidate" pattern). MaveDB's exact license vocabulary was
+confirmed live against its own `GET /api/v1/licenses/` endpoint
+(2026-08-08): five records total -- `"CC0"`, `"CC BY 4.0"`, and
+`"CC BY-SA 4.0"` are active/permissive (all commercial-use-safe: GEPER
+only ever reads a score/classification as evidence, never redistributes
+MaveDB's underlying dataset, so share-alike's redistribution condition
+doesn't apply to GEPER's use); `"CC BY-NC-SA 4.0"` (non-commercial) and
+`"Other - See Data Usage Guidelines"` (unspecified terms) are both
+inactive/unsafe. Real per-score-set metadata for a live MaveDB score set
+(`GET /api/v1/score-sets/urn:mavedb:00000097-a-1`) was also fetched to
+confirm the exact response shape (`license` is a nested object,
+`shortName` the field to read) before writing the check against it. A
+score set whose license is missing, unrecognized, or explicitly
+restrictive now contributes nothing -- logged, never silently used --
+applied automatically to every MaveDB query for every gene, not limited
+to the genes spot-checked during development. Regression coverage:
+`tests/test_ps3_bs3.py::TestMaveDBProvider` (8 new tests -- CC0/CC BY 4.0/
+CC BY-SA 4.0 all confirmed allowed; CC BY-NC-SA 4.0, the "Other" catch-all,
+a missing `license` key, and a `license` object missing its own
+`shortName` all confirmed excluded, fail-closed; the real, previously
+spot-checked BRCA1 fixture re-confirmed still producing evidence, i.e.
+no regression for the case already known to be fine).
 
 ## Re-verify this audit if
 

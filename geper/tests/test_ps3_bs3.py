@@ -305,6 +305,177 @@ class TestMaveDBProvider(unittest.TestCase):
             index = provider.fetch_gene_index("BRCA1")
         self.assertEqual(index, {})
 
+    # -----------------------------------------------------------------
+    # Runtime license guard (2026-08-08, see DATA_SOURCE_LICENSE_AUDIT.md
+    # "residual, code-unenforced risk" finding: MaveDB relicensed
+    # "nearly all", not all, score sets to a commercial-safe default --
+    # licensing is set per score set by its own submitter, so this must
+    # be checked automatically at query time, not assumed from a
+    # one-time manual BRCA1/TP53 spot check).
+    # -----------------------------------------------------------------
+
+    def _single_score_set_search_payload(self, urn="urn:mavedb:00099999-a-1"):
+        return {"scoreSets": [{"urn": urn, "numVariants": 10, "targetGenes": [{"name": "BRCA1"}]}]}
+
+    def _fetch_with_metadata(self, metadata):
+        provider = MaveDBFunctionalEvidenceProvider()
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=self._single_score_set_search_payload()),
+            ),
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.get",
+                return_value=_fake_response(json_payload=metadata),
+            ),
+        ):
+            return provider.fetch_gene_index("BRCA1")
+
+    def test_real_brca1_fixture_cc0_license_is_allowed(self):
+        """No-regression check: the real, live-captured BRCA1 fixture
+        already spot-checked during the license audit (CC0) must still
+        produce evidence now that the check is automatic, not manual."""
+        provider, search_payload, fake_get = self._provider_with_fixtures()
+        with (
+            mock.patch(
+                "pipeline.functional_evidence.mavedb_provider.requests.post",
+                return_value=_fake_response(json_payload=search_payload),
+            ),
+            mock.patch("pipeline.functional_evidence.mavedb_provider.requests.get", side_effect=fake_get),
+        ):
+            index = provider.fetch_gene_index("BRCA1")
+        self.assertNotEqual(index, {})
+
+    def test_cc_by_4_0_license_is_allowed(self):
+        metadata = {
+            "license": {"shortName": "CC BY 4.0", "active": True},
+            "scoreCalibrations": [
+                {
+                    "functionalClassifications": [
+                        {"functionalClassification": "abnormal", "range": [None, -1.0]},
+                    ]
+                }
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "-2.0"}],
+        ):
+            index = self._fetch_with_metadata(metadata)
+        self.assertIn(normalize_hgvs_c("NM_1:c.1A>T"), index)
+
+    def test_cc_by_sa_4_0_license_is_allowed(self):
+        metadata = {
+            "license": {"shortName": "CC BY-SA 4.0", "active": True},
+            "scoreCalibrations": [
+                {
+                    "functionalClassifications": [
+                        {"functionalClassification": "normal", "range": [-0.5, None]},
+                    ]
+                }
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "0.0"}],
+        ):
+            index = self._fetch_with_metadata(metadata)
+        self.assertIn(normalize_hgvs_c("NM_1:c.1A>T"), index)
+
+    def test_non_commercial_license_is_excluded(self):
+        """A score set explicitly licensed CC BY-NC-SA 4.0 (MaveDB's
+        deprecated non-commercial default) must never contribute
+        evidence, even though its calibration data is otherwise
+        perfectly usable."""
+        metadata = {
+            "license": {"shortName": "CC BY-NC-SA 4.0", "active": False},
+            "scoreCalibrations": [
+                {
+                    "functionalClassifications": [
+                        {"functionalClassification": "abnormal", "range": [None, -1.0]},
+                    ]
+                }
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "-2.0"}],
+        ):
+            with self.assertLogs("geper.pipeline.functional_evidence.mavedb_provider", level="WARNING") as cm:
+                index = self._fetch_with_metadata(metadata)
+        self.assertEqual(index, {})
+        self.assertTrue(any("CC BY-NC-SA 4.0" in line for line in cm.output))
+
+    def test_other_unspecified_license_is_excluded(self):
+        """MaveDB's own 'Other - See Data Usage Guidelines' catch-all
+        has no confirmed commercial terms -- must be excluded, not
+        assumed safe just because it isn't explicitly NC."""
+        metadata = {
+            "license": {"shortName": "Other - See Data Usage Guidelines", "active": False},
+            "scoreCalibrations": [
+                {"functionalClassifications": [{"functionalClassification": "abnormal", "range": [None, -1.0]}]}
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "-2.0"}],
+        ):
+            index = self._fetch_with_metadata(metadata)
+        self.assertEqual(index, {})
+
+    def test_missing_license_field_fails_closed(self):
+        """No `license` key at all (an unrecognized/future response
+        shape, or a genuinely malformed record) must be treated as
+        unsafe by default -- fail closed, not fail open, matching
+        GEPER's tri-state evidence-handling convention elsewhere."""
+        metadata = {
+            "scoreCalibrations": [
+                {"functionalClassifications": [{"functionalClassification": "abnormal", "range": [None, -1.0]}]}
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "-2.0"}],
+        ):
+            with self.assertLogs("geper.pipeline.functional_evidence.mavedb_provider", level="WARNING") as cm:
+                index = self._fetch_with_metadata(metadata)
+        self.assertEqual(index, {})
+        self.assertTrue(any("None" in line or "not in" in line for line in cm.output))
+
+    def test_license_field_present_but_shortname_missing_fails_closed(self):
+        """A `license` object present but missing its own `shortName`
+        (a malformed/unexpected shape) must also fail closed."""
+        metadata = {
+            "license": {"longName": "Some Future License"},
+            "scoreCalibrations": [
+                {"functionalClassifications": [{"functionalClassification": "abnormal", "range": [None, -1.0]}]}
+            ],
+        }
+        with mock.patch(
+            "pipeline.functional_evidence.mavedb_provider.MaveDBFunctionalEvidenceProvider._get_variant_rows",
+            return_value=[{"hgvs_nt": "NM_1:c.1A>T", "score": "-2.0"}],
+        ):
+            index = self._fetch_with_metadata(metadata)
+        self.assertEqual(index, {})
+
+    def test_license_check_happens_before_calibration_is_even_read(self):
+        """A restrictively-licensed score set is excluded regardless of
+        how good its calibration data looks -- the license check is not
+        bypassable by having clean calibration data."""
+        metadata = {
+            "license": {"shortName": "CC BY-NC-SA 4.0"},
+            "scoreCalibrations": [
+                {
+                    "functionalClassifications": [
+                        {"functionalClassification": "abnormal", "range": [None, -1.0]},
+                        {"functionalClassification": "normal", "range": [-0.5, None]},
+                    ]
+                }
+            ],
+        }
+        index = self._fetch_with_metadata(metadata)
+        self.assertEqual(index, {})
+
 
 # ---------------------------------------------------------------------------
 # FunctionalEvidenceLookup -- composite primary/secondary fallback logic

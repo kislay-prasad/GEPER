@@ -15,13 +15,30 @@ score set's *own* calibration -- it never invents a threshold. A score
 set with no calibration at all cannot produce a PS3/BS3 call and
 contributes nothing (not a fabricated guess).
 
-License: verified live during development -- every BRCA1/TP53 score
-set inspected returned `"license": {"shortName": "CC0"}` or `"CC BY
-4.0"`, both commercial-use-compatible (MaveDB relicensed its corpus
-from the earlier non-commercial CC-BY-NC-SA specifically to remove
-that restriction). CFTR returned zero score sets -- a genuine coverage
-gap, confirmed live (`POST /score-sets/search {"text": "CFTR"}` ->
-`{"scoreSets": [], "numScoreSets": 0}`), the same gap ERepo has.
+License: MaveDB relicensed nearly all of its corpus from the earlier
+non-commercial CC-BY-NC-SA to a permissive default, but licensing is
+set *per score set* by its own submitter, not platform-wide -- a
+stray CC-BY-NC-SA (or other non-commercial) score set can still exist
+(see `DATA_SOURCE_LICENSE_AUDIT.md`'s "residual, code-unenforced risk"
+finding, 2026-08-08). `_index_one_score_set` below therefore checks
+every score set's own `license.shortName` field (confirmed against
+MaveDB's own `/api/v1/licenses/` endpoint, live, 2026-08-08 -- the
+authoritative vocabulary, not guessed) before using its data as
+evidence, the same "verify before trust, at the point of use" principle
+`pipeline/models/borzoi_plugin.py`'s `BorzoiLicenseGuardError` already
+applies to Borzoi's weight source -- adapted here to a per-record soft
+skip rather than a hard plugin-load failure, since one score set's
+license has no bearing on any other score set's, or any other gene's
+(see `fetch_gene_index`'s own "one bad score set must not lose every
+other candidate" reasoning, which this reuses). A score set whose
+license is missing or not in `_COMMERCIAL_SAFE_LICENSE_SHORT_NAMES`
+contributes nothing, logged, exactly like a score set with no usable
+calibration -- never silently used anyway. This replaces the earlier,
+purely manual "spot-checked live for BRCA1/TP53 during development"
+verification with a check applied automatically to every query.
+CFTR returned zero score sets -- a genuine coverage gap, confirmed live
+(`POST /score-sets/search {"text": "CFTR"}` -> `{"scoreSets": [],
+"numScoreSets": 0}`), the same gap ERepo has.
 
 Performance: a gene like BRCA1 can have 60+ score sets (many are
 per-exon replicate splits of the same underlying assay). Fetching
@@ -53,6 +70,29 @@ from utils.service_health import HEALTH, is_transient_http_error
 logger = get_logger(__name__)
 
 _CLASSIFICATION_TO_CALL = {"abnormal": "PS3", "normal": "BS3"}  # "not_specified" contributes no call
+
+# MaveDB's own license vocabulary (confirmed live against
+# `GET /api/v1/licenses/`, 2026-08-08 -- five records, `shortName` is
+# the field a score set's own `license` object carries):
+#   "CC0"                        -- active, public domain -- SAFE
+#   "CC BY 4.0"                  -- active, attribution only -- SAFE
+#   "CC BY-SA 4.0"               -- active, attribution + share-alike -- SAFE
+#     (share-alike restricts *redistributing modified copies* under a
+#     different license; it does not restrict commercial use itself,
+#     and GEPER only ever reads a score/classification as evidence,
+#     never redistributes MaveDB's underlying dataset -- so this is
+#     commercial-use-safe for GEPER's purpose.)
+#   "CC BY-NC-SA 4.0"            -- inactive/deprecated, NON-COMMERCIAL -- UNSAFE
+#   "Other - See Data Usage Guidelines" -- inactive, terms unspecified -- UNSAFE
+# Only the three explicitly-confirmed-permissive names are listed here
+# -- anything else (a value not in this set, a missing `license`
+# field entirely, or a future license MaveDB adds that hasn't been
+# reviewed) fails closed as unsafe, matching GEPER's established
+# tri-state "don't guess a favorable default" convention elsewhere
+# (e.g. `commercial_use_allowed: Optional[bool]` in
+# `pipeline/models/base.py::ModelMetadata`, which treats `None` the
+# same way -- never silently treated as permitted).
+_COMMERCIAL_SAFE_LICENSE_SHORT_NAMES = frozenset({"CC0", "CC BY 4.0", "CC BY-SA 4.0"})
 
 
 class MaveDBFunctionalEvidenceProvider:
@@ -150,6 +190,16 @@ class MaveDBFunctionalEvidenceProvider:
 
     def _index_one_score_set(self, urn: str, index: Dict[str, FunctionalEvidenceRecord]) -> None:
         metadata = self._get_json(f"{self.endpoint}/score-sets/{urn}")
+
+        license_short_name = (metadata.get("license") or {}).get("shortName")
+        if license_short_name not in _COMMERCIAL_SAFE_LICENSE_SHORT_NAMES:
+            logger.warning(
+                f"MaveDB score set '{urn}' has license '{license_short_name!r}', which is not in "
+                f"GEPER's confirmed commercial-use-safe set {sorted(_COMMERCIAL_SAFE_LICENSE_SHORT_NAMES)} "
+                "-- excluding it from PS3/BS3 evidence (see DATA_SOURCE_LICENSE_AUDIT.md)."
+            )
+            return  # not a confirmed commercial-safe license -- nothing usable from this score set
+
         calibration = _best_calibration(metadata.get("scoreCalibrations"))
         if calibration is None:
             return  # no calibrated classification available -- nothing usable from this score set

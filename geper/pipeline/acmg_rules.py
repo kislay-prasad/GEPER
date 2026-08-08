@@ -45,6 +45,7 @@ from pipeline.pvs1.models import (
     LOF_ESTABLISHED,
     LOF_ESTABLISHED_RECESSIVE,
     LOF_UNKNOWN,
+    NULL_CANONICAL_SPLICE,
     NULL_WHOLE_GENE_DELETION,
     QUALIFYING_NULL_TYPES,
 )
@@ -56,13 +57,15 @@ from pipeline.pvs1.utils import (
     lof_mechanism_from_clingen,
     population_af_from_gnomad,
     protein_effect_flags,
+    protein_effect_undetermined_reason,
     transcript_from_result,
 )
 
 # ACMG/AMP 2015 criterion categories and the direction of pathogenicity
 # each one argues for. Used only for labelling / combining rules; the
-# combination rules below (PVS1+2PM etc.) mirror the standard 2015
-# Richards et al. point-based approximation.
+# combining rules below (`_combine`) use Tavtigian et al. 2018's
+# Bayesian-calibrated point system, not Richards et al. 2015's
+# categorical lookup table -- see `_combine`'s own docstring comment.
 _STRENGTH = {
     "PVS1": ("pathogenic", "very_strong"),
     "PS1": ("pathogenic", "strong"),
@@ -238,7 +241,18 @@ class ACMGRuleEngine:
     ) -> Dict[str, Any]:
         criteria: Dict[str, CriterionResult] = {}
 
-        is_synonymous, is_missense = self._protein_effect_flags(variant_dict, transcript_result)
+        # Transcript-CDS-frame protein effect, shared by BP7 (synonymous),
+        # BP1 (missense), and the PP3/BP4 applicability gate (LOF) below --
+        # never `pipeline/protein_translator.py`'s frame-unaware local
+        # translation window (see `pipeline/pvs1/utils.py::
+        # protein_effect_flags`'s docstring for why that window is
+        # unusable for this).
+        protein_flags = protein_effect_flags(variant_dict, transcript_from_result(transcript_result))
+        is_synonymous = protein_flags.is_synonymous if protein_flags.determined else None
+        is_missense = protein_flags.is_missense if protein_flags.determined else None
+        protein_undetermined_reason = (
+            None if protein_flags.determined else protein_effect_undetermined_reason(variant_dict, transcript_result)
+        )
 
         criteria["PVS1"] = self._pvs1(
             variant_dict=variant_dict,
@@ -267,14 +281,33 @@ class ACMGRuleEngine:
             uniprot_result=uniprot_result,
         )
         criteria["PS4"] = self._ps4(gnomad_result)
+        pvs1_null_variant_type = (criteria["PVS1"].details or {}).get("null_variant_type")
         criteria["PP3"], criteria["BP4"] = self._pp3_bp4(
-            alphamissense_result, mmsplice_result, ensemble_result, conservation_result
+            alphamissense_result,
+            mmsplice_result,
+            ensemble_result,
+            conservation_result,
+            protein_flags=protein_flags,
+            null_variant_type=pvs1_null_variant_type,
+            variant_dict=variant_dict,
         )
         criteria["BA1"], criteria["BS1"] = self._ba1_bs1(gnomad_result)
-        criteria["BP7"] = self._bp7(is_synonymous, mmsplice_result, spliceformer_result, splicebert_result)
+        criteria["BP7"] = self._bp7(
+            is_synonymous,
+            mmsplice_result,
+            spliceformer_result,
+            splicebert_result,
+            undetermined_reason=protein_undetermined_reason,
+        )
         criteria["PP1"] = self._pp1(clingen_result)
         criteria["BS4"] = self._bs4(clingen_result)
-        criteria["BP1"] = self._bp1(is_missense, clingen_result)
+        criteria["BP1"] = self._bp1(
+            is_missense,
+            clingen_result,
+            undetermined_reason=protein_undetermined_reason,
+            alphamissense_result=alphamissense_result,
+            pm1_result=criteria["PM1"],
+        )
         criteria["BP3"] = self._bp3(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
@@ -336,38 +369,6 @@ class ACMGRuleEngine:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _protein_effect_flags(
-        variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
-    ) -> "tuple[Optional[bool], Optional[bool]]":
-        """
-        (is_synonymous, is_missense) for BP7/BP1, called from the
-        transcript's real CDS reading frame -- never from
-        `pipeline/protein_translator.py`'s frame-unaware local
-        translation window. That window translates from the first AUG
-        it happens to find in a short flanking sequence, which for a
-        coding variant more than a few dozen bases from the transcript's
-        true start codon is an essentially arbitrary frame: it produced
-        matching ref/alt "protein" text for real missense variants
-        (BP7 wrongly triggering, contributing benign points) purely by
-        coincidence of which wrong codon the substitution happened to
-        land in. See `pipeline/pvs1/utils.py::protein_effect_flags` and
-        `coding_consequence_detail` for the transcript-CDS-frame
-        replacement and its own docstrings for the full history.
-
-        Returns `(None, None)` -- never a guessed boolean -- when the
-        consequence genuinely could not be determined from transcript
-        data (no transcript structure, no CDS sequence fetched, a
-        build/transcript coordinate mismatch, or a multi-nucleotide
-        same-length substitution). Callers must report "not_evaluated"
-        for that case, not a triggered/not_triggered guess.
-        """
-        transcript = transcript_from_result(transcript_result)
-        flags = protein_effect_flags(variant_dict, transcript)
-        if not flags.determined:
-            return None, None
-        return flags.is_synonymous, flags.is_missense
 
     # ------------------------------------------------------------------
     # Individually-evaluated criteria
@@ -1092,11 +1093,61 @@ class ACMGRuleEngine:
         return bp4
 
     @staticmethod
+    def _pp3_bp4_inapplicability_reason(
+        protein_flags: Optional[Any],
+        null_variant_type: Optional[str],
+        variant_dict: Optional[Dict[str, Any]],
+    ) -> Optional[str]:
+        """
+        PP3/BP4 applicability gate. PP3 and BP4 are ACMG/AMP's
+        *computational-evidence* criteria: AlphaMissense (missense
+        pathogenicity), MMSplice/the AI ensemble (splicing/regulatory
+        effect), and PhyloP/PhastCons/GERP++ (nucleotide conservation).
+        None of those tools predict anything about a variant whose
+        protein consequence is already settled by the transcript reading
+        frame itself -- a frameshift, a nonsense (stop-gained) codon, or
+        a canonical +-1/+-2 splice-site substitution is null regardless
+        of what a missense/conservation score says about the base that
+        happens to be changed. Applying PP3/BP4 to those variants (as
+        happened for a -1bp BRCA2 frameshift that also carried PVS1
+        very_strong -- see report finding review 2026-08-08) cites
+        evidence that is simply inapplicable, not merely weak.
+
+        Returns a human-readable reason naming why PP3/BP4 don't apply,
+        or `None` when they do (including every missense variant, and
+        any variant whose consequence could not be determined at all --
+        that gap is `_pp3_bp4`'s own "no computational predictor
+        produced a result" / evidence-scan path to handle, not this
+        gate's).
+        """
+        if null_variant_type == NULL_CANONICAL_SPLICE:
+            return (
+                "this is a canonical +-1/+-2 splice-site variant; regulatory/conservation-based "
+                "computational predictors (AlphaMissense, PhyloP/PhastCons/GERP++) are not applicable "
+                "evidence for a canonical splice-site substitution"
+            )
+        if protein_flags is not None and protein_flags.determined and protein_flags.is_lof:
+            ref = (variant_dict.get("ref") or "") if variant_dict else ""
+            alt = (variant_dict.get("alt") or "") if variant_dict else ""
+            kind = "a frameshift" if len(ref) != len(alt) else "a nonsense (stop-gained)"
+            return (
+                f"this is {kind} variant with a transcript-CDS-frame-determined null consequence; "
+                "missense/regulatory computational predictors are not applicable evidence for a "
+                "variant whose loss-of-function consequence is already established by the reading "
+                "frame itself"
+            )
+        return None
+
+    @staticmethod
     def _pp3_bp4(
         alphamissense_result: Optional[Dict[str, Any]],
         mmsplice_result: Optional[Dict[str, Any]],
         ensemble_result: Optional[Dict[str, Any]] = None,
         conservation_result: Optional[Dict[str, Any]] = None,
+        *,
+        protein_flags: Optional[Any] = None,
+        null_variant_type: Optional[str] = None,
+        variant_dict: Optional[Dict[str, Any]] = None,
     ) -> "tuple[CriterionResult, CriterionResult]":
         """
         PP3 ("computational evidence supports a deleterious effect") and
@@ -1159,6 +1210,15 @@ class ACMGRuleEngine:
         """
         pp3_dir, pp3_strength = _STRENGTH["PP3"]
         bp4_dir, bp4_strength = _STRENGTH["BP4"]
+
+        inapplicable_reason = ACMGRuleEngine._pp3_bp4_inapplicability_reason(
+            protein_flags, null_variant_type, variant_dict
+        )
+        if inapplicable_reason is not None:
+            na = _not_evaluated("PP3", f"PP3 does not apply -- {inapplicable_reason}.")
+            nb = _not_evaluated("BP4", f"BP4 does not apply -- {inapplicable_reason}.")
+            return na, nb
+
         sources: List[str] = []
         damaging: List[tuple] = []  # (source_label, evidence_text)
         benign: List[tuple] = []
@@ -1329,6 +1389,17 @@ class ACMGRuleEngine:
             )
             return pp3, bp4
 
+        # damaging-only / benign-only: every source that returned a
+        # result agrees, so the non-triggered criterion's rationale is
+        # "the evidence pointed the other way", not a disagreement --
+        # `conflicting_evidence` is deliberately left empty here (unlike
+        # the damaging-and-benign branch above). Populating it with the
+        # very evidence that converges cleanly would report a conflict
+        # that does not exist, which is what fed a spurious "Conflicting
+        # evidence (Minor)" flag onto nearly every finding via
+        # `pipeline/conflict_resolution_engine.py::_acmg_criterion_
+        # conflicts` (any non-empty conflicting_evidence list on any
+        # criterion becomes a review flag there) before this fix.
         if damaging:
             pp3 = CriterionResult(
                 "PP3",
@@ -1349,7 +1420,6 @@ class ACMGRuleEngine:
                 "not_triggered",
                 "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
                 "converge on a benign prediction.",
-                conflicting_evidence=damaging_texts,
                 evidence_sources=sources,
                 confidence="Low",
             )
@@ -1375,7 +1445,6 @@ class ACMGRuleEngine:
                 "not_triggered",
                 "Computational predictors that returned a result (" + ", ".join(sources) + ") did not "
                 "indicate a damaging effect.",
-                conflicting_evidence=benign_texts,
                 evidence_sources=sources,
                 confidence="Low",
             )
@@ -1540,6 +1609,8 @@ class ACMGRuleEngine:
         mmsplice_result: Optional[Dict[str, Any]],
         spliceformer_result: Optional[Dict[str, Any]] = None,
         splicebert_result: Optional[Dict[str, Any]] = None,
+        *,
+        undetermined_reason: Optional[str] = None,
     ) -> CriterionResult:
         """
         BP7 (ACMG/AMP 2015): "A synonymous (silent) variant for which
@@ -1586,12 +1657,12 @@ class ACMGRuleEngine:
         """
         direction, strength = _STRENGTH["BP7"]
         if is_synonymous is None:
+            reason = undetermined_reason or "the protein-level consequence could not be determined."
             return _not_evaluated(
                 "BP7",
-                "This variant's protein-level consequence could not be determined from transcript "
-                "data (no transcript/CDS structure was available, or this is a multi-nucleotide "
-                "substitution), so synonymous status cannot be confirmed -- BP7 requires a confirmed "
-                "synonymous call, never an assumption.",
+                f"This variant's protein-level consequence could not be determined because {reason} "
+                "Synonymous status cannot be confirmed -- BP7 requires a confirmed synonymous call, "
+                "never an assumption.",
             )
         if not is_synonymous:
             return CriterionResult(
@@ -1813,7 +1884,56 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
-    def _bp1(is_missense: Optional[bool], clingen_result: Optional[Dict[str, Any]]) -> CriterionResult:
+    def _bp1_opposing_missense_evidence(
+        alphamissense_result: Optional[Dict[str, Any]], pm1_result: Optional[CriterionResult]
+    ) -> Optional[str]:
+        """
+        Gate for BP1's blanket "gene where LOF is established => this
+        missense is benign evidence" inference, mirroring `_pp3_bp4`'s
+        applicability gate (A1) and BP7's existing tri-state precedent
+        (trigger / block on a damaging signal / not evaluated): a gene
+        being curated as primarily LOF-driven does not mean *every*
+        missense variant in it is mechanistically neutral. Some
+        dosage-sensitive genes still have a real, disease-causing
+        missense mechanism in specific domains (e.g. VHL type 2 disease
+        is substantially missense-driven despite VHL's overall LOF/
+        haploinsufficiency curation) -- BP1's own rationale already
+        concedes "no gene-specific BP1 point calibration is integrated
+        here". Rather than leaving that caveat as text alongside a
+        benign-supporting trigger, this blocks BP1 outright when a
+        strong, independent, variant-specific signal argues the
+        opposite direction: AlphaMissense's own top-confidence call
+        (`likely_pathogenic`), or PM1 (this same engine's conserved-
+        functional-domain criterion) independently triggering for this
+        residue.
+
+        Returns the opposing-evidence text, or `None` when BP1's
+        default gene-level inference is not contradicted by anything
+        GEPER has for this specific variant.
+        """
+        reasons = []
+        if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
+            am_class = (alphamissense_result.get("am_class") or "").strip().lower()
+            if am_class == "likely_pathogenic":
+                reasons.append(
+                    "AlphaMissense predicts 'likely_pathogenic' "
+                    f"(am_pathogenicity={alphamissense_result.get('am_pathogenicity')}) for this substitution."
+                )
+        if pm1_result is not None and pm1_result.status == "triggered":
+            reasons.append(f"PM1 (conserved functional domain) independently triggered: {pm1_result.rationale}")
+        if not reasons:
+            return None
+        return " ".join(reasons)
+
+    @staticmethod
+    def _bp1(
+        is_missense: Optional[bool],
+        clingen_result: Optional[Dict[str, Any]],
+        *,
+        undetermined_reason: Optional[str] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        pm1_result: Optional[CriterionResult] = None,
+    ) -> CriterionResult:
         """
         BP1 (ACMG/AMP 2015): "Missense variant in a gene for which
         primarily truncating variants are known to cause disease" --
@@ -1846,12 +1966,12 @@ class ACMGRuleEngine:
         """
         direction, strength = _STRENGTH["BP1"]
         if is_missense is None:
+            reason = undetermined_reason or "the protein-level consequence could not be determined."
             return _not_evaluated(
                 "BP1",
-                "This variant's protein-level consequence could not be determined from transcript "
-                "data (no transcript/CDS structure was available, or this is a multi-nucleotide "
-                "substitution), so missense status cannot be confirmed -- BP1 requires a confirmed "
-                "missense call, never an assumption.",
+                f"This variant's protein-level consequence could not be determined because {reason} "
+                "Missense status cannot be confirmed -- BP1 requires a confirmed missense call, "
+                "never an assumption.",
             )
         if not is_missense:
             return CriterionResult(
@@ -1874,6 +1994,22 @@ class ACMGRuleEngine:
             )
 
         if mechanism in (LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE):
+            opposing = ACMGRuleEngine._bp1_opposing_missense_evidence(alphamissense_result, pm1_result)
+            if opposing is not None:
+                return CriterionResult(
+                    "BP1",
+                    direction,
+                    strength,
+                    "not_triggered",
+                    f"Variant is missense, and ClinGen curates {gene} as a gene where loss-of-function/"
+                    "truncating variants are an established disease mechanism, but BP1 does not apply "
+                    "here: a strong, variant-specific signal argues against treating this particular "
+                    "missense substitution as benign, despite the gene's overall LOF curation.",
+                    conflicting_evidence=[opposing],
+                    evidence_sources=["ClinGen", "transcript_cds", "AlphaMissense", "InterPro"],
+                    confidence="Low",
+                    details={"lof_mechanism": mechanism, "opposing_missense_evidence": opposing},
+                )
             return CriterionResult(
                 "BP1",
                 direction,
@@ -2479,7 +2615,21 @@ class ACMGRuleEngine:
         return {"available": False}
 
     # ------------------------------------------------------------------
-    # Combining rules (Richards et al. 2015 point-based approximation)
+    # Combining rules (Tavtigian et al. 2018 Bayesian-calibrated point
+    # system, PMID 29300386 -- NOT a threshold approximation of Richards
+    # et al. 2015's categorical combining table; see `_POINTS`, whose
+    # 8/4/2/1 weights are that paper's calibrated point values for
+    # very_strong/strong/moderate/supporting evidence, and the net-point
+    # thresholds below, which are that paper's published cutoffs
+    # (Pathogenic >=10, Likely Pathogenic 6-9, VUS 0-5, Likely Benign -1
+    # to -6, Benign <=-7). The two systems do not always agree: Richards'
+    # categorical table classifies "1 Very Strong + 1 Moderate alone" as
+    # Likely Pathogenic only, while Tavtigian's calibrated points put the
+    # same combination (net=10) at Pathogenic. GEPER follows Tavtigian
+    # here because that is what these point weights and thresholds
+    # already implement; report text citing "2015 ACMG/AMP" combining
+    # rules should be understood as this calibrated point system, not
+    # the original categorical lookup table.
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -2517,12 +2667,21 @@ class ACMGRuleEngine:
         net = path_points - benign_points
         trace.append(f"Pathogenic points = {path_points}, benign points = {benign_points}, net = {net}.")
 
-        if benign_points >= 8:
+        # Thresholded on `net` (pathogenic points minus benign points),
+        # not on path_points/benign_points independently. Previously
+        # this compared path_points and benign_points as two separate
+        # one-sided tests and never actually consulted `net` -- so any
+        # triggered benign-direction criterion (e.g. BP4 supporting)
+        # was silently ignored whenever path_points alone already
+        # cleared the Pathogenic/Likely Pathogenic bar (PVS1 8 + PM2 2 +
+        # BP4 -1 reported "Pathogenic" from path_points=10 alone,
+        # dropping BP4's point entirely instead of netting to 9).
+        if net <= -7:
             return "Benign", trace
-        if benign_points >= 4 and path_points < 4:
+        if net <= -1:
             return "Likely Benign", trace
-        if path_points >= 10:
+        if net >= 10:
             return "Pathogenic", trace
-        if path_points >= 6:
+        if net >= 6:
             return "Likely Pathogenic", trace
         return "Uncertain Significance", trace

@@ -28,7 +28,18 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 
-_SEVERITY_WEIGHT_KEY = {"Minor": "MINOR_WEIGHT", "Moderate": "MODERATE_WEIGHT", "Major": "MAJOR_WEIGHT"}
+_SEVERITY_WEIGHT_KEY = {
+    "Minor": "MINOR_WEIGHT",
+    "Moderate": "MODERATE_WEIGHT",
+    "Major": "MAJOR_WEIGHT",
+    "Critical": "CRITICAL_WEIGHT",
+}
+
+# ClinVar's own two highest-confidence review tiers (3- and 4-star
+# review status, verbatim ClinVar API text, lowercased for comparison).
+_AUTHORITATIVE_CLINVAR_REVIEW_STATUS = ("reviewed by expert panel", "practice guideline")
+_PATHOGENIC_LEANING_CLASSIFICATIONS = ("pathogenic", "likely pathogenic")
+_BENIGN_LEANING_CLASSIFICATIONS = ("benign", "likely benign")
 
 
 def _ai_directions(ai_consensus: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -37,7 +48,14 @@ def _ai_directions(ai_consensus: List[Dict[str, Any]]) -> Dict[str, str]:
     for v in ai_consensus or []:
         pred = (v.get("prediction") or "").lower()
         source = v.get("source") or v.get("model") or "model"
-        if "pathogenic" in pred or pred in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+        if "pathogenic" in pred or pred in (
+            "strong_donor_loss",
+            "strong_acceptor_loss",
+            "exon_skipping",
+            "intron_retention",
+            "strong",
+            "moderate",
+        ):
             out[source] = "damaging"
         elif "benign" in pred:
             out[source] = "benign"
@@ -54,7 +72,7 @@ class ConflictItem:
     category: str  # "Clinical" | "Population" | "AI" | "Protein" | "Structure" | "Sequence" | "ACMG Criterion"
     evidence_a: Dict[str, str]  # {"source": ..., "statement": ...}
     evidence_b: Dict[str, str]
-    severity: str  # "Minor" | "Moderate" | "Major" | "Not evaluable"
+    severity: str  # "Critical" | "Major" | "Moderate" | "Minor" | "Not evaluable"
     resolution: str
     resolution_rationale: str
     confidence_impact: str
@@ -79,7 +97,7 @@ class ConflictResolutionResult:
     conflict_list: List[ConflictItem]
     conflict_summary: str
     conflict_score: float  # 0-100, higher = more/worse conflict
-    conflict_severity: str  # "None" | "Minor" | "Moderate" | "Major"
+    conflict_severity: str  # "None" | "Minor" | "Moderate" | "Major" | "Critical"
     conflict_resolution: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -125,6 +143,9 @@ class ConflictResolutionEngine:
         cfg = CONFIG.conflict
         conflicts: List[ConflictItem] = []
 
+        c = self._expert_panel_disagreement_conflict(acmg_classification, clinvar_result)
+        if c:
+            conflicts.append(c)
         conflicts.extend(self._acmg_criterion_conflicts(acmg_conflicting_evidence))
         c = self._clinical_conflict(clinvar_result, clingen_result)
         if c:
@@ -132,7 +153,13 @@ class ConflictResolutionEngine:
         c = self._population_conflict(acmg_classification, clinvar_result, gnomad_result)
         if c:
             conflicts.append(c)
-        c = self._ai_conflict(ai_consensus, confidence_conflict_penalty, confidence_conflict_explanation, priority_conflict_penalty, priority_conflict_explanation)
+        c = self._ai_conflict(
+            ai_consensus,
+            confidence_conflict_penalty,
+            confidence_conflict_explanation,
+            priority_conflict_penalty,
+            priority_conflict_explanation,
+        )
         if c:
             conflicts.append(c)
         c = self._protein_conflict(uniprot_result, interpro_result)
@@ -146,7 +173,7 @@ class ConflictResolutionEngine:
         # "Not evaluable" notes (Sequence) are excluded from scoring --
         # they are not detected conflicts, just an honest statement that
         # no check could be performed.
-        real_conflicts = [c for c in conflicts if c.severity in ("Minor", "Moderate", "Major")]
+        real_conflicts = [c for c in conflicts if c.severity in ("Minor", "Moderate", "Major", "Critical")]
 
         score = self._score(real_conflicts, cfg)
         severity = self._overall_severity(score, real_conflicts, cfg)
@@ -177,22 +204,101 @@ class ConflictResolutionEngine:
         for entry in acmg_conflicting_evidence or []:
             text = entry.get("text") if isinstance(entry, dict) else entry
             sources = entry.get("sources", []) if isinstance(entry, dict) else []
-            items.append(ConflictItem(
-                conflict_type="ACMG criterion internal caveat",
-                category="ACMG Criterion",
-                evidence_a={"source": ", ".join(sources) or "ACMG rule engine", "statement": text},
-                evidence_b={"source": "n/a", "statement": "No opposing evidence item; this is a caveat on the criterion's own applicability, not a two-sided disagreement."},
-                severity="Minor",
-                resolution="Criterion evaluation stands as recorded; caveat retained for reviewer awareness.",
-                resolution_rationale="This is a limitation the ACMG rule engine itself flagged while evaluating the criterion (e.g. an estimated coordinate or partial evidence), not a disagreement between two independent sources.",
-                confidence_impact="Already counted in the confidence engine's conflict penalty (each ACMG-criterion conflicting-evidence item is counted as one conflict unit there).",
-                priority_impact="Already counted in the prioritization engine's conflict penalty on the same basis.",
-            ))
+            items.append(
+                ConflictItem(
+                    conflict_type="ACMG criterion internal caveat",
+                    category="ACMG Criterion",
+                    evidence_a={"source": ", ".join(sources) or "ACMG rule engine", "statement": text},
+                    evidence_b={
+                        "source": "n/a",
+                        "statement": "No opposing evidence item; this is a caveat on the criterion's own applicability, not a two-sided disagreement.",
+                    },
+                    severity="Minor",
+                    resolution="Criterion evaluation stands as recorded; caveat retained for reviewer awareness.",
+                    resolution_rationale="This is a limitation the ACMG rule engine itself flagged while evaluating the criterion (e.g. an estimated coordinate or partial evidence), not a disagreement between two independent sources.",
+                    confidence_impact="Already counted in the confidence engine's conflict penalty (each ACMG-criterion conflicting-evidence item is counted as one conflict unit there).",
+                    priority_impact="Already counted in the prioritization engine's conflict penalty on the same basis.",
+                )
+            )
         return items
 
     @staticmethod
+    def _expert_panel_disagreement_conflict(acmg_classification, clinvar_result) -> Optional[ConflictItem]:
+        """
+        Critical-tier conflict, and deliberately the only detector in
+        this engine at that tier: GEPER's own bottom-line ACMG
+        classification disagrees with a ClinVar record reviewed by an
+        expert panel or endorsed as a practice guideline (ClinVar's own
+        two highest-confidence review tiers) for this *exact* variant --
+        gated on `clinvar_result.match_status == "matched"`, i.e. only
+        once `database/clinvar_client.py::_variant_match` has confirmed
+        this is the same allele, not merely a co-located ClinVar record.
+
+        Every other detector in this engine documents a disagreement
+        GEPER's rule engine already accounts for in some way (a
+        cross-reference note, a lower confidence score, a priority
+        factor) without the classification itself being in question.
+        This one means the number a clinician will actually act on
+        contradicts the most authoritative external classification
+        available for this variant -- not a caveat to note alongside
+        the result, but a reason to hold it for manual review.
+        """
+        if not (
+            clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
+        ):
+            return None
+        if not acmg_classification:
+            return None
+
+        top = clinvar_result["primary_record"]
+        review_status = (top.get("review_status") or "").strip().lower()
+        if review_status not in _AUTHORITATIVE_CLINVAR_REVIEW_STATUS:
+            return None
+
+        clinvar_sig = (top.get("clinical_significance") or "").strip().lower()
+        geper_sig = acmg_classification.strip().lower()
+        clinvar_pathogenic = any(s in clinvar_sig for s in _PATHOGENIC_LEANING_CLASSIFICATIONS)
+        clinvar_benign = any(s in clinvar_sig for s in _BENIGN_LEANING_CLASSIFICATIONS)
+        geper_pathogenic = geper_sig in _PATHOGENIC_LEANING_CLASSIFICATIONS
+        geper_benign = geper_sig in _BENIGN_LEANING_CLASSIFICATIONS
+
+        disagrees = (clinvar_pathogenic and not geper_pathogenic) or (clinvar_benign and not geper_benign)
+        if not disagrees:
+            return None
+
+        return ConflictItem(
+            conflict_type="GEPER classification disagrees with an expert-panel/practice-guideline ClinVar classification",
+            category="Clinical",
+            evidence_a={
+                "source": "ClinVar",
+                "statement": f"'{top.get('clinical_significance')}' (review status: {top.get('review_status')}).",
+            },
+            evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: '{acmg_classification}'."},
+            severity="Critical",
+            resolution=(
+                "This variant's GEPER classification must be manually reviewed before clinical use. GEPER's "
+                "ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input, so "
+                "this disagreement did not automatically change the classification above -- but a mismatch "
+                "against ClinVar's most authoritative review tier is the strongest signal this engine can "
+                "raise that GEPER's primary-evidence-based classification may be missing something ClinVar's "
+                "curators saw (or vice versa)."
+            ),
+            resolution_rationale=(
+                "ClinVar records reviewed by an expert panel or endorsed as a practice guideline are ClinVar's "
+                "own two highest-confidence review tiers (3- and 4-star), reflecting multi-submitter or "
+                "guideline-level curation rather than a single lab's assertion -- disagreement with one of "
+                "these is materially more serious than disagreement with an unreviewed or single-submitter "
+                "record, which is why this is GEPER's highest-severity reviewer flag."
+            ),
+            confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty.",
+            priority_impact="Not currently counted in the prioritization engine's numeric conflict penalty.",
+        )
+
+    @staticmethod
     def _clinical_conflict(clinvar_result, clingen_result) -> Optional[ConflictItem]:
-        if not (clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")):
+        if not (
+            clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
+        ):
             return None
         if not (clingen_result and clingen_result.get("found")):
             return None
@@ -206,8 +312,14 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="ClinVar pathogenicity vs ClinGen gene-disease validity",
             category="Clinical",
-            evidence_a={"source": "ClinVar", "statement": f"Variant classified as '{top.get('clinical_significance')}'."},
-            evidence_b={"source": "ClinGen", "statement": f"Gene-disease validity for {clingen_result.get('gene_symbol', 'this gene')} curated as '{clingen_result.get('clinical_validity_summary')}'."},
+            evidence_a={
+                "source": "ClinVar",
+                "statement": f"Variant classified as '{top.get('clinical_significance')}'.",
+            },
+            evidence_b={
+                "source": "ClinGen",
+                "statement": f"Gene-disease validity for {clingen_result.get('gene_symbol', 'this gene')} curated as '{clingen_result.get('clinical_validity_summary')}'.",
+            },
             severity="Major",
             resolution="ACMG classification is unchanged by this conflict. GEPER's ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",
             resolution_rationale="A pathogenic variant call is only as trustworthy as the underlying gene-disease relationship. ClinGen's curated validity rating is the more conservative, systematically-curated signal here.",
@@ -226,7 +338,9 @@ class ConflictResolutionEngine:
         pathogenic_leaning = acmg_classification in ("Pathogenic", "Likely Pathogenic")
         clinvar_primary = (
             clinvar_result["primary_record"]
-            if clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
+            if clinvar_result
+            and clinvar_result.get("match_status") == "matched"
+            and clinvar_result.get("primary_record")
             else None
         )
         clinvar_pathogenic = bool(
@@ -246,7 +360,10 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="Population rarity inconsistent with pathogenic-leaning clinical interpretation",
             category="Population",
-            evidence_a={"source": "gnomAD", "statement": f"Global allele frequency = {af:.2e}, {'above the BA1 common-variant threshold' if severity == 'Major' else 'above the BS1 expected-disease-frequency threshold'} ({gcfg.BA1_AF_THRESHOLD:.2e} / {gcfg.BS1_AF_THRESHOLD:.2e})."},
+            evidence_a={
+                "source": "gnomAD",
+                "statement": f"Global allele frequency = {af:.2e}, {'above the BA1 common-variant threshold' if severity == 'Major' else 'above the BS1 expected-disease-frequency threshold'} ({gcfg.BA1_AF_THRESHOLD:.2e} / {gcfg.BS1_AF_THRESHOLD:.2e}).",
+            },
             evidence_b={"source": " & ".join(clinical_sources), "statement": "; ".join(clinical_side)},
             severity=severity,
             resolution=(
@@ -261,7 +378,9 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _ai_conflict(ai_consensus, confidence_penalty, confidence_explanation, priority_penalty, priority_explanation) -> Optional[ConflictItem]:
+    def _ai_conflict(
+        ai_consensus, confidence_penalty, confidence_explanation, priority_penalty, priority_explanation
+    ) -> Optional[ConflictItem]:
         directions = _ai_directions(ai_consensus)
         distinct = set(directions.values())
         if len(distinct) <= 1:
@@ -276,8 +395,8 @@ class ConflictResolutionEngine:
             severity="Moderate",
             resolution="ACMG classification is unchanged. Both predictions are retained in ai_consensus for review; PP3/BP4 in the ACMG evaluation already require the two predictors to agree before contributing evidence in either direction, so a discordant pair like this does not spuriously trigger either criterion.",
             resolution_rationale="AlphaMissense scores missense pathogenicity; MMSplice scores splicing disruption -- they can legitimately disagree because they model different molecular mechanisms, but a pathogenic-vs-benign disagreement at the variant level still warrants a closer look.",
-            confidence_impact=f"Already counted: this discordance contributes to the confidence engine's conflict penalty ({_pct(confidence_penalty)}; \"{confidence_explanation}\").",
-            priority_impact=f"Already counted: this discordance contributes to the prioritization engine's conflict penalty ({_pct(priority_penalty)}; \"{priority_explanation}\").",
+            confidence_impact=f'Already counted: this discordance contributes to the confidence engine\'s conflict penalty ({_pct(confidence_penalty)}; "{confidence_explanation}").',
+            priority_impact=f'Already counted: this discordance contributes to the prioritization engine\'s conflict penalty ({_pct(priority_penalty)}; "{priority_explanation}").',
         )
 
     @staticmethod
@@ -289,7 +408,10 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="UniProt reviewed entry present but no InterPro/Pfam domain annotation resolved",
             category="Protein",
-            evidence_a={"source": "UniProt", "statement": f"Reviewed (Swiss-Prot) entry found ({uniprot_result.get('accession', 'n/a')}): {uniprot_result.get('protein_name', 'n/a')}."},
+            evidence_a={
+                "source": "UniProt",
+                "statement": f"Reviewed (Swiss-Prot) entry found ({uniprot_result.get('accession', 'n/a')}): {uniprot_result.get('protein_name', 'n/a')}.",
+            },
             evidence_b={"source": "InterPro", "statement": "No InterPro/Pfam annotation resolved for this protein."},
             severity="Minor",
             resolution="ACMG classification is unchanged. This is an annotation-coverage gap, not a biological disagreement between UniProt and InterPro -- PM1 (conserved-domain criterion) simply could not be evaluated for this variant as a result (see not_evaluated_rules / limitations).",
@@ -313,8 +435,14 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="Low AlphaFold structural confidence vs predicted damaging functional effect",
             category="Structure",
-            evidence_a={"source": "AlphaFold DB", "statement": f"Structural confidence at the affected residue is '{band}' (AlphaFold DB's own low-confidence bands, typically indicating an intrinsically disordered or poorly-modeled region)."},
-            evidence_b={"source": " & ".join(damaging_sources), "statement": f"{', '.join(damaging_sources)} predict{'s' if len(damaging_sources) == 1 else ''} a damaging effect for this variant."},
+            evidence_a={
+                "source": "AlphaFold DB",
+                "statement": f"Structural confidence at the affected residue is '{band}' (AlphaFold DB's own low-confidence bands, typically indicating an intrinsically disordered or poorly-modeled region).",
+            },
+            evidence_b={
+                "source": " & ".join(damaging_sources),
+                "statement": f"{', '.join(damaging_sources)} predict{'s' if len(damaging_sources) == 1 else ''} a damaging effect for this variant.",
+            },
             severity="Moderate",
             resolution="ACMG classification is unchanged. PM1/PP3 in the ACMG evaluation are driven by InterPro domain overlap and AlphaMissense/MMSplice respectively, not by AlphaFold confidence directly, so this conflict does not itself alter the classification -- but a damaging call in a low-confidence structural region deserves closer review, since disordered regions are less amenable to structure-based interpretation.",
             resolution_rationale="A low pLDDT region is often intrinsically disordered rather than misfolded, which can mean a 'damaging' sequence-based prediction reflects a real functional (e.g. linear-motif) effect that structure prediction simply can't resolve -- not necessarily that the prediction is wrong, but that structural evidence can't corroborate it either way.",
@@ -336,8 +464,14 @@ class ConflictResolutionEngine:
         return ConflictItem(
             conflict_type="BLAST / Ensembl consistency check",
             category="Sequence",
-            evidence_a={"source": "BLAST", "statement": f"{hits} homology hit(s) returned (no pathogenic/benign direction associated with this result)."},
-            evidence_b={"source": "Ensembl", "statement": "Not exposed as a separate per-variant evidence source in this pipeline; used internally for sequence-context retrieval only."},
+            evidence_a={
+                "source": "BLAST",
+                "statement": f"{hits} homology hit(s) returned (no pathogenic/benign direction associated with this result).",
+            },
+            evidence_b={
+                "source": "Ensembl",
+                "statement": "Not exposed as a separate per-variant evidence source in this pipeline; used internally for sequence-context retrieval only.",
+            },
             severity="Not evaluable",
             resolution="No conflict check performed.",
             resolution_rationale="GEPER has no directional (pathogenic/benign) signal from either BLAST or Ensembl to compare against other evidence, so a genuine conflict cannot be detected here without fabricating one.",
@@ -361,6 +495,13 @@ class ConflictResolutionEngine:
     def _overall_severity(score: float, real_conflicts: List[ConflictItem], cfg) -> str:
         if not real_conflicts:
             return "None"
+        # A single Critical-tier item (currently only
+        # `_expert_panel_disagreement_conflict`) forces the overall
+        # severity outright -- it is never diluted by averaging against
+        # lower-severity items the way the score-threshold tiers below
+        # are, since it means the classification itself is in doubt.
+        if any(c.severity == "Critical" for c in real_conflicts):
+            return "Critical"
         if score >= cfg.MAJOR_THRESHOLD:
             return "Major"
         if score >= cfg.MODERATE_THRESHOLD:

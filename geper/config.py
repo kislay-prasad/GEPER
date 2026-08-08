@@ -2221,6 +2221,15 @@ class ConflictConfig:
     MINOR_WEIGHT: float = float(os.environ.get("GEPER_CONFLICT_MINOR_WEIGHT", "1.0"))
     MODERATE_WEIGHT: float = float(os.environ.get("GEPER_CONFLICT_MODERATE_WEIGHT", "2.0"))
     MAJOR_WEIGHT: float = float(os.environ.get("GEPER_CONFLICT_MAJOR_WEIGHT", "3.0"))
+    # "Critical" is a distinct, higher tier reserved for exactly one
+    # detector (`ConflictResolutionEngine._expert_panel_disagreement_
+    # conflict`): GEPER's own ACMG classification disagreeing with a
+    # ClinVar record reviewed by an expert panel or practice guideline
+    # for this exact (variant-matched) variant. Its presence alone
+    # forces the overall `conflict_severity` to "Critical" (see
+    # `_overall_severity`) rather than only contributing to the
+    # aggregate score like the other tiers.
+    CRITICAL_WEIGHT: float = float(os.environ.get("GEPER_CONFLICT_CRITICAL_WEIGHT", "5.0"))
 
     # A run with this many "major-equivalent" weight units (or more) is
     # treated as saturating the 0-100 conflict_score scale. Configurable
@@ -2233,6 +2242,7 @@ class ConflictConfig:
     MAJOR_THRESHOLD: float = float(os.environ.get("GEPER_CONFLICT_MAJOR_THRESHOLD", "60"))
     MODERATE_THRESHOLD: float = float(os.environ.get("GEPER_CONFLICT_MODERATE_THRESHOLD", "30"))
     # Below MODERATE_THRESHOLD but > 0 -> "Minor"; exactly 0 -> "None".
+    # "Critical" is not score-thresholded -- see CRITICAL_WEIGHT above.
 
     # AlphaFold pLDDT bands treated as "low structural confidence" for
     # the structural-vs-functional-prediction conflict check. Matches

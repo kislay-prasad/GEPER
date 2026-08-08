@@ -19,7 +19,7 @@ from pipeline.confidence_engine import ConfidenceEngine
 from pipeline.prioritization_engine import PrioritizationEngine
 from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.explainability_engine import ExplainabilityEngine
-from pipeline.pvs1.utils import protein_effect_flags, transcript_from_result
+from pipeline.pvs1.utils import protein_effect_flags, protein_effect_undetermined_reason, transcript_from_result
 
 logger = get_logger(__name__)
 
@@ -157,9 +157,8 @@ class InterpretationEngine:
         protein_flags = protein_effect_flags(variant_dict, transcript_from_result(transcript_result))
         if not protein_flags.determined:
             evidence.append(
-                "Protein-level consequence could not be determined from transcript data (no CDS "
-                "sequence was available for this variant/transcript, or this is a multi-nucleotide "
-                "substitution)."
+                "Protein-level consequence could not be determined from transcript data: "
+                + protein_effect_undetermined_reason(variant_dict, transcript_result)
             )
         elif protein_flags.is_synonymous:
             evidence.append("Transcript-verified protein consequence: synonymous (no amino acid change).")

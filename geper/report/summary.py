@@ -83,6 +83,15 @@ _FOOTER_PAGE_NUM_Y = 8 * mm
 # logo and the title text that follows it.
 _LOGO_TITLE_GAP = 4 * mm
 
+# Single source of truth for both PDF formats' sign-off roles -- the
+# diagnostic-genetics two-signature convention (an authoring scientist
+# plus an authorising consultant). `report/summary.py::_build_signoff_
+# block` and `report/summary_short.py::_build_signoff_block` both read
+# this same tuple rather than hardcoding their own role titles, so the
+# two documents can never again show a different signatory for the
+# same run.
+_SIGNOFF_ROLES = ("Clinical Scientist", "Consultant Clinical Scientist")
+
 _DISCLAIMER_TEXT = (
     "Limitations and Disclaimer: This test was developed and its performance characteristics "
     "determined by the Geper Genomic Analysis Pipeline. It is intended for clinical use in "
@@ -812,15 +821,86 @@ def _build_patient_header_table(
     return table
 
 
-def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str, ParagraphStyle]) -> List[Any]:
-    """Sequencing QC status table -- PASS/WARNING against `CONFIG.qc_report`'s configurable thresholds (see that class's docstring for why these are placeholders)."""
-    is_mock = not qc_metrics
-    resolved: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in _MOCK_QC_METRICS.items()}
-    if qc_metrics:
-        for key, value in qc_metrics.items():
-            if key in resolved:
-                resolved[key]["value"] = value
+_PROVENANCE_STATUS_LABELS = {
+    "not_consulted": "Not consulted this run",
+    "unknown": "Consulted -- no version/hash could be determined",
+    "timestamp_only": "Consulted -- no release version published; query time recorded",
+    "hash_only": "Consulted -- content hash recorded, no release version published",
+    "version_known": "Version known",
+}
 
+
+def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+    """
+    Data Source Provenance section -- the PDF's own rendering of what
+    `report/report_generator.py::MarkdownReportGenerator._render_provenance`
+    already builds for the Markdown output (this document's
+    `code_version`/`model_checkpoints`/`provenance`, from
+    `pipeline/provenance.py`). Previously that section existed only in
+    the Markdown path -- the PDF, GEPER's primary clinical deliverable,
+    had no reproducibility record at all despite the run-level data
+    already being computed and present on `document`, which is unwired,
+    not a design choice; this renders the identical content, in the
+    same source-of-truth status vocabulary (`_PROVENANCE_STATUS_LABELS`
+    mirrors `report_generator.py`'s `status_labels` exactly so the two
+    formats never drift on wording).
+    """
+    flow: List[Any] = [
+        Paragraph(
+            "Recorded for reproducibility: if this report needs to be reproduced later, the exact "
+            "data-source versions and code version below are what to match.",
+            styles["Footnote"],
+        ),
+        Spacer(1, 2 * mm),
+        Paragraph(f"<b>GEPER code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),
+        Spacer(1, 2 * mm),
+    ]
+
+    checkpoints = document.get("model_checkpoints") or {}
+    flow.append(Paragraph("<b>AI model checkpoints:</b>", styles["BodyText"]))
+    if checkpoints:
+        flow.extend(
+            Paragraph(f"• {name}: {identifier}", styles["BulletText"])
+            for name, identifier in sorted(checkpoints.items())
+        )
+    else:
+        flow.append(Paragraph("No AI model checkpoint identifiers recorded for this run.", styles["Footnote"]))
+    flow.append(Spacer(1, 2 * mm))
+
+    provenance = document.get("provenance") or []
+    flow.append(Paragraph("<b>External data sources:</b>", styles["BodyText"]))
+    if not provenance:
+        flow.append(Paragraph("No data-source provenance was recorded for this run.", styles["Footnote"]))
+        return flow
+
+    for record in provenance:
+        status = record.get("status", "unknown")
+        label = _PROVENANCE_STATUS_LABELS.get(status, status)
+        detail_bits = [f"{record.get('source')}: {label}"]
+        if record.get("version"):
+            detail_bits.append(f"version {record['version']}")
+        if record.get("release_date"):
+            detail_bits.append(f"released {record['release_date']}")
+        if record.get("content_hash"):
+            detail_bits.append(
+                f"hash ({record.get('hash_algorithm') or 'unknown algorithm'}): {record['content_hash']}"
+            )
+        flow.append(Paragraph("• " + "; ".join(detail_bits), styles["BulletText"]))
+    return flow
+
+
+def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+    """
+    Sequencing QC status table -- PASS/WARNING against
+    `CONFIG.qc_report`'s configurable thresholds, computed only from
+    real, caller-supplied `qc_metrics`. When no `qc_metrics` were
+    supplied, this never invents numbers to compute a PASS/WARNING
+    status against: a clinical PDF asserting "PASS" against a fake
+    coverage/Q30 value is exactly the kind of fabricated-evidence bug
+    this pipeline works to eliminate elsewhere (see e.g. PP3/BP4's
+    conflicting-evidence discipline). Rows render as "Not supplied"
+    with no status cell instead.
+    """
     header = [
         Paragraph("Metric", styles["TableHeader"]),
         Paragraph("Result", styles["TableHeader"]),
@@ -828,11 +908,22 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
         Paragraph("Status", styles["TableHeader"]),
     ]
     rows = [header]
-    row_statuses: List[str] = []
+    row_statuses: List[Optional[str]] = []
     for key in _QC_METRIC_ORDER:
-        value = resolved[key]["value"]
-        unit = resolved[key]["unit"]
+        unit = _MOCK_QC_METRICS[key]["unit"]
         threshold = _qc_threshold_pass_min(key)
+        value = qc_metrics.get(key) if qc_metrics else None
+        if value is None:
+            row_statuses.append(None)
+            rows.append(
+                [
+                    Paragraph(_QC_METRIC_LABELS[key], styles["TableLabel"]),
+                    Paragraph("Not supplied", styles["TableValue"]),
+                    Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
+                    Paragraph("--", styles["TableValue"]),
+                ]
+            )
+            continue
         status = _qc_status(key, value)
         row_statuses.append(status)
         rows.append(
@@ -854,18 +945,32 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
     for i, status in enumerate(row_statuses, start=1):
-        bg = colors.HexColor("#e3f6e8") if status == "PASS" else colors.HexColor("#fdf1d6")
+        if status == "PASS":
+            bg = colors.HexColor("#e3f6e8")
+        elif status == "WARNING":
+            bg = colors.HexColor("#fdf1d6")
+        else:
+            bg = colors.HexColor("#eeeeee")
         style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
     table.setStyle(TableStyle(style_cmds))
 
     flowables: List[Any] = [table]
-    if is_mock:
+    if not qc_metrics:
         flowables.append(Spacer(1, 2 * mm))
         flowables.append(
             Paragraph(
-                "Note: no run-level QC metrics were supplied to this report; the values above are "
-                "illustrative placeholders only, not a real sequencing QC result. Pass real values via "
+                "No run-level QC metrics were supplied to this report -- the rows above reflect that "
+                "gap, not a real sequencing QC result. Pass real values via "
                 "generate_pdf(qc_metrics={...}) from the upstream sequencing/alignment pipeline.",
+                styles["Footnote"],
+            )
+        )
+    elif any(status is None for status in row_statuses):
+        flowables.append(Spacer(1, 2 * mm))
+        flowables.append(
+            Paragraph(
+                "Some run-level QC metrics were not supplied to this report; those rows show 'Not "
+                "supplied' rather than an invented value.",
                 styles["Footnote"],
             )
         )
@@ -912,9 +1017,13 @@ def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[D
       - No clinical interpretation could be built at all (a data gap, not
         a benign finding -- see `_build_variant_section`'s identical
         framing for the full-detail section).
-      - A real (Minor/Moderate/Major) evidence conflict was detected --
-        `clinical_report["conflict_resolution"]["severity"]`, the same
-        field the Conflict Resolution Engine (Phase 6) computes.
+      - A real (Minor/Moderate/Major/Critical) evidence conflict was
+        detected -- `clinical_report["conflict_resolution"]["severity"]`,
+        the same field the Conflict Resolution Engine (Phase 6) computes.
+        "Critical" means GEPER's own classification disagrees with an
+        expert-panel/practice-guideline ClinVar record for this exact
+        variant -- see `pipeline/conflict_resolution_engine.py::
+        _expert_panel_disagreement_conflict`.
       - Gene resolution came back genuinely ambiguous (multiple candidate
         genes overlap this position and could not be disambiguated) --
         see `pipeline/orchestrator.py::GeperPipeline._with_gene_resolution_context`
@@ -928,7 +1037,7 @@ def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[D
     flags: List[str] = []
 
     severity = (clinical.get("conflict_resolution") or {}).get("severity")
-    if severity in ("Minor", "Moderate", "Major"):
+    if severity in ("Minor", "Moderate", "Major", "Critical"):
         flags.append(f"Conflicting evidence ({severity})")
 
     for stage_key in ("clingen", "transcript"):
@@ -1118,10 +1227,14 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
         ]
         rows.append(row)
 
+    # Confidence column widened (was 17/20mm -- narrow enough that
+    # "Confidence" itself wrapped mid-word to "Confidenc / e" in the
+    # header row); the extra width is taken from "Top Evidence", the
+    # widest column, so the table's total width is unchanged.
     if has_case_ranking:
-        col_widths = [8 * mm, 30 * mm, 25 * mm, 17 * mm, 30 * mm, 40 * mm, 20 * mm]
+        col_widths = [8 * mm, 30 * mm, 25 * mm, 21 * mm, 30 * mm, 36 * mm, 20 * mm]
     else:
-        col_widths = [8 * mm, 35 * mm, 30 * mm, 20 * mm, 53 * mm, 24 * mm]
+        col_widths = [8 * mm, 35 * mm, 30 * mm, 24 * mm, 49 * mm, 24 * mm]
     table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),
@@ -1317,22 +1430,33 @@ def _build_indian_population_frequency_flowables(
     for where this dict comes from; IndiGenomes was retired from
     GEPER's active query path, see `DATA_SOURCE_LICENSE_AUDIT.md`),
     plus a "Common in Indian populations" flag when gnomAD SAS alone
-    exceeds the configured threshold. Renders nothing at all only when
-    there is truly no signal from either source (no gnomAD SAS figure
-    and the 1000 Genomes SAS stage wasn't even run this variant) -- in
-    real pipeline operation that stage always runs, so this omission
-    path is effectively test-only.
+    exceeds the configured threshold. Rendered for every finding, never
+    omitted -- a missing section used to be indistinguishable from a
+    queried-and-empty one (both showed nothing at all), which is
+    exactly the "absence of the section is indistinguishable from
+    absence of the query" failure mode this report works to eliminate
+    elsewhere. In real pipeline operation the 1000 Genomes SAS stage
+    always runs, so the explicit not-queried branches below are the
+    honest fallback for the cases where a caller genuinely didn't wire
+    that stage's result through, not a state a real end-to-end run
+    should ever hit.
     """
     ipf = clinical.get("indian_population_frequency") or {}
     gnomad_sas_af = ipf.get("gnomad_af_sas")
-    if gnomad_sas_af is None and not ipf.get("sas_shown"):
-        return []
 
     flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Indian Population Frequency:</b>", styles["BodyText"])]
     if gnomad_sas_af is not None:
         flow.append(Paragraph(f"• gnomAD (South Asian, SAS): AF = {gnomad_sas_af:.2e}", styles["BulletText"]))
+    elif ipf.get("gnomad_sas_queried"):
+        flow.append(Paragraph("• gnomAD (South Asian, SAS): variant not found in this source.", styles["BulletText"]))
+    else:
+        flow.append(Paragraph("• gnomAD (South Asian, SAS): not queried for this variant.", styles["BulletText"]))
     if ipf.get("sas_shown"):
         flow.extend(_build_1000_genomes_sas_flowables(ipf, styles))
+    else:
+        flow.append(
+            Paragraph("• 1000 Genomes Project (South Asian, SAS): not queried for this variant.", styles["BulletText"])
+        )
     if ipf.get("common_in_indian_population"):
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         flow.append(
@@ -1438,6 +1562,44 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Spacer(1, 2 * mm))
         flow.append(table)
 
+    # Criteria that were actually checked against this variant's
+    # evidence and came back negative -- shown so every evaluated
+    # criterion is accounted for somewhere in the report, not just the
+    # ones that triggered (not-evaluated criteria already get their own
+    # footnote in `limitations`; without this block, a not-triggered
+    # criterion was indistinguishable in the PDF from one that was
+    # never checked at all).
+    not_triggered = acmg.get("not_triggered_criteria") or []
+    if not_triggered:
+        nt_rows = [
+            [
+                Paragraph("Criterion", styles["TableHeader"]),
+                Paragraph("Rationale", styles["TableHeader"]),
+            ]
+        ]
+        for crit in not_triggered:
+            nt_rows.append(
+                [
+                    Paragraph(str(crit.get("code") or ""), styles["TableValue"]),
+                    Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
+                ]
+            )
+        nt_table = Table(nt_rows, colWidths=[22 * mm, 138 * mm], hAlign="LEFT", repeatRows=1)
+        nt_table.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.3, _TABLE_GRID_COLOR),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5a5a5a")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ]
+            )
+        )
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph(f"<b>Criteria Checked, Not Triggered ({len(not_triggered)}):</b>", styles["BodyText"]))
+        flow.append(Spacer(1, 1 * mm))
+        flow.append(nt_table)
+
     supporting = clinical.get("supporting_evidence") or []
     if supporting:
         flow.append(Spacer(1, 2 * mm))
@@ -1470,8 +1632,19 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
 
 def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
-    Signature + date lines, followed immediately by the standard legal
-    disclaimer.
+    Signature + date lines for both required signatories, followed
+    immediately by the standard legal disclaimer.
+
+    Dual sign-off -- Clinical Scientist and Consultant Clinical
+    Scientist -- matching `report/summary_short.py::_build_signoff_block`'s
+    convention exactly (the diagnostic-genetics two-signature standard:
+    an authoring scientist plus an authorising consultant). Previously
+    this report used a different, single-signer title ("Chief
+    Pathologist / Medical Director") from the short report's dual
+    signers for the same run -- a reviewer moving between the two PDFs
+    for one variant would see two different answers to "who signs
+    this". `_SIGNOFF_ROLES` is the shared, single source of truth for
+    both formats now; update it there, not here, to change either.
 
     Only the heading + signature table are wrapped in `KeepTogether` (a
     signature line split from its own "Signature:"/"Date:" labels would
@@ -1488,31 +1661,34 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     flowing right after -- same as any other paragraph.
     """
     line = "_" * 45
-    sig_table = Table(
-        [
-            [Paragraph("Signature:", styles["TableLabel"]), Paragraph(line, styles["TableValue"])],
-            [Paragraph("Date:", styles["TableLabel"]), Paragraph(line, styles["TableValue"])],
-        ],
-        colWidths=[28 * mm, 137 * mm],
-        hAlign="LEFT",
-    )
-    sig_table.setStyle(
-        TableStyle(
+    role_blocks: List[Any] = []
+    for i, role in enumerate(_SIGNOFF_ROLES):
+        if i:
+            role_blocks.append(Spacer(1, 6 * mm))
+        sig_table = Table(
             [
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ]
+                [Paragraph("Signature:", styles["TableLabel"]), Paragraph(line, styles["TableValue"])],
+                [Paragraph("Date:", styles["TableLabel"]), Paragraph(line, styles["TableValue"])],
+            ],
+            colWidths=[28 * mm, 137 * mm],
+            hAlign="LEFT",
         )
-    )
+        sig_table.setStyle(
+            TableStyle(
+                [
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]
+            )
+        )
+        role_blocks.extend([Paragraph(role, styles["SignoffTitle"]), Spacer(1, 4 * mm), sig_table])
 
     return [
         KeepTogether(
             [
                 _Bookmark("bm_signoff", "Sign-off & Disclaimer"),
                 Spacer(1, 10 * mm),
-                Paragraph("Chief Pathologist / Medical Director", styles["SignoffTitle"]),
-                Spacer(1, 4 * mm),
-                sig_table,
+                *role_blocks,
             ]
         ),
         Spacer(1, 8 * mm),
@@ -1613,6 +1789,15 @@ def generate_pdf(
         ]
     )
     story.extend(_build_qc_flowables(qc_metrics, styles))
+    story.append(Spacer(1, 6 * mm))
+
+    story.extend(
+        [
+            _Bookmark("bm_provenance", "Data Source Provenance"),
+            Paragraph("Data Source Provenance", styles["SectionHeading"]),
+        ]
+    )
+    story.extend(_build_provenance_flowables(document, styles))
     story.append(Spacer(1, 4 * mm))
 
     for idx, variant_result in enumerate(variants, start=1):

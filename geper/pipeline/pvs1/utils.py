@@ -670,6 +670,94 @@ def protein_effect_flags(
     return ProteinEffectFlags(False, False, False, False, True)
 
 
+def protein_effect_undetermined_reason(
+    variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
+) -> str:
+    """
+    Human-readable, specific reason `protein_effect_flags` returned
+    `determined=False` for this exact variant/transcript pair --
+    replaces the old undifferentiated catch-all ("no CDS sequence was
+    available for this variant/transcript, or this is a multi-
+    nucleotide substitution") that every one of BP7/BP1/the
+    `InterpretationEngine` protein-consequence line used to share
+    verbatim regardless of which of several genuinely different causes
+    actually applied. A reviewer reading "the reference allele does not
+    match the transcript's coding sequence at this position" needs to
+    do something very different from a reviewer reading "this position
+    is intronic" or "transcript lookup was skipped this run" -- lumping
+    them together hid that distinction.
+
+    Only call this once `protein_effect_flags(...).determined` is
+    already known False; it re-walks the same decision path
+    `coding_consequence_detail` takes (rather than having that function
+    itself carry a reason out, to keep its contract -- return the call
+    or `None`, nothing else -- unchanged for every existing caller).
+    """
+    if not variant_dict:
+        return "no variant coordinates were available for this analysis."
+    pos = variant_dict.get("pos")
+    ref = (variant_dict.get("ref") or "").upper()
+    alt = (variant_dict.get("alt") or "").upper()
+    if pos is None or not ref or not alt:
+        return "the variant's position, reference allele, or alternate allele was missing."
+    if len(ref) != len(alt):
+        # protein_effect_flags always determines length-changing
+        # (indel) variants via REF/ALT length parity alone -- it never
+        # reaches here undetermined for one, so this branch is
+        # unreachable in practice, but kept as an honest fallback
+        # rather than falling through to the multi-nucleotide message
+        # below, which would misdescribe an indel as a substitution.
+        return "this variant's protein-level consequence could not be classified from REF/ALT length alone."
+    if len(ref) != 1:
+        return (
+            f"this is a {len(ref)}-base, same-length (multi-nucleotide) substitution, which is not "
+            "evaluated for a single-codon consequence call."
+        )
+
+    # Single-nucleotide substitution from here on -- walk the same
+    # transcript/CDS resolution `coding_consequence_detail` takes.
+    if not transcript_result or transcript_result.get("skipped"):
+        return "transcript structure lookup was skipped for this run."
+    if transcript_result.get("error"):
+        return f"transcript structure lookup failed: {transcript_result.get('error')}."
+    if not transcript_result.get("found"):
+        return "no transcript structure was found for this gene/genome build."
+    if transcript_result.get("variant_outside_transcript"):
+        return "this variant's genomic position falls outside the resolved transcript's boundaries."
+
+    transcript = transcript_context_from_dict(transcript_result.get("transcript") or {})
+    if transcript is None:
+        return "the transcript structure record could not be parsed (missing exon/CDS coordinates)."
+    if not transcript.cds_sequence:
+        return "the resolved transcript has no coding-sequence (CDS) data fetched."
+
+    cds_pos = transcript.cds_position(int(pos))
+    if cds_pos is None:
+        return (
+            "this position does not map into the resolved transcript's coding sequence -- it may be "
+            "intronic, in an untranslated region (UTR), or outside this transcript's exons."
+        )
+
+    codon_index, offset = (cds_pos - 1) // 3, (cds_pos - 1) % 3
+    codon = transcript.cds_sequence[codon_index * 3 : codon_index * 3 + 3].upper()
+    if len(codon) != 3:
+        return (
+            "the affected codon falls at the edge of the transcript's coding sequence and could not be fully resolved."
+        )
+
+    ref_base = ref
+    if transcript.strand < 0:
+        ref_base = _COMPLEMENT.get(ref_base, ref_base)
+    if codon[offset] != ref_base:
+        return (
+            f"the reference allele ('{ref}') does not match the base ('{codon[offset]}') at this position "
+            "in the resolved transcript's coding sequence -- this indicates a genome-build or "
+            "transcript-coordinate mismatch, not a real substitution at this codon."
+        )
+
+    return "the affected codon could not be translated (an unexpected/ambiguous base was present)."
+
+
 def _protein_null_flags(protein_result: Optional[Dict[str, Any]]) -> Tuple[bool, bool]:
     """
     (is_nonsense, is_frameshift) from GEPER's local protein translation.

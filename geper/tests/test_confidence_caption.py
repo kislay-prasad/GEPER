@@ -118,7 +118,7 @@ class TestFullReportCaption(unittest.TestCase):
             text = self._generate(n)
             for i in range(1, n + 1):
                 self.assertIn(f"Finding {i}:", text)
-            self.assertIn("Chief Pathologist", text)
+            self.assertIn("Clinical Scientist", text)
             self.assertIn(_CAPTION_TEXT, text)
 
 

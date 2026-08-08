@@ -64,6 +64,7 @@ from report.summary import (
     _DISCLAIMER_TEXT,
     _MARGIN,
     _PAGE_W,
+    _SIGNOFF_ROLES,
     _NumberedCanvas,
     _consent_value_label,
     _derive_run_id,
@@ -474,9 +475,11 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     Dual sign-off: Clinical Scientist and Consultant Clinical
     Scientist, side by side -- the two-signature convention diagnostic
     genetics laboratories use (an authoring scientist plus an
-    authorising consultant). Distinct from the full report's single
-    "Chief Pathologist / Medical Director" block; both are unsigned
-    rule/date lines, neither asserts that anyone has actually signed.
+    authorising consultant), read from the shared `_SIGNOFF_ROLES`
+    (`report/summary.py`) so this and the full report's own dual
+    sign-off block can never again show different signatories for the
+    same run. Both are unsigned rule/date lines, neither asserts that
+    anyone has actually signed.
 
     Only the heading + signature table are wrapped in `KeepTogether`
     (so a signature line itself never splits across a page break); the
@@ -494,7 +497,7 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
     lbl, val = styles["SignoffRole"], styles["TableValue"]
     table = Table(
         [
-            [Paragraph("Clinical Scientist", lbl), Paragraph("Consultant Clinical Scientist", lbl)],
+            [Paragraph(_SIGNOFF_ROLES[0], lbl), Paragraph(_SIGNOFF_ROLES[1], lbl)],
             [Paragraph(line, val), Paragraph(line, val)],
             [Paragraph("Name / Signature", styles["Footnote"]), Paragraph("Name / Signature", styles["Footnote"])],
             [Paragraph(line, val), Paragraph(line, val)],

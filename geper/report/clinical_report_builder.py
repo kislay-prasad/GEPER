@@ -82,13 +82,13 @@ _TOOL_LIMITATIONS = (
     "should be reviewed by a qualified clinical geneticist or genetic counselor before any "
     "medical decision is made.",
     "Protein-residue positions used for domain (InterPro/Pfam) and structural (AlphaFold DB) "
-    "overlap checks are estimates derived from the variant's coding-sequence position, not "
-    "transcript-verified coordinates; treat domain/structure overlap findings as supportive, "
-    "not definitive.",
-    "Sequence-context models (HyenaDNA, Evo2, RNA-FM, ESM2) contribute routing and "
-    "embedding context in this pipeline; they do not themselves output a per-variant "
-    "pathogenic/benign verdict, and are reported separately from AlphaMissense/MMSplice for "
-    "that reason.",
+    "overlap checks are transcript-verified (computed from the variant's real, strand- and "
+    "splice-aware coding-sequence mapping, not a flat unspliced translation window) but only "
+    "when the resolved transcript is that gene's MANE Select or Ensembl-canonical isoform -- "
+    "InterPro/UniProt/AlphaFold DB coordinates are only meaningful against the canonical "
+    "isoform. When the resolved transcript is a different one, or no transcript could be "
+    "resolved at all, no residue position is reported and the corresponding domain/structure "
+    "criteria are marked not evaluated rather than shown against a mismatched coordinate.",
 )
 
 
@@ -226,6 +226,16 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
 
 
 def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
+    # `triggered_rules` and `not_triggered_rules` are rendered here in
+    # the same shape so every one of the 28 ACMG/AMP criteria this
+    # engine evaluates is accounted for somewhere in the report -- a
+    # criterion that was checked and came back negative (e.g. BP1 not
+    # triggered because an opposing missense predictor fired) used to
+    # be silently absent from every report section (not in the
+    # triggered table, not in `_limitations`'s not-evaluated-codes
+    # footnote either, since that only lists `not_evaluated_rules`),
+    # which read identically to that criterion never having been
+    # checked at all.
     return {
         "classification": ir.get("acmg_classification"),
         "triggered_criteria": [
@@ -236,6 +246,15 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
                 "rationale": c.get("rationale"),
             }
             for c in ir.get("triggered_rules", [])
+        ],
+        "not_triggered_criteria": [
+            {
+                "code": c.get("code"),
+                "strength": c.get("strength"),
+                "direction": c.get("direction"),
+                "rationale": c.get("rationale"),
+            }
+            for c in ir.get("not_triggered_rules", [])
         ],
         "combining_rule_trace": ir.get("combining_rule_trace", []),
         "not_evaluated_count": len(ir.get("not_evaluated_rules", [])),
@@ -555,6 +574,24 @@ def _sequence_context(ir: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]
 
 def _limitations(ir: Dict[str, Any]) -> List[str]:
     limitations = list(_TOOL_LIMITATIONS)
+    # Built per-finding from `ai_context_models` (what this variant's
+    # DNA-model router actually ran, per `pipeline/orchestrator.py`'s
+    # `dna_models_used`, plus RNA-FM/ESM2 when applicable -- see
+    # `interpretation_result.py`), never a fixed claim that all four of
+    # HyenaDNA/Evo2/RNA-FM/ESM2 ran for every variant, which previously
+    # contradicted findings whose own evidence line named only one.
+    context_models = ir.get("ai_context_models") or []
+    if context_models:
+        limitations.append(
+            f"Sequence-context model(s) actually used for this variant: {', '.join(context_models)}. "
+            "These contribute routing and embedding context in this pipeline; they do not themselves "
+            "output a per-variant pathogenic/benign verdict, and are reported separately from "
+            "AlphaMissense/MMSplice for that reason."
+        )
+    else:
+        limitations.append(
+            "No sequence-context model (HyenaDNA, Evo2, RNA-FM, ESM2) produced a result for this variant."
+        )
     not_evaluated = ir.get("not_evaluated_rules", [])
     if not_evaluated:
         codes = ", ".join(c.get("code", "?") for c in not_evaluated)

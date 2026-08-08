@@ -63,6 +63,7 @@ def build_clinical_report(
     variant_dict: Dict[str, Any] = None,
     raw_evidence: Optional[Dict[str, Any]] = None,
     indigenomes_result: Optional[Dict[str, Any]] = None,
+    thousand_genomes_sas_result: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Returns the 17-section clinical report dict, or `None` if
@@ -107,6 +108,13 @@ def build_clinical_report(
     deployment-only source, unlike gnomAD/ClinVar/etc.); adding an
     unlisted key there would raise a `TypeError` at the schema
     boundary rather than degrade gracefully.
+
+    `thousand_genomes_sas_result`: the raw 1000 Genomes SAS fallback
+    provider dict (see `annotation/thousand_genomes_sas.py
+    ::ThousandGenomesSASLookup.query_variant`), same reasoning as
+    `indigenomes_result` for why it's a separate explicit parameter.
+    Only ever shown in the report when IndiGenomes was confirmed
+    offline this run -- see `_indian_population_frequency` below.
     """
     if not interpretation_result or "error" in interpretation_result:
         return None
@@ -126,7 +134,9 @@ def build_clinical_report(
         "protein_knowledge": _protein_knowledge(raw),
         "structural_knowledge": _structural_knowledge(raw),
         "population_evidence": _population_evidence(raw),
-        "indian_population_frequency": _indian_population_frequency(raw, indigenomes_result),
+        "indian_population_frequency": _indian_population_frequency(
+            raw, indigenomes_result, thousand_genomes_sas_result
+        ),
         "clinical_evidence": _clinical_evidence(raw),
         "sequence_context": _sequence_context(ir, raw),
         "recommendations": ir.get("recommendations", []),
@@ -341,7 +351,11 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _indian_population_frequency(
+    raw: Dict[str, Any],
+    indigenomes_result: Optional[Dict[str, Any]],
+    thousand_genomes_sas_result: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     India-deployment feature: gnomAD's South Asian (SAS) subpopulation
     allele frequency alongside IndiGenomes' own India-specific cohort
@@ -371,6 +385,32 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
     GRCh37-skipped (`indigenomes_skipped_reason` set) -- the same
     found-vs-error distinction `_protein_knowledge`'s docstring
     documents for UniProt/InterPro, applied here for the same reason.
+
+    1000 Genomes SAS FALLBACK (`fallback_*` keys)
+    -------------------------------------------------------------------
+    Surfaced ONLY when `indigenomes_offline` is True -- the same
+    condition `pipeline/orchestrator.py::_run_thousand_genomes_sas_stage`
+    itself gates the live Ensembl query on, so this is this layer's own
+    independent confirmation of the identical signal, not a second
+    decision that could drift from it. If IndiGenomes was genuinely
+    queried this run (found a record OR confirmed not found), the
+    fallback is never shown -- even if `thousand_genomes_sas_result`
+    happens to carry usable data -- because a working IndiGenomes
+    result must never be cluttered with an inferior backup source (see
+    `annotation/thousand_genomes_sas.py`'s module docstring for exactly
+    why it's inferior: n=494 total vs. IndiGenomes' 1000+, and diaspora
+    samples collected outside India, not India-resident individuals).
+
+    `fallback_population_labels`/`fallback_sample_sizes`/
+    `fallback_total_sample_size` are carried through explicitly (not
+    left for the renderer to hardcode or, worse, omit) so every render
+    of this fallback -- Markdown and both PDF paths -- states both
+    mandatory disclosures the same way, from the same source of truth.
+    Deliberately NOT folded into `common_in_indian_population` below:
+    that flag stays driven by gnomAD SAS + IndiGenomes only, the two
+    sources this feature was built to compare -- mixing in a small,
+    diaspora-sourced fallback figure would let a genuinely
+    low-confidence number quietly influence a clinical flag.
     """
     gnomad = raw.get("gnomad") or {}
     gnomad_sas = (gnomad.get("population_breakdown") or {}).get("sas") or {}
@@ -392,6 +432,10 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
     threshold = CONFIG.indigenomes.COMMON_AF_THRESHOLD
     common_in_indian_population = any(af is not None and af >= threshold for af in (gnomad_sas_af, indigenomes_af))
 
+    tgs = thousand_genomes_sas_result or {}
+    fallback_shown = indigenomes_offline
+    fallback_available = fallback_shown and bool(tgs.get("found"))
+
     return {
         "gnomad_af_sas": gnomad_sas_af,
         "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error")),
@@ -404,6 +448,15 @@ def _indian_population_frequency(raw: Dict[str, Any], indigenomes_result: Option
         "indigenomes_skipped_reason": indigenomes.get("reason") if indigenomes.get("skipped") else None,
         "common_af_threshold": threshold,
         "common_in_indian_population": common_in_indian_population,
+        "fallback_shown": fallback_shown,
+        "fallback_available": fallback_available,
+        "fallback_error": tgs.get("error") if fallback_shown else None,
+        "fallback_rsid": tgs.get("rsid") if fallback_shown else None,
+        "fallback_sas_pooled": tgs.get("sas_pooled") if fallback_available else None,
+        "fallback_sub_populations": tgs.get("sub_populations") if fallback_available else None,
+        "fallback_population_labels": tgs.get("population_labels") if fallback_available else None,
+        "fallback_sample_sizes": tgs.get("sample_sizes") if fallback_available else None,
+        "fallback_total_sample_size": tgs.get("total_sample_size") if fallback_available else None,
     }
 
 

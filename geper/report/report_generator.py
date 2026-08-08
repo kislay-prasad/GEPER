@@ -8,11 +8,45 @@ numeric payloads deliberately summarized (not dumped) for readability.
 
 from typing import Any, Dict, List
 
+from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
 from pipeline.models.status import render_status_table_lines
 
 logger = get_logger(__name__)
+
+
+def _render_1000_genomes_sas_fallback_markdown(ipf: Dict[str, Any]) -> List[str]:
+    """
+    Renders the 1000 Genomes SAS fallback -- called only when
+    `ipf["fallback_shown"]` is True (IndiGenomes confirmed offline this
+    run; see `report/clinical_report_builder.py::_indian_population_frequency`).
+    Both mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/
+    `DIASPORA_DISCLOSURE`) are always rendered whenever this fallback
+    has anything at all to show -- found, not found, or errored --
+    never only on the "found" path, since a reader seeing this source
+    mentioned at all needs to know its limitations regardless of
+    outcome.
+    """
+    lines = ["- **1000 Genomes (South Asian, SAS) -- fallback source, IndiGenomes was unavailable this run:**"]
+    if ipf.get("fallback_available"):
+        pooled = ipf.get("fallback_sas_pooled") or {}
+        if pooled.get("af") is not None:
+            lines.append(f"    - Pooled SAS: AF={pooled.get('af')} (AC={pooled.get('ac')}, AN={pooled.get('an')})")
+        labels = ipf.get("fallback_population_labels") or {}
+        sizes = ipf.get("fallback_sample_sizes") or {}
+        for code, sub in (ipf.get("fallback_sub_populations") or {}).items():
+            label = labels.get(code, code)
+            n = sizes.get(code)
+            lines.append(f"    - {code} ({label}, n={n}): AF={sub.get('af')} (AC={sub.get('ac')}, AN={sub.get('an')})")
+    elif ipf.get("fallback_error"):
+        lines.append(f"    - _lookup failed (external service issue: {ipf['fallback_error']})._")
+    else:
+        lines.append("    - Variant not found in this fallback source either.")
+    lines.append(f"    - ⚠ {SAMPLE_SIZE_DISCLOSURE}")
+    lines.append(f"    - ⚠ {DIASPORA_DISCLOSURE}")
+    return lines
+
 
 _DISCLAIMER = (
     "> **Disclaimer:** GEPER is a research pipeline. Outputs are generated "
@@ -567,6 +601,8 @@ class ReportGenerator:
             lines.append(f"- **IndiGenomes:** not queried ({ipf['indigenomes_skipped_reason']}).")
         else:
             lines.append("- **IndiGenomes:** variant not found.")
+        if ipf.get("fallback_shown"):
+            lines.extend(_render_1000_genomes_sas_fallback_markdown(ipf))
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         if ipf.get("common_in_indian_population"):
             lines.append(f"- **⚠ Common in Indian populations** (at or above the {threshold_pct} threshold).")

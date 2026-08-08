@@ -138,6 +138,7 @@ def build_variant_result(
     mmsplice_result: Dict[str, Any] = None,
     gnomad_result: Dict[str, Any] = None,
     indigenomes_result: Dict[str, Any] = None,
+    thousand_genomes_sas_result: Dict[str, Any] = None,
     conservation_result: Dict[str, Any] = None,
     clingen_result: Dict[str, Any] = None,
     uniprot_result: Dict[str, Any] = None,
@@ -237,6 +238,16 @@ def build_variant_result(
         # passed to `build_clinical_report` as its own explicit
         # parameter instead.
         "indigenomes": indigenomes_result if indigenomes_result is not None else {"skipped": True, "found": False},
+        # New, additive key (1000 Genomes SAS sub-population fallback --
+        # see annotation/thousand_genomes_sas.py). Defaults to None
+        # exactly like `indigenomes_result` above. Deliberately NOT
+        # routed through `raw_evidence_for_report`/`RawEvidenceBundle`
+        # below, for the same reason `indigenomes_result` isn't --
+        # passed to `build_clinical_report` as its own explicit
+        # parameter instead.
+        "thousand_genomes_sas": thousand_genomes_sas_result
+        if thousand_genomes_sas_result is not None
+        else {"skipped": True, "found": False},
         # New, additive key (evolutionary-conservation evidence:
         # PhyloP now, PhastCons/GERP++ to follow the same pattern --
         # see pipeline/conservation/) -- defaults to None exactly like
@@ -341,6 +352,7 @@ def build_variant_result(
             variant_dict,
             raw_evidence=raw_evidence_for_report,
             indigenomes_result=indigenomes_result,
+            thousand_genomes_sas_result=thousand_genomes_sas_result,
         ),
         # New, additive key (Objective 6: AI model status reporting).
         # Unlike `ai_splicing_ensemble` below, this key is ALWAYS

@@ -48,6 +48,7 @@ from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.platypus.flowables import Flowable
 
+from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from config import CONFIG
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from utils.logger import get_logger
@@ -1247,6 +1248,66 @@ def _build_clinician_summary_flowables(
     return flow
 
 
+def _build_1000_genomes_sas_fallback_flowables(ipf: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+    """
+    Renders the 1000 Genomes SAS fallback -- called only when
+    `ipf["fallback_shown"]` is True (IndiGenomes confirmed offline this
+    run; see `report/clinical_report_builder.py::_indian_population_frequency`
+    and `annotation/thousand_genomes_sas.py`'s module docstring). Both
+    mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/`DIASPORA_DISCLOSURE`
+    -- the same shared text `report/report_generator.py`'s Markdown
+    path renders, so the two output formats never drift on wording) are
+    always shown whenever this fallback has anything to report at all --
+    found, not found, or errored -- not only on the "found" path.
+    """
+    flow: List[Any] = [
+        Paragraph(
+            "• 1000 Genomes (South Asian, SAS) -- fallback source, IndiGenomes was unavailable this run:",
+            styles["BulletText"],
+        )
+    ]
+    if ipf.get("fallback_available"):
+        pooled = ipf.get("fallback_sas_pooled") or {}
+        if pooled.get("af") is not None:
+            flow.append(
+                Paragraph(
+                    f"&nbsp;&nbsp;&nbsp;&nbsp;- Pooled SAS: AF = {pooled.get('af'):.2e} "
+                    f"(AC={pooled.get('ac')}, AN={pooled.get('an')})",
+                    styles["BulletText"],
+                )
+            )
+        labels = ipf.get("fallback_population_labels") or {}
+        sizes = ipf.get("fallback_sample_sizes") or {}
+        for code, sub in (ipf.get("fallback_sub_populations") or {}).items():
+            label = labels.get(code, code)
+            n = sizes.get(code)
+            af = sub.get("af")
+            af_text = f"{af:.2e}" if af is not None else "n/a"
+            flow.append(
+                Paragraph(
+                    f"&nbsp;&nbsp;&nbsp;&nbsp;- {code} ({label}, n={n}): AF = {af_text} "
+                    f"(AC={sub.get('ac')}, AN={sub.get('an')})",
+                    styles["BulletText"],
+                )
+            )
+    elif ipf.get("fallback_error"):
+        flow.append(
+            Paragraph(
+                f"&nbsp;&nbsp;&nbsp;&nbsp;- Lookup failed (external service issue: {ipf['fallback_error']}).",
+                styles["BulletText"],
+            )
+        )
+    else:
+        flow.append(
+            Paragraph(
+                "&nbsp;&nbsp;&nbsp;&nbsp;- Variant not found in this fallback source either.", styles["BulletText"]
+            )
+        )
+    flow.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;! {SAMPLE_SIZE_DISCLOSURE}", styles["StatusWarn"]))
+    flow.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;! {DIASPORA_DISCLOSURE}", styles["StatusWarn"]))
+    return flow
+
+
 def _build_indian_population_frequency_flowables(
     clinical: Dict[str, Any], styles: Dict[str, ParagraphStyle]
 ) -> List[Any]:
@@ -1317,6 +1378,8 @@ def _build_indian_population_frequency_flowables(
         # left silent, so its absence here is never mistaken for
         # "not checked".
         flow.append(Paragraph("• IndiGenomes: variant not found.", styles["BulletText"]))
+    if ipf.get("fallback_shown"):
+        flow.extend(_build_1000_genomes_sas_fallback_flowables(ipf, styles))
     if ipf.get("common_in_indian_population"):
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         flow.append(

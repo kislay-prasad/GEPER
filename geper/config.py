@@ -668,6 +668,53 @@ class IndiGenomesConfig:
 
 
 @dataclass(frozen=True)
+class ThousandGenomesSASConfig:
+    """
+    Configuration for the 1000 Genomes Project South Asian (SAS)
+    sub-population frequency FALLBACK (see
+    `annotation/thousand_genomes_sas.py`) -- shown in the "Indian
+    Population Frequency" report section ONLY when IndiGenomes was
+    confirmed offline for this run (`utils/service_health.py`), never
+    alongside a working IndiGenomes result. See that module's docstring
+    for the full investigation this is built from (2026-08-08): real,
+    live-confirmed per-sub-population (GIH/PJL/BEB/STU/ITU) allele
+    frequencies are reachable via Ensembl's own `/variation/human/
+    {rsID}?pops=1` REST endpoint -- `CONFIG.api.ENSEMBL_REST_BASE`, an
+    existing GEPER dependency, not a new external service.
+
+    Two disclosures are mandatory wherever this fallback's data is
+    shown (never softened or omitted -- see `_POPULATION_LABELS` and
+    `TOTAL_SAMPLE_SIZE` below): the total sample size (n=494 across all
+    five sub-populations, phase_3/2015 -- much smaller than
+    IndiGenomes' 1000+ India-resident genomes) and that every
+    sub-population is a DIASPORA cohort sampled outside India (e.g.
+    GIH = Gujarati Indian in Houston, TX; ITU = Indian Telugu in the
+    UK), not India-resident individuals.
+
+    Honesty note on reliability: this reuses the same `rest.ensembl.org`
+    host and the same "Ensembl" `utils/service_health.py` HEALTH entry
+    every other Ensembl-dependent stage already shares (PVS1 transcript
+    lookup, ClinGen gene resolution) -- `service_health.py`'s own module
+    docstring documents Ensembl throwing intermittent 500/502/503s in
+    this exact session. This fallback is NOT presented as more reliable
+    than IndiGenomes just because it is a differently-named source; it
+    inherits Ensembl's own reliability profile, whatever that is for a
+    given run.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_1000GENOMES_SAS", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    QUERY_TIMEOUT_SECS: int = int(os.environ.get("GEPER_1000GENOMES_SAS_TIMEOUT", "30"))
+    MAX_RETRIES: int = int(os.environ.get("GEPER_1000GENOMES_SAS_MAX_RETRIES", "3"))
+    RETRY_BACKOFF_SECS: float = float(os.environ.get("GEPER_1000GENOMES_SAS_RETRY_BACKOFF", "1.5"))
+
+
+@dataclass(frozen=True)
 class ConservationConfig:
     """
     Configuration for the evolutionary-conservation evidence source
@@ -2429,6 +2476,7 @@ class GeperConfig:
     mmsplice: MMSpliceConfig = field(default_factory=MMSpliceConfig)
     gnomad: GnomadConfig = field(default_factory=GnomadConfig)
     indigenomes: IndiGenomesConfig = field(default_factory=IndiGenomesConfig)
+    thousand_genomes_sas: ThousandGenomesSASConfig = field(default_factory=ThousandGenomesSASConfig)
     conservation: ConservationConfig = field(default_factory=ConservationConfig)
     clingen: ClinGenConfig = field(default_factory=ClinGenConfig)
     mane: MANEConfig = field(default_factory=MANEConfig)

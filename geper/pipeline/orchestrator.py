@@ -53,6 +53,7 @@ from pipeline.hpo.lookup import HPOLookup
 from pipeline.orphanet.lookup import OrphanetLookup
 from pipeline.conservation.lookup import ConservationLookup
 from annotation.indigenomes import IndiGenomesLookup
+from annotation.thousand_genomes_sas import ThousandGenomesSASLookup
 from pipeline.gnomad.lookup import GnomadLookup
 from pipeline.gnomad.provider import dataset_id_for_build as gnomad_dataset_id_for_build
 from pipeline.interpretation import InterpretationEngine
@@ -103,6 +104,7 @@ from utils.exceptions import (
 from utils.device_utils import log_environment_versions
 from utils.logger import get_logger
 from utils.model_cache import ModelCache
+from utils.service_health import HEALTH
 
 logger = get_logger(__name__)
 
@@ -222,6 +224,13 @@ class GeperPipeline:
         # annotation/indigenomes.py's module docstring for why this is
         # a live-query-only integration (no local-index counterpart).
         self.indigenomes_client = IndiGenomesLookup()
+        # Honest FALLBACK for the Indian Population Frequency report
+        # section -- used only when IndiGenomes is confirmed offline
+        # this run (see `annotation/thousand_genomes_sas.py`'s module
+        # docstring and `_run_thousand_genomes_sas_stage` below). Never
+        # a second data point sitting alongside a working IndiGenomes
+        # result.
+        self.thousand_genomes_sas_client = ThousandGenomesSASLookup()
         self.conservation_client = ConservationLookup()
         self.clingen_client = ClinGenLookup()
         # HPO gene-phenotype annotation (see pipeline/hpo/). Gene-level,
@@ -1214,6 +1223,7 @@ class GeperPipeline:
         clinvar_result = self._run_clinvar_stage(variant, dbsnp_result, errors)
         gnomad_result = self._run_gnomad_stage(variant, errors)
         indigenomes_result = self._run_indigenomes_stage(variant, errors)
+        thousand_genomes_sas_result = self._run_thousand_genomes_sas_stage(variant, dbsnp_result, errors)
         conservation_result = self._run_conservation_stage(variant, errors)
         hpo_result = self._run_hpo_stage(clingen_result, errors)
         orphanet_result = self._run_orphanet_stage(clingen_result, errors)
@@ -1307,6 +1317,7 @@ class GeperPipeline:
             dbsnp_result=dbsnp_result,
             gnomad_result=gnomad_result,
             indigenomes_result=indigenomes_result,
+            thousand_genomes_sas_result=thousand_genomes_sas_result,
             conservation_result=conservation_result,
             clingen_result=clingen_result,
             uniprot_result=uniprot_result,
@@ -2105,6 +2116,51 @@ class GeperPipeline:
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
             errors.append(f"IndiGenomes stage failed: {exc}")
+            logger.error(errors[-1])
+            return {"found": False, "skipped": False, "error": str(exc)}
+
+    def _run_thousand_genomes_sas_stage(
+        self, variant: Variant, dbsnp_result: Dict[str, Any], errors: List[str]
+    ) -> Dict[str, Any]:
+        """
+        1000 Genomes SAS sub-population frequency -- an honest FALLBACK
+        for the Indian Population Frequency report section (see
+        `annotation/thousand_genomes_sas.py`'s module docstring), run
+        ONLY when IndiGenomes was confirmed offline for this run.
+
+        Checks the same `HEALTH.is_offline("IndiGenomes")` registry
+        `annotation/indigenomes.py`'s own retry loop consults -- not
+        `indigenomes_result`'s error text -- so this and
+        `report/clinical_report_builder.py::_indian_population_frequency`'s
+        `indigenomes_offline` check always agree on the same signal.
+        Skipped entirely (zero extra network calls) whenever IndiGenomes
+        was NOT confirmed offline this run: this is a fallback a run
+        pays for only when it's actually needed, not a second lookup
+        run unconditionally alongside IndiGenomes every time.
+
+        `dbsnp_result`: this run's already-computed dbSNP stage output
+        (runs earlier in `process_variant`) -- its `rsid`, when found,
+        is handed to `ThousandGenomesSASLookup` as a resolution shortcut
+        so this fallback doesn't pay for a second, redundant rsID
+        lookup (see that module's docstring for why).
+        """
+        if not HEALTH.is_offline("IndiGenomes"):
+            return {
+                "skipped": True,
+                "reason": "IndiGenomes was available this run; fallback not needed.",
+                "found": False,
+            }
+
+        assembly = self.sequence_context_gen.assembly
+        rsid_hint = dbsnp_result.get("rsid") if dbsnp_result.get("found") else None
+        try:
+            with self._timer("thousand_genomes_sas"):
+                result = self.thousand_genomes_sas_client.query_variant(variant, assembly=assembly, rsid_hint=rsid_hint)
+            if result.get("error"):
+                errors.append(f"1000 Genomes SAS fallback stage: {result['error']}")
+            return result
+        except Exception as exc:  # noqa: BLE001 - final defense-in-depth
+            errors.append(f"1000 Genomes SAS fallback stage failed: {exc}")
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc)}
 

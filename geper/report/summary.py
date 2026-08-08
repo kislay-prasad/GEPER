@@ -1452,6 +1452,19 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Paragraph("<b>Limitations:</b>", styles["BodyText"]))
         flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in limitations)
 
+    # `clinical["references"]` (see `report/clinical_report_builder.py
+    # ::_references`) was already computed for the Markdown report's own
+    # "References" section, but this PDF path never rendered it -- found
+    # while adding HPO/Orphanet citations (2026-08-08). `_references()`
+    # now always returns at least the unconditional Orphanet entry, so
+    # this list is never empty in practice, but the `if` guard is kept
+    # for defensive symmetry with every other optional section here.
+    references = clinical.get("references") or []
+    if references:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>References:</b>", styles["BodyText"]))
+        flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in references)
+
     return flow
 
 

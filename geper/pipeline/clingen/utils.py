@@ -72,6 +72,7 @@ import requests
 
 from config import CONFIG
 from pipeline.clingen.models import DosageSensitivity, GeneDiseaseValidity
+from pipeline.ensembl.provider import genes_overlapping
 from pipeline.mane.provider import mane_select_transcript_id
 from utils.logger import get_logger
 from utils.service_health import HEALTH, is_transient_http_error
@@ -172,6 +173,29 @@ def _fetch_overlapping_genes(chrom: str, pos: int, build: str) -> Optional[List[
     return None
 
 
+def _fetch_overlapping_genes_local(chrom: str, pos: int, build: str) -> Optional[List[Dict[str, Any]]]:
+    """
+    Primary source for gene-overlap resolution: GEPER's self-provisioned
+    Ensembl GTF cache (`pipeline/ensembl/`), tried before the live
+    `overlap/region` REST call. GRCh38 only -- see
+    `config.py::EnsemblConfig`'s docstring for why the cache doesn't
+    cover GRCh37; a GRCh37 request skips straight to
+    `_fetch_overlapping_genes`, same as an unavailable cache. Returns
+    None -- never a guess -- when the cache can't answer, so
+    `resolve_gene_symbol_detail` falls through to the existing live
+    Ensembl path exactly as it always has.
+
+    Calls the module-level `genes_overlapping` imported above (not a
+    locally-scoped import) specifically so tests can patch
+    `pipeline.clingen.utils.genes_overlapping` directly, the same seam
+    `mane_select_transcript_id` already establishes for
+    `_disambiguate_overlapping_genes`.
+    """
+    if str(build).upper().startswith("GRCH37"):
+        return None
+    return genes_overlapping(chrom, pos)
+
+
 def resolve_gene_symbol_detail(
     chrom: str,
     pos: int,
@@ -201,7 +225,9 @@ def resolve_gene_symbol_detail(
             GeneResolutionStatus.NOT_FOUND, None, "none", reason="offline mode; no gene-overlap lookup performed."
         )
 
-    features = _fetch_overlapping_genes(chrom, pos, build)
+    features = _fetch_overlapping_genes_local(chrom, pos, build)
+    if features is None:
+        features = _fetch_overlapping_genes(chrom, pos, build)
     if features is None:
         return GeneResolution(
             GeneResolutionStatus.NOT_FOUND, None, "none", reason="Ensembl gene-overlap lookup failed."

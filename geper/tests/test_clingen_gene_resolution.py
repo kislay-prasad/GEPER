@@ -65,9 +65,13 @@ def _transcript_record(gene_symbol, cds_start, cds_end, strand, is_mane_select=F
 
 class TestVcfGeneHintTakesPriority(unittest.TestCase):
     def test_vcf_gene_hint_used_directly_no_network_call(self):
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes") as fake_fetch:
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes") as fake_fetch,
+            mock.patch("pipeline.clingen.utils.genes_overlapping") as fake_local_fetch,
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38", vcf_gene_hint="STK11")
         fake_fetch.assert_not_called()
+        fake_local_fetch.assert_not_called()
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
         self.assertEqual(resolution.gene_symbol, "STK11")
         self.assertEqual(resolution.source, "vcf_gene_info")
@@ -88,20 +92,29 @@ class TestVcfGeneHintTakesPriority(unittest.TestCase):
 
 class TestEnsemblFallbackSingleCandidate(unittest.TestCase):
     def test_single_protein_coding_gene_resolves(self):
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE]):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE]),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
         self.assertEqual(resolution.gene_symbol, "STK11")
         self.assertEqual(resolution.source, "ensembl_single_candidate")
 
     def test_no_features_at_all_is_not_found(self):
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[]):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[]),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("1", 999999999, build="GRCh38")
         self.assertEqual(resolution.status, GeneResolutionStatus.NOT_FOUND)
         self.assertIsNone(resolution.gene_symbol)
 
     def test_request_failure_is_not_found_not_a_crash(self):
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=None):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=None),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
         self.assertEqual(resolution.status, GeneResolutionStatus.NOT_FOUND)
 
@@ -112,7 +125,10 @@ class TestEnsemblFallbackSingleCandidate(unittest.TestCase):
         discarded, since 'skipped ClinGen lookup entirely' is a worse
         outcome than 'looked it up for a non-coding gene symbol')."""
         lncrna = _gene_feature("SOME-AS1", 1177000, 1179000, 1, biotype="lncRNA")
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[lncrna]):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[lncrna]),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
+        ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
         self.assertEqual(resolution.status, GeneResolutionStatus.RESOLVED)
         self.assertEqual(resolution.gene_symbol, "SOME-AS1")
@@ -136,6 +152,7 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
             mock.patch(
                 "pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE, _CBARP_FEATURE]
             ),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):
@@ -159,6 +176,7 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):
@@ -182,6 +200,7 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):
@@ -208,6 +227,7 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):
@@ -221,6 +241,7 @@ class TestOverlappingGeneDisambiguation(unittest.TestCase):
         features = [_STK11_FEATURE, _CBARP_FEATURE]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=RuntimeError("network boom")),
         ):
             resolution = resolve_gene_symbol_detail("19", _STK11_POS, build="GRCh38")
@@ -260,6 +281,7 @@ class TestRealManeDatasetBreaksTheTie(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", side_effect=fake_mane_lookup),
         ):
@@ -290,6 +312,7 @@ class TestRealManeDatasetBreaksTheTie(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", side_effect=fake_mane_lookup),
         ):
@@ -314,6 +337,7 @@ class TestRealManeDatasetBreaksTheTie(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):
@@ -324,7 +348,10 @@ class TestRealManeDatasetBreaksTheTie(unittest.TestCase):
 
 class TestBackwardCompatibleWrapper(unittest.TestCase):
     def test_resolve_gene_symbol_returns_plain_string_when_resolved(self):
-        with mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE]):
+        with (
+            mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=[_STK11_FEATURE]),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
+        ):
             self.assertEqual(resolve_gene_symbol("19", _STK11_POS, build="GRCh38"), "STK11")
 
     def test_resolve_gene_symbol_returns_none_for_ambiguous_never_a_guess(self):
@@ -338,6 +365,7 @@ class TestBackwardCompatibleWrapper(unittest.TestCase):
         features = [_gene_feature("GENEA", 1177558, 1230000, 1), _gene_feature("GENEB", 1228000, 1239465, -1)]
         with (
             mock.patch("pipeline.clingen.utils._fetch_overlapping_genes", return_value=features),
+            mock.patch("pipeline.clingen.utils.genes_overlapping", return_value=None),
             mock.patch("pipeline.pvs1.lookup.TranscriptLookup.query_gene", side_effect=fake_query_gene),
             mock.patch("pipeline.clingen.utils.mane_select_transcript_id", return_value=None),
         ):

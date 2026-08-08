@@ -45,6 +45,7 @@ import pipeline.clingen.bootstrap as clingen_bootstrap
 from pipeline.clingen.lookup import ClinGenLookup
 import pipeline.hpo.bootstrap as hpo_bootstrap
 import pipeline.mane.bootstrap as mane_bootstrap
+import pipeline.ensembl.bootstrap as ensembl_bootstrap
 import pipeline.orphanet.bootstrap as orphanet_bootstrap
 import pipeline.uniprot.bootstrap as uniprot_bootstrap
 from pipeline.functional_evidence.lookup import FunctionalEvidenceLookup
@@ -465,6 +466,9 @@ class GeperPipeline:
         # of the two observes the more informative signal wins.
         self._capture_bootstrapped_dataset_provenance(
             "UniProt", CONFIG.uniprot.LOCAL_DATASET_FILE, uniprot_bootstrap.dataset_cache_path()
+        )
+        self._capture_bootstrapped_dataset_provenance(
+            "Ensembl (GTF+CDS gene/transcript cache)", CONFIG.ensembl.LOCAL_FILE, ensembl_bootstrap.dataset_cache_path()
         )
 
         # AlphaMissense: keyed by build ("hg38"/"hg19", not "GRCh38"/

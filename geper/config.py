@@ -991,6 +991,127 @@ class MANEConfig:
 
 
 @dataclass(frozen=True)
+class EnsemblConfig:
+    """
+    Configuration for GEPER's self-provisioning Ensembl gene/transcript-
+    structure cache (see `pipeline/ensembl/`): the human GTF (gene ->
+    transcript -> exon/CDS coordinates) and CDS FASTA (per-transcript
+    coding sequence) downloads that replace two previously-live,
+    per-request Ensembl REST dependencies with a bootstrap-and-cache
+    dataset, the same shape `pipeline/mane/` and `pipeline/uniprot/`
+    already established:
+      - `pipeline/pvs1/lookup.py::TranscriptLookup` -- transcript exon/
+        CDS structure for the PVS1 null-variant decision tree. The
+        cache is tried first; a genuine Ensembl REST call
+        (`_fetch_live`) remains as the fallback for GRCh37 requests
+        (out of this cache's scope, see below) and for any gene the
+        cache doesn't have an answer for.
+      - `pipeline/clingen/utils.py::resolve_gene_symbol_detail`'s
+        Ensembl overlap-region fallback, used only when a variant's VCF
+        record carries no `GENE=` INFO field.
+
+    Deliberately GRCh38 only: Ensembl's GRCh37 mirror
+    (`https://ftp.ensembl.org/pub/grch37/current/gtf/homo_sapiens/`)
+    exists but was not folded into this cache -- GRCh37 lookups already
+    have a dedicated, build-routed live REST path
+    (`TranscriptLookup._rest_base`/`_GRCH37_REST_BASE`) that this
+    integration leaves untouched, and doubling the download/parse cost
+    for a legacy build was judged not worth it for GEPER's primary
+    GRCh38 use case. A GRCh37 request simply skips the local cache
+    entirely and falls straight through to the existing live path --
+    an honest scope limitation, not a silent gap.
+
+    Two files, both confirmed live 2026-08-08 against Ensembl's stable
+    `current`/`current_fasta` FTP aliases (release 116 at the time):
+      - GTF: `https://ftp.ensembl.org/pub/current/gtf/homo_sapiens/` --
+        NOT `current_gtf/homo_sapiens/` (that path 404s; only
+        `current_fasta/`, `current_gff3/`, and `current_variation/` exist
+        as top-level aliases, GTF instead lives under the general
+        `current/` release alias). Like NCBI's MANE directory, the
+        filename itself embeds the release version
+        (`Homo_sapiens.GRCh38.116.gtf.gz`, ~141MB compressed,
+        ~4.7GB decompressed/~11.2M lines) -- `GTF_INDEX_URL` below is
+        the stable directory, regex-parsed at bootstrap time to find
+        the current filename (mirroring
+        `pipeline/mane/bootstrap.py::_discover_current_summary_url`),
+        specifically excluding the sibling `.abinitio.gtf.gz`/
+        `.chr.gtf.gz`/`.chr_patch_hapl_scaff.gtf.gz` files in the same
+        directory (ab-initio gene predictions and alternate-scaffold
+        variants of the same annotation, neither useful here).
+      - CDS FASTA: `https://ftp.ensembl.org/pub/current_fasta/
+        homo_sapiens/cds/Homo_sapiens.GRCh38.cds.all.fa.gz` (~37MB
+        compressed) -- unlike the GTF, this filename is NOT
+        version-suffixed (same stable-alias shape as UniProt's
+        reference-proteome download), so `CDS_FASTA_URL` is hit
+        directly with no directory-listing discovery step.
+
+    Both files are streamed and parsed line-by-line without ever
+    holding the decompressed GTF's ~4.7GB in memory at once (same
+    "never buffer the whole decompressed file" discipline
+    `pipeline/uniprot/bootstrap.py` documents for its own ~600MB+
+    flat file) -- important given this codebase's 8GB-RAM target
+    deployment profile. Only one transcript per gene is kept (the
+    protein-coding transcript tagged `Ensembl_canonical` in the GTF,
+    i.e. the same transcript `TranscriptLookup._choose_transcript`
+    would pick from a live REST response for the same gene, falling
+    back to the longest-CDS protein-coding transcript when no
+    transcript carries that tag), so the cached dataset itself is
+    small (~one row per protein-coding gene, comparable in size to
+    `pipeline/mane/`'s dataset) even though the raw downloads are not.
+
+    `Ensembl_canonical`/`MANE_Select` are GTF `tag` attribute values,
+    confirmed live against BRCA1's own canonical transcript
+    (`ENST00000357654`, tagged with both). Neither appears in
+    Ensembl's own GTF README's documented tag list (which predates
+    their introduction) -- confirmed by direct inspection of the live
+    file rather than trusting the README, since the README is
+    demonstrably stale on this exact point.
+    """
+
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_ENSEMBL_CACHE", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    LOCAL_FILE: str = os.environ.get("GEPER_ENSEMBL_LOCAL_FILE", "")
+
+    OFFLINE_MODE: bool = os.environ.get("GEPER_ENSEMBL_OFFLINE", "false").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+    # -- self-provisioning local dataset (see pipeline/ensembl/bootstrap.py) --
+    AUTO_FETCH_ENABLED: bool = os.environ.get("GEPER_ENSEMBL_AUTO_FETCH", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    GTF_INDEX_URL: str = os.environ.get(
+        "GEPER_ENSEMBL_GTF_INDEX_URL",
+        "https://ftp.ensembl.org/pub/current/gtf/homo_sapiens/",
+    )
+    CDS_FASTA_URL: str = os.environ.get(
+        "GEPER_ENSEMBL_CDS_FASTA_URL",
+        "https://ftp.ensembl.org/pub/current_fasta/homo_sapiens/cds/Homo_sapiens.GRCh38.cds.all.fa.gz",
+    )
+    # Ensembl releases roughly every 2-3 months (release 116 as of
+    # 2026-08-08) -- a weekly refresh check is already generous, same
+    # reasoning as MANEConfig/UniProtConfig's identical TTL.
+    AUTO_FETCH_TTL_HOURS: float = float(os.environ.get("GEPER_ENSEMBL_AUTO_FETCH_TTL_HOURS", "168"))
+    AUTO_FETCH_DIR: str = os.environ.get("GEPER_ENSEMBL_AUTO_FETCH_DIR", "")  # "" -> "<CACHE_DIR>/ensembl"
+    # Much larger downloads than any other bootstrapped dataset in this
+    # codebase (~180MB combined) -- a longer default timeout than
+    # MANE/UniProt's, since a slow connection genuinely needs more wall
+    # time here, not because the server itself is slower to respond.
+    AUTO_FETCH_TIMEOUT_SECS: int = int(os.environ.get("GEPER_ENSEMBL_AUTO_FETCH_TIMEOUT", "600"))
+
+
+@dataclass(frozen=True)
 class HPOConfig:
     """
     Configuration for the Human Phenotype Ontology (HPO) gene-phenotype
@@ -2311,6 +2432,7 @@ class GeperConfig:
     conservation: ConservationConfig = field(default_factory=ConservationConfig)
     clingen: ClinGenConfig = field(default_factory=ClinGenConfig)
     mane: MANEConfig = field(default_factory=MANEConfig)
+    ensembl: EnsemblConfig = field(default_factory=EnsemblConfig)
     hpo: HPOConfig = field(default_factory=HPOConfig)
     orphanet: OrphanetConfig = field(default_factory=OrphanetConfig)
     functional_evidence: FunctionalEvidenceConfig = field(default_factory=FunctionalEvidenceConfig)

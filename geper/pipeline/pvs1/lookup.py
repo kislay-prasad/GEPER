@@ -32,6 +32,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from config import CONFIG
+from pipeline.ensembl.provider import transcript_for_gene
 from pipeline.pvs1.cache import TranscriptCache
 from pipeline.pvs1.utils import transcript_context_from_ensembl
 from pipeline.vcf_parser import Variant
@@ -159,6 +160,52 @@ class TranscriptLookup:
                 "reason": "PVS1 transcript lookup is in offline mode; no transcript structure fetched.",
             }
 
+        local_result = self._fetch_local(gene_symbol, build)
+        if local_result is not None:
+            return local_result
+
+        return self._fetch_live(gene_symbol, build)
+
+    def _fetch_local(self, gene_symbol: str, build: str) -> Optional[Dict[str, Any]]:
+        """
+        Primary source: GEPER's self-provisioned Ensembl GTF+CDS cache
+        (`pipeline/ensembl/`), tried before any network call. GRCh38
+        only -- see `config.py::EnsemblConfig`'s docstring for why the
+        cache doesn't cover GRCh37; a GRCh37 request skips straight to
+        `_fetch_live`, same as an unavailable cache or a gene the cache
+        has no entry for.
+
+        Returns None -- never a guess -- whenever the cache can't
+        answer, so `_fetch` falls through to the existing live Ensembl
+        REST path exactly as it always has.
+        """
+        if str(build).upper().startswith("GRCH37"):
+            return None
+
+        # Calls the module-level `transcript_for_gene` imported above
+        # (not a locally-scoped import) specifically so tests can patch
+        # `pipeline.pvs1.lookup.transcript_for_gene` directly, the same
+        # seam `pipeline.clingen.utils.mane_select_transcript_id`
+        # already establishes for its own module-level provider import.
+        transcript_dict = transcript_for_gene(gene_symbol)
+        if transcript_dict is None:
+            return None
+
+        transcript_dict = dict(transcript_dict)
+        exons = transcript_dict.get("exons") or []
+        transcript_dict["transcript_span"] = (
+            [min(e["start"] for e in exons), max(e["end"] for e in exons)] if exons else [None, None]
+        )
+        return {
+            "skipped": False,
+            "found": True,
+            "gene_symbol": gene_symbol,
+            "assembly": build,
+            "source": "ensembl_gtf_cache",
+            "transcript": transcript_dict,
+        }
+
+    def _fetch_live(self, gene_symbol: str, build: str) -> Dict[str, Any]:
         url = f"{self._rest_base(build).rstrip('/')}/lookup/symbol/homo_sapiens/{gene_symbol}"
         params = {"expand": "1", "content-type": "application/json"}
 

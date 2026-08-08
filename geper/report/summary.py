@@ -991,11 +991,16 @@ def _offline_sources_caveat_text() -> Optional[str]:
     genuinely queried and found to have nothing. Read once here so any
     "not evaluated" or "not found" text for one of these sources
     elsewhere in the report is not mistaken for a completed, negative
-    search -- the same reasoning
-    `report/clinical_report_builder.py::_indian_population_frequency`
-    documents for the per-finding IndiGenomes case. Returns `None` when
-    every configured source was reachable at startup (the common case,
-    no caveat needed).
+    search. Returns `None` when every configured source was reachable
+    at startup (the common case, no caveat needed).
+
+    IndiGenomes no longer appears here as of 2026-08-08: it's retired
+    from GEPER's active query path (see `config.py::IndiGenomesConfig`'s
+    docstring and `DATA_SOURCE_LICENSE_AUDIT.md`), which also disables
+    its `utils/service_health.py` startup probe by default -- a source
+    that's never checked can never show up as "confirmed offline"
+    here, so this caveat mechanism naturally stops mentioning it
+    without needing a special case.
     """
     offline = HEALTH.offline_services()
     if not offline:
@@ -1248,26 +1253,23 @@ def _build_clinician_summary_flowables(
     return flow
 
 
-def _build_1000_genomes_sas_fallback_flowables(ipf: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+def _build_1000_genomes_sas_flowables(ipf: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
-    Renders the 1000 Genomes SAS fallback -- called only when
-    `ipf["fallback_shown"]` is True (IndiGenomes confirmed offline this
-    run; see `report/clinical_report_builder.py::_indian_population_frequency`
-    and `annotation/thousand_genomes_sas.py`'s module docstring). Both
-    mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/`DIASPORA_DISCLOSURE`
-    -- the same shared text `report/report_generator.py`'s Markdown
-    path renders, so the two output formats never drift on wording) are
-    always shown whenever this fallback has anything to report at all --
-    found, not found, or errored -- not only on the "found" path.
+    Renders the 1000 Genomes SAS section -- the SOLE Indian/South-Asian
+    cohort source as of 2026-08-08 (IndiGenomes was retired from
+    GEPER's active query path -- see `DATA_SOURCE_LICENSE_AUDIT.md` and
+    `report/clinical_report_builder.py::_indian_population_frequency`).
+    Called whenever `ipf["sas_shown"]` is True -- in real pipeline
+    operation, always. Both mandatory disclosures
+    (`SAMPLE_SIZE_DISCLOSURE`/`DIASPORA_DISCLOSURE` -- the same shared
+    text `report/report_generator.py`'s Markdown path renders, so the
+    two output formats never drift on wording) are always shown
+    whenever this section has anything to report at all -- found, not
+    found, or errored -- not only on the "found" path.
     """
-    flow: List[Any] = [
-        Paragraph(
-            "• 1000 Genomes (South Asian, SAS) -- fallback source, IndiGenomes was unavailable this run:",
-            styles["BulletText"],
-        )
-    ]
-    if ipf.get("fallback_available"):
-        pooled = ipf.get("fallback_sas_pooled") or {}
+    flow: List[Any] = [Paragraph("• 1000 Genomes (South Asian, SAS):", styles["BulletText"])]
+    if ipf.get("sas_available"):
+        pooled = ipf.get("sas_pooled") or {}
         if pooled.get("af") is not None:
             flow.append(
                 Paragraph(
@@ -1276,9 +1278,9 @@ def _build_1000_genomes_sas_fallback_flowables(ipf: Dict[str, Any], styles: Dict
                     styles["BulletText"],
                 )
             )
-        labels = ipf.get("fallback_population_labels") or {}
-        sizes = ipf.get("fallback_sample_sizes") or {}
-        for code, sub in (ipf.get("fallback_sub_populations") or {}).items():
+        labels = ipf.get("sas_population_labels") or {}
+        sizes = ipf.get("sas_sample_sizes") or {}
+        for code, sub in (ipf.get("sas_sub_populations") or {}).items():
             label = labels.get(code, code)
             n = sizes.get(code)
             af = sub.get("af")
@@ -1290,19 +1292,15 @@ def _build_1000_genomes_sas_fallback_flowables(ipf: Dict[str, Any], styles: Dict
                     styles["BulletText"],
                 )
             )
-    elif ipf.get("fallback_error"):
+    elif ipf.get("sas_error"):
         flow.append(
             Paragraph(
-                f"&nbsp;&nbsp;&nbsp;&nbsp;- Lookup failed (external service issue: {ipf['fallback_error']}).",
+                f"&nbsp;&nbsp;&nbsp;&nbsp;- Lookup failed (external service issue: {ipf['sas_error']}).",
                 styles["BulletText"],
             )
         )
     else:
-        flow.append(
-            Paragraph(
-                "&nbsp;&nbsp;&nbsp;&nbsp;- Variant not found in this fallback source either.", styles["BulletText"]
-            )
-        )
+        flow.append(Paragraph("&nbsp;&nbsp;&nbsp;&nbsp;- Variant not found in this source.", styles["BulletText"]))
     flow.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;! {SAMPLE_SIZE_DISCLOSURE}", styles["StatusWarn"]))
     flow.append(Paragraph(f"&nbsp;&nbsp;&nbsp;&nbsp;! {DIASPORA_DISCLOSURE}", styles["StatusWarn"]))
     return flow
@@ -1312,74 +1310,29 @@ def _build_indian_population_frequency_flowables(
     clinical: Dict[str, Any], styles: Dict[str, ParagraphStyle]
 ) -> List[Any]:
     """
-    India-deployment feature: gnomAD South Asian (SAS) AF alongside
-    IndiGenomes' own India-specific cohort AF (see
+    India-deployment feature: gnomAD South Asian (SAS) AF alongside the
+    1000 Genomes Project's SAS sub-population AF -- the sole
+    Indian/South-Asian cohort source as of 2026-08-08 (see
     `report/clinical_report_builder.py::_indian_population_frequency`
-    for where this dict comes from and why the two figures are never
-    merged into one number), plus a "Common in Indian populations"
-    flag when either exceeds the configured threshold. Renders nothing
-    at all only when there is truly no signal from either source --
-    gnomAD SAS has no figure and IndiGenomes was genuinely queried
-    with no matching record (a real, meaningful absence). Any other
-    IndiGenomes outcome (confirmed offline this run, a genuine lookup
-    error, or disabled/GRCh37-skipped) is always rendered explicitly,
-    even when gnomAD alone would otherwise fill the section --
-    silently omitting IndiGenomes in those cases would look identical
-    to "queried, nothing found" to a reader, which is exactly the
-    ambiguity this section must not create (see
-    `report/clinical_report_builder.py::_indian_population_frequency`
-    for where `indigenomes_offline`/`indigenomes_error`/
-    `indigenomes_skipped_reason` come from).
+    for where this dict comes from; IndiGenomes was retired from
+    GEPER's active query path, see `DATA_SOURCE_LICENSE_AUDIT.md`),
+    plus a "Common in Indian populations" flag when gnomAD SAS alone
+    exceeds the configured threshold. Renders nothing at all only when
+    there is truly no signal from either source (no gnomAD SAS figure
+    and the 1000 Genomes SAS stage wasn't even run this variant) -- in
+    real pipeline operation that stage always runs, so this omission
+    path is effectively test-only.
     """
     ipf = clinical.get("indian_population_frequency") or {}
     gnomad_sas_af = ipf.get("gnomad_af_sas")
-    indigenomes_available = ipf.get("indigenomes_available")
-    indigenomes_offline = ipf.get("indigenomes_offline")
-    indigenomes_error = ipf.get("indigenomes_error")
-    indigenomes_skipped_reason = ipf.get("indigenomes_skipped_reason")
-    indigenomes_flagged = bool(
-        indigenomes_available or indigenomes_offline or indigenomes_error or indigenomes_skipped_reason
-    )
-    if gnomad_sas_af is None and not indigenomes_flagged:
+    if gnomad_sas_af is None and not ipf.get("sas_shown"):
         return []
 
     flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Indian Population Frequency:</b>", styles["BodyText"])]
     if gnomad_sas_af is not None:
         flow.append(Paragraph(f"• gnomAD (South Asian, SAS): AF = {gnomad_sas_af:.2e}", styles["BulletText"]))
-    if indigenomes_available:
-        flow.append(
-            Paragraph(
-                f"• IndiGenomes: AF = {ipf.get('indigenomes_af'):.2e} "
-                f"(AC={ipf.get('indigenomes_ac')}, AN={ipf.get('indigenomes_an')})",
-                styles["BulletText"],
-            )
-        )
-    elif indigenomes_offline:
-        flow.append(
-            Paragraph(
-                "• IndiGenomes: not evaluated -- IndiGenomes was unreachable during this analysis run "
-                "(not queried). This is a data-collection gap for this run, not evidence of an absent record.",
-                styles["BulletText"],
-            )
-        )
-    elif indigenomes_error:
-        flow.append(
-            Paragraph(
-                f"• IndiGenomes: lookup failed (external service issue: {indigenomes_error}) -- "
-                "not evidence of an absent record.",
-                styles["BulletText"],
-            )
-        )
-    elif indigenomes_skipped_reason:
-        flow.append(Paragraph(f"• IndiGenomes: not queried ({indigenomes_skipped_reason}).", styles["BulletText"]))
-    elif gnomad_sas_af is not None:
-        # gnomAD had a figure but IndiGenomes was genuinely queried
-        # with no matching record -- stated explicitly rather than
-        # left silent, so its absence here is never mistaken for
-        # "not checked".
-        flow.append(Paragraph("• IndiGenomes: variant not found.", styles["BulletText"]))
-    if ipf.get("fallback_shown"):
-        flow.extend(_build_1000_genomes_sas_fallback_flowables(ipf, styles))
+    if ipf.get("sas_shown"):
+        flow.extend(_build_1000_genomes_sas_flowables(ipf, styles))
     if ipf.get("common_in_indian_population"):
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         flow.append(

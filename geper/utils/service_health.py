@@ -303,6 +303,15 @@ def default_service_checks() -> List[ServiceCheck]:
             ),
         ),
     ]
+    # `CONFIG.indigenomes.ENABLED` now defaults to False (IndiGenomes
+    # retired from GEPER's active query path 2026-08-08 -- a
+    # commercial-use licensing restriction, see
+    # `config.py::IndiGenomesConfig`'s docstring and
+    # `DATA_SOURCE_LICENSE_AUDIT.md`), so this check is skipped by
+    # default and no dangling "IndiGenomes" HEALTH entry appears for a
+    # source no longer queried. Left gated on the same flag (not
+    # deleted) rather than hardcoded off, so re-enabling the flag to
+    # reinstate the integration also restores this probe automatically.
     if _CONFIG.indigenomes.ENABLED:
         checks.append(
             ServiceCheck(

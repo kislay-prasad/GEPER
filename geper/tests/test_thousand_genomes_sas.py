@@ -1,9 +1,12 @@
 """
 Tests for `annotation/thousand_genomes_sas.py` -- the 1000 Genomes SAS
-sub-population frequency FALLBACK (used only when IndiGenomes is
-confirmed offline, see `report/clinical_report_builder.py
-::_indian_population_frequency` for the report-layer gating tested
-separately in `tests/test_indian_population_frequency.py`).
+sub-population frequency lookup, the SOLE Indian/South-Asian
+population-frequency source as of 2026-08-08 (IndiGenomes was retired
+from GEPER's active query path -- see `DATA_SOURCE_LICENSE_AUDIT.md` --
+and this module's own module docstring). See
+`report/clinical_report_builder.py::_indian_population_frequency` for
+the report-layer rendering tested separately in
+`tests/test_indian_population_frequency.py`.
 
 `requests.get` is mocked throughout -- no real network calls in the test
 suite. The response shapes mocked here (`overlap/region`'s `alleles`

@@ -638,9 +638,25 @@ class IndiGenomesConfig:
     `geper/annotation/indigenomes.py`'s module docstring), so this is a
     live-query-only integration, matching `GraphQLGnomadProvider`'s
     retry/backoff/timeout shape without a local-index counterpart.
+
+    RETIRED FROM GEPER'S ACTIVE QUERY PATH as of 2026-08-08 -- see
+    `DATA_SOURCE_LICENSE_AUDIT.md`: IndiGenomes' own terms state it "is
+    intended for purely research purposes" and that "Commercial use of
+    the resource would require licensing," which GEPER has not
+    obtained. `ENABLED` therefore now defaults to `false`;
+    `pipeline/orchestrator.py` no longer calls
+    `IndiGenomesLookup.query_variant` at all (not just internally
+    no-oping on this flag), and `annotation/thousand_genomes_sas.py`'s
+    1000 Genomes SAS lookup is the sole Indian/South-Asian
+    population-frequency source in the "Indian Population Frequency"
+    report section now. This module and its config are kept, not
+    deleted, so the integration can be reinstated (flip `ENABLED` back
+    to `true`, or `GEPER_ENABLE_INDIGENOMES=true`, and restore the call
+    in `pipeline/orchestrator.py::process_variant`) if a commercial
+    license is obtained later.
     """
 
-    ENABLED: bool = os.environ.get("GEPER_ENABLE_INDIGENOMES", "true").strip().lower() not in (
+    ENABLED: bool = os.environ.get("GEPER_ENABLE_INDIGENOMES", "false").strip().lower() not in (
         "0",
         "false",
         "no",
@@ -660,10 +676,16 @@ class IndiGenomesConfig:
     CACHE_MAX_SIZE: int = int(os.environ.get("GEPER_INDIGENOMES_CACHE_MAX_SIZE", "20000"))
 
     # "Common in Indian populations" report-flag threshold (task point:
-    # "a 'Common in Indian populations' flag when either exceeds 1%"),
-    # shared between the gnomAD-SAS and IndiGenomes AF figures in the
-    # report's Indian Population Frequency section (see
-    # `report/clinical_report_builder.py::_indian_population_frequency`).
+    # "a 'Common in Indian populations' flag when either exceeds 1%").
+    # Originally shared between the gnomAD-SAS and IndiGenomes AF
+    # figures; since IndiGenomes' retirement (see this class's own
+    # docstring) it's shared between gnomAD-SAS and the 1000 Genomes
+    # SAS pooled AF instead -- see
+    # `report/clinical_report_builder.py::_indian_population_frequency`.
+    # Left under this config class (not moved to
+    # `ThousandGenomesSASConfig`) so `GEPER_INDIAN_POPULATION_COMMON_AF`
+    # keeps meaning the same thing it always has, regardless of which
+    # source(s) currently feed the flag.
     COMMON_AF_THRESHOLD: float = float(os.environ.get("GEPER_INDIAN_POPULATION_COMMON_AF", "0.01"))
 
 
@@ -671,35 +693,44 @@ class IndiGenomesConfig:
 class ThousandGenomesSASConfig:
     """
     Configuration for the 1000 Genomes Project South Asian (SAS)
-    sub-population frequency FALLBACK (see
-    `annotation/thousand_genomes_sas.py`) -- shown in the "Indian
-    Population Frequency" report section ONLY when IndiGenomes was
-    confirmed offline for this run (`utils/service_health.py`), never
-    alongside a working IndiGenomes result. See that module's docstring
-    for the full investigation this is built from (2026-08-08): real,
+    sub-population frequency lookup (see
+    `annotation/thousand_genomes_sas.py`) -- the SOLE source for the
+    "Indian Population Frequency" report section as of 2026-08-08.
+
+    Originally built as a fallback shown only when IndiGenomes was
+    confirmed offline for a given run; IndiGenomes itself was retired
+    from GEPER's active query path entirely on 2026-08-08 (see
+    `IndiGenomesConfig`'s own docstring and `DATA_SOURCE_LICENSE_AUDIT.md`
+    -- a commercial-use licensing restriction, not a reliability
+    concern), so this now runs unconditionally for every variant rather
+    than gated on `utils/service_health.py`'s IndiGenomes entry. See
+    `annotation/thousand_genomes_sas.py`'s own module docstring for the
+    full investigation this is built from (2026-08-08): real,
     live-confirmed per-sub-population (GIH/PJL/BEB/STU/ITU) allele
     frequencies are reachable via Ensembl's own `/variation/human/
     {rsID}?pops=1` REST endpoint -- `CONFIG.api.ENSEMBL_REST_BASE`, an
     existing GEPER dependency, not a new external service.
 
-    Two disclosures are mandatory wherever this fallback's data is
-    shown (never softened or omitted -- see `_POPULATION_LABELS` and
+    Two disclosures are mandatory wherever this source's data is shown
+    (never softened or omitted -- see `_POPULATION_LABELS` and
     `TOTAL_SAMPLE_SIZE` below): the total sample size (n=494 across all
     five sub-populations, phase_3/2015 -- much smaller than
-    IndiGenomes' 1000+ India-resident genomes) and that every
-    sub-population is a DIASPORA cohort sampled outside India (e.g.
-    GIH = Gujarati Indian in Houston, TX; ITU = Indian Telugu in the
-    UK), not India-resident individuals.
+    IndiGenomes' 1000+ India-resident genomes would have been) and that
+    every sub-population is a DIASPORA cohort sampled outside India
+    (e.g. GIH = Gujarati Indian in Houston, TX; ITU = Indian Telugu in
+    the UK), not India-resident individuals. These disclosures matter
+    even more now that this is the only source shown, not an
+    occasional fallback -- they are unconditional in the report layer,
+    never gated on anything.
 
     Honesty note on reliability: this reuses the same `rest.ensembl.org`
     host and the same "Ensembl" `utils/service_health.py` HEALTH entry
     every other Ensembl-dependent stage already shares (PVS1 transcript
     lookup, ClinGen gene resolution) -- `service_health.py`'s own module
     docstring documents Ensembl throwing intermittent 500/502/503s in
-    this exact session. This fallback is NOT presented as more reliable
-    than IndiGenomes just because it is a differently-named source; it
-    inherits Ensembl's own reliability profile, whatever that is for a
-    given run.
+    this exact session. This source is NOT presented as more reliable
+    than IndiGenomes was; it inherits Ensembl's own reliability profile,
+    whatever that is for a given run.
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_1000GENOMES_SAS", "true").strip().lower() not in (

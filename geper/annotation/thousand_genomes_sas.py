@@ -1,11 +1,19 @@
 """
-1000 Genomes Project South Asian (SAS) sub-population frequency -- an
-HONEST FALLBACK for the "Indian Population Frequency" report section,
-used ONLY when IndiGenomes (`annotation/indigenomes.py`) was confirmed
-offline for this run. Never a permanent second data point shown
-alongside a working IndiGenomes result -- see
-`report/clinical_report_builder.py::_indian_population_frequency` for
-where that gating decision is made.
+1000 Genomes Project South Asian (SAS) sub-population frequency -- the
+SOLE source for the "Indian Population Frequency" report section as of
+2026-08-08.
+
+Originally built as an honest fallback for when IndiGenomes
+(`annotation/indigenomes.py`) was confirmed offline for a given run.
+IndiGenomes itself was retired from GEPER's active query path entirely
+on 2026-08-08 (see `DATA_SOURCE_LICENSE_AUDIT.md`: its own terms state
+it "is intended for purely research purposes" and that "commercial use
+... would require licensing," which GEPER has not obtained) -- so what
+was a conditional fallback is now the unconditional, only source this
+section has, run for every variant regardless of any other service's
+availability. `annotation/indigenomes.py` is kept in the codebase, not
+deleted, so IndiGenomes can be reinstated later if a commercial license
+is obtained; until then, `pipeline/orchestrator.py` never calls it.
 
 Investigation this is built from (2026-08-08, live-verified)
 =======================================================================

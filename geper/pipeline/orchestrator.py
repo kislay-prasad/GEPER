@@ -104,7 +104,6 @@ from utils.exceptions import (
 from utils.device_utils import log_environment_versions
 from utils.logger import get_logger
 from utils.model_cache import ModelCache
-from utils.service_health import HEALTH
 
 logger = get_logger(__name__)
 
@@ -223,13 +222,22 @@ class GeperPipeline:
         # CSIR-IGIB) population-frequency evidence -- see
         # annotation/indigenomes.py's module docstring for why this is
         # a live-query-only integration (no local-index counterpart).
+        # RETIRED from the active query path as of 2026-08-08 (see
+        # `config.py::IndiGenomesConfig`'s docstring and
+        # `DATA_SOURCE_LICENSE_AUDIT.md` -- IndiGenomes' own terms
+        # restrict commercial use, which GEPER has not licensed). This
+        # client is still constructed (cheap -- no network I/O at
+        # construction time) and `_run_indigenomes_stage` below still
+        # exists, but `process_variant` no longer calls it -- kept only
+        # so the integration can be reinstated later without rebuilding
+        # it from scratch.
         self.indigenomes_client = IndiGenomesLookup()
-        # Honest FALLBACK for the Indian Population Frequency report
-        # section -- used only when IndiGenomes is confirmed offline
-        # this run (see `annotation/thousand_genomes_sas.py`'s module
-        # docstring and `_run_thousand_genomes_sas_stage` below). Never
-        # a second data point sitting alongside a working IndiGenomes
-        # result.
+        # SOLE source for the Indian Population Frequency report
+        # section as of 2026-08-08 (see `config.py
+        # ::ThousandGenomesSASConfig`'s docstring) -- originally an
+        # honest FALLBACK used only when IndiGenomes was confirmed
+        # offline; now runs unconditionally, every variant, since
+        # IndiGenomes itself is no longer queried at all (see above).
         self.thousand_genomes_sas_client = ThousandGenomesSASLookup()
         self.conservation_client = ConservationLookup()
         self.clingen_client = ClinGenLookup()
@@ -1222,7 +1230,7 @@ class GeperPipeline:
         dbsnp_result = self._run_dbsnp_stage(variant, errors)
         clinvar_result = self._run_clinvar_stage(variant, dbsnp_result, errors)
         gnomad_result = self._run_gnomad_stage(variant, errors)
-        indigenomes_result = self._run_indigenomes_stage(variant, errors)
+        indigenomes_result = self._indigenomes_retired_result()
         thousand_genomes_sas_result = self._run_thousand_genomes_sas_stage(variant, dbsnp_result, errors)
         conservation_result = self._run_conservation_stage(variant, errors)
         hpo_result = self._run_hpo_stage(clingen_result, errors)
@@ -2095,6 +2103,30 @@ class GeperPipeline:
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc)}
 
+    def _indigenomes_retired_result(self) -> Dict[str, Any]:
+        """
+        Fixed result for the retired IndiGenomes stage -- see
+        `config.py::IndiGenomesConfig`'s docstring and
+        `DATA_SOURCE_LICENSE_AUDIT.md`: IndiGenomes' own terms state it
+        "is intended for purely research purposes" and that "Commercial
+        use of the resource would require licensing," which GEPER has
+        not obtained. As of 2026-08-08, `process_variant` calls this
+        instead of `_run_indigenomes_stage` (still defined below, kept
+        for reinstatement, not deleted), so `annotation/indigenomes.py`'s
+        query function is never reached at all -- not merely gated
+        internally the way `IndiGenomesLookup.query_variant` already
+        gates on `CONFIG.indigenomes.ENABLED` on its own. Shaped exactly
+        like that method's own disabled-state return value, so every
+        downstream consumer of `indigenomes_result` (raw-evidence
+        capture, the report layer) sees the same shape it always has.
+        """
+        return {
+            "skipped": True,
+            "reason": "IndiGenomes retired from GEPER's active query path (commercial-use licensing "
+            "restriction) -- see DATA_SOURCE_LICENSE_AUDIT.md.",
+            "found": False,
+        }
+
     def _run_indigenomes_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
         IndiGenomes population-frequency evidence (India-deployment
@@ -2106,6 +2138,11 @@ class GeperPipeline:
         unexpected bug in the module itself, exactly like every other
         stage helper's defense-in-depth `except Exception` (e.g.
         `_run_gnomad_stage`).
+
+        NOT CALLED from `process_variant` as of 2026-08-08 -- see
+        `_indigenomes_retired_result` above, which is used instead.
+        Kept, not deleted, so this can be reinstated by swapping that
+        call back to this method if a commercial license is obtained.
         """
         assembly = self.sequence_context_gen.assembly
         try:
@@ -2123,44 +2160,31 @@ class GeperPipeline:
         self, variant: Variant, dbsnp_result: Dict[str, Any], errors: List[str]
     ) -> Dict[str, Any]:
         """
-        1000 Genomes SAS sub-population frequency -- an honest FALLBACK
-        for the Indian Population Frequency report section (see
-        `annotation/thousand_genomes_sas.py`'s module docstring), run
-        ONLY when IndiGenomes was confirmed offline for this run.
-
-        Checks the same `HEALTH.is_offline("IndiGenomes")` registry
-        `annotation/indigenomes.py`'s own retry loop consults -- not
-        `indigenomes_result`'s error text -- so this and
-        `report/clinical_report_builder.py::_indian_population_frequency`'s
-        `indigenomes_offline` check always agree on the same signal.
-        Skipped entirely (zero extra network calls) whenever IndiGenomes
-        was NOT confirmed offline this run: this is a fallback a run
-        pays for only when it's actually needed, not a second lookup
-        run unconditionally alongside IndiGenomes every time.
+        1000 Genomes SAS sub-population frequency -- the SOLE source
+        for the Indian Population Frequency report section as of
+        2026-08-08 (see `annotation/thousand_genomes_sas.py`'s module
+        docstring and `config.py::ThousandGenomesSASConfig`'s
+        docstring). Originally an honest FALLBACK run only when
+        IndiGenomes was confirmed offline; now runs unconditionally,
+        every variant, every run, since IndiGenomes is no longer
+        queried at all (see `_indigenomes_retired_result` above).
 
         `dbsnp_result`: this run's already-computed dbSNP stage output
         (runs earlier in `process_variant`) -- its `rsid`, when found,
         is handed to `ThousandGenomesSASLookup` as a resolution shortcut
-        so this fallback doesn't pay for a second, redundant rsID
-        lookup (see that module's docstring for why).
+        so this stage doesn't pay for a second, redundant rsID lookup
+        (see that module's docstring for why).
         """
-        if not HEALTH.is_offline("IndiGenomes"):
-            return {
-                "skipped": True,
-                "reason": "IndiGenomes was available this run; fallback not needed.",
-                "found": False,
-            }
-
         assembly = self.sequence_context_gen.assembly
         rsid_hint = dbsnp_result.get("rsid") if dbsnp_result.get("found") else None
         try:
             with self._timer("thousand_genomes_sas"):
                 result = self.thousand_genomes_sas_client.query_variant(variant, assembly=assembly, rsid_hint=rsid_hint)
             if result.get("error"):
-                errors.append(f"1000 Genomes SAS fallback stage: {result['error']}")
+                errors.append(f"1000 Genomes SAS stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"1000 Genomes SAS fallback stage failed: {exc}")
+            errors.append(f"1000 Genomes SAS stage failed: {exc}")
             logger.error(errors[-1])
             return {"found": False, "skipped": False, "error": str(exc)}
 

@@ -21,7 +21,6 @@ repeatedly."
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
-from utils.service_health import HEALTH
 
 # Stable, well-known public-resource references for whichever sources
 # actually contributed evidence to this variant (via `evidence_sources`,
@@ -99,22 +98,30 @@ def build_clinical_report(
     falling back to the old (broken-if-empty) behavior only so this
     isn't a breaking API change for any other future caller.
 
-    `indigenomes_result`: the raw IndiGenomes provider dict (see
-    `annotation/indigenomes.py::IndiGenomesLookup.query_variant`) for
-    the `indian_population_frequency` section below. Passed as its own
-    explicit parameter, NOT folded into `raw_evidence` -- that dict's
-    validated shape (`pipeline/stage_schemas.py::RawEvidenceBundle`)
-    has a fixed 11 fields and IndiGenomes is not one of them (an India-
-    deployment-only source, unlike gnomAD/ClinVar/etc.); adding an
-    unlisted key there would raise a `TypeError` at the schema
-    boundary rather than degrade gracefully.
+    `indigenomes_result`: VESTIGIAL as of 2026-08-08 -- IndiGenomes was
+    retired from GEPER's active query path entirely (its own terms
+    restrict commercial use, which GEPER has not licensed; see
+    `config.py::IndiGenomesConfig`'s docstring and
+    `DATA_SOURCE_LICENSE_AUDIT.md`). Still accepted here, purely so
+    every existing caller (`report/json_builder.py`, this module's own
+    tests) keeps working without a signature-breaking change, but it is
+    no longer read or passed to `_indian_population_frequency` below --
+    there is no longer an "IndiGenomes vs. fallback" branch to feed. If
+    IndiGenomes is ever reinstated, restore the argument's use here
+    alongside `pipeline/orchestrator.py::_run_indigenomes_stage`.
 
-    `thousand_genomes_sas_result`: the raw 1000 Genomes SAS fallback
-    provider dict (see `annotation/thousand_genomes_sas.py
-    ::ThousandGenomesSASLookup.query_variant`), same reasoning as
-    `indigenomes_result` for why it's a separate explicit parameter.
-    Only ever shown in the report when IndiGenomes was confirmed
-    offline this run -- see `_indian_population_frequency` below.
+    `thousand_genomes_sas_result`: the raw 1000 Genomes SAS provider
+    dict (see `annotation/thousand_genomes_sas.py
+    ::ThousandGenomesSASLookup.query_variant`) -- the SOLE source for
+    the `indian_population_frequency` section below as of 2026-08-08
+    (previously an IndiGenomes fallback, shown only when IndiGenomes
+    was confirmed offline; now shown unconditionally). Passed as its
+    own explicit parameter, NOT folded into `raw_evidence` -- that
+    dict's validated shape (`pipeline/stage_schemas.py::RawEvidenceBundle`)
+    has a fixed 11 fields and this is not one of them (an India-
+    deployment-only source, unlike gnomAD/ClinVar/etc.); adding an
+    unlisted key there would raise a `TypeError` at the schema boundary
+    rather than degrade gracefully.
     """
     if not interpretation_result or "error" in interpretation_result:
         return None
@@ -134,9 +141,7 @@ def build_clinical_report(
         "protein_knowledge": _protein_knowledge(raw),
         "structural_knowledge": _structural_knowledge(raw),
         "population_evidence": _population_evidence(raw),
-        "indian_population_frequency": _indian_population_frequency(
-            raw, indigenomes_result, thousand_genomes_sas_result
-        ),
+        "indian_population_frequency": _indian_population_frequency(raw, thousand_genomes_sas_result),
         "clinical_evidence": _clinical_evidence(raw),
         "sequence_context": _sequence_context(ir, raw),
         "recommendations": ir.get("recommendations", []),
@@ -353,110 +358,94 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
 
 def _indian_population_frequency(
     raw: Dict[str, Any],
-    indigenomes_result: Optional[Dict[str, Any]],
     thousand_genomes_sas_result: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     India-deployment feature: gnomAD's South Asian (SAS) subpopulation
-    allele frequency alongside IndiGenomes' own India-specific cohort
-    frequency (~1000+ genomes -- see `annotation/indigenomes.py`'s
-    module docstring for why this is a live per-variant query, not a
-    downloaded index), plus a single "common in Indian populations"
+    allele frequency alongside the 1000 Genomes Project's SAS
+    sub-population frequency (see `annotation/thousand_genomes_sas.py`'s
+    module docstring), plus a single "common in Indian populations"
     flag when either exceeds `CONFIG.indigenomes.COMMON_AF_THRESHOLD`
     (default 1%).
 
-    The two figures are reported side by side, never merged into one
-    blended number -- they measure genuinely different cohorts
-    (gnomAD's global SAS reference population vs. IndiGenomes' India-
-    resident cohort) and a reviewer comparing a variant against
-    Indian-population background frequency should see both distinctly,
-    not a single number this pipeline invented by averaging or
-    preferring one over the other.
+    AS OF 2026-08-08, 1000 Genomes SAS is the SOLE Indian/South-Asian
+    cohort source this section shows, run unconditionally for every
+    variant -- see `annotation/thousand_genomes_sas.py`'s module
+    docstring and `config.py::ThousandGenomesSASConfig`'s docstring for
+    why: IndiGenomes (the source this originally sat alongside, and
+    which this was built as an offline-fallback for) was retired from
+    GEPER's active query path entirely, because its own terms restrict
+    commercial use and GEPER has not obtained a license (see
+    `DATA_SOURCE_LICENSE_AUDIT.md`). There is therefore no longer an
+    "IndiGenomes vs. 1000 Genomes SAS fallback" branch here -- unlike
+    the prior version of this function, `sas_*` below is simply THE
+    result whenever this section has anything to show, the same way any
+    other single-source report field is rendered, not something gated
+    on another source's confirmed-offline state.
+
+    The two mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/
+    `DIASPORA_DISCLOSURE`, see `annotation/thousand_genomes_sas.py`)
+    matter more now than when this was an occasional fallback -- they
+    must appear every time this section shows anything from this
+    source, not conditionally. This function doesn't render them
+    itself (that's `report/report_generator.py`'s and
+    `report/summary.py`'s job, both importing the same shared text so
+    Markdown and PDF never drift on wording), but `sas_shown` below is
+    unconditionally true whenever there's a gnomAD-SAS or 1000-Genomes-
+    SAS figure to report, so the renderer always has a reason to
+    include them.
 
     `gnomad_af_sas` is read from `raw["gnomad"]["population_breakdown"]`
     (already computed by the gnomAD stage -- see
     `pipeline/gnomad/models.py::POPULATIONS`), not re-queried here.
-    `indigenomes_*` distinguishes "not found" (`indigenomes_available
-    =False`, `indigenomes_error=None`) from a genuine query failure
-    (`indigenomes_error` set, `indigenomes_offline=False`) from a
-    skipped-because-confirmed-offline run (`indigenomes_error` set
-    *and* `indigenomes_offline=True`, per `utils/service_health.py`'s
-    HEALTH registry) and from the integration being disabled/
-    GRCh37-skipped (`indigenomes_skipped_reason` set) -- the same
-    found-vs-error distinction `_protein_knowledge`'s docstring
-    documents for UniProt/InterPro, applied here for the same reason.
-
-    1000 Genomes SAS FALLBACK (`fallback_*` keys)
-    -------------------------------------------------------------------
-    Surfaced ONLY when `indigenomes_offline` is True -- the same
-    condition `pipeline/orchestrator.py::_run_thousand_genomes_sas_stage`
-    itself gates the live Ensembl query on, so this is this layer's own
-    independent confirmation of the identical signal, not a second
-    decision that could drift from it. If IndiGenomes was genuinely
-    queried this run (found a record OR confirmed not found), the
-    fallback is never shown -- even if `thousand_genomes_sas_result`
-    happens to carry usable data -- because a working IndiGenomes
-    result must never be cluttered with an inferior backup source (see
-    `annotation/thousand_genomes_sas.py`'s module docstring for exactly
-    why it's inferior: n=494 total vs. IndiGenomes' 1000+, and diaspora
-    samples collected outside India, not India-resident individuals).
-
-    `fallback_population_labels`/`fallback_sample_sizes`/
-    `fallback_total_sample_size` are carried through explicitly (not
-    left for the renderer to hardcode or, worse, omit) so every render
-    of this fallback -- Markdown and both PDF paths -- states both
-    mandatory disclosures the same way, from the same source of truth.
-    Deliberately NOT folded into `common_in_indian_population` below:
-    that flag stays driven by gnomAD SAS + IndiGenomes only, the two
-    sources this feature was built to compare -- mixing in a small,
-    diaspora-sourced fallback figure would let a genuinely
-    low-confidence number quietly influence a clinical flag.
+    `sas_population_labels`/`sas_sample_sizes`/`sas_total_sample_size`
+    are carried through explicitly (not left for the renderer to
+    hardcode or, worse, omit) so every render of this source --
+    Markdown and both PDF paths -- states both mandatory disclosures
+    the same way, from the same source of truth. Deliberately NOT
+    folded into `common_in_indian_population` below: `sas_pooled`'s AF
+    is a small, diaspora-sourced figure (see
+    `annotation/thousand_genomes_sas.py`'s disclosures) and mixing it
+    into the same threshold check as gnomAD's much larger SAS reference
+    population would let a genuinely low-confidence number quietly
+    influence a clinical flag on equal footing with a better-powered
+    one -- so the flag is driven by gnomAD SAS alone now (previously
+    gnomAD SAS + IndiGenomes; IndiGenomes is gone, and 1000 Genomes SAS
+    was never eligible for this flag for the same reason).
     """
     gnomad = raw.get("gnomad") or {}
     gnomad_sas = (gnomad.get("population_breakdown") or {}).get("sas") or {}
     gnomad_sas_af = gnomad_sas.get("af")
 
-    indigenomes = indigenomes_result or {}
-    indigenomes_available = bool(indigenomes.get("found"))
-    indigenomes_af = indigenomes.get("af") if indigenomes_available else None
-
-    # Distinguishes "queried, no record" from "skipped this run because
-    # IndiGenomes was confirmed offline at startup" (see
-    # `utils/service_health.py`) -- the two must never look identical
-    # in a report a clinician might rely on. `indigenomes_error` alone
-    # can't tell them apart (both surface as an error string), so this
-    # cross-checks the run-level HEALTH registry rather than
-    # string-matching the error text.
-    indigenomes_offline = bool(indigenomes.get("error")) and HEALTH.is_offline("IndiGenomes")
-
     threshold = CONFIG.indigenomes.COMMON_AF_THRESHOLD
-    common_in_indian_population = any(af is not None and af >= threshold for af in (gnomad_sas_af, indigenomes_af))
+    common_in_indian_population = gnomad_sas_af is not None and gnomad_sas_af >= threshold
 
     tgs = thousand_genomes_sas_result or {}
-    fallback_shown = indigenomes_offline
-    fallback_available = fallback_shown and bool(tgs.get("found"))
+    sas_available = bool(tgs.get("found"))
+    # True whenever the 1000 Genomes SAS stage actually ran this
+    # variant (`pipeline/orchestrator.py::_run_thousand_genomes_sas_stage`,
+    # unconditional as of 2026-08-08) -- i.e. whenever a caller passed a
+    # real result dict at all, found/not-found/errored alike. Only
+    # False in a test/caller that passes `None` outright (the stage
+    # genuinely wasn't invoked), mirroring how `fallback_shown` used to
+    # gate on "was IndiGenomes confirmed offline" -- now it gates on
+    # "did this stage run", which in real pipeline operation is always.
+    sas_shown = thousand_genomes_sas_result is not None
 
     return {
         "gnomad_af_sas": gnomad_sas_af,
         "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error")),
-        "indigenomes_available": indigenomes_available,
-        "indigenomes_af": indigenomes_af,
-        "indigenomes_ac": indigenomes.get("ac") if indigenomes_available else None,
-        "indigenomes_an": indigenomes.get("an") if indigenomes_available else None,
-        "indigenomes_error": indigenomes.get("error"),
-        "indigenomes_offline": indigenomes_offline,
-        "indigenomes_skipped_reason": indigenomes.get("reason") if indigenomes.get("skipped") else None,
         "common_af_threshold": threshold,
         "common_in_indian_population": common_in_indian_population,
-        "fallback_shown": fallback_shown,
-        "fallback_available": fallback_available,
-        "fallback_error": tgs.get("error") if fallback_shown else None,
-        "fallback_rsid": tgs.get("rsid") if fallback_shown else None,
-        "fallback_sas_pooled": tgs.get("sas_pooled") if fallback_available else None,
-        "fallback_sub_populations": tgs.get("sub_populations") if fallback_available else None,
-        "fallback_population_labels": tgs.get("population_labels") if fallback_available else None,
-        "fallback_sample_sizes": tgs.get("sample_sizes") if fallback_available else None,
-        "fallback_total_sample_size": tgs.get("total_sample_size") if fallback_available else None,
+        "sas_shown": sas_shown,
+        "sas_available": sas_available,
+        "sas_error": tgs.get("error") if sas_shown else None,
+        "sas_rsid": tgs.get("rsid") if sas_shown else None,
+        "sas_pooled": tgs.get("sas_pooled") if sas_available else None,
+        "sas_sub_populations": tgs.get("sub_populations") if sas_available else None,
+        "sas_population_labels": tgs.get("population_labels") if sas_available else None,
+        "sas_sample_sizes": tgs.get("sample_sizes") if sas_available else None,
+        "sas_total_sample_size": tgs.get("total_sample_size") if sas_available else None,
     }
 
 

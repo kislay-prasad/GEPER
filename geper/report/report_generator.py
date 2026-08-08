@@ -16,33 +16,36 @@ from pipeline.models.status import render_status_table_lines
 logger = get_logger(__name__)
 
 
-def _render_1000_genomes_sas_fallback_markdown(ipf: Dict[str, Any]) -> List[str]:
+def _render_1000_genomes_sas_markdown(ipf: Dict[str, Any]) -> List[str]:
     """
-    Renders the 1000 Genomes SAS fallback -- called only when
-    `ipf["fallback_shown"]` is True (IndiGenomes confirmed offline this
-    run; see `report/clinical_report_builder.py::_indian_population_frequency`).
-    Both mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/
-    `DIASPORA_DISCLOSURE`) are always rendered whenever this fallback
-    has anything at all to show -- found, not found, or errored --
-    never only on the "found" path, since a reader seeing this source
+    Renders the 1000 Genomes SAS section -- the SOLE Indian/South-Asian
+    cohort source as of 2026-08-08 (see `report/clinical_report_builder.py
+    ::_indian_population_frequency`; IndiGenomes was retired from
+    GEPER's active query path, see `DATA_SOURCE_LICENSE_AUDIT.md`).
+    Called whenever `ipf["sas_shown"]` is True -- in real pipeline
+    operation, always (the stage now runs unconditionally for every
+    variant). Both mandatory disclosures (`SAMPLE_SIZE_DISCLOSURE`/
+    `DIASPORA_DISCLOSURE`) are always rendered whenever this section has
+    anything at all to show -- found, not found, or errored -- never
+    only on the "found" path, since a reader seeing this source
     mentioned at all needs to know its limitations regardless of
     outcome.
     """
-    lines = ["- **1000 Genomes (South Asian, SAS) -- fallback source, IndiGenomes was unavailable this run:**"]
-    if ipf.get("fallback_available"):
-        pooled = ipf.get("fallback_sas_pooled") or {}
+    lines = ["- **1000 Genomes (South Asian, SAS):**"]
+    if ipf.get("sas_available"):
+        pooled = ipf.get("sas_pooled") or {}
         if pooled.get("af") is not None:
             lines.append(f"    - Pooled SAS: AF={pooled.get('af')} (AC={pooled.get('ac')}, AN={pooled.get('an')})")
-        labels = ipf.get("fallback_population_labels") or {}
-        sizes = ipf.get("fallback_sample_sizes") or {}
-        for code, sub in (ipf.get("fallback_sub_populations") or {}).items():
+        labels = ipf.get("sas_population_labels") or {}
+        sizes = ipf.get("sas_sample_sizes") or {}
+        for code, sub in (ipf.get("sas_sub_populations") or {}).items():
             label = labels.get(code, code)
             n = sizes.get(code)
             lines.append(f"    - {code} ({label}, n={n}): AF={sub.get('af')} (AC={sub.get('ac')}, AN={sub.get('an')})")
-    elif ipf.get("fallback_error"):
-        lines.append(f"    - _lookup failed (external service issue: {ipf['fallback_error']})._")
+    elif ipf.get("sas_error"):
+        lines.append(f"    - _lookup failed (external service issue: {ipf['sas_error']})._")
     else:
-        lines.append("    - Variant not found in this fallback source either.")
+        lines.append("    - Variant not found in this source.")
     lines.append(f"    - ⚠ {SAMPLE_SIZE_DISCLOSURE}")
     lines.append(f"    - ⚠ {DIASPORA_DISCLOSURE}")
     return lines
@@ -584,25 +587,8 @@ class ReportGenerator:
             )
         else:
             lines.append("- **gnomAD (South Asian, SAS):** lookup unavailable for this variant.")
-        if ipf.get("indigenomes_available"):
-            lines.append(
-                f"- **IndiGenomes:** AF={ipf.get('indigenomes_af')} (AC={ipf.get('indigenomes_ac')}, AN={ipf.get('indigenomes_an')})"
-            )
-        elif ipf.get("indigenomes_offline"):
-            lines.append(
-                "- **IndiGenomes:** _not evaluated -- IndiGenomes was unreachable during this analysis run "
-                "(not queried); this is a data-collection gap for this run, not evidence of an absent record._"
-            )
-        elif ipf.get("indigenomes_error"):
-            lines.append(
-                f"- **IndiGenomes:** _lookup failed (external service issue: {ipf['indigenomes_error']}) -- not evidence of an absent record._"
-            )
-        elif ipf.get("indigenomes_skipped_reason"):
-            lines.append(f"- **IndiGenomes:** not queried ({ipf['indigenomes_skipped_reason']}).")
-        else:
-            lines.append("- **IndiGenomes:** variant not found.")
-        if ipf.get("fallback_shown"):
-            lines.extend(_render_1000_genomes_sas_fallback_markdown(ipf))
+        if ipf.get("sas_shown"):
+            lines.extend(_render_1000_genomes_sas_markdown(ipf))
         threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
         if ipf.get("common_in_indian_population"):
             lines.append(f"- **⚠ Common in Indian populations** (at or above the {threshold_pct} threshold).")

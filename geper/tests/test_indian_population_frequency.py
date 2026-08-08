@@ -3,7 +3,18 @@ Tests for the "Indian Population Frequency" report section (India-
 deployment feature): `report/clinical_report_builder.py
 ::_indian_population_frequency` (the shared section data both output
 formats render), plus its Markdown (`report/report_generator.py`) and
-PDF (`report/summary.py`) renderings.
+PDF (`report/summary.py`) renderings -- and, at the bottom, the
+`pipeline/orchestrator.py` stage-wiring change that retired IndiGenomes.
+
+AS OF 2026-08-08: IndiGenomes was retired from GEPER's active query
+path entirely -- its own terms restrict commercial use ("Commercial
+use of the resource would require licensing"), which GEPER has not
+obtained (see `DATA_SOURCE_LICENSE_AUDIT.md`). 1000 Genomes SAS
+(`annotation/thousand_genomes_sas.py`), originally built as an
+offline-only fallback, is now the sole, unconditional source for this
+section. This file replaces the prior version's extensive
+"IndiGenomes vs. fallback" branching tests with tests for the simpler,
+unconditional shape -- there is no longer a branch to test.
 
 PDF tests generate real, small PDFs with ReportLab (lightweight, no
 model weights -- safe to run locally), following the same pattern
@@ -13,12 +24,12 @@ model weights -- safe to run locally), following the same pattern
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from report.clinical_report_builder import _indian_population_frequency, build_clinical_report
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
-from utils.service_health import ServiceCheck, ServiceHealthRegistry, ServiceStatus
 
 try:
     from pypdf import PdfReader
@@ -61,119 +72,6 @@ def _patch_threshold(value=0.01):
     return patcher
 
 
-def _offline_registry(*names: str) -> ServiceHealthRegistry:
-    """A `ServiceHealthRegistry` with `names` pre-marked OFFLINE, for
-    simulating a service `utils/service_health.py::HEALTH` already
-    confirmed unreachable at startup -- same shape
-    `tests/test_service_health.py` uses."""
-    registry = ServiceHealthRegistry()
-    fake_config = mock.Mock()
-    fake_config.health_check.ENABLED = True
-    fake_config.health_check.TIMEOUT_SECS = 1.0
-    with mock.patch("utils.service_health.CONFIG", fake_config):
-        registry.run_startup_checks([ServiceCheck(name, lambda: (ServiceStatus.OFFLINE, "Timeout")) for name in names])
-    return registry
-
-
-class TestIndianPopulationFrequencySection(unittest.TestCase):
-    def setUp(self):
-        self.addCleanup(mock.patch.stopall)
-
-    def test_gnomad_sas_and_indigenomes_both_present(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-        indigenomes = {"skipped": False, "found": True, "af": 0.015, "ac": 30, "an": 2000}
-        section = _indian_population_frequency(raw, indigenomes)
-        self.assertEqual(section["gnomad_af_sas"], 0.02)
-        self.assertEqual(section["indigenomes_af"], 0.015)
-        self.assertTrue(section["indigenomes_available"])
-        self.assertTrue(section["common_in_indian_population"])
-
-    def test_both_rare_no_common_flag(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.0001}}}}
-        indigenomes = {"skipped": False, "found": True, "af": 0.0002, "ac": 1, "an": 2000}
-        section = _indian_population_frequency(raw, indigenomes)
-        self.assertFalse(section["common_in_indian_population"])
-
-    def test_only_indigenomes_common_still_flags(self):
-        # gnomAD SAS below threshold, IndiGenomes alone above it --
-        # flag must still fire (never requires both sources to agree).
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.001}}}}
-        indigenomes = {"skipped": False, "found": True, "af": 0.05, "ac": 100, "an": 2000}
-        section = _indian_population_frequency(raw, indigenomes)
-        self.assertTrue(section["common_in_indian_population"])
-
-    def test_indigenomes_not_found_distinct_from_error(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {}}
-        section = _indian_population_frequency(raw, {"skipped": False, "found": False})
-        self.assertFalse(section["indigenomes_available"])
-        self.assertIsNone(section["indigenomes_error"])
-        self.assertIsNone(section["indigenomes_af"])
-
-    def test_indigenomes_error_surfaced(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {}}
-        section = _indian_population_frequency(raw, {"skipped": False, "found": False, "error": "timeout"})
-        self.assertEqual(section["indigenomes_error"], "timeout")
-
-    def test_indigenomes_skipped_reason_surfaced(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {}}
-        section = _indian_population_frequency(
-            raw, {"skipped": True, "found": False, "reason": "IndiGenomes is GRCh38-only; ..."}
-        )
-        self.assertIn("GRCh38-only", section["indigenomes_skipped_reason"])
-
-    def test_indigenomes_offline_distinct_from_generic_error(self):
-        """The core distinction this feature adds: an `error` string
-        caused by IndiGenomes being confirmed offline this run (per
-        `utils/service_health.py::HEALTH`) must set `indigenomes_offline
-        =True`, separate from a generic lookup failure (malformed
-        response, unexpected exception) that leaves it `False` even
-        though `indigenomes_error` is set in both cases."""
-        _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
-        raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(
-                raw,
-                {
-                    "skipped": False,
-                    "found": False,
-                    "error": "IndiGenomes request to '...' skipped: IndiGenomes was confirmed offline at startup.",
-                },
-            )
-        self.assertTrue(section["indigenomes_offline"])
-        self.assertIsNotNone(section["indigenomes_error"])
-
-    def test_generic_error_is_not_flagged_offline(self):
-        _patch_threshold(0.01)
-        not_offline = ServiceHealthRegistry()  # never probed -- nothing OFFLINE
-        raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", not_offline):
-            section = _indian_population_frequency(
-                raw, {"skipped": False, "found": False, "error": "malformed JSON response"}
-            )
-        self.assertFalse(section["indigenomes_offline"])
-        self.assertEqual(section["indigenomes_error"], "malformed JSON response")
-
-    def test_indigenomes_result_none_handled(self):
-        _patch_threshold(0.01)
-        section = _indian_population_frequency({"gnomad": {}}, None)
-        self.assertFalse(section["indigenomes_available"])
-        self.assertFalse(section["common_in_indian_population"])
-
-    def test_gnomad_missing_sas_entry(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"eas": {"af": 0.3}}}}
-        section = _indian_population_frequency(raw, None)
-        self.assertIsNone(section["gnomad_af_sas"])
-        self.assertFalse(section["common_in_indian_population"])  # eas doesn't count toward the Indian-population flag
-
-
 _TGS_FOUND = {
     "skipped": False,
     "found": True,
@@ -197,105 +95,97 @@ _TGS_FOUND = {
     "total_sample_size": 494,
 }
 
+_TGS_NOT_FOUND = {"skipped": False, "found": False, "rsid": None}
+_TGS_ERROR = {"skipped": False, "found": False, "error": "Ensembl request failed after 3 attempts"}
 
-class TestThousandGenomesSasFallbackGating(unittest.TestCase):
+
+class TestIndianPopulationFrequencySection(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(mock.patch.stopall)
+
+    def test_gnomad_sas_at_or_above_threshold_sets_common_flag(self):
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
+        section = _indian_population_frequency(raw, None)
+        self.assertEqual(section["gnomad_af_sas"], 0.02)
+        self.assertTrue(section["common_in_indian_population"])
+
+    def test_gnomad_sas_below_threshold_no_common_flag(self):
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.0001}}}}
+        section = _indian_population_frequency(raw, None)
+        self.assertFalse(section["common_in_indian_population"])
+
+    def test_gnomad_missing_sas_entry(self):
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"eas": {"af": 0.3}}}}
+        section = _indian_population_frequency(raw, None)
+        self.assertIsNone(section["gnomad_af_sas"])
+        self.assertFalse(section["common_in_indian_population"])  # eas doesn't count toward the Indian-population flag
+
+    def test_huge_1000g_sas_af_never_counted_toward_common_flag(self):
+        """The flag is driven by gnomAD SAS alone now (IndiGenomes is
+        gone; 1000 Genomes SAS was never eligible for this flag either,
+        for the same 'small diaspora cohort shouldn't drive a clinical
+        flag' reasoning the prior fallback version already documented)."""
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.001}}}}
+        huge_af = dict(_TGS_FOUND, sas_pooled={"af": 0.99, "ac": 900, "an": 978})
+        section = _indian_population_frequency(raw, huge_af)
+        self.assertFalse(section["common_in_indian_population"])
+
+
+class TestThousandGenomesSasUnconditional(unittest.TestCase):
     """
-    `_indian_population_frequency`'s fallback-gating logic: the 1000
-    Genomes SAS fallback (`annotation/thousand_genomes_sas.py`) must be
-    shown ONLY when IndiGenomes is confirmed offline for this run --
-    never alongside a working IndiGenomes result (found or genuine
-    not-found), even if the fallback itself has real data ready to show.
+    `_indian_population_frequency`'s 1000 Genomes SAS handling: as of
+    2026-08-08 it is shown whenever a result dict was actually passed
+    (`sas_shown`), regardless of found/not-found/error -- never gated
+    on any other source's availability, since IndiGenomes no longer
+    exists in the active query path to gate on.
     """
 
     def setUp(self):
         self.addCleanup(mock.patch.stopall)
 
-    def test_fallback_not_shown_when_indigenomes_found(self):
+    def test_shown_and_available_when_found(self):
         _patch_threshold(0.01)
         raw = {"gnomad": {}}
-        section = _indian_population_frequency(raw, {"skipped": False, "found": True, "af": 0.02}, _TGS_FOUND)
-        self.assertFalse(section["fallback_shown"])
-        self.assertFalse(section["fallback_available"])
-        self.assertIsNone(section["fallback_sub_populations"])
+        section = _indian_population_frequency(raw, _TGS_FOUND)
+        self.assertTrue(section["sas_shown"])
+        self.assertTrue(section["sas_available"])
+        self.assertEqual(section["sas_rsid"], "rs699")
+        self.assertEqual(section["sas_sub_populations"]["GIH"]["af"], 0.592)
+        self.assertEqual(section["sas_total_sample_size"], 494)
+        self.assertIn("Houston", section["sas_population_labels"]["GIH"])
+        self.assertIsNone(section["sas_error"])
 
-    def test_fallback_not_shown_when_indigenomes_genuinely_not_found(self):
-        """IndiGenomes genuinely queried and found nothing -- not offline
-        -- the fallback must still not appear, even though it has data."""
+    def test_shown_but_not_available_when_genuinely_not_found(self):
         _patch_threshold(0.01)
-        not_offline = ServiceHealthRegistry()
         raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", not_offline):
-            section = _indian_population_frequency(raw, {"skipped": False, "found": False}, _TGS_FOUND)
-        self.assertFalse(section["fallback_shown"])
-        self.assertFalse(section["fallback_available"])
+        section = _indian_population_frequency(raw, _TGS_NOT_FOUND)
+        self.assertTrue(section["sas_shown"])
+        self.assertFalse(section["sas_available"])
+        self.assertIsNone(section["sas_error"])
 
-    def test_fallback_shown_when_indigenomes_offline_and_fallback_found(self):
+    def test_shown_with_its_own_error(self):
         _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
         raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(
-                raw,
-                {"skipped": False, "found": False, "error": "IndiGenomes was confirmed offline at startup."},
-                _TGS_FOUND,
-            )
-        self.assertTrue(section["fallback_shown"])
-        self.assertTrue(section["fallback_available"])
-        self.assertEqual(section["fallback_rsid"], "rs699")
-        self.assertEqual(section["fallback_sub_populations"]["GIH"]["af"], 0.592)
-        self.assertEqual(section["fallback_total_sample_size"], 494)
-        self.assertIn("Houston", section["fallback_population_labels"]["GIH"])
+        section = _indian_population_frequency(raw, _TGS_ERROR)
+        self.assertTrue(section["sas_shown"])
+        self.assertFalse(section["sas_available"])
+        self.assertEqual(section["sas_error"], "Ensembl request failed after 3 attempts")
 
-    def test_fallback_shown_but_not_available_when_1000g_also_not_found(self):
+    def test_not_shown_only_when_result_is_none(self):
+        """The only way this section doesn't show the 1000 Genomes SAS
+        source at all is if the caller never even ran the stage (passed
+        `None`) -- in real pipeline operation this stage always runs,
+        so this path is effectively test-only."""
         _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
         raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(
-                raw,
-                {"skipped": False, "found": False, "error": "offline"},
-                {"skipped": False, "found": False, "rsid": None},
-            )
-        self.assertTrue(section["fallback_shown"])
-        self.assertFalse(section["fallback_available"])
-        self.assertIsNone(section["fallback_error"])
-
-    def test_fallback_shown_with_its_own_error(self):
-        _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
-        raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(
-                raw,
-                {"skipped": False, "found": False, "error": "offline"},
-                {"skipped": False, "found": False, "error": "Ensembl request failed after 3 attempts"},
-            )
-        self.assertTrue(section["fallback_shown"])
-        self.assertFalse(section["fallback_available"])
-        self.assertEqual(section["fallback_error"], "Ensembl request failed after 3 attempts")
-
-    def test_fallback_af_never_counted_toward_common_in_indian_population_flag(self):
-        """Even a huge fallback AF must not influence the clinical flag
-        -- that flag stays driven by gnomAD SAS + IndiGenomes only (see
-        `_indian_population_frequency`'s docstring)."""
-        _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.001}}}}
-        huge_af_fallback = dict(_TGS_FOUND, sas_pooled={"af": 0.99, "ac": 900, "an": 978})
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(
-                raw, {"skipped": False, "found": False, "error": "offline"}, huge_af_fallback
-            )
-        self.assertFalse(section["common_in_indian_population"])
-
-    def test_fallback_result_none_handled(self):
-        _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
-        raw = {"gnomad": {}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            section = _indian_population_frequency(raw, {"skipped": False, "found": False, "error": "offline"}, None)
-        self.assertTrue(section["fallback_shown"])
-        self.assertFalse(section["fallback_available"])
+        section = _indian_population_frequency(raw, None)
+        self.assertFalse(section["sas_shown"])
+        self.assertFalse(section["sas_available"])
+        self.assertIsNone(section["sas_pooled"])
 
 
 class TestBuildClinicalReportIncludesSection(unittest.TestCase):
@@ -305,23 +195,35 @@ class TestBuildClinicalReportIncludesSection(unittest.TestCase):
     def test_section_present_in_full_clinical_report(self):
         _patch_threshold(0.01)
         raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-        cr = build_clinical_report(
-            _ir(), raw_evidence=raw, indigenomes_result={"skipped": False, "found": True, "af": 0.03}
-        )
+        cr = build_clinical_report(_ir(), raw_evidence=raw, thousand_genomes_sas_result=_TGS_FOUND)
         self.assertIn("indian_population_frequency", cr)
         self.assertTrue(cr["indian_population_frequency"]["common_in_indian_population"])
+        self.assertTrue(cr["indian_population_frequency"]["sas_shown"])
+
+    def test_indigenomes_result_kwarg_is_accepted_but_has_no_effect(self):
+        """Backward-compatibility check: `build_clinical_report` still
+        accepts `indigenomes_result` (so existing callers like
+        `report/json_builder.py` don't need a signature-breaking
+        change) but it must no longer influence the output -- there's
+        no more IndiGenomes-vs-fallback branch for it to feed."""
+        _patch_threshold(0.01)
+        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.001}}}}
+        cr_with = build_clinical_report(
+            _ir(),
+            raw_evidence=raw,
+            indigenomes_result={"skipped": False, "found": True, "af": 0.5, "ac": 900, "an": 1000},
+            thousand_genomes_sas_result=_TGS_FOUND,
+        )
+        cr_without = build_clinical_report(_ir(), raw_evidence=raw, thousand_genomes_sas_result=_TGS_FOUND)
+        self.assertEqual(cr_with["indian_population_frequency"], cr_without["indian_population_frequency"])
+        self.assertNotIn("indigenomes_available", cr_with["indian_population_frequency"])
 
 
-def _markdown_document(indigenomes_result, thousand_genomes_sas_result=None):
+def _markdown_document(thousand_genomes_sas_result):
     """Shared helper: a one-variant document dict ready for `ReportGenerator().generate()`."""
     _patch_threshold(0.01)
     raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-    cr = build_clinical_report(
-        _ir(),
-        raw_evidence=raw,
-        indigenomes_result=indigenomes_result,
-        thousand_genomes_sas_result=thousand_genomes_sas_result,
-    )
+    cr = build_clinical_report(_ir(), raw_evidence=raw, thousand_genomes_sas_result=thousand_genomes_sas_result)
     return {
         "geper_version": "t",
         "generated_at": "2026-01-01T00:00:00Z",
@@ -345,19 +247,23 @@ class TestMarkdownRendering(unittest.TestCase):
     def setUp(self):
         self.addCleanup(mock.patch.stopall)
 
-    def _document(self, indigenomes_result, thousand_genomes_sas_result=None):
-        return _markdown_document(indigenomes_result, thousand_genomes_sas_result)
-
-    def test_section_11_present_with_both_sources(self):
-        doc = self._document({"skipped": False, "found": True, "af": 0.015, "ac": 30, "an": 2000})
+    def test_section_11_present_with_gnomad_and_1000g(self):
+        doc = _markdown_document(_TGS_FOUND)
         md = ReportGenerator().generate(doc)
         self.assertIn("### 11. Indian Population Frequency", md)
         self.assertIn("gnomAD (South Asian, SAS)", md)
-        self.assertIn("IndiGenomes", md)
+        self.assertIn("1000 Genomes (South Asian, SAS)", md)
         self.assertIn("Common in Indian populations", md)
+        # No standalone "IndiGenomes:" evidence line remains -- the
+        # only legitimate mention left is the sample-size disclosure's
+        # own size comparison ("...much smaller than IndiGenomes'
+        # 1000+ India-resident genomes"), which is accurate historical
+        # context, not a live source being queried.
+        self.assertNotIn("**IndiGenomes:**", md)
+        self.assertIn("much smaller than IndiGenomes' 1000+", md)
 
     def test_subsequent_sections_renumbered_correctly(self):
-        doc = self._document({"skipped": False, "found": False})
+        doc = _markdown_document(_TGS_NOT_FOUND)
         md = ReportGenerator().generate(doc)
         self.assertIn("### 12. Clinical Evidence", md)
         self.assertIn("### 13. Sequence Context", md)
@@ -366,90 +272,40 @@ class TestMarkdownRendering(unittest.TestCase):
         self.assertIn("### 16. References", md)
         self.assertIn("### 17. Evidence Sources", md)
 
-    def test_indigenomes_not_found_renders_plainly(self):
-        doc = self._document({"skipped": False, "found": False})
+    def test_1000g_not_found_renders_plainly(self):
+        doc = _markdown_document(_TGS_NOT_FOUND)
         md = ReportGenerator().generate(doc)
-        self.assertIn("IndiGenomes:** variant not found", md)
+        self.assertIn("Variant not found in this source.", md)
 
-    def test_indigenomes_offline_renders_distinct_text_from_not_found(self):
-        """Regression test for the offline-vs-not-found ambiguity this
-        feature fixes: confirmed-offline text must not collapse into
-        the same "variant not found" wording a genuine absence gets."""
-        offline = _offline_registry("IndiGenomes")
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            doc = self._document(
-                {"skipped": False, "found": False, "error": "IndiGenomes was confirmed offline at startup."}
-            )
+    def test_1000g_error_renders_distinctly(self):
+        doc = _markdown_document(_TGS_ERROR)
         md = ReportGenerator().generate(doc)
-        self.assertIn("IndiGenomes was unreachable during this analysis run", md)
-        self.assertIn("not evidence of an absent record", md)
-        self.assertNotIn("IndiGenomes:** variant not found", md)
+        self.assertIn("lookup failed (external service issue: Ensembl request failed after 3 attempts)", md)
 
-
-class TestMarkdownFallbackRendering(unittest.TestCase):
-    def setUp(self):
-        self.addCleanup(mock.patch.stopall)
-
-    def test_fallback_absent_when_indigenomes_found(self):
-        """The fallback must NOT appear when IndiGenomes was successfully
-        queried this run, even though a fallback result with real data
-        was passed in -- a working IndiGenomes result must never be
-        cluttered with an inferior backup source."""
-        doc = _markdown_document({"skipped": False, "found": True, "af": 0.015, "ac": 30, "an": 2000}, _TGS_FOUND)
+    def test_disclosures_present_when_1000g_found(self):
+        doc = _markdown_document(_TGS_FOUND)
         md = ReportGenerator().generate(doc)
-        self.assertNotIn("1000 Genomes", md)
-
-    def test_fallback_absent_when_indigenomes_queried_and_not_found(self):
-        doc = _markdown_document({"skipped": False, "found": False}, _TGS_FOUND)
-        md = ReportGenerator().generate(doc)
-        self.assertNotIn("1000 Genomes", md)
-
-    def test_fallback_appears_with_both_mandatory_disclosures_when_offline(self):
-        offline = _offline_registry("IndiGenomes")
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            doc = _markdown_document(
-                {"skipped": False, "found": False, "error": "IndiGenomes was confirmed offline at startup."},
-                _TGS_FOUND,
-            )
-        md = ReportGenerator().generate(doc)
-        self.assertIn("1000 Genomes (South Asian, SAS)", md)
-        self.assertIn("fallback source, IndiGenomes was unavailable this run", md)
-        # Sub-population data, human-readable label, and sample size --
-        # never a bare population code with no context.
         self.assertIn("GIH (Gujarati Indian in Houston, TX, USA", md)
         self.assertIn("n=106", md)
-        # Both mandatory disclosures, verbatim shared text.
         self.assertIn("494 total samples", md)
         self.assertIn("diaspora populations outside India", md)
 
-    def test_fallback_disclosures_present_even_when_fallback_itself_not_found(self):
-        """Both disclosures must render even on the fallback's own
-        not-found path, not only when it has data -- a reader seeing
+    def test_disclosures_present_even_when_1000g_not_found(self):
+        """Both mandatory disclosures must render even on the
+        not-found path, not only when there's data -- a reader seeing
         this source mentioned at all needs the caveats."""
-        offline = _offline_registry("IndiGenomes")
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            doc = _markdown_document(
-                {"skipped": False, "found": False, "error": "offline"},
-                {"skipped": False, "found": False, "rsid": None},
-            )
+        doc = _markdown_document(_TGS_NOT_FOUND)
         md = ReportGenerator().generate(doc)
-        self.assertIn("1000 Genomes (South Asian, SAS)", md)
-        self.assertIn("not found in this fallback source either", md)
         self.assertIn("494 total samples", md)
         self.assertIn("diaspora populations outside India", md)
 
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-def _pdf_document(indigenomes_result, thousand_genomes_sas_result=None):
+def _pdf_document(thousand_genomes_sas_result):
     """Shared helper: a one-variant document dict ready for `generate_pdf()`."""
     _patch_threshold(0.01)
     raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-    cr = build_clinical_report(
-        _ir(),
-        raw_evidence=raw,
-        indigenomes_result=indigenomes_result,
-        thousand_genomes_sas_result=thousand_genomes_sas_result,
-    )
+    cr = build_clinical_report(_ir(), raw_evidence=raw, thousand_genomes_sas_result=thousand_genomes_sas_result)
     return {
         "geper_version": "t",
         "generated_at": "2026-01-01T00:00:00Z",
@@ -470,89 +326,55 @@ def _pdf_document(indigenomes_result, thousand_genomes_sas_result=None):
 
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-class TestPdfFallbackRendering(unittest.TestCase):
+class TestPdfRendering(unittest.TestCase):
     """
     Real ReportLab PDF generation + pypdf text extraction, per this
-    feature's stated verification requirement -- confirms the fallback
+    feature's stated verification requirement -- confirms the section
     (and both its mandatory disclosures) actually appear in rendered
-    PDF text, and confirms they're absent when IndiGenomes worked fine.
+    PDF text, unconditionally, for every variant.
     """
 
     def setUp(self):
         self.addCleanup(mock.patch.stopall)
 
-    def test_fallback_absent_from_pdf_when_indigenomes_found(self):
-        document = _pdf_document({"skipped": False, "found": True, "af": 0.015, "ac": 30, "an": 2000}, _TGS_FOUND)
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "r.pdf")
-            generate_pdf(document, out)
-            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertNotIn("1000 Genomes", text)
-
-    def test_fallback_appears_in_pdf_with_both_disclosures_when_offline(self):
-        offline = _offline_registry("IndiGenomes")
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            document = _pdf_document(
-                {"skipped": False, "found": False, "error": "IndiGenomes was confirmed offline at startup."},
-                _TGS_FOUND,
-            )
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "r.pdf")
-            with mock.patch("report.summary.HEALTH", offline):
-                generate_pdf(document, out)
-            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertIn("1000 Genomes", text)
-        self.assertIn("fallback source", text)
-        self.assertIn("GIH", text)
-        # Both mandatory disclosures, verbatim shared text -- must be
-        # present in the real rendered PDF, not just the data dict.
-        self.assertIn("494 total samples", text)
-        self.assertIn("diaspora populations outside India", text)
-
-
-class TestPdfRendering(unittest.TestCase):
-    def setUp(self):
-        self.addCleanup(mock.patch.stopall)
-
-    def test_section_appears_in_generated_pdf(self):
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-        cr = build_clinical_report(
-            _ir(),
-            raw_evidence=raw,
-            indigenomes_result={"skipped": False, "found": True, "af": 0.015, "ac": 30, "an": 2000},
-        )
-        document = {
-            "geper_version": "t",
-            "generated_at": "2026-01-01T00:00:00Z",
-            "input_vcf": "x.vcf",
-            "assembly": "GRCh38",
-            "vcf_samples": ["S1"],
-            "variant_count": 1,
-            "variants": [
-                {
-                    "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-                    "interpretation": {},
-                    "clinical_report": cr,
-                    "ai_model_status": {},
-                    "errors": [],
-                }
-            ],
-        }
+    def test_section_appears_in_pdf_with_1000g_and_disclosures(self):
+        document = _pdf_document(_TGS_FOUND)
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "r.pdf")
             generate_pdf(document, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
         self.assertIn("Indian Population Frequency", text)
-        self.assertIn("IndiGenomes", text)
+        self.assertIn("1000 Genomes (South Asian, SAS)", text)
+        self.assertIn("GIH", text)
         self.assertIn("Common in Indian populations", text)
+        # No standalone "IndiGenomes:" evidence bullet remains -- the
+        # only legitimate mention left is the sample-size disclosure's
+        # own size comparison, not a live source being queried.
+        self.assertNotIn("• IndiGenomes", text)
+        # Both mandatory disclosures, verbatim shared text.
+        self.assertIn("494 total samples", text)
+        self.assertIn("diaspora populations outside India", text)
+
+    def test_disclosures_present_even_when_1000g_not_found_in_pdf(self):
+        document = _pdf_document(_TGS_NOT_FOUND)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "r.pdf")
+            generate_pdf(document, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertIn("Indian Population Frequency", text)
+        self.assertIn("Variant not found in this source.", text)
+        self.assertIn("494 total samples", text)
+        self.assertIn("diaspora populations outside India", text)
 
     def test_section_omitted_when_no_data_at_all(self):
-        # Neither gnomAD SAS nor IndiGenomes has anything -- the section
-        # must render nothing (no empty header noise).
+        # Neither gnomAD SAS nor the 1000 Genomes SAS stage (never run
+        # -- None passed) has anything -- the section must render
+        # nothing (no empty header noise). In real pipeline operation
+        # the 1000 Genomes SAS stage always runs, so this is
+        # effectively a test-only edge case.
         _patch_threshold(0.01)
         raw = {"gnomad": {"skipped": True}}
-        cr = build_clinical_report(_ir(), raw_evidence=raw, indigenomes_result=None)
+        cr = build_clinical_report(_ir(), raw_evidence=raw, thousand_genomes_sas_result=None)
         document = {
             "geper_version": "t",
             "generated_at": "2026-01-01T00:00:00Z",
@@ -576,106 +398,65 @@ class TestPdfRendering(unittest.TestCase):
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
         self.assertNotIn("Indian Population Frequency", text)
 
-    def test_offline_and_genuine_not_found_render_distinctly_in_one_pdf(self):
-        """
-        End-to-end verification (real ReportLab generation + pypdf text
-        extraction, per this feature's stated verification requirement):
-        a two-variant run where Finding 1's IndiGenomes lookup was
-        skipped because IndiGenomes was confirmed offline this run, and
-        Finding 2's IndiGenomes lookup genuinely ran and found nothing.
-        The PDF text for these two must never be the same string --
-        that identical-looking gap is exactly the ambiguity a clinician
-        must not be exposed to.
-        """
-        _patch_threshold(0.01)
-        offline = _offline_registry("IndiGenomes")
 
-        raw_with_gnomad = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-        with mock.patch("report.clinical_report_builder.HEALTH", offline):
-            cr_offline = build_clinical_report(
-                _ir(variant={"chrom": "1", "pos": 100, "ref": "A", "alt": "T"}),
-                raw_evidence=raw_with_gnomad,
-                indigenomes_result={
-                    "skipped": False,
-                    "found": False,
-                    "error": "IndiGenomes request skipped: IndiGenomes was confirmed offline at startup.",
-                },
-            )
-        cr_not_found = build_clinical_report(
-            _ir(variant={"chrom": "2", "pos": 200, "ref": "G", "alt": "C"}),
-            raw_evidence=raw_with_gnomad,
-            indigenomes_result={"skipped": False, "found": False},
+class TestIndiGenomesRetiredFromOrchestrator(unittest.TestCase):
+    """
+    Verifies `pipeline/orchestrator.py`'s stage wiring: IndiGenomes is
+    never called during normal pipeline execution, and the 1000 Genomes
+    SAS stage runs unconditionally (no `HEALTH.is_offline("IndiGenomes")`
+    gate). Uses a duck-typed `self` (matching
+    `tests/test_provenance.py::TestOrchestratorStageProvenanceCapture`'s
+    established pattern) rather than constructing a real `GeperPipeline`
+    -- that requires loading model registries, out of scope for a
+    lightweight unit test and this machine's RAM constraint.
+    """
+
+    def test_indigenomes_retired_result_has_the_expected_shape(self):
+        from pipeline.orchestrator import GeperPipeline
+
+        result = GeperPipeline._indigenomes_retired_result(SimpleNamespace())
+        self.assertTrue(result["skipped"])
+        self.assertFalse(result["found"])
+        self.assertIn("licens", result["reason"].lower())
+
+    def test_indigenomes_query_variant_is_never_called(self):
+        """The core compliance guarantee: going through the retired
+        stage never reaches `annotation/indigenomes.py`'s query
+        function at all, not just internally no-ops it."""
+        from pipeline.orchestrator import GeperPipeline
+
+        fake_client = mock.Mock()
+        fake_self = SimpleNamespace(indigenomes_client=fake_client)
+        GeperPipeline._indigenomes_retired_result(fake_self)
+        fake_client.query_variant.assert_not_called()
+
+    def test_thousand_genomes_sas_stage_runs_unconditionally(self):
+        """No `HEALTH.is_offline` gate remains -- the stage must run
+        (and call the client) regardless of any service's health
+        state, since it's confirmed there is no `HEALTH` reference left
+        in this method at all (see the source diff), not merely that
+        it happens to return non-skipped here."""
+        from pipeline.orchestrator import GeperPipeline
+        from pipeline.vcf_parser import Variant
+
+        fake_client = mock.Mock()
+        fake_client.query_variant.return_value = _TGS_FOUND
+        fake_self = SimpleNamespace(
+            sequence_context_gen=SimpleNamespace(assembly="GRCh38"),
+            thousand_genomes_sas_client=fake_client,
+            _timer=mock.MagicMock(
+                return_value=mock.MagicMock(__enter__=mock.Mock(), __exit__=mock.Mock(return_value=False))
+            ),
         )
+        variant = Variant(chrom="1", pos=230710048, variant_id="rs699", ref="A", alt="G", qual=None, filter_status=None)
+        result = GeperPipeline._run_thousand_genomes_sas_stage(fake_self, variant, {"found": False}, [])
+        fake_client.query_variant.assert_called_once()
+        self.assertEqual(result, _TGS_FOUND)
 
-        document = {
-            "geper_version": "t",
-            "generated_at": "2026-01-01T00:00:00Z",
-            "input_vcf": "x.vcf",
-            "assembly": "GRCh38",
-            "vcf_samples": ["S1"],
-            "variant_count": 2,
-            "variants": [
-                {
-                    "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-                    "interpretation": {},
-                    "clinical_report": cr_offline,
-                    "ai_model_status": {},
-                    "errors": [],
-                },
-                {
-                    "variant": {"chrom": "2", "pos": 200, "ref": "G", "alt": "C"},
-                    "interpretation": {},
-                    "clinical_report": cr_not_found,
-                    "ai_model_status": {},
-                    "errors": [],
-                },
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "r.pdf")
-            with mock.patch("report.summary.HEALTH", offline):
-                generate_pdf(document, out)
-            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+    def test_config_indigenomes_disabled_by_default(self):
+        from config import CONFIG
 
-        # Finding 1: offline -- explicit, not a silent gap, not the
-        # same wording as a genuine absence.
-        self.assertIn("IndiGenomes was unreachable during this analysis run", text)
-        self.assertIn("data-collection gap for this run", text)
-        # Finding 2: genuinely queried, nothing found -- still present
-        # (not swallowed by the fact Finding 1 also mentions IndiGenomes).
-        self.assertIn("IndiGenomes: variant not found", text)
-        # Run-level caveat (Reviewer Attention) names the offline source.
-        self.assertIn("IndiGenomes", text)
-        self.assertIn("unreachable during this analysis run and were not queried for any variant", text)
-
-    def test_all_sources_healthy_prints_no_offline_caveat(self):
-        healthy = ServiceHealthRegistry()  # nothing ever marked offline
-        _patch_threshold(0.01)
-        raw = {"gnomad": {"skipped": False, "found": True, "population_breakdown": {"sas": {"af": 0.02}}}}
-        cr = build_clinical_report(_ir(), raw_evidence=raw, indigenomes_result={"skipped": False, "found": False})
-        document = {
-            "geper_version": "t",
-            "generated_at": "2026-01-01T00:00:00Z",
-            "input_vcf": "x.vcf",
-            "assembly": "GRCh38",
-            "vcf_samples": ["S1"],
-            "variant_count": 1,
-            "variants": [
-                {
-                    "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
-                    "interpretation": {},
-                    "clinical_report": cr,
-                    "ai_model_status": {},
-                    "errors": [],
-                }
-            ],
-        }
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "r.pdf")
-            with mock.patch("report.summary.HEALTH", healthy):
-                generate_pdf(document, out)
-            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertNotIn("unreachable during this analysis run and were not queried", text)
+        self.assertFalse(CONFIG.indigenomes.ENABLED)
 
 
 if __name__ == "__main__":

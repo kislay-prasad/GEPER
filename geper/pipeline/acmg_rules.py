@@ -180,6 +180,20 @@ def _functional_evidence_not_evaluated_reason(functional_evidence_result: Option
     )
 
 
+def _at_codon(codon_number: Optional[int]) -> str:
+    """
+    " at codon N", or "" when `codon_number` is None -- e.g. an indel
+    whose breakpoints sit on an exon boundary, so no single genomic
+    base of the variant maps cleanly into the CDS (see
+    `TranscriptContext.first_affected_codon`'s docstring). Rationale
+    templates should splice this in rather than interpolating
+    `codon_number` directly, so an unavailable codon degrades to
+    omitting the clause instead of leaking a literal "None" into
+    clinician-facing text.
+    """
+    return f" at codon {codon_number}" if codon_number is not None else ""
+
+
 def _not_evaluated(code: str, reason: str) -> CriterionResult:
     direction, strength = _STRENGTH[code]
     return CriterionResult(
@@ -948,8 +962,8 @@ class ACMGRuleEngine:
                 direction,
                 strength,
                 "not_triggered",
-                f"Predicted consequence is a qualifying {detail.category.replace('_', ' ')} at codon "
-                f"{detail.codon_number}, but that position falls within a UniProt-annotated "
+                f"Predicted consequence is a qualifying {detail.category.replace('_', ' ')}"
+                f"{_at_codon(detail.codon_number)}, but that position falls within a UniProt-annotated "
                 f"{repeat_feature.get('feature_type')} region ({label}, residues "
                 f"{repeat_feature.get('begin')}-{repeat_feature.get('end')}) -- PM4 does not apply in a "
                 "known repeat/low-complexity region, where length changes are plausible benign population "
@@ -987,7 +1001,7 @@ class ACMGRuleEngine:
             "triggered",
             f"Predicted consequence is a qualifying {detail.category.replace('_', ' ')}"
             + (f" ({detail.residues_changed} residue(s))" if detail.residues_changed else "")
-            + f" at codon {detail.codon_number}"
+            + _at_codon(detail.codon_number)
             + (
                 ", and UniProt confirms this position is not in an annotated repeat/low-complexity region."
                 if checked is False
@@ -1947,7 +1961,7 @@ class ACMGRuleEngine:
                 direction,
                 strength,
                 "not_triggered",
-                f"In-frame indel at codon {detail.codon_number} does not fall within a UniProt-"
+                f"In-frame indel{_at_codon(detail.codon_number)} does not fall within a UniProt-"
                 "annotated repeat/compositional-bias region.",
                 supporting_evidence=list(notes),
                 evidence_sources=["transcript_structure", "UniProt"],
@@ -1965,7 +1979,7 @@ class ACMGRuleEngine:
             direction,
             strength,
             "triggered",
-            f"In-frame {detail.category.replace('_', ' ')} at codon {detail.codon_number} falls within "
+            f"In-frame {detail.category.replace('_', ' ')}{_at_codon(detail.codon_number)} falls within "
             f"a UniProt-annotated {repeat_feature.get('feature_type')} region ({label}, residues "
             f"{repeat_feature.get('begin')}-{repeat_feature.get('end')}), a repetitive region with no "
             "annotated function.",

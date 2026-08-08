@@ -82,6 +82,7 @@ def uniprot_result(features=None, found=True):
 # classify_pm4_variant -- pure classification, real coordinates
 # ---------------------------------------------------------------------------
 
+
 class TestClassifyPM4Variant(unittest.TestCase):
     def test_hemoglobin_constant_spring_is_classified_stop_loss(self):
         """Real ClinVar: HBA2 c.427T>C (p.Ter143Gln), Pathogenic, reviewed by expert panel."""
@@ -119,6 +120,7 @@ class TestClassifyPM4Variant(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PM4 -- real ClinVar ground truth, through the full rule engine
 # ---------------------------------------------------------------------------
+
 
 class TestPM4KnownVariants(unittest.TestCase):
     def test_hemoglobin_constant_spring_triggers_pm4(self):
@@ -173,6 +175,94 @@ class TestPM4KnownVariants(unittest.TestCase):
         self.assertTrue(any("no uniprot annotation" in c.lower() for c in pm4["details"]["unchecked_caveats"]))
 
 
+class TestPM4WholeExonDeletionCodonNumber(unittest.TestCase):
+    """
+    Regression for a real Colab-run finding: a large in-frame deletion
+    whose VCF REF/ALT anchor base sits in the intron immediately
+    before the deleted exon (a legitimate left-anchored representation
+    of a clean whole-exon deletion) produced a PM4 rationale reading
+    "...at codon None" -- a raw Python None leaking into
+    clinician-facing report text. `codon_at(pos)` looked only at the
+    anchor base itself and gave up; `first_affected_codon` instead
+    scans the whole REF/ALT span for the first genomic base that maps
+    into the CDS.
+
+    Built on the real HBA2 fixture (CDS starts at 172913 inside exon
+    1, which runs to 173007; intron; exon 2: 173125-173329): pos=173124
+    is the last intronic base before exon 2, and REF spans 208 bp from
+    there through 207 bp into/past exon 2 -- deleting all of exon 2
+    (205 bp) plus 2 bp of the following intron, a 207 bp (69-residue)
+    in-frame deletion.
+    """
+
+    def _deletion_variant(self):
+        return {
+            "chrom": "16",
+            "pos": 173124,
+            "ref": "A" * 208,
+            "alt": "A",
+        }
+
+    def test_codon_number_resolves_into_the_deleted_exon_not_the_intronic_anchor(self):
+        detail, notes = classify_pm4_variant(self._deletion_variant(), hba2())
+        self.assertIsNotNone(detail)
+        self.assertEqual(detail.category, PM4_IN_FRAME_INDEL)
+        self.assertEqual(detail.residues_changed, 69)
+        # codon_at(173124) alone would be None (intronic anchor); the
+        # real deletion reaches into exon 2, which starts at CDS
+        # position 96 -> codon 32.
+        self.assertEqual(detail.codon_number, 32)
+
+    def test_rationale_never_contains_the_literal_string_none(self):
+        result = ACMGRuleEngine().evaluate(
+            variant_dict=self._deletion_variant(),
+            transcript_result=hba2_transcript_result(),
+        )
+        pm4 = result["all_criteria"]["PM4"]
+        self.assertEqual(pm4["status"], "triggered")
+        self.assertNotIn("None", pm4["rationale"])
+        self.assertIn("at codon 32", pm4["rationale"])
+
+
+class TestPM4RationaleNeverLeaksNone(unittest.TestCase):
+    """
+    Broad regression sweep: no PM4 rationale string, across every
+    scenario this test module exercises, may ever contain the literal
+    substring "None" -- whether from a missing codon number or any
+    other value that failed to resolve.
+    """
+
+    def test_no_pm4_rationale_in_this_suite_contains_none(self):
+        scenarios = [
+            {
+                "variant_dict": {"chrom": "16", "pos": 173598, "ref": "T", "alt": "C"},
+                "transcript_result": hba2_transcript_result(),
+            },
+            {
+                "variant_dict": {"chrom": "17", "pos": 7673826, "ref": "AGTAG", "alt": "AG"},
+                "transcript_result": tp53_transcript_result(),
+            },
+            {
+                "variant_dict": {"chrom": "17", "pos": 7673826, "ref": "AG", "alt": "A"},
+                "transcript_result": tp53_transcript_result(),
+            },
+            {
+                "variant_dict": {"chrom": "17", "pos": 7675088, "ref": "C", "alt": "T"},
+                "transcript_result": tp53_transcript_result(),
+            },
+            {
+                "variant_dict": {"chrom": "16", "pos": 173124, "ref": "A" * 208, "alt": "A"},
+                "transcript_result": hba2_transcript_result(),
+            },
+            {},
+        ]
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario.get("variant_dict")):
+                result = ACMGRuleEngine().evaluate(**scenario)
+                pm4 = result["all_criteria"]["PM4"]
+                self.assertNotIn("None", pm4["rationale"])
+
+
 class TestPM4RepeatRegionCaveat(unittest.TestCase):
     """
     Grounded in real UniProt data (Titin/Q8WZ42's PEVK repeat -- see
@@ -185,7 +275,9 @@ class TestPM4RepeatRegionCaveat(unittest.TestCase):
         self.assertEqual(pevk_1["description"], "PEVK 1")
         # A constructed TP53 in-frame deletion whose codon is set to
         # fall inside that real repeat span, isolating the caveat.
-        features = [dict(pevk_1, begin=260, end=270)]  # same real feature, remapped onto TP53's own codon range for this isolated test
+        features = [
+            dict(pevk_1, begin=260, end=270)
+        ]  # same real feature, remapped onto TP53's own codon range for this isolated test
         result = ACMGRuleEngine().evaluate(
             variant_dict={"chrom": "17", "pos": 7673826, "ref": "AGTAG", "alt": "AG"},  # codon 265
             transcript_result=tp53_transcript_result(),
@@ -229,6 +321,7 @@ class TestPM4RepeatRegionCaveat(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PS4 -- honest, always-not_evaluated behavior
 # ---------------------------------------------------------------------------
+
 
 class TestPS4NeverTriggers(unittest.TestCase):
     """PS4 requires case-frequency data GEPER does not integrate; it must never report 'triggered', under any input."""
@@ -278,6 +371,7 @@ class TestPS4NeverTriggers(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Engine wiring / backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestEngineWiring(unittest.TestCase):
     def test_engine_still_works_for_callers_that_pass_no_pm4_ps4_inputs(self):

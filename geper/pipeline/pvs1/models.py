@@ -297,6 +297,39 @@ class TranscriptContext:
         cds_pos = self.cds_position(pos)
         return None if cds_pos is None else (cds_pos + 2) // 3
 
+    def first_affected_codon(self, pos: int, ref: str, alt: str) -> Optional[int]:
+        """
+        1-based codon number for an indel's reported "affected codon",
+        or None if none of the REF/ALT span lands in the CDS at all.
+
+        `pos` itself (the VCF REF/ALT anchor base) is used whenever it
+        maps into the CDS -- unchanged from plain `codon_at(pos)`, so
+        the codon reported for an ordinary indel is exactly what it
+        always was. `pos` alone breaks down only for an indel whose
+        breakpoints sit exactly on an exon boundary (e.g. a clean
+        whole-exon deletion): the anchor base can fall in the
+        neighbouring intron even though the deletion itself removes a
+        large, genuinely coding stretch, and `codon_at(pos)` then
+        silently returns None for a variant that plainly has an
+        affected codon. Only in that fallback case do we scan forward
+        through the rest of the REF/ALT span for the first base that
+        does map into the CDS -- scanning unconditionally (picking
+        whichever scanned base maps to the numerically smallest CDS
+        coordinate) would instead risk *changing* the reported codon
+        for ordinary indels on a minus-strand transcript, where a
+        larger genomic offset maps to an earlier CDS coordinate.
+        """
+        cds_pos = self.cds_position(pos)
+        if cds_pos is None:
+            span = max(len(ref), len(alt))
+            for offset in range(1, span):
+                cds_pos = self.cds_position(pos + offset)
+                if cds_pos is not None:
+                    break
+        if cds_pos is None:
+            return None
+        return (cds_pos + 2) // 3
+
     def genomic_position_for_cds(self, cds_pos: int) -> Optional[int]:
         """Inverse of `cds_position`: the genomic position of a 1-based CDS coordinate, or None if out of range."""
         for span in self.coding_spans():
@@ -458,9 +491,7 @@ class TranscriptContext:
                 return None if span.length == 0 else (span.length % 3 == 0)
         return None
 
-    def nmd_after_exon_skip(
-        self, exon_rank: int, nmd_penultimate_window: int = 50
-    ) -> Optional[Dict[str, Any]]:
+    def nmd_after_exon_skip(self, exon_rank: int, nmd_penultimate_window: int = 50) -> Optional[Dict[str, Any]]:
         """
         NMD prediction for the frameshifted transcript that results from
         skipping one coding exon (the canonical-splice-site branch of the

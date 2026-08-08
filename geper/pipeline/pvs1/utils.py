@@ -46,6 +46,7 @@ _DOSAGE_UNLIKELY = 40  # "Dosage sensitivity unlikely"
 # Transcript structure
 # ---------------------------------------------------------------------------
 
+
 def transcript_context_from_ensembl(
     payload: Dict[str, Any],
     gene_symbol: Optional[str] = None,
@@ -122,6 +123,7 @@ def transcript_context_from_dict(record: Dict[str, Any]) -> Optional[TranscriptC
 # Gene-level LOF mechanism (ClinGen dosage sensitivity)
 # ---------------------------------------------------------------------------
 
+
 def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tuple[str, List[str]]:
     """
     Map ClinGen's dosage-sensitivity curation onto PVS1's precondition,
@@ -178,6 +180,7 @@ def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tupl
 # ---------------------------------------------------------------------------
 # Population frequency
 # ---------------------------------------------------------------------------
+
 
 def population_af_from_gnomad(gnomad_result: Optional[Dict[str, Any]]) -> Tuple[Optional[float], Optional[str]]:
     """
@@ -272,17 +275,23 @@ def functional_regions_from_interpro(
             coverage = (int(end) - int(start) + 1) / protein_length
             if coverage > _MAX_REGION_COVERAGE_FRACTION:
                 continue
-        regions.append({
-            "start": int(start),
-            "end": int(end),
-            "label": domain.get("name") or domain.get("short_name") or domain.get("member_accession") or "unnamed domain",
-        })
+        regions.append(
+            {
+                "start": int(start),
+                "end": int(end),
+                "label": domain.get("name")
+                or domain.get("short_name")
+                or domain.get("member_accession")
+                or "unnamed domain",
+            }
+        )
     return regions or None
 
 
 # ---------------------------------------------------------------------------
 # Null-variant classification
 # ---------------------------------------------------------------------------
+
 
 def _deleted_interval(pos: int, ref: str, alt: str) -> Optional[Tuple[int, int]]:
     """
@@ -359,7 +368,7 @@ def coding_consequence_detail(
         return None
 
     codon_index, offset = (cds_pos - 1) // 3, (cds_pos - 1) % 3
-    codon = transcript.cds_sequence[codon_index * 3: codon_index * 3 + 3].upper()
+    codon = transcript.cds_sequence[codon_index * 3 : codon_index * 3 + 3].upper()
     if len(codon) != 3:
         return None
 
@@ -373,7 +382,7 @@ def coding_consequence_detail(
     if codon[offset] != ref_base:
         return None  # build/transcript mismatch -- do not infer a consequence
 
-    mutated = codon[:offset] + alt_base + codon[offset + 1:]
+    mutated = codon[:offset] + alt_base + codon[offset + 1 :]
     table = CONFIG.CODON_TABLE  # RNA-keyed; reuse the project's single codon table
     ref_aa = table.get(codon.replace("T", "U"))
     alt_aa = table.get(mutated.replace("T", "U"))
@@ -392,9 +401,7 @@ def coding_consequence_detail(
     return CodingConsequenceDetail(category=category, codon_number=codon_index + 1, ref_aa=ref_aa, alt_aa=alt_aa)
 
 
-def coding_consequence(
-    transcript: Optional[TranscriptContext], pos: int, ref: str, alt: str
-) -> Optional[str]:
+def coding_consequence(transcript: Optional[TranscriptContext], pos: int, ref: str, alt: str) -> Optional[str]:
     """Amino-acid consequence *category* of a substitution -- see `coding_consequence_detail` for the full result this wraps."""
     detail = coding_consequence_detail(transcript, pos, ref, alt)
     return detail.category if detail else None
@@ -457,7 +464,9 @@ def classify_null_variant(
         if (len(alt) - len(ref)) % 3 != 0:
             notes.append(f"Indel changes coding length by {len(alt) - len(ref)} bp (not a multiple of 3): frameshift.")
             return NULL_FRAMESHIFT, notes
-        notes.append(f"Indel changes coding length by {len(alt) - len(ref)} bp (a multiple of 3): in-frame, not a PVS1 null class.")
+        notes.append(
+            f"Indel changes coding length by {len(alt) - len(ref)} bp (a multiple of 3): in-frame, not a PVS1 null class."
+        )
         return None, notes
 
     # Substitutions: call the consequence in the transcript's real
@@ -503,7 +512,9 @@ class PM4VariantDetail:
 
     category: str  # PM4_IN_FRAME_INDEL | PM4_STOP_LOSS
     codon_number: Optional[int]  # first affected codon (indel) or the stop codon's own number (stop-loss)
-    residues_changed: Optional[int]  # |length_delta| // 3 for an indel; None for stop-loss (see classify_pm4_variant's docstring)
+    residues_changed: Optional[
+        int
+    ]  # |length_delta| // 3 for an indel; None for stop-loss (see classify_pm4_variant's docstring)
 
 
 def classify_pm4_variant(
@@ -552,7 +563,7 @@ def classify_pm4_variant(
                 "outside PM4's in-frame scope."
             )
             return None, notes
-        codon_number = transcript.codon_at(int(pos))
+        codon_number = transcript.first_affected_codon(int(pos), ref, alt)
         notes.append(
             f"Indel changes coding length by {length_delta} bp (a multiple of 3, {abs(length_delta) // 3} "
             f"residue(s)): in-frame {'insertion' if length_delta > 0 else 'deletion'}."

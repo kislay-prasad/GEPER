@@ -184,6 +184,36 @@ def _comments_to_json(comments: List[str]) -> List[Dict[str, Any]]:
     return result
 
 
+def _position_value(position: Any) -> Optional[int]:
+    """
+    Plain integer value of a `Bio.SeqFeature` position, or `None` when
+    the position is a genuine `Bio.SeqFeature.UnknownPosition` --
+    Swiss-Prot's own `?` marker for a feature boundary that is unclear
+    in the source record (e.g. an uncertain signal-peptide cleavage
+    site), confirmed real via `Bio.SeqFeature.Position.fromstring`
+    (`text == "?"` -> `UnknownPosition()`), not a parse failure.
+
+    Every other `Position` subclass Biopython produces from a real
+    flat-file record (`ExactPosition`, `BeforePosition`,
+    `AfterPosition`, `WithinPosition`, `OneOfPosition`, ...) *is* an
+    `int` subclass and converts normally; `UnknownPosition` is the one
+    documented exception. Checking `isinstance(position, int)` (accept)
+    rather than enumerating the non-int exception is deliberate: it
+    stays correct even if Biopython ever adds another non-int Position
+    type.
+
+    Returning `None` here -- rather than raising or guessing a
+    concrete residue number -- matches the read side's own tolerance
+    for a missing position: `pipeline/uniprot/utils.py::_extract_features`
+    already reads `location.get("start", {}).get("value")` with plain
+    `.get()`, and `UniProtFeature.overlaps` already treats a `None`
+    begin/end as "no match" rather than a guess. This is the same
+    never-guess convention PM1/PVS1/gene-resolution already use
+    elsewhere in this codebase for a genuinely unknown coordinate.
+    """
+    return int(position) if isinstance(position, int) else None
+
+
 def _features_to_json(features: List[Any]) -> List[Dict[str, Any]]:
     """
     Each `Bio.SeqFeature`-like feature's `.location` is a 0-based,
@@ -191,20 +221,35 @@ def _features_to_json(features: List[Any]) -> List[Dict[str, Any]]:
     convention -- the REST API's `location.start.value`/`.end.value`
     are 1-based inclusive, so `start` is offset by +1 while `end` is
     used as-is (a 0-based half-open end already equals the 1-based
-    inclusive end for the same span).
+    inclusive end for the same span). Offsetting an unknown start by
+    +1 would turn a real `None` into `1`, a fabricated position, so the
+    +1 is only applied when `_position_value` actually resolved a real
+    integer.
+
+    A feature with an unresolvable start and/or end is still kept
+    (with `None` for whichever side was unknown) rather than dropped --
+    one unknown boundary must not silently discard the feature's type/
+    description, and must never abort conversion of the whole protein
+    record it belongs to (see `_record_to_entry_json`, which has no
+    try/except around this call precisely because it must not raise).
+    Only a feature with no `.location` at all (a distinct, pre-existing
+    case -- not produced by any FT line this module has observed) is
+    skipped outright, since there is nothing positional to report.
     """
     result: List[Dict[str, Any]] = []
     for feat in features:
         location = getattr(feat, "location", None)
-        if location is None or location.start is None or location.end is None:
+        if location is None:
             continue
+        start_value = _position_value(location.start)
+        end_value = _position_value(location.end)
         result.append(
             {
                 "type": getattr(feat, "type", None) or "Unknown",
                 "description": (getattr(feat, "qualifiers", None) or {}).get("note"),
                 "location": {
-                    "start": {"value": int(location.start) + 1},
-                    "end": {"value": int(location.end)},
+                    "start": {"value": start_value + 1 if start_value is not None else None},
+                    "end": {"value": end_value},
                 },
             }
         )
@@ -273,7 +318,14 @@ def _download_and_convert(dat_url: str, dest_path: str, version: Optional[str]) 
                     continue
                 if gene in entries and record.data_class != "Reviewed" and gene in reviewed_genes:
                     continue  # a reviewed entry for this gene is already indexed -- don't downgrade it
-                entry = _record_to_entry_json(record)
+                try:
+                    entry = _record_to_entry_json(record)
+                except Exception as exc:  # noqa: BLE001 - one malformed record must never abort the whole ~200k-record proteome parse (see the UnknownPosition incident this guards against)
+                    logger.warning(
+                        f"Could not convert UniProt record for gene '{gene}' "
+                        f"({getattr(record, 'entry_name', '?')}): {exc}"
+                    )
+                    continue
                 if entry is None:
                     continue
                 entries[gene] = entry

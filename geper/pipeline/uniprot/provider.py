@@ -100,7 +100,17 @@ class LocalDatasetUniProtProvider(UniProtProviderBase):
             if self._auto_fetch and CONFIG.uniprot.AUTO_FETCH_ENABLED and not CONFIG.uniprot.OFFLINE_MODE and not path:
                 from pipeline.uniprot import bootstrap as uniprot_bootstrap
 
-                path = uniprot_bootstrap.ensure_dataset_file()
+                try:
+                    path = uniprot_bootstrap.ensure_dataset_file()
+                except Exception as exc:  # noqa: BLE001 - an unexpected bootstrap failure must still let `self._loaded`
+                    # get set below, or every subsequent `query()` this run would re-attempt the
+                    # full ~15s fetch+parse instead of caching the "unavailable" outcome once.
+                    # (This is the exact mechanism that made the UnknownPosition bug re-download
+                    # the reference proteome on every one of 20 variants in one real run: the
+                    # exception used to propagate out of this method before `self._loaded = True`
+                    # below ever executed.)
+                    logger.error(f"UniProt bootstrap raised unexpectedly: {exc}")
+                    path = None
             if path:
                 self._load(path)
             self._loaded = True

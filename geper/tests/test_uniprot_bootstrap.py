@@ -25,6 +25,7 @@ instead, matching the split `tests/test_mane_bootstrap.py`/
 """
 
 import gzip
+import io
 import json
 import os
 import tempfile
@@ -32,6 +33,7 @@ import unittest
 from unittest import mock
 
 import requests
+from Bio import SwissProt
 
 from pipeline.uniprot import bootstrap as uniprot_bootstrap
 
@@ -192,6 +194,125 @@ class TestFieldExtraction(unittest.TestCase):
         self.assertEqual(result[0]["disease"]["description"], "")
 
 
+class TestPositionValue(unittest.TestCase):
+    """
+    Regression coverage for the real production bug (2026-08-08): a
+    live UniProt run crashed on every single variant with
+    `TypeError: int() argument must be a string, a bytes-like object
+    or a real number, not 'UnknownPosition'` -- `Bio.SeqFeature.
+    UnknownPosition` is Swiss-Prot's own `?` marker for a feature
+    boundary that is genuinely unclear in the source record, and is
+    NOT an `int` subclass the way every other `Position` type is, so
+    a bare `int(location.start)` raised on it. `_position_value` is
+    the fix: it must return `None` for `UnknownPosition` (never guess,
+    never raise) and a normal int for everything else.
+    """
+
+    def test_unknown_position_returns_none_not_a_raise(self):
+        from Bio.SeqFeature import UnknownPosition
+
+        self.assertIsNone(uniprot_bootstrap._position_value(UnknownPosition()))
+
+    def test_exact_position_converts_normally(self):
+        from Bio.SeqFeature import ExactPosition
+
+        self.assertEqual(uniprot_bootstrap._position_value(ExactPosition(42)), 42)
+
+    def test_before_and_after_position_convert_normally(self):
+        # Fuzzy but still-int-subclass Position types (Swiss-Prot's
+        # `<`/`>` boundary markers) must keep working exactly as before
+        # -- only UnknownPosition's bare `?` is the special case.
+        from Bio.SeqFeature import AfterPosition, BeforePosition
+
+        self.assertEqual(uniprot_bootstrap._position_value(BeforePosition(10)), 10)
+        self.assertEqual(uniprot_bootstrap._position_value(AfterPosition(20)), 20)
+
+    def test_plain_int_converts_normally(self):
+        self.assertEqual(uniprot_bootstrap._position_value(7), 7)
+
+
+# A real, valid Swiss-Prot flat-file record whose FT lines use the
+# literal `?` position Swiss-Prot publishes for a genuinely unclear
+# feature boundary (e.g. an uncertain signal-peptide cleavage site) --
+# confirmed via `Bio.SeqFeature.Position.fromstring`: `text == "?"` ->
+# `UnknownPosition()`. This is the exact shape that crashed the real
+# 2026-08-08 production run; a fully-resolved DOMAIN feature is
+# included alongside to confirm normal features in the same record are
+# untouched by the fix.
+_UNKNOWN_POSITION_RECORD_TEXT = """ID   UNKNOWNPOS_HUMAN         Reviewed;        100 AA.
+AC   Q00099;
+DT   01-JAN-2000, integrated into UniProtKB/Swiss-Prot.
+DT   01-JAN-2000, sequence version 1.
+DT   01-JAN-2020, entry version 5.
+DE   RecName: Full=Test protein with an unclear signal peptide {ECO:0000269|PubMed:12345678};
+GN   Name=UNKPOSTEST;
+OS   Homo sapiens (Human).
+OC   Eukaryota; Metazoa; Chordata; Craniata; Vertebrata; Euteleostomi; Mammalia.
+OX   NCBI_TaxID=9606;
+RN   [1]
+RP   FUNCTION.
+RX   PubMed=12345678;
+RA   Doe J.;
+RT   "A test paper.";
+RL   J. Test. 1:1-2(2000).
+CC   -!- FUNCTION: Does a test function for UNKNOWNPOS.
+PE   1: Evidence at protein level;
+KW   Reference proteome.
+FT   SIGNAL          1..?
+FT   CHAIN           ?..100
+FT                   /note="Test chain with unknown start"
+FT   DOMAIN          10..50
+FT                   /note="A normal, fully-resolved domain"
+SQ   SEQUENCE   100 AA;  11000 MW;  1234567890ABCDEF CRC64;
+     MASDFASDFA SDFASDFASD FASDFASDFA SDFASDFASD FASDFASDFA MASDFASDFA
+     SDFASDFASD FASDFASDFA SDFASDFASD FASDFASDFA
+//
+"""
+
+
+class TestFeaturesToJsonUnknownPositionRegression(unittest.TestCase):
+    """Exercises the real `Bio.SwissProt.parse` -> `_features_to_json` path directly (no network/bootstrap involved)."""
+
+    def _record(self):
+        return next(SwissProt.parse(io.StringIO(_UNKNOWN_POSITION_RECORD_TEXT)))
+
+    def test_does_not_raise(self):
+        # This is the literal crash from the real run -- calling
+        # `_record_to_entry_json` on a record with an UnknownPosition
+        # feature used to raise TypeError here.
+        uniprot_bootstrap._record_to_entry_json(self._record())  # must not raise
+
+    def test_unknown_boundary_features_are_kept_with_null_position(self):
+        entry = uniprot_bootstrap._record_to_entry_json(self._record())
+        by_type = {f["type"]: f for f in entry["features"]}
+
+        self.assertIn("SIGNAL", by_type)
+        self.assertEqual(by_type["SIGNAL"]["location"]["start"]["value"], 1)
+        self.assertIsNone(by_type["SIGNAL"]["location"]["end"]["value"])
+
+        self.assertIn("CHAIN", by_type)
+        self.assertIsNone(by_type["CHAIN"]["location"]["start"]["value"])
+        self.assertEqual(by_type["CHAIN"]["location"]["end"]["value"], 100)
+
+    def test_normal_feature_in_the_same_record_is_unaffected(self):
+        entry = uniprot_bootstrap._record_to_entry_json(self._record())
+        by_type = {f["type"]: f for f in entry["features"]}
+        self.assertEqual(by_type["DOMAIN"]["location"]["start"]["value"], 10)
+        self.assertEqual(by_type["DOMAIN"]["location"]["end"]["value"], 50)
+
+    def test_rest_of_the_record_still_parses(self):
+        # One feature's unknown boundary must not degrade anything else
+        # about this protein's cached data.
+        entry = uniprot_bootstrap._record_to_entry_json(self._record())
+        self.assertEqual(entry["primaryAccession"], "Q00099")
+        self.assertEqual(
+            entry["proteinDescription"]["recommendedName"]["fullName"]["value"],
+            "Test protein with an unclear signal peptide",
+        )
+        self.assertEqual(entry["sequence"]["length"], 100)
+        self.assertEqual(entry["comments"][0]["texts"][0]["value"], "Does a test function for UNKNOWNPOS.")
+
+
 class TestDownloadAndConvert(unittest.TestCase):
     def test_parses_and_converts_all_valid_records(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -259,6 +380,34 @@ class TestDownloadAndConvert(unittest.TestCase):
                 ok = uniprot_bootstrap._download_and_convert("https://x.invalid/f.gz", dest, "2026_02")
             self.assertFalse(ok)
             self.assertFalse(os.path.exists(dest))
+
+    def test_a_record_with_an_unknown_position_does_not_abort_the_whole_proteome_parse(self):
+        """
+        End-to-end regression for the real 2026-08-08 production bug:
+        one record anywhere in the ~200k-record reference proteome with
+        an UnknownPosition feature used to raise out of the
+        `SwissProt.parse` loop entirely, so `_download_and_convert`
+        never reached its write step -- the cache file was never
+        created, `ensure_dataset_file()` never returned a path, and
+        every other, perfectly-good record in the same file (BRCA1TEST,
+        GENE2TEST, GENE3TEST) was silently lost too. Mixes the
+        UnknownPosition record into the same flat file as the existing
+        fixture's good records to prove the fix isolates the damage to
+        that one record.
+        """
+        mixed_text = _FLAT_FILE_TEXT + _UNKNOWN_POSITION_RECORD_TEXT
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = os.path.join(tmp, "uniprot_local_dataset.jsonl")
+            with mock.patch("pipeline.uniprot.bootstrap.requests.get", return_value=_dat_gz_response(mixed_text)):
+                ok = uniprot_bootstrap._download_and_convert("https://x.invalid/f.gz", dest, "2026_02")
+            self.assertTrue(ok)
+            with open(dest, "r", encoding="utf-8") as fh:
+                rows = {json.loads(line)["gene_symbol"]: json.loads(line)["entry"] for line in fh if line.strip()}
+
+        # The good records survive alongside the UnknownPosition one.
+        self.assertEqual(set(rows.keys()), {"BRCA1TEST", "GENE2TEST", "GENE3TEST", "UNKPOSTEST"})
+        unkpos_features = {f["type"]: f for f in rows["UNKPOSTEST"]["features"]}
+        self.assertIsNone(unkpos_features["CHAIN"]["location"]["start"]["value"])
 
 
 class TestEnsureDatasetFile(unittest.TestCase):

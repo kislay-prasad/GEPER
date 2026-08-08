@@ -148,6 +148,40 @@ class TestLocalDatasetUniProtProvider(unittest.TestCase):
         self.assertFalse(provider.is_available())
         self.assertIsNone(provider.query("TP53"))
 
+    def test_bootstrap_is_only_attempted_once_per_process_even_if_it_raises_unexpectedly(self):
+        """
+        Regression for the secondary symptom of the real 2026-08-08
+        production bug: because the UnknownPosition crash used to
+        propagate out of `ensure_dataset_file()` before
+        `LocalDatasetUniProtProvider._ensure_loaded` reached its
+        `self._loaded = True` line, that guard never got set, so every
+        one of 20 variants in one real run re-triggered the full
+        ~15s fetch+parse (~297s wasted) instead of hitting the
+        already-attempted-this-session cache. `_ensure_loaded` now
+        catches an unexpected bootstrap exception itself, so `_loaded`
+        is set exactly once regardless of whether bootstrap succeeds,
+        finds nothing, or blows up.
+        """
+        provider = LocalDatasetUniProtProvider(dataset_path=None, auto_fetch=True)
+        with (
+            mock.patch(
+                "pipeline.uniprot.bootstrap.ensure_dataset_file", side_effect=RuntimeError("simulated bootstrap crash")
+            ) as fake_ensure,
+            mock.patch("pipeline.uniprot.provider.CONFIG") as fake_config,
+        ):
+            fake_config.uniprot.AUTO_FETCH_ENABLED = True
+            fake_config.uniprot.OFFLINE_MODE = False
+
+            first = provider.query("TP53")
+            second = provider.query("BRCA1")
+
+        self.assertEqual(
+            fake_ensure.call_count, 1, "bootstrap must only be attempted once per process, not once per query"
+        )
+        # Neither call raises or hangs -- both degrade to a clean not_found.
+        self.assertFalse(first.found)
+        self.assertFalse(second.found)
+
 
 class TestLocalDatasetUniProtProviderRealGroundTruth(unittest.TestCase):
     """

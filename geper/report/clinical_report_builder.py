@@ -22,6 +22,47 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 
+# Which evidence-combining system GEPER actually applies to turn
+# triggered ACMG/AMP criteria into a final classification -- stated
+# explicitly and identically everywhere the classification itself
+# appears (report header, per-finding line, methodology/limitations),
+# so a reviewing geneticist never has to guess. `pipeline/acmg_rules.py
+# ::ACMGRuleEngine._combine` uses Tavtigian et al. 2018's Bayesian-
+# calibrated point system (point weights 8/4/2/1 for very_strong/
+# strong/moderate/supporting, thresholded on net pathogenic-minus-
+# benign points) -- NOT Richards et al. 2015's original categorical
+# combining table, which the unqualified phrase "ACMG/AMP
+# Classification" would otherwise imply. The two systems do not always
+# agree: PVS1 (very_strong) plus one Moderate criterion alone reaches
+# Pathogenic under Tavtigian's net-points thresholds (8+2=10) but only
+# Likely Pathogenic under Richards' categorical table (which requires
+# a second Moderate, or a Moderate plus a Supporting, alongside a
+# Very Strong to reach Pathogenic). See `_combine`'s own docstring
+# comment for the full citation and reasoning.
+ACMG_METHODOLOGY_STATEMENT = (
+    "ACMG/AMP criteria are combined into a final classification using the Bayesian-calibrated point "
+    'system of Tavtigian SV et al., "Modeling the ACMG/AMP variant classification guidelines as a '
+    'Bayesian classification framework", Genet Med 2018 (PMID 29300386) -- not the original Richards '
+    "et al. 2015 categorical combining table (PMID 25741868). The two can disagree on some evidence "
+    "combinations (e.g. one top-tier-strength criterion such as PVS1 plus one Moderate criterion "
+    "alone reaches Pathogenic under this point system's thresholds, but only Likely Pathogenic under "
+    "the 2015 categorical table)."
+)
+
+# Single source of truth for the clarifying caption shown next to every
+# place `ConfidenceEngine.score()`'s output is displayed (full PDF,
+# short PDF, Markdown) -- C2, report review round 2: this score
+# measures evidence *completeness*, not classification *certainty*
+# ("Pathogenic / Low (25%)" previously read as doubt about the call).
+# Renamed from "Confidence" to "Evidence Completeness" everywhere the
+# label itself appears; this exact sentence is the shared substring
+# every renderer includes verbatim, so the caption can never drift out
+# of sync the way independently-worded footnotes would.
+EVIDENCE_COMPLETENESS_CAPTION = (
+    "Evidence Completeness reflects how much evidence GEPER could gather for this variant, not how "
+    "certain the classification is."
+)
+
 # Stable, well-known public-resource references for whichever sources
 # actually contributed evidence to this variant (via `evidence_sources`,
 # already computed by Phase 2 -- not re-derived here). These are fixed
@@ -81,6 +122,7 @@ _TOOL_LIMITATIONS = (
     "substitute for professional clinical genetic interpretation, diagnosis, or advice, and "
     "should be reviewed by a qualified clinical geneticist or genetic counselor before any "
     "medical decision is made.",
+    ACMG_METHODOLOGY_STATEMENT,
     "Protein-residue positions used for domain (InterPro/Pfam) and structural (AlphaFold DB) "
     "overlap checks are transcript-verified (computed from the variant's real, strand- and "
     "splice-aware coding-sequence mapping, not a flat unspliced translation window) but only "
@@ -202,9 +244,9 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
     classification = ir.get("acmg_classification") or "not classified"
     conf_label = ir.get("confidence_label")
     conf_clause = (
-        f" (confidence: {conf_label})"
+        f" (evidence completeness: {conf_label})"
         if conf_label and not ir.get("confidence_pending", True)
-        else " (confidence not yet scored)"
+        else " (evidence completeness not yet scored)"
     )
 
     priority_cat = ir.get("priority_category")
@@ -212,11 +254,24 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
         f" Assigned {priority_cat} review priority." if priority_cat and not ir.get("priority_pending", True) else ""
     )
 
+    # Full accounting, not just two of the three buckets (C3, report
+    # review round 2): a reader who saw only "N triggered" (here) and
+    # "M could not be evaluated" (in Limitations) naturally added the
+    # two expecting a total -- but that omits `not_triggered_rules`
+    # (checked, and did not trigger), so the two numbers alone never
+    # summed to the real 28-criterion total. Every one of the 28
+    # ACMG/AMP criteria `pipeline/acmg_rules.py::ACMGRuleEngine.evaluate`
+    # evaluates lands in exactly one of these three buckets -- this is
+    # a structural partition of a fixed 28-entry set (`_STRENGTH`), not
+    # something that can silently lose or double-count a criterion --
+    # so the three numbers below always sum to the fourth.
     n_triggered = len(ir.get("triggered_rules", []))
+    n_not_triggered = len(ir.get("not_triggered_rules", []))
     n_not_evaluated = len(ir.get("not_evaluated_rules", []))
+    n_total = n_triggered + n_not_triggered + n_not_evaluated
     evidence_clause = (
-        f" {n_triggered} ACMG criteria were triggered by available evidence"
-        f"{f'; {n_not_evaluated} could not be evaluated due to missing data sources' if n_not_evaluated else ''}."
+        f" Of {n_total} ACMG/AMP criteria evaluated: {n_triggered} triggered, {n_not_triggered} checked but "
+        f"not triggered, {n_not_evaluated} could not be evaluated due to missing data sources."
     )
 
     return (
@@ -244,6 +299,14 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
                 "strength": c.get("strength"),
                 "direction": c.get("direction"),
                 "rationale": c.get("rationale"),
+                # PVS1's decision-tree audit trail (decision_path/
+                # caveats_checked/unchecked_caveats) -- carried through
+                # here so it can actually be rendered (C5, report
+                # review round 2): the rationale text already refers a
+                # reader to "the decision tree" by name, but until now
+                # that tree's own path was computed and then dropped at
+                # this exact mapping, never reaching any report format.
+                "details": c.get("details"),
             }
             for c in ir.get("triggered_rules", [])
         ],
@@ -253,6 +316,7 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
                 "strength": c.get("strength"),
                 "direction": c.get("direction"),
                 "rationale": c.get("rationale"),
+                "details": c.get("details"),
             }
             for c in ir.get("not_triggered_rules", [])
         ],
@@ -595,10 +659,12 @@ def _limitations(ir: Dict[str, Any]) -> List[str]:
     not_evaluated = ir.get("not_evaluated_rules", [])
     if not_evaluated:
         codes = ", ".join(c.get("code", "?") for c in not_evaluated)
+        n_total = len(ir.get("triggered_rules", [])) + len(ir.get("not_triggered_rules", [])) + len(not_evaluated)
         limitations.append(
-            f"{len(not_evaluated)} ACMG criteria could not be evaluated for this variant due to "
-            f"missing evidence sources ({codes}); see the ACMG classification section for the "
-            f"specific reason each was skipped."
+            f"{len(not_evaluated)} of {n_total} ACMG criteria could not be evaluated for this variant due "
+            f"to missing evidence sources ({codes}); see the ACMG classification section (both the "
+            f"triggered and the checked-but-not-triggered tables) for the remaining criteria and the "
+            f"specific reason each not-evaluated one was skipped."
         )
     if ir.get("confidence_pending", True):
         limitations.append("Confidence scoring did not complete for this variant.")

@@ -128,9 +128,11 @@ class TestFieldExtraction(unittest.TestCase):
         self.assertEqual(_confidence_text({"confidence": {"pending": True}}), "Pending")
 
     def test_confidence_label_and_score(self):
-        self.assertEqual(
-            _confidence_text({"confidence": {"pending": False, "label": "High", "score": 91.4}}), "High (91%)"
-        )
+        # Label only, no percentage (C2, report review round 2): this
+        # score measures evidence completeness, not certainty, and a
+        # percentage next to the classification on this summary strip
+        # reads as doubt about the call itself.
+        self.assertEqual(_confidence_text({"confidence": {"pending": False, "label": "High", "score": 91.4}}), "High")
 
 
 class TestShortInterpretation(unittest.TestCase):

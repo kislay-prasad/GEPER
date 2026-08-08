@@ -2293,6 +2293,31 @@ class VariantNormalizationConfig:
 
 
 @dataclass(frozen=True)
+class VariantClusteringConfig:
+    """
+    Configuration for the report's gene- and genomic-window clustering
+    observation (C7, report review round 2): a multi-finding-per-gene
+    or multi-finding-in-a-short-window summary that works without any
+    phenotype input (`case_prioritization.py`'s HPO-driven ranking only
+    activates with --hpo-terms/--phenotype-file, which leaves every
+    run without them -- the common case for a raw VCF -- with no
+    cross-finding view at all). Deliberately reports proximity only:
+    it never infers phase, compound heterozygosity, or any
+    cis/trans relationship, because GEPER has no phase data to support
+    that inference.
+    """
+
+    # Two findings on the same chromosome at or within this many bases
+    # of each other are flagged as a genomic-proximity cluster. 1kb is
+    # comfortably wider than a single gene's typical exon spacing
+    # (catches multiple findings in the same or adjacent exons) while
+    # staying well short of "same gene" for most genes, so it adds
+    # signal beyond the gene-grouping observation rather than
+    # duplicating it.
+    WINDOW_BP: int = int(os.environ.get("GEPER_CLUSTER_WINDOW_BP", "1000"))
+
+
+@dataclass(frozen=True)
 class QCReportConfig:
     """
     Configuration for the sequencing/alignment QC metrics table drawn
@@ -2536,6 +2561,7 @@ class GeperConfig:
     conflict: ConflictConfig = field(default_factory=ConflictConfig)
     splicing: SplicingConfig = field(default_factory=SplicingConfig)
     qc_report: QCReportConfig = field(default_factory=QCReportConfig)
+    variant_clustering: VariantClusteringConfig = field(default_factory=VariantClusteringConfig)
     report_branding: ReportBrandingConfig = field(default_factory=ReportBrandingConfig)
     normalization: VariantNormalizationConfig = field(default_factory=VariantNormalizationConfig)
     health_check: HealthCheckConfig = field(default_factory=HealthCheckConfig)

@@ -49,7 +49,6 @@ from pipeline.pvs1.models import (
     LOF_REFUTED,
     LOF_UNKNOWN,
     NULL_CANONICAL_SPLICE,
-    NULL_EXON_DELETION,
     NULL_FRAMESHIFT,
     NULL_INITIATION_CODON,
     NULL_NONSENSE,
@@ -161,13 +160,21 @@ class PVS1DecisionTree:
             checked.append("Gene-level LOF disease mechanism: established by ClinGen dosage curation.")
         elif mechanism == LOF_REFUTED:
             path.append("Loss of function is an established disease mechanism for this gene? -> No (curated against).")
-            checked.append("Gene-level LOF disease mechanism: ClinGen curates this gene as dosage-sensitivity unlikely.")
+            checked.append(
+                "Gene-level LOF disease mechanism: ClinGen curates this gene as dosage-sensitivity unlikely."
+            )
         elif mechanism == LOF_NOT_ESTABLISHED:
             path.append("Loss of function is an established disease mechanism for this gene? -> Not established.")
-            checked.append("Gene-level LOF disease mechanism: ClinGen dosage curation exists but does not establish haploinsufficiency.")
+            checked.append(
+                "Gene-level LOF disease mechanism: ClinGen dosage curation exists but does not establish haploinsufficiency."
+            )
         else:
-            path.append("Loss of function is an established disease mechanism for this gene? -> Unknown (no curation available).")
-            unchecked.append("Gene-level LOF disease mechanism: no ClinGen dosage curation was available for this gene.")
+            path.append(
+                "Loss of function is an established disease mechanism for this gene? -> Unknown (no curation available)."
+            )
+            unchecked.append(
+                "Gene-level LOF disease mechanism: no ClinGen dosage curation was available for this gene."
+            )
         supporting.extend(inp.lof_mechanism_evidence)
 
         # -- Step 3: transcript structure ------------------------------
@@ -192,7 +199,8 @@ class PVS1DecisionTree:
                 lof_mechanism=mechanism,
                 decision_path=path + ["Transcript structure available? -> No."],
                 caveats_checked=checked,
-                unchecked_caveats=unchecked + [
+                unchecked_caveats=unchecked
+                + [
                     "Variant location relative to the last exon / NMD boundary: transcript structure unavailable.",
                     "Fraction of the protein removed: transcript structure unavailable.",
                 ],
@@ -237,7 +245,7 @@ class PVS1DecisionTree:
 
         # -- Step 7: enforce the gene-level mechanism gate -------------
         applies, final_strength, rationale, confidence = self._apply_mechanism_gate(
-            inp, mechanism, provisional, path
+            inp, mechanism, provisional, path, code
         )
 
         return PVS1Evaluation(
@@ -286,8 +294,7 @@ class PVS1DecisionTree:
             return inp.exon_biologically_relevant
         if transcript is not None and (transcript.biologically_relevant is not None):
             checked.append(
-                "Biologically-relevant transcript: "
-                + ("yes." if transcript.biologically_relevant else "NO.")
+                "Biologically-relevant transcript: " + ("yes." if transcript.biologically_relevant else "NO.")
             )
             return transcript.biologically_relevant
         if transcript is not None and (transcript.is_mane_select or transcript.is_canonical):
@@ -400,7 +407,10 @@ class PVS1DecisionTree:
                 f"the removed/altered region (codons {lost_start}-{lost_end}) overlaps "
                 f"{len(hits)} annotated functional region(s): {', '.join(hits[:3])}."
             )
-        return False, f"the removed/altered region (codons {lost_start}-{lost_end}) overlaps no annotated functional region."
+        return (
+            False,
+            f"the removed/altered region (codons {lost_start}-{lost_end}) overlaps no annotated functional region.",
+        )
 
     # ------------------------------------------------------------------
     # Branch: nonsense / frameshift
@@ -469,8 +479,15 @@ class PVS1DecisionTree:
 
         fraction = transcript.fraction_of_protein_lost(termination_codon)
         strength, code = self._truncation_subtree(
-            inp, transcript, termination_codon, fraction,
-            ("NF3", "NF5", "NF6"), path, checked, unchecked, supporting,
+            inp,
+            transcript,
+            termination_codon,
+            fraction,
+            ("NF3", "NF5", "NF6"),
+            path,
+            checked,
+            unchecked,
+            supporting,
             region_label="Truncated region",
         )
         return strength, code, termination_codon, False
@@ -509,8 +526,7 @@ class PVS1DecisionTree:
         if inp.splice_frame_consequence in ("frameshift", "frame_preserving"):
             preserves_frame = inp.splice_frame_consequence == "frame_preserving"
             checked.append(
-                f"Reading-frame effect: taken from the supplied splice consequence "
-                f"('{inp.splice_frame_consequence}')."
+                f"Reading-frame effect: taken from the supplied splice consequence ('{inp.splice_frame_consequence}')."
             )
         elif preserves_frame is not None:
             span = transcript.coding_span_for_rank(skipped_rank)
@@ -545,8 +561,15 @@ class PVS1DecisionTree:
             if span and transcript.total_codons:
                 removed_fraction = (span.length / 3.0) / transcript.total_codons
             strength, code = self._truncation_subtree(
-                inp, transcript, first_lost_codon, removed_fraction,
-                ("SS10", "SS8", "SS9"), path, checked, unchecked, supporting,
+                inp,
+                transcript,
+                first_lost_codon,
+                removed_fraction,
+                ("SS10", "SS8", "SS9"),
+                path,
+                checked,
+                unchecked,
+                supporting,
                 region_label="In-frame deleted region",
             )
             return strength, code, None, False
@@ -585,12 +608,17 @@ class PVS1DecisionTree:
         if relevant is False:
             path.append("Exon present in biologically-relevant transcript(s)? -> No.")
             return STRENGTH_NOT_APPLICABLE, "SS4", None, False
-        removed_fraction = (
-            transcript.fraction_of_protein_lost(first_lost_codon) if first_lost_codon else None
-        )
+        removed_fraction = transcript.fraction_of_protein_lost(first_lost_codon) if first_lost_codon else None
         strength, code = self._truncation_subtree(
-            inp, transcript, first_lost_codon, removed_fraction,
-            ("SS3", "SS5", "SS6"), path, checked, unchecked, supporting,
+            inp,
+            transcript,
+            first_lost_codon,
+            removed_fraction,
+            ("SS3", "SS5", "SS6"),
+            path,
+            checked,
+            unchecked,
+            supporting,
             region_label="Truncated region",
         )
         return strength, code, None, False
@@ -632,7 +660,9 @@ class PVS1DecisionTree:
             return cap_strength(STRENGTH_MODERATE, inp.initiation_codon_max_strength), "IC3", None, None
         if inp.pathogenic_variants_upstream_of_alt_start is False:
             path.append("Known pathogenic variants upstream of the closest potential in-frame start codon? -> No.")
-            checked.append("No pathogenic variants are reported upstream of the closest potential in-frame start codon.")
+            checked.append(
+                "No pathogenic variants are reported upstream of the closest potential in-frame start codon."
+            )
         else:
             path.append("Known pathogenic variants upstream of the closest potential in-frame start codon? -> Unknown.")
             unchecked.append(
@@ -665,7 +695,9 @@ class PVS1DecisionTree:
 
         if transcript is None or inp.deleted_interval is None:
             path.append("Deleted interval mapped onto the transcript? -> No.")
-            unchecked.append("Exon-deletion branch: the deleted genomic interval could not be mapped onto the transcript CDS.")
+            unchecked.append(
+                "Exon-deletion branch: the deleted genomic interval could not be mapped onto the transcript CDS."
+            )
             return STRENGTH_NOT_APPLICABLE, "DEL0", None, None
 
         low, high = min(inp.deleted_interval), max(inp.deleted_interval)
@@ -704,16 +736,27 @@ class PVS1DecisionTree:
             nmd = first_lost_codon is not None and transcript.is_nmd_predicted(
                 first_lost_codon, inp.nmd_penultimate_window_bp
             )
-            checked.append(f"NMD prediction: NMD {'IS' if nmd else 'is NOT'} predicted for the frameshifted transcript.")
+            checked.append(
+                f"NMD prediction: NMD {'IS' if nmd else 'is NOT'} predicted for the frameshifted transcript."
+            )
             if nmd:
                 path.append("Predicted to undergo NMD? -> Yes.")
-                supporting.append("The out-of-frame deletion produces a transcript predicted to undergo nonsense-mediated decay.")
+                supporting.append(
+                    "The out-of-frame deletion produces a transcript predicted to undergo nonsense-mediated decay."
+                )
                 return STRENGTH_VERY_STRONG, "DEL1", first_lost_codon, True
             path.append("Predicted to undergo NMD? -> No.")
             fraction = transcript.fraction_of_protein_lost(first_lost_codon) if first_lost_codon else None
             strength, code = self._truncation_subtree(
-                inp, transcript, first_lost_codon, fraction,
-                ("DEL2", "DEL2", "DEL2"), path, checked, unchecked, supporting,
+                inp,
+                transcript,
+                first_lost_codon,
+                fraction,
+                ("DEL2", "DEL2", "DEL2"),
+                path,
+                checked,
+                unchecked,
+                supporting,
                 region_label="Truncated region",
             )
             return strength, code, first_lost_codon, False
@@ -723,8 +766,15 @@ class PVS1DecisionTree:
         if transcript.total_codons:
             removed_fraction = (deleted_coding / 3.0) / transcript.total_codons
         strength, code = self._truncation_subtree(
-            inp, transcript, first_lost_codon, removed_fraction,
-            ("DEL3", "DEL3", "DEL3"), path, checked, unchecked, supporting,
+            inp,
+            transcript,
+            first_lost_codon,
+            removed_fraction,
+            ("DEL3", "DEL3", "DEL3"),
+            path,
+            checked,
+            unchecked,
+            supporting,
             region_label="In-frame deleted region",
         )
         return strength, code, first_lost_codon, False
@@ -772,35 +822,52 @@ class PVS1DecisionTree:
             # its own code keeps the distinction visible to a reviewer.
             return STRENGTH_NOT_APPLICABLE, "FREQ"
         path.append(f"Null variant frequent in the general population? -> No (allele frequency {label}).")
-        checked.append(f"Population-frequency caveat: gnomAD allele frequency {label} is below the LoF-tolerance ceiling.")
+        checked.append(
+            f"Population-frequency caveat: gnomAD allele frequency {label} is below the LoF-tolerance ceiling."
+        )
         return strength, code
 
     @staticmethod
     def _apply_mechanism_gate(
-        inp: PVS1Input, mechanism: str, provisional: str, path: List[str]
+        inp: PVS1Input, mechanism: str, provisional: str, path: List[str], code: str = ""
     ) -> Tuple[bool, str, str, Optional[str]]:
         strength_label = provisional.replace("_", " ")
+        # The single decision_path entry that actually determined this
+        # leaf/strength (e.g. "Predicted to undergo NMD? -> Yes." for a
+        # very_strong nonsense call, or "Removes >10% of the protein?
+        # -> No (4.2%)." for a downgraded moderate call) -- named
+        # explicitly in the rationale below rather than left for the
+        # reader to dig out of `decision_path` themselves. Previously
+        # every mechanism-established outcome shared one boilerplate
+        # sentence regardless of strength, identical for a very_strong
+        # and a strong call apart from the one word "very" -- a
+        # reviewer had no way to tell WHY a given finding was
+        # downgraded without reading the raw decision_path array, which
+        # (see C5) the PDF didn't even render.
+        leaf_reason = path[-1].rstrip(".") if path else "no further decision-tree detail was recorded"
+        code_clause = f" (ClinGen SVI leaf {code})" if code else ""
 
         if provisional == STRENGTH_NOT_APPLICABLE:
             return (
                 False,
                 STRENGTH_NOT_APPLICABLE,
-                "PVS1 does not apply: the decision tree terminated at a 'not applicable' leaf "
-                "(see decision_path for the exact node).",
+                f"PVS1 does not apply{code_clause}: the decision tree terminated at a 'not applicable' "
+                f"leaf -- {leaf_reason}.",
                 "Moderate",
             )
 
         if mechanism in _MECHANISM_ESTABLISHED:
             note = (
-                " (loss of function is the established mechanism for this gene's autosomal recessive "
-                "phenotype)" if mechanism == LOF_ESTABLISHED_RECESSIVE else ""
+                " (loss of function is the established mechanism for this gene's autosomal recessive phenotype)"
+                if mechanism == LOF_ESTABLISHED_RECESSIVE
+                else ""
             )
             return (
                 True,
                 provisional,
-                f"PVS1 applies at {strength_label} strength{note}. The variant is a qualifying null "
-                "variant, loss of function is an established disease mechanism for this gene, and the "
-                "ClinGen SVI decision tree terminated at the leaf recorded in decision_path.",
+                f"PVS1 applies at {strength_label} strength{note}{code_clause}. The variant is a "
+                "qualifying null variant, loss of function is an established disease mechanism for this "
+                f"gene, and the decision tree reached this strength because: {leaf_reason}.",
                 "High" if provisional == STRENGTH_VERY_STRONG else "Moderate",
             )
 
@@ -816,7 +883,9 @@ class PVS1DecisionTree:
             )
 
         if mechanism == LOF_NOT_ESTABLISHED:
-            path.append("Mechanism gate: ClinGen dosage curation does not establish haploinsufficiency -> PVS1 withheld.")
+            path.append(
+                "Mechanism gate: ClinGen dosage curation does not establish haploinsufficiency -> PVS1 withheld."
+            )
             return (
                 False,
                 STRENGTH_NOT_APPLICABLE,

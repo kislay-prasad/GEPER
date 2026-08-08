@@ -36,7 +36,7 @@ import json
 import os
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from PIL import Image as PILImage
 from reportlab.lib import colors
@@ -51,6 +51,7 @@ from reportlab.platypus.flowables import Flowable
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from config import CONFIG
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
+from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.service_health import HEALTH
 from utils.timezone_utils import format_ist
@@ -1148,7 +1149,15 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
 
         indexed.sort(key=_rank_key)
 
-    header_labels = ["#", "Variant / Gene", "Classification", "Confidence"]
+    # "Completeness", not "Confidence" (C2, report review round 2): this
+    # column is `ConfidenceEngine`'s evidence-completeness score, not a
+    # measure of how certain the classification is -- see the
+    # explanatory footnote appended below the table, and
+    # `pipeline/confidence_engine.py`'s own module docstring. Renamed
+    # site-wide (table header, per-finding label, Markdown heading) so
+    # "Pathogenic / Low (25%)" can no longer be misread as doubt about
+    # the call itself.
+    header_labels = ["#", "Variant / Gene", "Classification", "Completeness"]
     if has_case_ranking:
         header_labels.append("Phenotype Match")
     header_labels += ["Top Evidence", "Attention"]
@@ -1166,13 +1175,23 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
         acmg = (clinical or {}).get("acmg_classification") or {}
         classification = acmg.get("classification") or "Not classified"
 
+        # No percentage in this front-page table (C2, report review
+        # round 2): "Pathogenic / Low (25%)" reads as doubt about the
+        # classification, when this score in fact measures evidence
+        # completeness (how many of 7 unrelated categories returned
+        # data), not certainty -- a PVS1-very_strong frameshift with a
+        # Definitive ClinGen gene-disease case can legitimately score
+        # "Low" here purely because AlphaMissense/MMSplice don't apply
+        # to a null variant. The label alone is still useful triage
+        # signal; the percentage invited a misreading the label alone
+        # doesn't. The full percentage remains in each finding's own
+        # detail section, next to the explanatory footnote that
+        # contextualizes it.
         confidence = (clinical or {}).get("confidence") or {}
         if confidence.get("pending", True):
             confidence_text = "Pending"
         else:
-            score = confidence.get("score")
-            score_text = f"{score:.0f}%" if isinstance(score, (int, float)) else ""
-            confidence_text = f"{confidence.get('label') or 'n/a'}" + (f" ({score_text})" if score_text else "")
+            confidence_text = confidence.get("label") or "n/a"
 
         top_evidence = [
             _normalize_evidence_text(item) for item in ((clinical or {}).get("supporting_evidence") or [])[:3]
@@ -1250,6 +1269,92 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
     return table
 
 
+def _gene_clusters(variants: List[Dict[str, Any]]) -> Dict[str, List[int]]:
+    """
+    Groups this run's 1-based finding numbers by gene symbol; returns
+    only genes with more than one finding (C7, report review round 2).
+    Works from `interpretation_result.gene_symbol`, already resolved
+    for every finding -- no new evidence source, no phenotype input
+    required, unlike `pipeline/case_prioritization.py`'s HPO-driven
+    ranking (which only activates with --hpo-terms/--phenotype-file
+    and leaves every other run with no cross-finding view at all).
+    """
+    by_gene: Dict[str, List[int]] = {}
+    for idx, vr in enumerate(variants, start=1):
+        gene = (vr.get("interpretation_result") or {}).get("gene_symbol")
+        if not gene:
+            continue
+        by_gene.setdefault(gene, []).append(idx)
+    return {gene: idxs for gene, idxs in by_gene.items() if len(idxs) > 1}
+
+
+def _genomic_window_clusters(variants: List[Dict[str, Any]], window_bp: int) -> List[List[int]]:
+    """
+    Groups this run's 1-based finding numbers whose genomic positions
+    sit within `window_bp` of their nearest same-chromosome neighbor
+    (C7, report review round 2) -- a chained/transitive grouping (A-B
+    within window and B-C within window group A, B, C together even if
+    A-C alone would exceed it), matching how a reviewer would eyeball a
+    cluster on a coordinate track. Deliberately reports proximity only:
+    this is NOT phase, NOT compound-heterozygosity, NOT a cis/trans
+    call -- GEPER has no phase data, and the report text built from
+    this must never imply one. Findings missing chrom/pos are skipped,
+    never guessed into a cluster.
+    """
+    by_chrom: Dict[str, List[Tuple[int, int]]] = {}
+    for idx, vr in enumerate(variants, start=1):
+        variant = vr.get("variant") or {}
+        chrom, pos = variant.get("chrom"), variant.get("pos")
+        if chrom is None or pos is None:
+            continue
+        try:
+            by_chrom.setdefault(str(chrom), []).append((int(pos), idx))
+        except (TypeError, ValueError):
+            continue
+
+    clusters: List[List[int]] = []
+    for entries in by_chrom.values():
+        entries.sort()
+        current: List[Tuple[int, int]] = []
+        for pos, idx in entries:
+            if current and pos - current[-1][0] > window_bp:
+                if len(current) > 1:
+                    clusters.append([i for _, i in current])
+                current = []
+            current.append((pos, idx))
+        if len(current) > 1:
+            clusters.append([i for _, i in current])
+    return clusters
+
+
+def _multi_finding_observation_lines(document: Dict[str, Any], variants: List[Dict[str, Any]]) -> List[str]:
+    """
+    Plain-language lines for the gene- and genomic-window clustering
+    observations above -- both computed unconditionally (no phenotype
+    input needed), unlike `case_prioritization`'s HPO-gated ranking.
+    Returns [] when this run has nothing to group (a single variant, or
+    every variant in a different gene and far apart).
+    """
+    lines: List[str] = []
+    gene_groups = _gene_clusters(variants)
+    for gene, idxs in sorted(gene_groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        finding_list = ", ".join(f"#{i}" for i in idxs)
+        lines.append(f"{len(idxs)} findings in {gene}: {finding_list}.")
+
+    window_bp = CONFIG.variant_clustering.WINDOW_BP
+    for cluster in _genomic_window_clusters(variants, window_bp):
+        chrom = (variants[cluster[0] - 1].get("variant") or {}).get("chrom")
+        positions = [(variants[i - 1].get("variant") or {}).get("pos") for i in cluster]
+        finding_list = ", ".join(f"#{i}" for i in cluster)
+        lines.append(
+            f"Findings {finding_list} sit within {window_bp:,} bp of each other on chromosome {chrom} "
+            f"(positions {min(positions)}-{max(positions)}). GEPER has no phase data and does not infer "
+            "compound heterozygosity or a cis/trans relationship from this -- proximity is noted for "
+            "reviewer awareness only."
+        )
+    return lines
+
+
 def _build_clinician_summary_flowables(
     document: Dict[str, Any],
     variants: List[Dict[str, Any]],
@@ -1304,13 +1409,25 @@ def _build_clinician_summary_flowables(
         flow.append(_build_clinician_summary_table(variants, styles))
         flow.append(
             Paragraph(
-                "Confidence reflects how complete the available evidence is, not how certain each classification is.",
+                f"{EVIDENCE_COMPLETENESS_CAPTION} A variant with the strongest possible single line of "
+                "evidence can still score Low here if other, unrelated evidence categories do not apply "
+                "to it (see each finding's own detail section).",
                 styles["Footnote"],
             )
         )
     else:
         flow.append(Paragraph("No variants were analyzed in this run.", styles["BodyText"]))
     flow.append(Spacer(1, 3 * mm))
+
+    # Gene- and genomic-window clustering observation (C7, report
+    # review round 2): works without any phenotype input, unlike
+    # `case_prioritization`'s HPO-gated ranking, so it's present on
+    # every run with more than one finding worth grouping.
+    multi_finding_lines = _multi_finding_observation_lines(document, variants)
+    if multi_finding_lines:
+        flow.append(Paragraph("Multi-Finding Observations", styles["SectionHeading"]))
+        flow.extend(Paragraph(f"• {line}", styles["BulletText"]) for line in multi_finding_lines)
+        flow.append(Spacer(1, 3 * mm))
 
     attention_lines: List[str] = []
     for idx, variant_result in enumerate(variants, start=1):
@@ -1493,7 +1610,12 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
 
     acmg = clinical.get("acmg_classification") or {}
     if acmg.get("classification"):
-        flow.append(Paragraph(f"<b>ACMG/AMP Classification:</b> {acmg['classification']}", styles["BodyText"]))
+        flow.append(
+            Paragraph(
+                f"<b>ACMG/AMP Classification (Tavtigian 2018 point system):</b> {acmg['classification']}",
+                styles["BodyText"],
+            )
+        )
 
     # Clinician override (geper/review/signoff.py's "override" command) --
     # layered on top of, never substituting for, GEPER's own
@@ -1512,13 +1634,51 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
 
     confidence = clinical.get("confidence") or {}
     if not confidence.get("pending") and confidence.get("label"):
-        flow.append(Paragraph(f"<b>Confidence:</b> {confidence['label']}", styles["BodyText"]))
+        score = confidence.get("score")
+        score_text = f" ({score:.0f}%)" if isinstance(score, (int, float)) else ""
+        flow.append(Paragraph(f"<b>Evidence Completeness:</b> {confidence['label']}{score_text}", styles["BodyText"]))
         flow.append(
             Paragraph(
-                "Confidence reflects how complete the available evidence is, not how certain this classification is.",
+                f"{EVIDENCE_COMPLETENESS_CAPTION} It is computed across seven independent categories "
+                "(clinical, population, AI, protein, structural, sequence-context, additional). A variant "
+                "with the strongest possible single line of evidence (e.g. PVS1 very_strong on a clear "
+                "loss-of-function call) can still score Low here if unrelated categories genuinely don't "
+                "apply to it -- see the breakdown below for exactly which categories contributed and why.",
                 styles["Footnote"],
             )
         )
+        category_breakdown = (confidence.get("breakdown") or {}).get("category_breakdown") or []
+        if category_breakdown:
+            cb_rows = [
+                [
+                    Paragraph("Category", styles["TableHeader"]),
+                    Paragraph("Present", styles["TableHeader"]),
+                    Paragraph("Quality", styles["TableHeader"]),
+                    Paragraph("Why", styles["TableHeader"]),
+                ]
+            ]
+            for cat in category_breakdown:
+                cb_rows.append(
+                    [
+                        Paragraph(str(cat.get("category") or ""), styles["TableValue"]),
+                        Paragraph(f"{cat.get('presence', 0):.0%}", styles["TableValue"]),
+                        Paragraph(f"{cat.get('quality', 0):.0%}", styles["TableValue"]),
+                        Paragraph(str(cat.get("rationale") or ""), styles["TableValueSmall"]),
+                    ]
+                )
+            cb_table = Table(cb_rows, colWidths=[28 * mm, 18 * mm, 18 * mm, 96 * mm], hAlign="LEFT", repeatRows=1)
+            cb_table.setStyle(
+                TableStyle(
+                    [
+                        ("GRID", (0, 0), (-1, -1), 0.3, _TABLE_GRID_COLOR),
+                        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5a5a5a")),
+                        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ]
+                )
+            )
+            flow.append(Spacer(1, 1 * mm))
+            flow.append(cb_table)
 
     triggered = acmg.get("triggered_criteria") or []
     if triggered:
@@ -1599,6 +1759,43 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Paragraph(f"<b>Criteria Checked, Not Triggered ({len(not_triggered)}):</b>", styles["BodyText"]))
         flow.append(Spacer(1, 1 * mm))
         flow.append(nt_table)
+
+    # PVS1 decision-tree path (C5, report review round 2): PVS1's own
+    # rationale text (see `pipeline/pvs1/decision_tree.py::
+    # PVS1DecisionTree._apply_mechanism_gate`) refers to "the decision
+    # tree" reaching its strength -- this is that tree's actual
+    # question-by-question path, computed by `PVS1DecisionTree.evaluate`
+    # for every PVS1 result (triggered, not_triggered, or not_evaluated
+    # alike) but previously dropped before reaching any report section.
+    # Referencing an audit trail that isn't shown is worse than not
+    # referencing it at all, so this is now rendered whenever PVS1
+    # carries one, not just cited.
+    pvs1_entry = next((c for c in (triggered + not_triggered) if c.get("code") == "PVS1" and c.get("details")), None)
+    if pvs1_entry:
+        decision_path = pvs1_entry["details"].get("decision_path") or []
+        if decision_path:
+            flow.append(Spacer(1, 2 * mm))
+            flow.append(Paragraph("<b>PVS1 Decision-Tree Path:</b>", styles["BodyText"]))
+            flow.extend(Paragraph(f"{i}. {step}", styles["BulletText"]) for i, step in enumerate(decision_path, 1))
+        unchecked_caveats = pvs1_entry["details"].get("unchecked_caveats") or []
+        if unchecked_caveats:
+            flow.append(Spacer(1, 1 * mm))
+            flow.append(Paragraph("<i>PVS1 caveats not checked this run:</i>", styles["Footnote"]))
+            flow.extend(Paragraph(f"• {c}", styles["Footnote"]) for c in unchecked_caveats)
+
+    # Combining-rule trace (C3, report review round 2): already
+    # computed by `ACMGRuleEngine._combine` and already rendered in the
+    # Markdown report (`report/report_generator.py`), but previously
+    # never rendered in this PDF -- the exact "cited but not shown"
+    # problem this round's C5 item names for `decision_path`. Shown
+    # here because it's what actually explains BP6-triggered-but-
+    # excluded-from-scoring (and every other point contribution) in
+    # this specific finding's own arithmetic, not just in the abstract.
+    combining_trace = acmg.get("combining_rule_trace") or []
+    if combining_trace:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Classification Combining-Rule Trace:</b>", styles["BodyText"]))
+        flow.extend(Paragraph(f"• {line}", styles["BulletText"]) for line in combining_trace)
 
     supporting = clinical.get("supporting_evidence") or []
     if supporting:
@@ -1779,6 +1976,15 @@ def generate_pdf(
 
     story: List[Any] = list(_build_report_header(logo_path, styles))
     story.append(Spacer(1, 4 * mm))
+    # Report-header-level methodology disclosure (C0, report review
+    # round 2): stated once, up front, before any classification is
+    # shown, so a reviewer never has to infer which combining system
+    # produced the classifications below -- see `ACMG_METHODOLOGY_
+    # STATEMENT`'s own docstring comment in clinical_report_builder.py
+    # for the full citation and the Tavtigian-vs-Richards divergence
+    # this exists to prevent silently misreading.
+    story.append(Paragraph(ACMG_METHODOLOGY_STATEMENT, styles["Footnote"]))
+    story.append(Spacer(1, 3 * mm))
     story.extend(_build_clinician_summary_flowables(document, variants, sample_id, resolved_run_id, assembly, styles))
     story.extend(
         [

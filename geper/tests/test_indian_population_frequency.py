@@ -366,11 +366,15 @@ class TestPdfRendering(unittest.TestCase):
         self.assertIn("494 total samples", text)
         self.assertIn("diaspora populations outside India", text)
 
-    def test_section_omitted_when_no_data_at_all(self):
+    def test_section_shows_explicit_not_queried_states_when_no_data_at_all(self):
         # Neither gnomAD SAS nor the 1000 Genomes SAS stage (never run
-        # -- None passed) has anything -- the section must render
-        # nothing (no empty header noise). In real pipeline operation
-        # the 1000 Genomes SAS stage always runs, so this is
+        # -- None passed) has anything for this variant. Previously the
+        # section rendered nothing at all in this case -- indistinguishable
+        # from a section that was never checked. B3 (report review round 1)
+        # made this section unconditional: it always renders, with an
+        # explicit "not queried" state per source, so a missing section is
+        # never confused with a queried-and-empty one. In real pipeline
+        # operation the 1000 Genomes SAS stage always runs, so this is
         # effectively a test-only edge case.
         _patch_threshold(0.01)
         raw = {"gnomad": {"skipped": True}}
@@ -396,7 +400,9 @@ class TestPdfRendering(unittest.TestCase):
             out = os.path.join(tmp, "r.pdf")
             generate_pdf(document, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertNotIn("Indian Population Frequency", text)
+        self.assertIn("Indian Population Frequency", text)
+        self.assertIn("gnomAD (South Asian, SAS): not queried for this variant.", text)
+        self.assertIn("1000 Genomes Project (South Asian, SAS): not queried for this variant.", text)
 
 
 class TestIndiGenomesRetiredFromOrchestrator(unittest.TestCase):

@@ -9,6 +9,7 @@ numeric payloads deliberately summarized (not dumped) for readability.
 from typing import Any, Dict, List
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
+from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
 from pipeline.models.status import render_status_table_lines
@@ -359,6 +360,29 @@ class ReportGenerator:
             for c in acmg["triggered_criteria"]:
                 lines.append(f"| {c['code']} | {c['strength']} | {c['direction']} | {c['rationale']} |")
             lines.append("")
+        # PVS1 decision-tree path (C5, report review round 2): PVS1's
+        # own rationale text refers to "the decision tree" reaching its
+        # strength -- render that tree's actual path rather than only
+        # citing it (see `pipeline/pvs1/decision_tree.py::
+        # PVS1DecisionTree.evaluate`'s `decision_path`).
+        pvs1_entry = next(
+            (
+                c
+                for c in (acmg.get("triggered_criteria") or []) + (acmg.get("not_triggered_criteria") or [])
+                if c.get("code") == "PVS1" and c.get("details")
+            ),
+            None,
+        )
+        if pvs1_entry:
+            decision_path = pvs1_entry["details"].get("decision_path") or []
+            if decision_path:
+                lines.append("<details><summary>PVS1 decision-tree path</summary>")
+                lines.append("")
+                for i, step in enumerate(decision_path, 1):
+                    lines.append(f"{i}. {step}")
+                lines.append("")
+                lines.append("</details>")
+                lines.append("")
         if acmg.get("combining_rule_trace"):
             lines.append("<details><summary>Combining-rule trace</summary>")
             lines.append("")
@@ -374,14 +398,16 @@ class ReportGenerator:
             lines.append("")
 
         conf = clinical_report["confidence"]
-        lines.append("### 3. Confidence Score")
+        lines.append("### 3. Evidence Completeness")
         lines.append("")
         lines.append(
-            "*Confidence reflects how complete the available evidence is, not how certain this classification is.*"
+            f"*{EVIDENCE_COMPLETENESS_CAPTION} A variant with the strongest possible single line of "
+            "evidence can still score Low here if unrelated categories don't apply to it (see the "
+            "breakdown below).*"
         )
         lines.append("")
         if conf.get("pending"):
-            lines.append("*Confidence scoring did not complete for this variant.*")
+            lines.append("*Evidence completeness scoring did not complete for this variant.*")
         else:
             score = conf.get("score")
             lines.append(
@@ -801,7 +827,7 @@ class ReportGenerator:
             lines.append(f"**ACMG Classification:** {ir['acmg_classification']}")
             lines.append("")
         if not ir.get("confidence_pending", True):
-            lines.append(f"**Confidence Score:** {ir.get('confidence_score')}% ({ir.get('confidence_label')})")
+            lines.append(f"**Evidence Completeness:** {ir.get('confidence_score')}% ({ir.get('confidence_label')})")
             breakdown = (ir.get("confidence_breakdown") or {}).get("category_breakdown", [])
             if breakdown:
                 lines.append("")
@@ -818,7 +844,7 @@ class ReportGenerator:
                     lines.append(f"*Conflict adjustment: {conflict_note}*")
                     lines.append("")
         else:
-            lines.append("**Confidence Score:** pending (Phase 3 confidence engine did not run for this variant)")
+            lines.append("**Evidence Completeness:** pending (Phase 3 confidence engine did not run for this variant)")
             lines.append("")
 
         # Phase 4: priority score/category, rendered the same way as

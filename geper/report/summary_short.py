@@ -59,6 +59,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from report.summary import (
     _DEIDENTIFIED_LABEL,
     _DISCLAIMER_TEXT,
@@ -194,15 +195,20 @@ def _classification_text(clinical: Optional[Dict[str, Any]]) -> str:
 
 
 def _confidence_text(clinical: Optional[Dict[str, Any]]) -> str:
-    """Same confidence rendering the full report's Clinician Summary table uses (`report/summary.py::_build_clinician_summary_table`), so the two documents never disagree on a variant's confidence."""
+    """
+    Same rendering the full report's Clinician Summary table uses
+    (`report/summary.py::_build_clinician_summary_table`), so the two
+    documents never disagree on a variant's evidence completeness.
+    Label only, no percentage -- see that table's own comment (C2,
+    report review round 2) for why: this score measures evidence
+    completeness, not certainty, and a percentage next to the
+    classification on a front-page/summary view reads as doubt about
+    the call itself.
+    """
     confidence = (clinical or {}).get("confidence") or {}
     if confidence.get("pending", True):
         return "Pending"
-    score = confidence.get("score")
-    label = confidence.get("label") or "n/a"
-    if isinstance(score, (int, float)):
-        return f"{label} ({score:.0f}%)"
-    return str(label)
+    return str(confidence.get("label") or "n/a")
 
 
 def _short_interpretation(clinical: Optional[Dict[str, Any]]) -> str:
@@ -412,7 +418,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
                 Paragraph(gene or "Not resolved", val),
                 Paragraph("Classification", lbl),
                 Paragraph(_classification_text(clinical), val),
-                Paragraph("Confidence", lbl),
+                Paragraph("Completeness", lbl),
                 Paragraph(_confidence_text(clinical), val),
             ]
         ],
@@ -617,12 +623,13 @@ def generate_short_pdf(
 
     story.append(Paragraph("Result", styles["SectionHeading"]))
     if variants:
-        story.append(
-            Paragraph(
-                "Confidence reflects how complete the available evidence is, not how certain each classification is.",
-                styles["Footnote"],
-            )
-        )
+        # Same methodology disclosure the full report states up front
+        # (C0, report review round 2) -- this condensed report omits
+        # per-criterion detail by design, but still states a
+        # classification, so it carries the same up-front statement of
+        # which combining system produced it.
+        story.append(Paragraph(ACMG_METHODOLOGY_STATEMENT, styles["Footnote"]))
+        story.append(Paragraph(EVIDENCE_COMPLETENESS_CAPTION, styles["Footnote"]))
     if any(isinstance(vr.get("case_prioritization"), dict) for vr in variants):
         # Same reordering the full report's Clinician Summary table
         # applies and explains (report/summary.py::_build_clinician_summary_table);

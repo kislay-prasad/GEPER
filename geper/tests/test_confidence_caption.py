@@ -33,7 +33,7 @@ try:
 except ImportError:
     _PYPDF_AVAILABLE = False
 
-_CAPTION_TEXT = "Confidence reflects how complete the available evidence is, not how certain"
+_CAPTION_TEXT = "Evidence Completeness reflects how much evidence GEPER could gather for this variant"
 
 
 def _clinical(classification="Pathogenic", confidence_label="High", confidence_score=90, pending=False):
@@ -218,8 +218,8 @@ class TestMarkdownCaption(unittest.TestCase):
     def test_caption_appears_in_confidence_score_section(self):
         document = _markdown_document(1)
         md = ReportGenerator().generate(document)
-        self.assertIn("### 3. Confidence Score", md)
-        section_start = md.index("### 3. Confidence Score")
+        self.assertIn("### 3. Evidence Completeness", md)
+        section_start = md.index("### 3. Evidence Completeness")
         section_end = md.index("### 4. Priority Score")
         section = md[section_start:section_end]
         self.assertIn(_CAPTION_TEXT, section)

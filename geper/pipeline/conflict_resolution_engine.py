@@ -172,8 +172,26 @@ class ConflictResolutionEngine:
 
         # "Not evaluable" notes (Sequence) are excluded from scoring --
         # they are not detected conflicts, just an honest statement that
-        # no check could be performed.
-        real_conflicts = [c for c in conflicts if c.severity in ("Minor", "Moderate", "Major", "Critical")]
+        # no check could be performed. "ACMG Criterion" items are also
+        # excluded here for the same reason (D4, report review round
+        # 3): `_acmg_criterion_conflicts`'s own docstring says these are
+        # "not a disagreement between two independent sources", just a
+        # caveat the rule engine already flagged on itself (e.g. an
+        # estimated coordinate, partial evidence). Almost every finding
+        # has at least one such caveat somewhere in its ACMG evaluation,
+        # so counting them toward `conflict_severity` made the
+        # "Conflicting evidence" Attention flag fire on effectively
+        # every finding regardless of whether any evidence actually
+        # disagreed -- exactly the signal-free flag A4 was meant to
+        # remove. They remain in `conflict_list` (and therefore in the
+        # full per-finding conflict detail) for reviewer visibility;
+        # they just no longer drive the top-line severity/score/summary
+        # or the Attention-column flag text.
+        real_conflicts = [
+            c
+            for c in conflicts
+            if c.severity in ("Minor", "Moderate", "Major", "Critical") and c.category != "ACMG Criterion"
+        ]
 
         score = self._score(real_conflicts, cfg)
         severity = self._overall_severity(score, real_conflicts, cfg)

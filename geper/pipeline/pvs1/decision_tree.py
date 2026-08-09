@@ -82,6 +82,19 @@ class PVS1Input:
     transcript: Optional[TranscriptContext] = None
     pos: Optional[int] = None
 
+    # Human-readable protein consequence GEPER actually determined for
+    # this variant when it is NOT a qualifying null class (e.g.
+    # "missense (amino acid substitution)", "synonymous (no amino acid
+    # change)", "in-frame insertion/deletion") -- same transcript-
+    # verified classification `pipeline/interpretation.py`'s evidence
+    # line already uses (`ProteinEffectFlags`, see
+    # `pipeline/pvs1/utils.py::protein_effect_flags`). Populated only
+    # when `null_variant_type` is None; used solely to make the NF0
+    # not-applicable rationale name the real consequence instead of the
+    # word "undetermined" when GEPER in fact determined one (D2, report
+    # review round 3).
+    observed_consequence: Optional[str] = None
+
     # -- gene-level LOF mechanism (ClinGen dosage sensitivity) --------
     lof_mechanism: str = LOF_UNKNOWN
     lof_mechanism_evidence: List[str] = field(default_factory=list)
@@ -135,6 +148,7 @@ class PVS1DecisionTree:
 
         # -- Step 1: is this a qualifying null variant class? ----------
         if inp.null_variant_type not in QUALIFYING_NULL_TYPES:
+            consequence_label = inp.null_variant_type or inp.observed_consequence or "undetermined"
             return PVS1Evaluation(
                 applies=False,
                 strength=STRENGTH_NOT_APPLICABLE,
@@ -143,7 +157,7 @@ class PVS1DecisionTree:
                 rationale=(
                     "PVS1 applies only to null variants (nonsense, frameshift, canonical +-1/+-2 splice "
                     "site, initiation codon, single/multi-exon deletion). This variant's predicted "
-                    f"consequence ({inp.null_variant_type or 'undetermined'}) is not one of them."
+                    f"consequence ({consequence_label}) is not one of them."
                 ),
                 lof_mechanism=inp.lof_mechanism,
                 decision_path=["Qualifying null variant class? -> No."],
@@ -326,6 +340,7 @@ class PVS1DecisionTree:
         unchecked: List[str],
         supporting: List[str],
         region_label: str,
+        last_lost_codon: Optional[int] = None,
     ) -> Tuple[str, str]:
         """
         The subtree shared by every NMD-escaping / in-frame branch:
@@ -339,10 +354,23 @@ class PVS1DecisionTree:
         `codes` supplies the three leaf codes for the calling branch
         (critical, >10%, else) so the reported code identifies the exact
         node in the published tree.
+
+        `last_lost_codon`: the end of the altered/removed codon range.
+        Defaults to the end of the protein (`transcript.total_codons`)
+        when omitted -- correct for a truncating variant (nonsense/
+        frameshift/NMD-escaping), where everything downstream of
+        `first_lost_codon` really is lost. An in-frame exon skip must
+        pass the *skipped exon's own* last codon here instead: only
+        that exon's codons are removed, and the callers 3' of it are
+        still translated normally, so treating the whole rest of the
+        protein as "removed" would spuriously overlap any downstream
+        functional domain (D3, report review round 3).
         """
         code_critical, code_ten_percent, code_else = codes
+        if last_lost_codon is None:
+            last_lost_codon = transcript.total_codons
 
-        critical, critical_note = self._is_critical_region(inp, transcript, first_lost_codon)
+        critical, critical_note = self._is_critical_region(inp, transcript, first_lost_codon, last_lost_codon)
         if critical is True:
             path.append(f"{region_label} critical to protein function? -> Yes.")
             checked.append(f"Critical-region check: {critical_note}")
@@ -382,19 +410,30 @@ class PVS1DecisionTree:
 
     @staticmethod
     def _is_critical_region(
-        inp: PVS1Input, transcript: Optional[TranscriptContext], first_lost_codon: Optional[int]
+        inp: PVS1Input,
+        transcript: Optional[TranscriptContext],
+        first_lost_codon: Optional[int],
+        last_lost_codon: Optional[int] = None,
     ) -> Tuple[Optional[bool], str]:
         """
         Does the truncated/altered region overlap an annotated functional
         region? Returns (True/False/None, explanation) -- None when no
         annotation was supplied at all, which is a different statement
         from "no domain overlaps".
+
+        `last_lost_codon` defaults to the end of the protein (matching
+        every truncating caller); an in-frame exon-skip caller passes
+        the skipped exon's own last codon instead, since only that
+        exon's codons are actually removed (see `_truncation_subtree`'s
+        docstring).
         """
         if not inp.functional_regions:
             return None, "no functional-region annotation supplied."
-        if first_lost_codon is None or transcript is None or not transcript.total_codons:
+        if last_lost_codon is None:
+            last_lost_codon = transcript.total_codons if transcript is not None else None
+        if first_lost_codon is None or last_lost_codon is None:
             return None, "functional regions supplied but the affected codon range is unknown."
-        lost_start, lost_end = first_lost_codon, transcript.total_codons
+        lost_start, lost_end = first_lost_codon, last_lost_codon
         hits = []
         for region in inp.functional_regions:
             start, end = region.get("start"), region.get("end")
@@ -560,6 +599,7 @@ class PVS1DecisionTree:
             removed_fraction = None
             if span and transcript.total_codons:
                 removed_fraction = (span.length / 3.0) / transcript.total_codons
+            last_lost_codon = (span.cds_end + 2) // 3 if span and span.cds_end else None
             strength, code = self._truncation_subtree(
                 inp,
                 transcript,
@@ -571,6 +611,7 @@ class PVS1DecisionTree:
                 unchecked,
                 supporting,
                 region_label="In-frame deleted region",
+                last_lost_codon=last_lost_codon,
             )
             return strength, code, None, False
 
@@ -703,6 +744,7 @@ class PVS1DecisionTree:
         low, high = min(inp.deleted_interval), max(inp.deleted_interval)
         deleted_coding = 0
         first_lost_codon = None
+        last_lost_codon = None
         for span in transcript.coding_spans():
             if span.length == 0:
                 continue
@@ -710,10 +752,14 @@ class PVS1DecisionTree:
             if overlap_low > overlap_high:
                 continue
             deleted_coding += overlap_high - overlap_low + 1
-            edge = overlap_low if transcript.strand > 0 else overlap_high
-            codon = transcript.codon_at(edge)
+            near_edge = overlap_low if transcript.strand > 0 else overlap_high
+            far_edge = overlap_high if transcript.strand > 0 else overlap_low
+            codon = transcript.codon_at(near_edge)
             if codon is not None and (first_lost_codon is None or codon < first_lost_codon):
                 first_lost_codon = codon
+            far_codon = transcript.codon_at(far_edge)
+            if far_codon is not None and (last_lost_codon is None or far_codon > last_lost_codon):
+                last_lost_codon = far_codon
 
         if deleted_coding == 0:
             path.append("Deletion removes coding sequence? -> No.")
@@ -776,6 +822,7 @@ class PVS1DecisionTree:
             unchecked,
             supporting,
             region_label="In-frame deleted region",
+            last_lost_codon=last_lost_codon,
         )
         return strength, code, first_lost_codon, False
 

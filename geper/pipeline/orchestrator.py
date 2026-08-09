@@ -457,6 +457,25 @@ class GeperPipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"BLAST tool-version provenance capture failed: {exc}")
 
+        self._capture_bootstrapped_datasets_provenance()
+
+    def _capture_bootstrapped_datasets_provenance(self) -> None:
+        """
+        Reads whatever's currently on disk for every bootstrapped/cached
+        dataset (ClinGen gene-validity/dosage, HPO, Orphanet, MANE
+        Select, UniProt, Ensembl cache, AlphaMissense). Called at
+        pipeline startup AND again after the variant loop completes
+        (see `run()`), because these datasets are fetched lazily on
+        first actual use (`pipeline/*/bootstrap.py::_ensure`/`ensure_*`),
+        not at pipeline construction time -- a startup-only call would
+        read a provenance sidecar that doesn't exist yet for any dataset
+        whose first download happens while processing the first variant,
+        permanently misreporting a genuinely-consulted source as
+        "Not consulted this run" (D1, report review round 3). Re-running
+        this after variants are processed is safe and cheap: each check
+        is just a sidecar-file read, and `RunProvenanceCollector.record`
+        only ever upgrades a source's status, never downgrades it.
+        """
         self._capture_bootstrapped_dataset_provenance(
             "ClinGen (gene validity)",
             CONFIG.clingen.GENE_VALIDITY_LOCAL_FILE,
@@ -753,6 +772,14 @@ class GeperPipeline:
 
             if i % CONFIG.CHECKPOINT_INTERVAL == 0:
                 result_builder.write(json_path)
+
+        # Re-check bootstrapped-dataset provenance now that every variant
+        # has been processed: ClinGen/HPO/Orphanet/AlphaMissense download
+        # lazily on first use, so the startup-time check in __init__ can
+        # run before any of them have actually fetched/cached anything
+        # (D1, report review round 3). This re-sweep is what lets a
+        # source consulted via the cache path show up as consulted.
+        self._capture_bootstrapped_datasets_provenance()
 
         json_document = result_builder.build()
 
@@ -1310,6 +1337,7 @@ class GeperPipeline:
             interpro_result=interpro_result,
             alphafold_result=alphafold_result,
             functional_evidence_result=functional_evidence_result,
+            conservation_result=conservation_result,
         )
 
         return build_variant_result(
@@ -1355,6 +1383,7 @@ class GeperPipeline:
         interpro_result: Optional[Dict[str, Any]],
         alphafold_result: Optional[Dict[str, Any]],
         functional_evidence_result: Optional[Dict[str, Any]],
+        conservation_result: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Per-variant provenance capture for the sources whose version
@@ -1489,6 +1518,40 @@ class GeperPipeline:
                     self.provenance.record("Functional evidence (MaveDB)", VersionStatus.UNKNOWN, notes=note)
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Functional-evidence provenance capture failed: {exc}")
+
+        try:
+            if conservation_result and not conservation_result.get("skipped"):
+                source = conservation_result.get("source") or ""
+                error = conservation_result.get("error")
+                # `source` names the provider(s) that actually answered
+                # this query (see pipeline/conservation/provider.py --
+                # "local_bigwig"/"ucsc_api" feed PhyloP/PhastCons,
+                # "myvariant_gerp" feeds GERP++; a "+"-joined string when
+                # more than one contributed), joined from a cache hit
+                # ("cache") equally counts as consulted this run -- the
+                # scores came from a real prior query, not a guess.
+                if "local_bigwig" in source or "ucsc_api" in source or source == "cache":
+                    self.provenance.record(
+                        "Conservation (PhyloP/PhastCons, UCSC)",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="No source-wide release version captured for this pass (UCSC's per-track "
+                        "'dataTime' is not yet wired through -- see pipeline/provenance.py's module "
+                        "docstring); only the query timestamp is recorded.",
+                    )
+                if "myvariant_gerp" in source or source == "cache":
+                    self.provenance.record(
+                        "Conservation (GERP++, MyVariant.info)",
+                        VersionStatus.TIMESTAMP_ONLY,
+                        notes="MyVariant.info exposes only its own internal document-revision counter, "
+                        "not a GERP/dbNSFP data release, so no version is recorded; only the query "
+                        "timestamp is.",
+                    )
+                if error and not conservation_result.get("found"):
+                    note = f"Most recent query failed: {error}"
+                    self.provenance.record("Conservation (PhyloP/PhastCons, UCSC)", VersionStatus.UNKNOWN, notes=note)
+                    self.provenance.record("Conservation (GERP++, MyVariant.info)", VersionStatus.UNKNOWN, notes=note)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Conservation provenance capture failed: {exc}")
 
     # ------------------------------------------------------------------
     # Individual stage helpers

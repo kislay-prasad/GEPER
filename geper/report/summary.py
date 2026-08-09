@@ -1246,14 +1246,17 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
         ]
         rows.append(row)
 
-    # Confidence column widened (was 17/20mm -- narrow enough that
-    # "Confidence" itself wrapped mid-word to "Confidenc / e" in the
-    # header row); the extra width is taken from "Top Evidence", the
-    # widest column, so the table's total width is unchanged.
+    # This column's header is now "Completeness" (C2, report review
+    # round 2), which is longer than the "Confidence" text the D5-fixed
+    # width below was originally sized for -- it re-wrapped mid-word
+    # ("Completene / ss") at the old 21/24mm (D5, report review round
+    # 3). Widened again to fit "Completeness" specifically; the extra
+    # width is taken from "Top Evidence", the widest column, so the
+    # table's total width is unchanged.
     if has_case_ranking:
-        col_widths = [8 * mm, 30 * mm, 25 * mm, 21 * mm, 30 * mm, 36 * mm, 20 * mm]
+        col_widths = [8 * mm, 30 * mm, 25 * mm, 26 * mm, 30 * mm, 31 * mm, 20 * mm]
     else:
-        col_widths = [8 * mm, 35 * mm, 30 * mm, 24 * mm, 49 * mm, 24 * mm]
+        col_widths = [8 * mm, 35 * mm, 30 * mm, 29 * mm, 44 * mm, 24 * mm]
     table = Table(rows, colWidths=col_widths, hAlign="LEFT", repeatRows=1)
     style_cmds = [
         ("GRID", (0, 0), (-1, -1), 0.4, _TABLE_GRID_COLOR),

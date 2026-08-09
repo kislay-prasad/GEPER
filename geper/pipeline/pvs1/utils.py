@@ -861,6 +861,23 @@ def build_pvs1_input(
 
     transcript = transcript_from_result(transcript_result)
     null_type, classification_notes = classify_null_variant(variant_dict, protein_result, transcript)
+    observed_consequence = None
+    if null_type is None:
+        # Not a qualifying null class -- name the real transcript-
+        # verified consequence GEPER determined (if any), rather than
+        # leaving the NF0 rationale to fall back to "undetermined" for
+        # a variant whose consequence is, in fact, known (D2, report
+        # review round 3). Same classification
+        # `pipeline/interpretation.py`'s "Transcript-verified protein
+        # consequence" evidence line already uses.
+        flags = protein_effect_flags(variant_dict, transcript)
+        if flags.determined:
+            if flags.is_missense:
+                observed_consequence = "missense (amino acid substitution)"
+            elif flags.is_synonymous:
+                observed_consequence = "synonymous (no amino acid change)"
+            elif flags.is_inframe_indel:
+                observed_consequence = "in-frame insertion/deletion"
     mechanism, mechanism_evidence = lof_mechanism_from_clingen(clingen_result)
     population_af, af_label = population_af_from_gnomad(gnomad_result)
     functional_regions = functional_regions_from_interpro(interpro_result, transcript)
@@ -871,6 +888,7 @@ def build_pvs1_input(
 
     kwargs: Dict[str, Any] = dict(
         null_variant_type=null_type,
+        observed_consequence=observed_consequence,
         transcript=transcript,
         pos=int(pos) if pos is not None else None,
         lof_mechanism=mechanism,

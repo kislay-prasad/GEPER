@@ -1,0 +1,16 @@
+##fileformat=VCFv4.2
+##fileDate=20260809
+##source=GEPER_manual_curation_v1
+##reference=GRCh38
+##contig=<ID=3,length=198295559,assembly=GRCh38,species="Homo sapiens">
+##INFO=<ID=GENE,Number=1,Type=String,Description="HGNC gene symbol">
+##INFO=<ID=HGVSC,Number=1,Type=String,Description="Coding HGVS (RefSeq transcript)">
+##INFO=<ID=HGVSP,Number=1,Type=String,Description="Protein HGVS">
+##INFO=<ID=CLINSIG,Number=1,Type=String,Description="Cited clinical significance (ClinVar)">
+##INFO=<ID=EXPECTED_RULE,Number=1,Type=String,Description="GEPER conflict-resolution/ACMG behaviour this record is a positive control for; see test_data/conflict_tiers.md for full rationale and caveats">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+3	37008903	MLH1_A3_critical	C	T	.	.	GENE=MLH1;HGVSC=NM_000249.4:c.543C>T;HGVSP=p.Gly181=;CLINSIG=Pathogenic;EXPECTED_RULE=A3_CRITICAL
+3	10142111	VHL_BP1_missense	G	T	.	.	GENE=VHL;HGVSC=NM_000551.4:c.264G>T;HGVSP=p.Trp88Cys;CLINSIG=Likely_pathogenic;EXPECTED_RULE=BP1_GATE
+3	10149906	VHL_C7_cluster_a	C	T	.	.	GENE=VHL;HGVSC=NM_000551.4:c.583C>T;HGVSP=p.Gln195Ter;CLINSIG=Pathogenic;EXPECTED_RULE=C7_WINDOW_CLUSTER
+3	10149933	VHL_C7_cluster_b	G	T	.	.	GENE=VHL;HGVSC=NM_000551.4:c.610G>T;HGVSP=p.Glu204Ter;CLINSIG=Uncertain_significance;EXPECTED_RULE=C7_WINDOW_CLUSTER
+3	10146594	VHL_A1_frameshift	AA	AAA	.	.	GENE=VHL;HGVSC=NM_000551.4:c.422dup;HGVSP=p.Asn141fs;CLINSIG=Pathogenic;EXPECTED_RULE=A1_PP3BP4_GATE

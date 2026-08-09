@@ -404,8 +404,10 @@ document with a clinical-use disclaimer at the top, including an
 | Variable | Purpose | Default |
 |---|---|---|
 | `GEPER_OUTPUT_DIR` | Default output directory | `./geper_output` |
-| `GEPER_CACHE_DIR` | HuggingFace model cache directory | `./model_cache` |
-| `GEPER_HYENADNA_CKPT_DIR` | HyenaDNA checkpoint directory | `./checkpoints` |
+| `GEPER_CACHE_DIR` | Shared root for bootstrapped-dataset caches (ClinGen, HPO, Orphanet, UniProt, Ensembl, MANE, AlphaMissense) and, when set, the fallback root for HyenaDNA/plugin model weights and RNA-FM's `TORCH_HOME` below (F2, report review round 4) -- not HF-specific despite the name; ESM2 also uses it directly via `cache_dir=` | `./model_cache` |
+| `GEPER_HYENADNA_CKPT_DIR` | HyenaDNA checkpoint directory. Overrides everything below when set | `./checkpoints`, or `<GEPER_CACHE_DIR>/hyenadna` if `GEPER_CACHE_DIR` is set |
+| `GEPER_PLUGIN_CACHE_DIR` | Weight cache for the plugin model family (Enformer, Borzoi, SpliceFormer, SpliceBERT). Overrides everything below when set | `./plugin_model_cache`, or `<GEPER_CACHE_DIR>/plugin_model_cache` if `GEPER_CACHE_DIR` is set |
+| `TORCH_HOME` | RNA-FM's checkpoint cache (via `torch.hub`) -- a PyTorch-standard env var, only set automatically by GEPER when `GEPER_CACHE_DIR` is set and `TORCH_HOME` isn't already in the environment | PyTorch's own default (`~/.cache/torch`), or `<GEPER_CACHE_DIR>/torch` if `GEPER_CACHE_DIR` is set and `TORCH_HOME` is unset |
 | `GEPER_NCBI_EMAIL` | Email sent to NCBI E-utilities (politeness policy) | placeholder |
 | `GEPER_NCBI_API_KEY` | NCBI API key for higher rate limits | unset |
 | `GEPER_BLAST_MODE` | BLAST backend priority: `auto` (local first, remote fallback, graceful skip if neither available), `local`, or `remote` | `auto` |

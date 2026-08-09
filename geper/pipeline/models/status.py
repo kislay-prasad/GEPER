@@ -70,6 +70,45 @@ SKIPPED = "skipped"
 DISABLED = "disabled"
 FAILED = "failed"
 
+# Priority for collapsing one model's per-variant statuses (see
+# `rollup_run_status`) into a single run-level status: USED beats
+# everything (it genuinely contributed to at least one finding this
+# run, even if it was skipped/failed for others), FAILED beats
+# DISABLED/SKIPPED (a real problem occurred this run, worth surfacing
+# even if it never happened to succeed), DISABLED beats SKIPPED (the
+# environment/config gap is worth naming over a plain "not applicable").
+_ROLLUP_PRIORITY: Dict[str, int] = {SKIPPED: 0, DISABLED: 1, FAILED: 2, USED: 3}
+
+
+def rollup_run_status(
+    all_variant_statuses: List[Optional[Dict[str, Dict[str, str]]]],
+) -> Dict[str, Dict[str, str]]:
+    """
+    Collapses every variant's per-variant `build_ai_model_status()`
+    output into one run-level status per model key. This is what
+    `pipeline/provenance.py`'s "AI model checkpoints" section reports
+    against (F1a, report review round 4): before this, that section
+    listed a model's checkpoint identifier purely from config flags,
+    with no way to tell a model that actually ran this run from one
+    that was configured but never available or never loaded --
+    SpliceBERT (load failure) and Evo2 (skipped on unsupported
+    hardware) both rendered identically to a model that worked.
+
+    Same USED > FAILED > DISABLED > SKIPPED priority as this module's
+    per-variant reasoning (see e.g. `_ensemble_model_status`'s
+    docstring): a real success or failure this run must never be
+    diluted by averaging against unrelated variants where the model
+    simply wasn't applicable.
+    """
+    best: Dict[str, Dict[str, str]] = {}
+    for variant_status in all_variant_statuses or []:
+        for key, entry in (variant_status or {}).items():
+            status = (entry or {}).get("status", SKIPPED)
+            existing = best.get(key)
+            if existing is None or _ROLLUP_PRIORITY.get(status, 0) > _ROLLUP_PRIORITY.get(existing["status"], 0):
+                best[key] = dict(entry)
+    return best
+
 
 def _entry(status: str, reason: str) -> Dict[str, str]:
     return {"status": status, "reason": reason}
@@ -88,8 +127,7 @@ def _dna_context_model_status(
     if not model_availability.get(key, True):
         return _entry(
             DISABLED,
-            "Not available in this environment (missing optional "
-            "dependency, or -- for Evo2 -- unsupported hardware).",
+            "Not available in this environment (missing optional dependency, or -- for Evo2 -- unsupported hardware).",
         )
     if key in model_stage_errors:
         return _entry(FAILED, model_stage_errors[key])

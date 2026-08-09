@@ -133,6 +133,35 @@ checkpoint loading step in a subprocess with a hard 60s timeout, so any
 future regression of this exact bug fails fast and loud in the test
 suite instead of hanging silently.
 
+**Update (report review round 4, F1b) — this fix is not the end of the
+story.** The `USE_TF=0` env var alone later proved insufficient once
+`transformers` was already imported earlier in the process (it only
+has effect on a cold import), which is why `loader.py` now *also*
+directly overrides the already-cached `transformers.utils.import_utils
+._tf_available` attribute plus a bounded load timeout (see that
+module's own docstring for the full second round of this bug). Then,
+in the two most recent live-verified runs (GEPER-RUN-20260809,
+`transformers` upgraded from the previously-pinned 4.56.2 to 5.13.1),
+SpliceBERT failed to load *again* — this time timing out rather than
+hanging indefinitely (the bounded-timeout fix did its job), preceded
+by the same-shaped "You are using a model of type 'bert' to instantiate
+a model of type ''" warning. Root cause of this third occurrence is
+**not confirmed** — static inspection (this pass had no GPU and could
+not attempt a real load) turned up no config/architecture mismatch in
+the checkpoint itself (it is a standard, unmodified `BertForMaskedLM`),
+so the leading hypothesis is a second, transformers-v5-specific
+import-order sensitivity triggered by the same precondition as the
+original bug (`pipeline/models/esm2.py` importing `transformers`
+first) — but this is a hypothesis, not a verified finding. What this
+pass DID do: (1) the failure is now detected once at pipeline startup
+instead of implicitly on the first variant (`GeperPipeline
+._probe_standalone_plugins_at_startup`), and (2) the swallowed
+debug-level exception detail is now promoted into the raised error
+message itself, so the next live run captures the actual diagnostic
+detail instead of the generic "SpliceBERT model unavailable" string.
+Whether SpliceBERT is fixable or should be permanently disabled is an
+open question pending that next run's real error detail.
+
 ## Known gaps / not independently re-verified in this pass
 
 - **Enformer, Borzoi, SPiP's transcriptome file**: bootstrap code was
@@ -153,3 +182,82 @@ suite instead of hanging silently.
   blocks the code/data separation — the code works regardless of what the
   README says — but it should be fixed so the docs don't mislead the next
   person who reads them instead of the source.
+
+## C1 net-points bug: blast radius is unrecoverable, not zero
+
+(Report review round 4, F3.) `pipeline/acmg_rules.py::ACMGRuleEngine
+._combine` had a real bug — thresholding `path_points`/`benign_points`
+independently instead of on `net = path_points - benign_points` —
+that silently discarded triggered benign criteria in every run before
+the fix landed on `fix/report-review-A1-B7`. `audit_net_points_blast_
+radius.py` (repo root) is the correct, working tool for finding which
+stored classifications that bug actually changed: it re-derives what
+the old and new threshold logic would each output from a stored
+`combining_rule_trace` and flags any disagreement.
+
+Running it against a post-fix run returns "0 affected." **That is a
+true statement about the artifact it was run against, not about the
+bug's historical impact.** No pre-fix `geper_results.json` — or any
+other run artifact — survives anywhere: not in this repository
+(working tree or git history; confirmed by the script's own docstring),
+and not in the Colab sessions that originally produced whatever
+pre-fix outputs existed, which are gone. A script correctly finding
+zero affected variants in the *only* artifact it has ever been run
+against says nothing about whether any pre-fix run was affected — a
+bug that silently drops triggered benign criteria on the classification
+path is exactly the shape of bug most likely to have changed a real
+result somewhere, and "0 affected" here answers "did this fix change
+this one already-fixed run" (trivially no, the bug isn't present in a
+post-fix run), not "did the bug ever affect a real classification."
+
+**Conclusion: the blast radius of the pre-fix C1 bug is unrecoverable,
+not zero.** Any GEPER classification produced by a run before the
+`_combine` fix landed should be treated as unverified — specifically,
+re-run through the current code (or manually checked against the
+`combining_rule_trace` math in the original report, if one survives)
+before being relied on — rather than assumed correct because no
+audited artifact currently disagrees with it.
+
+**If a pre-fix artifact ever surfaces** (an old `geper_results.json`
+recovered from local disk, an old Colab notebook's saved outputs, a
+PDF/Markdown report with its `combining_rule_trace` lines still
+legible), point the existing script at it directly:
+```
+python audit_net_points_blast_radius.py path/to/old_geper_results.json
+python audit_net_points_blast_radius.py path/to/old_output_dir/   # globs **/*.json
+```
+No changes to the script are needed for this — it was built to answer
+exactly this question the moment a real artifact exists to ask it of.
+
+## MANE Select tie-break: real data path exists, but is unconfirmed to have ever fired
+
+(Report review round 4, F4.) `pipeline/clingen/utils.py
+::_disambiguate_overlapping_genes` checks MANE Select status two ways:
+`transcript.is_mane_select` (populated from Ensembl's `lookup/id` REST
+response, which — verified live — never actually carries a MANE field,
+so this branch is permanently `False` in production; see that
+function's own docstring) and a lookup against `pipeline/mane/
+provider.py`'s bootstrapped NCBI MANE summary dataset (real data,
+keyed by gene symbol). Both are already documented in-code at the
+tie-break site itself (that function's docstring, lines ~282-290) —
+this is not new information.
+
+What is **not yet confirmed**: whether the second, real-data path has
+ever actually resolved a tie in production. The two overlapping-gene
+loci observed falling through to `AMBIGUOUS` in the GEPER-RUN-20260809
+verified run are consistent with *either* (a) neither candidate gene
+having a MANE Select transcript in the dataset for that specific
+position (a correct `AMBIGUOUS` outcome — nothing to disambiguate
+with), or (b) some other reason the NCBI-dataset lookup didn't fire at
+all (e.g. a `TranscriptLookup` exception for one of the two candidates,
+silently falling through per that function's own `except Exception`
+clause). This pass could not distinguish between these without the
+real run's per-gene log lines, which do not survive anywhere (no run
+artifacts survive at all — see the C1 section above for the same
+constraint). **Do not assume the MANE tie-break is inert** from the
+`AMBIGUOUS` outcomes observed so far; the code path exists, is
+unit-tested (`tests/test_clingen_gene_resolution.py`), and is
+plausible to be genuinely functional for a gene pair where exactly one
+candidate has a MANE Select transcript. Confirming which of (a)/(b)
+explains the specific observed cases needs a live run's logs, not
+another static-inspection pass.

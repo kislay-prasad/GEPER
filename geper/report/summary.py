@@ -50,6 +50,10 @@ from reportlab.platypus.flowables import Flowable
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from config import CONFIG
+from pipeline.models.status import DISABLED as _STATUS_DISABLED
+from pipeline.models.status import FAILED as _STATUS_FAILED
+from pipeline.models.status import SKIPPED as _STATUS_SKIPPED
+from pipeline.models.status import USED as _STATUS_USED
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
@@ -830,6 +834,17 @@ _PROVENANCE_STATUS_LABELS = {
     "version_known": "Version known",
 }
 
+# Mirrors `report/report_generator.py`'s `_MODEL_STATUS_LABELS` exactly
+# (same `pipeline/models/status.py` vocabulary) so the PDF and Markdown
+# "AI model checkpoints" sections never drift on wording (F1a, report
+# review round 4).
+_MODEL_STATUS_LABELS = {
+    _STATUS_USED: "ran this run",
+    _STATUS_FAILED: "attempted, failed to load/run this run",
+    _STATUS_DISABLED: "not available in this environment",
+    _STATUS_SKIPPED: "not applicable to any variant this run",
+}
+
 
 def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
@@ -860,10 +875,17 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
     checkpoints = document.get("model_checkpoints") or {}
     flow.append(Paragraph("<b>AI model checkpoints:</b>", styles["BodyText"]))
     if checkpoints:
-        flow.extend(
-            Paragraph(f"• {name}: {identifier}", styles["BulletText"])
-            for name, identifier in sorted(checkpoints.items())
-        )
+        for name, value in sorted(checkpoints.items()):
+            # See `report/report_generator.py`'s identical branch for
+            # why both shapes are handled (F1a, report review round 4).
+            if isinstance(value, dict):
+                status_label = _MODEL_STATUS_LABELS.get(value.get("status"), value.get("status") or "unknown")
+                text = f"• {name}: {value.get('identifier')} -- {status_label}"
+                if value.get("reason"):
+                    text += f" ({value['reason']})"
+            else:
+                text = f"• {name}: {value}"
+            flow.append(Paragraph(text, styles["BulletText"]))
     else:
         flow.append(Paragraph("No AI model checkpoint identifiers recorded for this run.", styles["Footnote"]))
     flow.append(Spacer(1, 2 * mm))

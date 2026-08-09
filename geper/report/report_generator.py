@@ -12,9 +12,21 @@ from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DIS
 from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
-from pipeline.models.status import render_status_table_lines
+from pipeline.models.status import DISABLED, FAILED, SKIPPED, USED, render_status_table_lines
 
 logger = get_logger(__name__)
+
+# Shared with `report/summary.py`'s `_MODEL_STATUS_LABELS` so the
+# Markdown and PDF "AI model checkpoints" sections never drift on
+# wording -- same status vocabulary `pipeline/models/status.py` already
+# defines for the per-variant AI Models table (F1a, report review
+# round 4), reused here rather than a third vocabulary.
+_MODEL_STATUS_LABELS = {
+    USED: "ran this run",
+    FAILED: "attempted, failed to load/run this run",
+    DISABLED: "not available in this environment",
+    SKIPPED: "not applicable to any variant this run",
+}
 
 
 def _render_1000_genomes_sas_markdown(ipf: Dict[str, Any]) -> List[str]:
@@ -136,8 +148,22 @@ class ReportGenerator:
         lines.append("**AI model checkpoints:**")
         lines.append("")
         if checkpoints:
-            for name, identifier in sorted(checkpoints.items()):
-                lines.append(f"- **{name}:** `{identifier}`")
+            for name, value in sorted(checkpoints.items()):
+                # `value` is either the enriched
+                # {"identifier", "status", "reason"} shape
+                # (`pipeline/provenance.py::finalize_model_checkpoint_provenance`,
+                # F1a) once a run-level status was tracked for this
+                # model, or a plain identifier string when it wasn't
+                # (no per-variant status exists for that checkpoint
+                # key, e.g. a run with zero variants) -- both render,
+                # rather than assuming the enriched shape unconditionally.
+                if isinstance(value, dict):
+                    status_label = _MODEL_STATUS_LABELS.get(value.get("status"), value.get("status") or "unknown")
+                    lines.append(f"- **{name}:** `{value.get('identifier')}` -- {status_label}")
+                    if value.get("reason"):
+                        lines.append(f"  - {value['reason']}")
+                else:
+                    lines.append(f"- **{name}:** `{value}`")
         else:
             lines.append("*No AI model checkpoint identifiers recorded for this run.*")
         lines.append("")

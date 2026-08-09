@@ -61,11 +61,11 @@ from pipeline.case_prioritization import rank_case
 from pipeline.hpo.ontology import get_shared_ontology
 from pipeline.interpro.lookup import InterProLookup
 from pipeline.models.ensemble import EnsembleManager
-from pipeline.models.manager import ModelManager
+from pipeline.models.manager import ModelManager, PluginUnavailableError
 from pipeline.models.mmsplice.loader import MMSpliceModel
 from pipeline.models.mmsplice.service import MMSpliceService
 from pipeline.models.pending_plugins import build_default_registry
-from pipeline.models.status import build_ai_model_status
+from pipeline.models.status import build_ai_model_status, rollup_run_status
 from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
 from pipeline.provenance import (
@@ -73,6 +73,7 @@ from pipeline.provenance import (
     VersionStatus,
     capture_blast_local_tool_versions,
     capture_ensembl_release,
+    finalize_model_checkpoint_provenance,
     get_geper_code_version,
     get_model_checkpoint_identifiers,
     local_file_provenance,
@@ -781,6 +782,19 @@ class GeperPipeline:
         # source consulted via the cache path show up as consulted.
         self._capture_bootstrapped_datasets_provenance()
 
+        # Same timing fix, applied to the "AI model checkpoints"
+        # provenance list (F1a, report review round 4): whether
+        # SpliceBERT/Evo2/etc actually ran, failed to load, or were
+        # simply never applicable to any variant this run is only known
+        # after `_process_variant` has run for everything -- computing
+        # it at startup (like the old `self.model_checkpoints` snapshot
+        # did) can only ever reflect config flags, not what actually
+        # happened. Mutates `self.model_checkpoints` in place (the same
+        # dict object `result_builder` was constructed with), so
+        # `result_builder.build()` below picks up the enriched version.
+        run_model_status = rollup_run_status([vr.get("ai_model_status") for vr in result_builder.variant_results])
+        self.model_checkpoints.update(finalize_model_checkpoint_provenance(self.model_checkpoints, run_model_status))
+
         json_document = result_builder.build()
 
         # Phase 4: batch-relative priority ranking. `priority_score` is
@@ -983,7 +997,58 @@ class GeperPipeline:
                     }
                 )
 
+        self._probe_standalone_plugins_at_startup()
+
         self._log_startup_report(rows)
+
+    # Standalone splice-prediction plugins run directly through
+    # `self.model_manager` (see `_run_standalone_splice_plugin_stage`'s
+    # own docstring for why these two are separate from the Enformer/
+    # Borzoi ensemble): eagerly probed here, once, for the same reason
+    # `_run_startup_validation`'s main loop above eagerly probes
+    # HyenaDNA/Evo2/RNA-FM/ESM-2/MMSplice -- so a checkpoint that can't
+    # load (F1b, report review round 4: SpliceBERT's HuggingFace
+    # checkpoint failed to instantiate in the last two verified runs)
+    # is discovered before the first variant, not implicitly on it.
+    _STANDALONE_PLUGIN_KEYS = ("spliceformer", "splicebert")
+
+    def _probe_standalone_plugins_at_startup(self) -> None:
+        """
+        Forces `ModelManager.get()` once for each standalone splice
+        plugin that's cheaply "available" (config-enabled, dependency
+        installed) but hasn't actually been load-tested yet. This does
+        not change runtime behavior: `ModelManager.get()` already caches
+        a load failure permanently in `self._failed` (see that class's
+        docstring) and `_run_standalone_splice_plugin_stage` already
+        never re-attempts the expensive load once failed -- but without
+        this eager probe, that first (potentially slow, up to
+        `CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS`) load attempt,
+        and its failure, only happen implicitly on variant #1, and the
+        cached failure message is then re-logged once per subsequent
+        variant by `ModelManager.predict()`'s own `logger.info(str(exc))`
+        (cheap, but noisy, and easy to misread as a retry). Resolving it
+        here means: one clear log line, before any variant, and
+        `self._plugin_availability[key]` flips to False on failure so
+        `_run_standalone_splice_plugin_stage`'s per-variant gate skips
+        calling into `self.model_manager` at all for the rest of this
+        run -- eliminating the repeat log lines too, not just the cost.
+        """
+        for key in self._STANDALONE_PLUGIN_KEYS:
+            if not self._plugin_availability.get(key, False):
+                continue  # already known unavailable (disabled/missing dependency); nothing to load-test
+            display = _MODEL_DISPLAY_NAMES.get(key, key)
+            try:
+                self.model_manager.get(key)
+                logger.info(f"Startup validation PASSED for '{key}' ({display}).")
+            except PluginUnavailableError as exc:
+                message = str(exc)[:600]
+                logger.error(
+                    f"Startup validation FAILED for '{key}' ({display}): {message}. Demoting this "
+                    "plugin to unavailable for the remainder of this run; every variant will report "
+                    "it as unavailable rather than re-attempting the load."
+                )
+                self._plugin_availability[key] = False
+                self._model_stage_errors.setdefault(key, message)
 
     @staticmethod
     def _log_startup_report(rows: List[Dict[str, str]]) -> None:
@@ -2013,7 +2078,15 @@ class GeperPipeline:
             }
 
         if not self._plugin_availability.get(key, False):
-            reason = self.model_registry.get(key).unavailability_reason()
+            # Prefer the real captured load-failure message
+            # (`_probe_standalone_plugins_at_startup`, F1b) over the
+            # plugin's own `unavailability_reason()` -- the latter only
+            # knows about config/dependency gating (e.g. "requires
+            # ENABLE_SPLICEBERT"), which is the wrong, misleadingly
+            # generic explanation once `_plugin_availability[key]` was
+            # flipped to False by an actual checkpoint-load failure
+            # rather than by that cheap check.
+            reason = self._model_stage_errors.get(key) or self.model_registry.get(key).unavailability_reason()
             if key not in self._logged_missing_at_routing:
                 self._logged_missing_at_routing.add(key)
                 logger.warning(

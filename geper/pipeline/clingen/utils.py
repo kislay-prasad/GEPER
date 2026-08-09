@@ -327,6 +327,18 @@ def _disambiguate_overlapping_genes(symbols: List[str], pos: int, build: str) ->
 
     tie_pool = cds_hits if len(cds_hits) > 1 else symbols
     mane_in_pool = [s for s in mane_hits if s in tie_pool]
+    # NOTE (report review round 4, F4): `transcript.is_mane_select`
+    # (fed into `mane_hits` above) is confirmed permanently False in
+    # production -- see this function's docstring. The
+    # `mane_select_transcript_id()` dataset lookup (also above) is
+    # real and should work whenever exactly one tied candidate has a
+    # MANE Select transcript, but whether it has EVER actually fired
+    # in a real run is unconfirmed: every observed AMBIGUOUS outcome so
+    # far is equally consistent with "neither candidate has a MANE
+    # Select transcript here" (correct) as with a silent failure
+    # upstream (the `except Exception: continue` a few lines above).
+    # See DATA_PROVENANCE.md's "MANE Select tie-break" section before
+    # assuming this branch is either dead or working.
     if len(mane_in_pool) == 1:
         return GeneResolution(
             GeneResolutionStatus.RESOLVED,

@@ -406,6 +406,67 @@ def get_model_checkpoint_identifiers() -> Dict[str, str]:
     return identifiers
 
 
+# Maps each key `get_model_checkpoint_identifiers()` uses onto the
+# model key `pipeline/models/status.py::DISPLAY_NAMES`/
+# `build_ai_model_status()` tracks per variant -- the two dicts were
+# built independently (one config-shaped, one per-variant-result-
+# shaped) and don't share key names 1:1 (HyenaDNA is split into two
+# checkpoint-identifier keys here; AlphaMissense's identifier key names
+# the catalogue, not the model). Not in this map == no run-level
+# status tracking exists for that identifier (currently none; kept as
+# a map, not an assumption of 1:1 naming, so a future identifier key
+# doesn't silently get mis-attributed to the wrong model's status).
+_CHECKPOINT_NAME_TO_MODEL_KEY: Dict[str, str] = {
+    "hyenadna_checkpoint_dir": "hyenadna",
+    "hyenadna_model_name": "hyenadna",
+    "evo2_variant": "evo2",
+    "rna_fm": "rna_fm",
+    "esm2": "esm2",
+    "mmsplice": "mmsplice",
+    "alphamissense_catalogue_source": "alphamissense",
+    "spliceformer": "spliceformer",
+    "splicebert": "splicebert",
+    "enformer": "enformer",
+    "borzoi": "borzoi",
+}
+
+
+def finalize_model_checkpoint_provenance(
+    identifiers: Dict[str, str], run_status: Dict[str, Dict[str, str]]
+) -> Dict[str, Dict[str, str]]:
+    """
+    Enriches `get_model_checkpoint_identifiers()`'s flat identifier
+    strings with each model's actual run-level status (see
+    `pipeline.models.status.rollup_run_status`) -- reusing that
+    module's existing USED/SKIPPED/DISABLED/FAILED vocabulary rather
+    than inventing a parallel one, the same way `VersionStatus` already
+    distinguishes "not consulted" from "consulted" for external data
+    sources (D1, report review round 3). Called once, after every
+    variant has been processed (see `pipeline/orchestrator.py::run()`)
+    -- calling it at startup, before any variant ran, would repeat the
+    exact timing bug D1 fixed for the bootstrapped datasets, since
+    whether a model actually loaded/ran is only known after the fact.
+
+    A checkpoint identifier with no run-level status tracked for it
+    (not in `_CHECKPOINT_NAME_TO_MODEL_KEY`, or `run_status` doesn't
+    mention that model key -- e.g. a run with zero variants) keeps its
+    plain identifier string unchanged rather than fabricating a status.
+    """
+    enriched: Dict[str, Any] = {}
+    for name, identifier in identifiers.items():
+        model_key = _CHECKPOINT_NAME_TO_MODEL_KEY.get(name)
+        status_entry = run_status.get(model_key) if model_key else None
+        if status_entry is None:
+            enriched[name] = identifier
+        else:
+            enriched[name] = {
+                "identifier": identifier,
+                "status": status_entry.get("status", "unknown"),
+                "reason": status_entry.get("reason", ""),
+            }
+    return enriched
+
+
 # ---------------------------------------------------------------------------
 # Per-run collector
 # ---------------------------------------------------------------------------

@@ -149,7 +149,21 @@ class ModelConfig:
 
     # HyenaDNA is loaded from a local/downloaded checkpoint directory
     # rather than the HF hub in the reference snippet supplied.
-    HYENADNA_CHECKPOINT_DIR: str = os.environ.get("GEPER_HYENADNA_CKPT_DIR", "./checkpoints")
+    #
+    # Redirected under GEPER_CACHE_DIR (F2, report review round 4) the
+    # same way the bootstrapped datasets (ClinGen/HPO/Orphanet/UniProt/
+    # Ensembl/AlphaMissense) already are -- but only when GEPER_CACHE_DIR
+    # is explicitly set: an explicit GEPER_HYENADNA_CKPT_DIR always wins
+    # (unchanged), and when NEITHER is set this stays the original
+    # "./checkpoints" default so a local user with no Drive/persistent
+    # cache configured sees no behavior change at all (a checkpoint
+    # already downloaded there under the old default is still found).
+    HYENADNA_CHECKPOINT_DIR: str = os.environ.get(
+        "GEPER_HYENADNA_CKPT_DIR",
+        os.path.join(os.environ["GEPER_CACHE_DIR"], "hyenadna")
+        if os.environ.get("GEPER_CACHE_DIR")
+        else "./checkpoints",
+    )
     HYENADNA_MODEL_NAME: str = "hyenadna-medium-450k-seqlen"
     HYENADNA_MAX_LENGTH: int = 450_000
 
@@ -2527,10 +2541,27 @@ class SplicingConfig:
     SPIP_TIMEOUT_SECONDS: int = int(os.environ.get("GEPER_SPIP_TIMEOUT_SECONDS", "600"))
 
     # Directory the new plugin weight cache (pipeline/models/cache.py)
-    # uses -- separate from CONFIG.CACHE_DIR (which predates this and
-    # is used by BLAST/gnomAD/ClinGen result caches) so plugin weight
-    # files are easy to find/clear independently of unrelated caches.
-    PLUGIN_CACHE_DIR: str = os.environ.get("GEPER_PLUGIN_CACHE_DIR", "./plugin_model_cache")
+    # uses -- kept as its own named subdirectory rather than merged
+    # flat into CONFIG.CACHE_DIR (which predates this and is used by
+    # BLAST/gnomAD/ClinGen result caches) so plugin weight files
+    # (Enformer/Borzoi/SpliceFormer/SpliceBERT, multiple GB) are still
+    # easy to find/clear independently of the smaller bootstrapped-
+    # dataset caches -- while still living *under* GEPER_CACHE_DIR by
+    # default (F2, report review round 4) so pointing GEPER_CACHE_DIR
+    # at persistent storage (e.g. a mounted Drive) carries plugin
+    # weights along with everything else, instead of leaving ~multi-GB
+    # downloads stranded in container-local storage every fresh
+    # session. An explicit GEPER_PLUGIN_CACHE_DIR always wins
+    # (unchanged); when NEITHER env var is set this stays the original
+    # "./plugin_model_cache" default, so a local user with no Drive
+    # sees no behavior change and already-downloaded weights there are
+    # still found.
+    PLUGIN_CACHE_DIR: str = os.environ.get(
+        "GEPER_PLUGIN_CACHE_DIR",
+        os.path.join(os.environ["GEPER_CACHE_DIR"], "plugin_model_cache")
+        if os.environ.get("GEPER_CACHE_DIR")
+        else "./plugin_model_cache",
+    )
 
 
 @dataclass(frozen=True)
@@ -2670,3 +2701,19 @@ _STANDARD_CODON_TABLE: Dict[str, str] = {
 }
 
 CONFIG = GeperConfig()
+
+# RNA-FM (models/rna_fm.py) caches its checkpoint under `torch.hub`'s
+# own directory (`torch.hub.get_dir()`), which PyTorch resolves from
+# the `TORCH_HOME` env var (falling back to `~/.cache/torch`) --
+# entirely independent of GEPER_CACHE_DIR, unlike every other
+# bootstrapped/model cache in this file. Setting `TORCH_HOME` here
+# (module import time, before anything can call `torch.hub.get_dir()`)
+# is the only way to redirect it, since RNA-FM never reads a
+# GEPER-specific config value for its cache location (F2, report
+# review round 4). Same guard as HYENADNA_CHECKPOINT_DIR/
+# PLUGIN_CACHE_DIR above: only takes effect when GEPER_CACHE_DIR is
+# explicitly set, and never overrides an explicit TORCH_HOME the
+# deployer already set for their own reasons -- a local user with
+# neither set keeps PyTorch's own default, unchanged.
+if os.environ.get("GEPER_CACHE_DIR") and not os.environ.get("TORCH_HOME"):
+    os.environ["TORCH_HOME"] = os.path.join(os.environ["GEPER_CACHE_DIR"], "torch")

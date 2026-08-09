@@ -188,10 +188,7 @@ class SpliceBERTPlugin(PluginModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_SPLICEBERT:
-            return (
-                "disabled via CONFIG.splicing.ENABLE_SPLICEBERT "
-                "(set GEPER_ENABLE_SPLICEBERT=true to enable)"
-            )
+            return "disabled via CONFIG.splicing.ENABLE_SPLICEBERT (set GEPER_ENABLE_SPLICEBERT=true to enable)"
         return "the 'transformers' package is not installed in this environment"
 
     def __init__(self):
@@ -212,16 +209,23 @@ class SpliceBERTPlugin(PluginModel):
 
         if not splicebert_loader.is_checkpoint_cached(cache_dir, checkpoint):
             try:
-                splicebert_loader.download_and_extract_checkpoint(
-                    cache_dir, checkpoint=checkpoint, record=record
-                )
+                splicebert_loader.download_and_extract_checkpoint(cache_dir, checkpoint=checkpoint, record=record)
             except _NETWORK_ERROR_TYPES as exc:
-                self.logger.debug(
-                    f"SpliceBERT archive fetch for checkpoint '{checkpoint}' "
-                    f"failed ({exc.__class__.__name__}): {exc}",
-                    exc_info=True,
+                message = (
+                    f"SpliceBERT model unavailable: archive fetch for checkpoint '{checkpoint}' "
+                    f"failed ({exc.__class__.__name__}): {exc}"
                 )
-                raise RuntimeError("SpliceBERT model unavailable") from exc
+                # Promoted from `logger.debug` to `logger.warning` (F1b,
+                # report review round 4): the underlying reason was
+                # previously only visible with debug logging enabled,
+                # so every real run only ever recorded the generic
+                # wrapper text below -- never the actual detail needed
+                # to diagnose it later. Also folded into the raised
+                # message itself so it reaches `ModelManager._failed`
+                # (and therefore the provenance/status reporting F1a
+                # wires up) without needing the log line at all.
+                self.logger.warning(message, exc_info=True)
+                raise RuntimeError(message) from exc
 
         checkpoint_dir = splicebert_loader.checkpoint_dir_for(cache_dir, checkpoint)
         try:
@@ -233,8 +237,34 @@ class SpliceBERTPlugin(PluginModel):
             # load that times out demotes this model to unavailable
             # for the rest of the run instead of propagating a raw
             # timeout message.
-            self.logger.debug(f"SpliceBERT checkpoint load for '{checkpoint}' timed out: {exc}", exc_info=True)
-            raise RuntimeError("SpliceBERT model unavailable") from exc
+            #
+            # Root cause of *why* it times out at all is unconfirmed as
+            # of this pass (F1b, report review round 4): the checkpoint
+            # is a standard, unmodified `BertForMaskedLM` (see
+            # `build_model_and_tokenizer`'s docstring), so this is not
+            # a config/architecture mismatch in the checkpoint itself.
+            # The two most recent verified runs preceded this failure
+            # with transformers' "You are using a model of type 'bert'
+            # to instantiate a model of type ''" warning under
+            # transformers 5.13.1 (this repo's fix for the ORIGINAL
+            # hang, `_force_transformers_to_prefer_torch_over_tf`, was
+            # verified only against the previously-pinned 4.56.2) --
+            # plausibly a second, distinct transformers-v5 auto-mapping
+            # resolution issue triggered by the same import-order
+            # precondition as the original bug (`pipeline/models/esm2.py`
+            # importing `transformers` first), but this was not
+            # reproduced or fixed in this pass since doing so needs a
+            # real load attempt, which this pass's environment cannot
+            # provide (no GPU, no fresh download). Message and
+            # exc_info promoted to `warning` so the next live run
+            # captures the detail needed to actually diagnose it,
+            # instead of only "SpliceBERT model unavailable".
+            message = (
+                f"SpliceBERT model unavailable: checkpoint load for '{checkpoint}' timed out "
+                f"after {CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS:.0f}s ({exc})"
+            )
+            self.logger.warning(message, exc_info=True)
+            raise RuntimeError(message) from exc
 
         model.to(self.device)
         model.eval()

@@ -23,7 +23,7 @@ import os
 import unittest
 
 from pipeline.acmg_rules import ACMGRuleEngine
-from pipeline.pvs1.decision_tree import PVS1DecisionTree, PVS1Input
+from pipeline.pvs1.decision_tree import PVS1DecisionTree
 from pipeline.pvs1.models import (
     LOF_ESTABLISHED,
     LOF_ESTABLISHED_RECESSIVE,
@@ -59,6 +59,7 @@ with open(_FIXTURE, "r", encoding="utf-8") as _fh:
 # Fixture builders -- each returns the exact dict shape the corresponding
 # GEPER provider stage returns, so the tests exercise the real adapters.
 # ---------------------------------------------------------------------------
+
 
 def transcript_result(gene: str):
     """The dict shape `pipeline/pvs1/lookup.py::TranscriptLookup` returns."""
@@ -141,6 +142,7 @@ def evaluate(gene, variant_dict, protein=None, gnomad=None, interpro=None, cling
 # Coordinate mapping -- the arithmetic every caveat below depends on
 # ---------------------------------------------------------------------------
 
+
 class TestTranscriptCoordinateMapping(unittest.TestCase):
     """
     Validates the genomic -> CDS mapping against the `c.` positions real
@@ -199,6 +201,7 @@ class TestTranscriptCoordinateMapping(unittest.TestCase):
 # The known-variant set
 # ---------------------------------------------------------------------------
 
+
 class TestKnownClinVarVariants(unittest.TestCase):
     """One test per real ClinVar variant, with the expected PVS1 outcome."""
 
@@ -212,8 +215,12 @@ class TestKnownClinVarVariants(unittest.TestCase):
         in a gene ClinGen curates as haploinsufficient (score 3).
         Expect PVS1 at full Very Strong strength, SVI leaf NF1.
         """
-        result = evaluate("BRCA1", variant("17", 43093844, "G", "A"),
-                          protein=nonsense_protein_result(), gnomad=gnomad_result(9.58e-06))
+        result = evaluate(
+            "BRCA1",
+            variant("17", 43093844, "G", "A"),
+            protein=nonsense_protein_result(),
+            gnomad=gnomad_result(9.58e-06),
+        )
         self.assertTrue(result.applies)
         self.assertEqual(result.strength, STRENGTH_VERY_STRONG)
         self.assertEqual(result.criterion_code, "NF1")
@@ -275,8 +282,12 @@ class TestKnownClinVarVariants(unittest.TestCase):
         too common to carry PVS1-strength evidence. Expect PVS1 withheld
         entirely.
         """
-        result = evaluate("BRCA2", variant("13", 32398489, "A", "T"),
-                          protein=nonsense_protein_result(), gnomad=gnomad_result(0.008115))
+        result = evaluate(
+            "BRCA2",
+            variant("13", 32398489, "A", "T"),
+            protein=nonsense_protein_result(),
+            gnomad=gnomad_result(0.008115),
+        )
         self.assertFalse(result.applies)
         self.assertEqual(result.strength, STRENGTH_NOT_APPLICABLE)
         self.assertEqual(result.criterion_code, "FREQ")
@@ -389,8 +400,8 @@ class TestKnownClinVarVariants(unittest.TestCase):
 # Individual decision-tree caveats
 # ---------------------------------------------------------------------------
 
-class TestDecisionTreeCaveats(unittest.TestCase):
 
+class TestDecisionTreeCaveats(unittest.TestCase):
     def test_nmd_escaping_truncation_in_a_critical_region_is_strong_not_moderate(self):
         """
         NM_007294.4(BRCA1):c.5467+1G>A, chr17:43047642 C>T (ClinVar:
@@ -404,7 +415,8 @@ class TestDecisionTreeCaveats(unittest.TestCase):
         a terminal-exon splice variant.
         """
         interpro = {
-            "skipped": False, "found": True,
+            "skipped": False,
+            "found": True,
             "domains": [
                 {"start": 1646, "end": 1736, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
                 {"start": 1760, "end": 1855, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
@@ -435,6 +447,72 @@ class TestDecisionTreeCaveats(unittest.TestCase):
         self.assertFalse(info["nmd_predicted"])
         self.assertLess(info["cutoff_cds"], t.nmd_cutoff_cds())
 
+    def test_in_frame_exon_skip_critical_region_is_bounded_to_the_skipped_exon(self):
+        """
+        NM_007294.4(BRCA1):c.135-2A>T-equivalent, chr17:43106534 C>A --
+        the canonical acceptor +1 of exon 4 (ClinVar: Pathogenic,
+        reviewed by expert panel). Skipping exon 4 in-frame removes only
+        codons 45-71 (report review round 3, D3): the SVI "in-frame
+        deleted region critical to protein function?" node must be
+        answered against THAT range, not against codons 45-(end of
+        protein), which is what the pre-fix code did.
+
+        Two real BRCA1 domain layouts distinguish "the fix changed the
+        answer" from "the fix changed the mechanism but the real answer
+        is unchanged":
+
+        1. BRCA1's real N-terminal RING domain (UniProt P38398, "Zinc
+           finger, RING-type", aa 24-64) genuinely overlaps codons
+           45-71 -- so with BRCA1's real domain annotation, PVS1_Strong
+           (SS10) is still correct after the fix, matching the live,
+           InterPro-backed Colab run (GEPER-RUN-20260809T06513) exactly:
+           no classification downgrade occurred. A prior version of
+           this verification asserted "no overlap" using ONLY a distal
+           domain (BRCT, aa ~1650-1855) and never checked against
+           BRCA1's real N-terminal annotation -- that assertion was an
+           artifact of an incomplete fixture, not of the fix itself.
+        2. With only the distal BRCT domains supplied (a synthetic,
+           not-biologically-complete domain set, kept here specifically
+           to isolate the bug this fix addresses), codons 45-71 do NOT
+           overlap 1646-1855 -- proving the fix actually stopped the
+           range from being silently extended to the end of the
+           protein (that synthetic case would have wrongly matched
+           BRCT under the pre-fix code, which always used
+           `transcript.total_codons` as the range's end).
+        """
+        v = variant("17", 43106534, "C", "A")
+        interpro_real = {
+            "skipped": False,
+            "found": True,
+            "domains": [
+                {
+                    "start": 24,
+                    "end": 64,
+                    "type": "domain",
+                    "name": "Zinc finger, RING-type",
+                    "member_accession": "PF00097",
+                },
+                {"start": 1646, "end": 1736, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
+                {"start": 1760, "end": 1855, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
+            ],
+        }
+        interpro_distal_only = {
+            "skipped": False,
+            "found": True,
+            "domains": [
+                {"start": 1646, "end": 1736, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
+                {"start": 1760, "end": 1855, "type": "domain", "name": "BRCT domain", "member_accession": "PF00533"},
+            ],
+        }
+
+        with_ring = evaluate("BRCA1", v, interpro=interpro_real)
+        self.assertEqual(with_ring.strength, STRENGTH_STRONG)
+        self.assertEqual(with_ring.criterion_code, "SS10")
+
+        distal_only = evaluate("BRCA1", v, interpro=interpro_distal_only)
+        self.assertEqual(distal_only.strength, STRENGTH_MODERATE)
+        self.assertEqual(distal_only.criterion_code, "SS9")
+
     def test_exon_absent_from_the_biologically_relevant_transcript_blocks_pvs1(self):
         """The alternative-isoform caveat: an exon spliced out of the disease-relevant transcript disqualifies PVS1."""
         inp = build_pvs1_input(
@@ -451,11 +529,18 @@ class TestDecisionTreeCaveats(unittest.TestCase):
     def test_single_coding_exon_transcript_always_escapes_nmd(self):
         """NMD needs a downstream exon-exon junction; a single-coding-exon gene has none."""
         t = transcript("BRCA1")
-        single = transcript_context_from_dict({
-            "transcript_id": "SINGLE", "gene_symbol": "TEST", "chrom": t.chrom, "strand": 1,
-            "cds_genomic_start": 1000, "cds_genomic_end": 1999, "protein_length": 333,
-            "exons": [{"start": 1000, "end": 1999}],
-        })
+        single = transcript_context_from_dict(
+            {
+                "transcript_id": "SINGLE",
+                "gene_symbol": "TEST",
+                "chrom": t.chrom,
+                "strand": 1,
+                "cds_genomic_start": 1000,
+                "cds_genomic_end": 1999,
+                "protein_length": 333,
+                "exons": [{"start": 1000, "end": 1999}],
+            }
+        )
         self.assertIsNone(single.nmd_cutoff_cds())
         self.assertFalse(single.is_nmd_predicted(10))
 
@@ -465,20 +550,26 @@ class TestDecisionTreeCaveats(unittest.TestCase):
         self.assertEqual(mechanism, LOF_UNKNOWN)
         self.assertEqual(evidence, [])
 
-        result = evaluate("BRCA1", variant("17", 43093844, "G", "A"),
-                          protein=nonsense_protein_result(), clingen={"skipped": True, "found": False})
+        result = evaluate(
+            "BRCA1",
+            variant("17", 43093844, "G", "A"),
+            protein=nonsense_protein_result(),
+            clingen={"skipped": True, "found": False},
+        )
         self.assertFalse(result.applies)
         self.assertEqual(result.lof_mechanism, LOF_UNKNOWN)
         self.assertEqual(result.provisional_strength, STRENGTH_VERY_STRONG)
 
     def test_missing_transcript_structure_withholds_pvs1_rather_than_assuming_full_strength(self):
         """Without transcript structure the last-exon caveat cannot be checked, so PVS1 is not applied."""
-        result = PVS1DecisionTree().evaluate(build_pvs1_input(
-            variant_dict=variant("17", 43093844, "G", "A"),
-            protein_result=nonsense_protein_result(),
-            clingen_result=clingen_result("BRCA1"),
-            transcript_result={"skipped": False, "found": False},
-        ))
+        result = PVS1DecisionTree().evaluate(
+            build_pvs1_input(
+                variant_dict=variant("17", 43093844, "G", "A"),
+                protein_result=nonsense_protein_result(),
+                clingen_result=clingen_result("BRCA1"),
+                transcript_result={"skipped": False, "found": False},
+            )
+        )
         self.assertFalse(result.applies)
         self.assertTrue(any("transcript structure unavailable" in c for c in result.unchecked_caveats))
 
@@ -487,8 +578,9 @@ class TestDecisionTreeCaveats(unittest.TestCase):
         refuted = clingen_result("BRCA1")
         refuted["dosage_sensitivity"]["haploinsufficiency_score"] = 40
         refuted["dosage_sensitivity"]["haploinsufficiency_label"] = "Dosage sensitivity unlikely"
-        result = evaluate("BRCA1", variant("17", 43093844, "G", "A"),
-                          protein=nonsense_protein_result(), clingen=refuted)
+        result = evaluate(
+            "BRCA1", variant("17", 43093844, "G", "A"), protein=nonsense_protein_result(), clingen=refuted
+        )
         self.assertFalse(result.applies)
         self.assertIn("dosage sensitivity unlikely", result.rationale.lower())
 
@@ -500,9 +592,7 @@ class TestDecisionTreeCaveats(unittest.TestCase):
         self.assertIn("Role of region in disease", joined)
 
     def test_in_frame_indel_is_not_a_null_variant(self):
-        null_type, _ = classify_null_variant(
-            variant("13", 32398607, "C", "CGAATTA"), None, transcript("BRCA2")
-        )
+        null_type, _ = classify_null_variant(variant("13", 32398607, "C", "CGAATTA"), None, transcript("BRCA2"))
         self.assertIsNone(null_type)
 
 
@@ -510,8 +600,8 @@ class TestDecisionTreeCaveats(unittest.TestCase):
 # Wiring into the ACMG rule engine
 # ---------------------------------------------------------------------------
 
-class TestRuleEngineIntegration(unittest.TestCase):
 
+class TestRuleEngineIntegration(unittest.TestCase):
     def test_engine_reports_pvs1_triggered_at_very_strong(self):
         result = ACMGRuleEngine().evaluate(
             variant_dict=variant("17", 43093844, "G", "A"),
@@ -523,8 +613,9 @@ class TestRuleEngineIntegration(unittest.TestCase):
         self.assertEqual(pvs1["status"], "triggered")
         self.assertEqual(pvs1["strength"], "very_strong")
         self.assertEqual(pvs1["details"]["criterion_code"], "NF1")
-        self.assertIn("PVS1 triggered (very_strong, pathogenic) contributes 8 point(s).",
-                      result["combining_rule_trace"])
+        self.assertIn(
+            "PVS1 triggered (very_strong, pathogenic) contributes 8 point(s).", result["combining_rule_trace"]
+        )
 
     def test_downgraded_pvs1_contributes_fewer_points_to_the_combining_rules(self):
         result = ACMGRuleEngine().evaluate(
@@ -535,8 +626,7 @@ class TestRuleEngineIntegration(unittest.TestCase):
         pvs1 = result["all_criteria"]["PVS1"]
         self.assertEqual(pvs1["status"], "triggered")
         self.assertEqual(pvs1["strength"], "moderate")
-        self.assertIn("PVS1 triggered (moderate, pathogenic) contributes 2 point(s).",
-                      result["combining_rule_trace"])
+        self.assertIn("PVS1 triggered (moderate, pathogenic) contributes 2 point(s).", result["combining_rule_trace"])
 
     def test_uncurated_gene_is_not_evaluated_rather_than_not_triggered(self):
         result = ACMGRuleEngine().evaluate(
@@ -628,26 +718,32 @@ class TestCriticalRegionEvidenceQuality(unittest.TestCase):
         return {"skipped": False, "found": True, "domains": domains}
 
     def test_whole_protein_family_entries_do_not_make_a_region_critical(self):
-        interpro = self._interpro([
-            {"start": 1, "end": 3418, "type": "family", "name": "Breast cancer type 2 susceptibility protein"},
-            {"start": 1, "end": 3418, "type": "family", "name": "DNA recombination repair protein, BRCA2 type"},
-        ])
+        interpro = self._interpro(
+            [
+                {"start": 1, "end": 3418, "type": "family", "name": "Breast cancer type 2 susceptibility protein"},
+                {"start": 1, "end": 3418, "type": "family", "name": "DNA recombination repair protein, BRCA2 type"},
+            ]
+        )
         result = evaluate("BRCA2", variant("13", 32398607, "C", "CGAATTATATC"), interpro=interpro)
         self.assertEqual(result.strength, STRENGTH_MODERATE)
         self.assertEqual(result.criterion_code, "NF6")
 
     def test_a_localised_domain_in_the_truncated_region_still_counts(self):
-        interpro = self._interpro([
-            {"start": 3380, "end": 3410, "type": "domain", "name": "BRCA2, oligonucleotide-binding domain"},
-        ])
+        interpro = self._interpro(
+            [
+                {"start": 3380, "end": 3410, "type": "domain", "name": "BRCA2, oligonucleotide-binding domain"},
+            ]
+        )
         result = evaluate("BRCA2", variant("13", 32398607, "C", "CGAATTATATC"), interpro=interpro)
         self.assertEqual(result.strength, STRENGTH_STRONG)
         self.assertEqual(result.criterion_code, "NF3")
 
     def test_a_domain_outside_the_truncated_region_does_not_count(self):
-        interpro = self._interpro([
-            {"start": 100, "end": 200, "type": "domain", "name": "an N-terminal domain"},
-        ])
+        interpro = self._interpro(
+            [
+                {"start": 100, "end": 200, "type": "domain", "name": "an N-terminal domain"},
+            ]
+        )
         result = evaluate("BRCA2", variant("13", 32398607, "C", "CGAATTATATC"), interpro=interpro)
         self.assertEqual(result.strength, STRENGTH_MODERATE)
 
@@ -671,8 +767,11 @@ class TestTranscriptLookupCaching(unittest.TestCase):
         def fake_fetch(gene_symbol, build):
             calls.append(gene_symbol)
             return {
-                "skipped": False, "found": True, "gene_symbol": gene_symbol,
-                "source": "ensembl_api", "transcript": dict(_TRANSCRIPTS[gene_symbol]),
+                "skipped": False,
+                "found": True,
+                "gene_symbol": gene_symbol,
+                "source": "ensembl_api",
+                "transcript": dict(_TRANSCRIPTS[gene_symbol]),
             }
 
         lookup._fetch = fake_fetch

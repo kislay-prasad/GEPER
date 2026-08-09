@@ -430,6 +430,17 @@ KNOWN_SOURCES = (
     "BLAST",
     "AlphaMissense catalogue",
     "Ensembl",
+    # Distinct from plain "Ensembl" above (that entry is the REST API's
+    # own `/info/data` release number, e.g. "Ensembl release 116",
+    # captured once per run by `capture_ensembl_release`) -- this is the
+    # separately bootstrapped/cached local GTF+CDS gene/transcript
+    # dataset file `pipeline/ensembl/bootstrap.py` downloads, with its
+    # own hash/timestamp sidecar. Previously not registered here at all,
+    # so `RunProvenanceCollector.record` silently dropped every capture
+    # for it with an "unrecognized source" warning nobody acted on --
+    # exactly the missing-vs-empty pattern D1 fixed, just for a source
+    # name instead of a status (report review round 4).
+    "Ensembl (GTF+CDS gene/transcript cache)",
     "Conservation (PhyloP/PhastCons, UCSC)",
     "Conservation (GERP++, MyVariant.info)",
     "Functional evidence (ClinGen ERepo)",

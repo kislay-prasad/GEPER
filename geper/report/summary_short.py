@@ -422,7 +422,17 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
                 Paragraph(_confidence_text(clinical), val),
             ]
         ],
-        colWidths=[13 * mm, 25 * mm, 24 * mm, 40 * mm, 22 * mm, 41 * mm],
+        # The "Completeness" label column was sized for "Confidence"
+        # (C2, report review round 2 renamed it) and, at 8pt
+        # Helvetica-Bold, "Completeness" measures ~19.3mm -- wider than
+        # "Classification" despite fewer characters (bold "C"/"m"/"l"
+        # are wide glyphs) -- so the old 22mm column left under 3mm of
+        # padding room and wrapped ("Completenes / s"). D5 fixed the
+        # full report's equivalent column; this is the short report's
+        # (report review round 4, E4). Widened to 25mm, taken from the
+        # adjacent value column (41mm -> 38mm) so the row's total width
+        # is unchanged.
+        colWidths=[13 * mm, 25 * mm, 24 * mm, 40 * mm, 25 * mm, 38 * mm],
         hAlign="LEFT",
     )
     strip.setStyle(

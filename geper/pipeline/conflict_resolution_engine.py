@@ -38,6 +38,19 @@ _SEVERITY_WEIGHT_KEY = {
 # ClinVar's own two highest-confidence review tiers (3- and 4-star
 # review status, verbatim ClinVar API text, lowercased for comparison).
 _AUTHORITATIVE_CLINVAR_REVIEW_STATUS = ("reviewed by expert panel", "practice guideline")
+# The next tier down (1- and 2-star): a genuine, curated ClinVar
+# assertion still exists, just not at expert-panel/practice-guideline
+# confidence. Deliberately excludes "criteria provided, conflicting
+# classifications" -- ClinVar's own submitters disagree with each
+# other there, so GEPER disagreeing with a single (arbitrarily chosen)
+# record from an already-split entry is much weaker evidence than
+# disagreeing with a record multiple submitters agree on -- and
+# excludes the 0-star tiers ("no assertion provided"/"no assertion
+# criteria provided") entirely, which carry no curation weight at all.
+_CURATED_CLINVAR_REVIEW_STATUS = (
+    "criteria provided, single submitter",
+    "criteria provided, multiple submitters, no conflicts",
+)
 _PATHOGENIC_LEANING_CLASSIFICATIONS = ("pathogenic", "likely pathogenic")
 _BENIGN_LEANING_CLASSIFICATIONS = ("benign", "likely benign")
 
@@ -144,6 +157,9 @@ class ConflictResolutionEngine:
         conflicts: List[ConflictItem] = []
 
         c = self._expert_panel_disagreement_conflict(acmg_classification, clinvar_result)
+        if c:
+            conflicts.append(c)
+        c = self._curated_clinvar_disagreement_conflict(acmg_classification, clinvar_result)
         if c:
             conflicts.append(c)
         conflicts.extend(self._acmg_criterion_conflicts(acmg_conflicting_evidence))
@@ -273,15 +289,7 @@ class ConflictResolutionEngine:
         if review_status not in _AUTHORITATIVE_CLINVAR_REVIEW_STATUS:
             return None
 
-        clinvar_sig = (top.get("clinical_significance") or "").strip().lower()
-        geper_sig = acmg_classification.strip().lower()
-        clinvar_pathogenic = any(s in clinvar_sig for s in _PATHOGENIC_LEANING_CLASSIFICATIONS)
-        clinvar_benign = any(s in clinvar_sig for s in _BENIGN_LEANING_CLASSIFICATIONS)
-        geper_pathogenic = geper_sig in _PATHOGENIC_LEANING_CLASSIFICATIONS
-        geper_benign = geper_sig in _BENIGN_LEANING_CLASSIFICATIONS
-
-        disagrees = (clinvar_pathogenic and not geper_pathogenic) or (clinvar_benign and not geper_benign)
-        if not disagrees:
+        if not ConflictResolutionEngine._clinvar_disagrees(acmg_classification, top):
             return None
 
         return ConflictItem(
@@ -307,6 +315,81 @@ class ConflictResolutionEngine:
                 "guideline-level curation rather than a single lab's assertion -- disagreement with one of "
                 "these is materially more serious than disagreement with an unreviewed or single-submitter "
                 "record, which is why this is GEPER's highest-severity reviewer flag."
+            ),
+            confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty.",
+            priority_impact="Not currently counted in the prioritization engine's numeric conflict penalty.",
+        )
+
+    @staticmethod
+    def _clinvar_disagrees(acmg_classification: str, primary_record: Dict[str, Any]) -> bool:
+        """Shared pathogenic/benign-direction disagreement check used by
+        every ClinVar-vs-GEPER detector at every review-status tier."""
+        clinvar_sig = (primary_record.get("clinical_significance") or "").strip().lower()
+        geper_sig = acmg_classification.strip().lower()
+        clinvar_pathogenic = any(s in clinvar_sig for s in _PATHOGENIC_LEANING_CLASSIFICATIONS)
+        clinvar_benign = any(s in clinvar_sig for s in _BENIGN_LEANING_CLASSIFICATIONS)
+        geper_pathogenic = geper_sig in _PATHOGENIC_LEANING_CLASSIFICATIONS
+        geper_benign = geper_sig in _BENIGN_LEANING_CLASSIFICATIONS
+        return (clinvar_pathogenic and not geper_pathogenic) or (clinvar_benign and not geper_benign)
+
+    @staticmethod
+    def _curated_clinvar_disagreement_conflict(acmg_classification, clinvar_result) -> Optional[ConflictItem]:
+        """
+        Moderate-tier counterpart to `_expert_panel_disagreement_conflict`
+        (report review round 4, E3): a matched ClinVar record still
+        reflects a genuine, curated classification (1- or 2-star --
+        "criteria provided, single submitter" or "criteria provided,
+        multiple submitters, no conflicts"), just not at expert-panel/
+        practice-guideline confidence, so A3's tier design correctly
+        keeps it below Critical -- but before this detector existed,
+        this exact disagreement had NO dedicated signal at all. Its
+        prior "Moderate" severity (pre-D4) was an accident of how many
+        unrelated ACMG-criterion caveats happened to also be present on
+        the finding, which D4 correctly stopped counting -- leaving a
+        real classification disagreement under-represented rather than
+        removing a false positive. This detector gives it an explicit,
+        caveat-count-independent floor instead.
+        """
+        if not (
+            clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
+        ):
+            return None
+        if not acmg_classification:
+            return None
+
+        top = clinvar_result["primary_record"]
+        review_status = (top.get("review_status") or "").strip().lower()
+        if review_status not in _CURATED_CLINVAR_REVIEW_STATUS:
+            return None
+
+        if not ConflictResolutionEngine._clinvar_disagrees(acmg_classification, top):
+            return None
+
+        return ConflictItem(
+            conflict_type="GEPER classification disagrees with a curated (non-expert-panel) ClinVar classification",
+            category="Clinical",
+            evidence_a={
+                "source": "ClinVar",
+                "statement": f"'{top.get('clinical_significance')}' (review status: {top.get('review_status')}).",
+            },
+            evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: '{acmg_classification}'."},
+            severity="Moderate",
+            resolution=(
+                "This variant's GEPER classification should be manually reviewed before clinical use. GEPER's "
+                "ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input, so "
+                "this disagreement did not automatically change the classification above -- but ClinVar's "
+                "record here still reflects independently curated submitter assertions, not an unreviewed "
+                "single claim, so the disagreement is worth a reviewer's attention even though it does not "
+                "meet the expert-panel/practice-guideline bar for GEPER's highest-severity flag."
+            ),
+            resolution_rationale=(
+                "1- and 2-star ClinVar records ('criteria provided, single submitter' / 'criteria provided, "
+                "multiple submitters, no conflicts') apply documented ACMG-style criteria, unlike the 0-star "
+                "tiers ('no assertion provided'/'no assertion criteria provided'), and -- for the 2-star case "
+                "in particular -- multiple submitters agree, unlike 'criteria provided, conflicting "
+                "classifications' where ClinVar's own submitters are already split. A disagreement against "
+                "this tier is real evidence worth a floor of its own, independent of how many (if any) "
+                "ACMG-criterion caveats this specific finding happens to also carry."
             ),
             confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty.",
             priority_impact="Not currently counted in the prioritization engine's numeric conflict penalty.",
@@ -440,10 +523,32 @@ class ConflictResolutionEngine:
 
     @staticmethod
     def _structural_conflict(alphafold_result, ai_consensus) -> Optional[ConflictItem]:
+        """
+        Only fires against a genuine residue-specific confidence value
+        (`affected_residue_band`) -- NOT a fallback to `mean_plddt_band`
+        (report review round 4, E2). `mean_plddt_band` is the WHOLE
+        protein's average confidence, computed independently of any
+        variant; it is only present in `alphafold_result` at all because
+        `pipeline/alphafold/lookup.py::AlphaFoldLookup.query_variant`
+        falls back to the accession-level (position-independent) lookup
+        whenever `canonical_protein_position` returned None -- which it
+        always does for a splice-site/intronic variant, since there is
+        no coding position to map (see that function's own docstring).
+        For a large, mostly-disordered protein like BRCA1 (folded only
+        in a few domains such as RING/BRCT), the whole-protein average
+        is "low" almost by construction, regardless of whether the
+        actually-affected position is itself disordered -- so treating
+        it as "confidence at the affected residue" fabricated a claim
+        about a position AlphaFold was never actually asked about, and
+        spuriously conflicted with a splicing predictor's "damaging"
+        call that has nothing to do with protein structure in the first
+        place. Missing residue-specific confidence is an honest "not
+        applicable" here, not evidence of low confidence.
+        """
         cfg = CONFIG.conflict
         if not (alphafold_result and alphafold_result.get("found")):
             return None
-        band = (alphafold_result.get("affected_residue_band") or alphafold_result.get("mean_plddt_band") or "").lower()
+        band = (alphafold_result.get("affected_residue_band") or "").lower()
         if band not in cfg.LOW_STRUCTURAL_CONFIDENCE_BANDS:
             return None
         directions = _ai_directions(ai_consensus)
@@ -521,10 +626,31 @@ class ConflictResolutionEngine:
         if any(c.severity == "Critical" for c in real_conflicts):
             return "Critical"
         if score >= cfg.MAJOR_THRESHOLD:
-            return "Major"
-        if score >= cfg.MODERATE_THRESHOLD:
-            return "Moderate"
-        return "Minor"
+            score_tier = "Major"
+        elif score >= cfg.MODERATE_THRESHOLD:
+            score_tier = "Moderate"
+        else:
+            score_tier = "Minor"
+        # A genuine single-item disagreement (e.g. a matched-but-not-
+        # expert-panel ClinVar record, `_curated_clinvar_disagreement_
+        # conflict`) is never diluted below its own labeled severity by
+        # the weighted-score threshold math above (report review round
+        # 4, E3): that math is tuned for "how many/how severe conflicts
+        # accumulated", which correctly needs several items to cross
+        # into "Moderate"/"Major" -- but a lone item that is ITSELF
+        # tagged Moderate or Major is a real, specific disagreement a
+        # reviewer should see at that severity regardless of how many
+        # (or how few) other, unrelated conflicts this finding also
+        # carries. The floor is the highest individual severity present;
+        # the score-threshold tier can only raise it further, never
+        # lower it.
+        severity_rank = {"Minor": 0, "Moderate": 1, "Major": 2}
+        highest_item_tier = max(
+            (c.severity for c in real_conflicts if c.severity in severity_rank),
+            key=lambda s: severity_rank[s],
+            default="Minor",
+        )
+        return max(score_tier, highest_item_tier, key=lambda s: severity_rank[s])
 
     @staticmethod
     def _summary(real_conflicts: List[ConflictItem], severity: str) -> str:

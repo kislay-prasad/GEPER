@@ -37,8 +37,6 @@ docker run --rm -it \
   -e GEPER_NCBI_API_KEY=your_key_here \
   -v "$(pwd)/data:/data" \
   -v geper_model_cache:/app/geper/model_cache \
-  -v geper_checkpoints:/app/geper/checkpoints \
-  -v geper_plugin_model_cache:/app/geper/plugin_model_cache \
   -v geper_hf_cache:/root/.cache/huggingface \
   geper:latest \
   python geper/main.py --vcf /data/sample.vcf --output-dir /data/out
@@ -162,7 +160,7 @@ declares support for.**
 | `enformer-pytorch`, `borzoi-pytorch`, `mmsplice` (pip packages) | ✅ pre-installed in the image | Default-enabled plugins; see the transformers writeup above for why this needed care |
 | HyenaDNA **source** (`geper/hyena-dna/`) | ✅ pre-cloned, in the image | Code only, ~50MB, not weights |
 | `git`, `git-lfs`, `r-base-core` | ✅ apt, in the image | Genuine runtime deps (HyenaDNA checkpoint download is a real `git lfs clone`; SPiP shells out to `Rscript`) — found by grepping every `subprocess` call across `pipeline/models/`, `models/`, `database/`, not assumed |
-| HyenaDNA/Enformer/Borzoi/SpliceBERT/SpliceFormer/SPiP **weights** (`geper/checkpoints/`, `geper/plugin_model_cache/`) | ❌ volume, downloaded on first real use | Multi-GB (~3.1GB for `plugin_model_cache` alone, confirmed against a real local checkout); baking this in would multiply the image size for zero benefit over a persistent volume — see below |
+| HyenaDNA/Enformer/Borzoi/SpliceBERT/SpliceFormer/SPiP **weights** (`geper/model_cache/hyenadna/`, `geper/model_cache/plugin_model_cache/` -- consolidated under `GEPER_CACHE_DIR`, G2 report review round 5) | ❌ volume, downloaded on first real use | Multi-GB (~3.1GB for the plugin weights alone, confirmed against a real local checkout); baking this in would multiply the image size for zero benefit over a persistent volume — see below |
 | SPiP's 3 CRAN packages (`foreach`/`doParallel`/`randomForest`) | ❌ still auto-installs via `install.packages()` on first SPiP use | Would need R's own compiler toolchain in the image for `randomForest`'s compiled code; SPiP degrades gracefully without it, so this was judged not worth the extra image weight — revisit if SPiP becomes load-bearing |
 | AlphaMissense's full catalogue (multi-GB, GCS-hosted) | ❌ downloaded on first use, or point `GEPER_ALPHAMISSENSE_HG38_LOCAL`/`_HG19_LOCAL` at a pre-downloaded file | Multi-GB, same reasoning as the weight caches above |
 | Evo 2 | ❌ not installed at all | GPU-only, no practical CPU path (`models/evo2.py`'s own docstring) — needs a CUDA-matched `torch`/`flash-attn` build this general-purpose image doesn't attempt; a separate CUDA-base variant would be needed if Evo 2 support is wanted in a container |
@@ -217,8 +215,6 @@ docker run --rm -it \
   -e GEPER_NCBI_EMAIL=you@example.com -e GEPER_NCBI_API_KEY=your_key \
   -v "$(pwd)/data:/data" \
   -v geper_model_cache:/app/geper/model_cache \
-  -v geper_checkpoints:/app/geper/checkpoints \
-  -v geper_plugin_model_cache:/app/geper/plugin_model_cache \
   -v geper_hf_cache:/root/.cache/huggingface \
   geper:latest \
   python geper/main.py --vcf /data/sample.vcf --output-dir /data/out
@@ -242,8 +238,6 @@ docker run --rm -it \
   -e GEPER_NCBI_EMAIL=you@example.com -e GEPER_NCBI_API_KEY=your_key \
   -v "$(pwd)/data:/data" \
   -v geper_model_cache:/app/geper/model_cache \
-  -v geper_checkpoints:/app/geper/checkpoints \
-  -v geper_plugin_model_cache:/app/geper/plugin_model_cache \
   -v geper_hf_cache:/root/.cache/huggingface \
   geper:latest \
   python bridge/run_combined.py \
@@ -306,9 +300,15 @@ GEPER_NCBI_API_KEY=your_key_here
   own default output directory) for the case where you don't pass
   `--output-dir` explicitly.
 - **Model weight caches**: named Docker volumes (`geper_model_cache`,
-  `geper_checkpoints`, `geper_plugin_model_cache`, `geper_hf_cache`) —
-  persist across `docker compose down`/container recreation; deleted
-  only by `docker volume rm` or `docker compose down -v`.
+  `geper_hf_cache`) — persist across `docker compose down`/container
+  recreation; deleted only by `docker volume rm` or `docker compose
+  down -v`. `geper_model_cache` alone covers the bootstrap datasets,
+  HyenaDNA's checkpoint, the plugin weight cache, and RNA-FM's torch
+  cache (consolidated under `GEPER_CACHE_DIR`, set in the Dockerfile --
+  see its own comment on that `ENV` line; G2, report review round 5).
+  Previously three separate volumes (`geper_model_cache`,
+  `geper_checkpoints`, `geper_plugin_model_cache`) that had to be kept
+  in sync by hand across every `docker run`/compose invocation.
 
 ---
 

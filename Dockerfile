@@ -461,33 +461,58 @@ ENV PYTHONUNBUFFERED=1
 # startup warning). Pass them at `docker run -e ...` / via
 # docker-compose.yml's `environment:`/`env_file:` -- see DOCKER.md.
 
+# GEPER_CACHE_DIR (G2, report review round 5): explicitly set here so
+# every cache that `geper/config.py` roots under it when it's set --
+# HyenaDNA's checkpoint dir, the plugin weight cache (Enformer/Borzoi/
+# SpliceBERT/SpliceFormer/SPiP), and RNA-FM's TORCH_HOME -- actually
+# does, inside this container. Consolidates what used to be three
+# separate named volumes (geper_model_cache/geper_checkpoints/
+# geper_plugin_model_cache) into subdirectories of this one path, so
+# there is exactly one volume to mount for "persist every model/dataset
+# cache across container runs" instead of three that had to be kept in
+# sync by hand. Unset, every one of those would silently fall back to
+# its own pre-consolidation container-local default path and re-download
+# on every fresh container -- this ENV line is what activates the
+# fallback logic those config fields already have (see config.py's own
+# comments on HYENADNA_CHECKPOINT_DIR/PLUGIN_CACHE_DIR for the exact
+# rule: an explicit GEPER_HYENADNA_CKPT_DIR/GEPER_PLUGIN_CACHE_DIR/
+# TORCH_HOME still always wins over this).
+ENV GEPER_CACHE_DIR=/app/geper/model_cache
+
 # All of these are auto-created by GEPER's own bootstrap/download logic
 # on first use and are declared as volumes rather than baked into the
 # image -- see "Model weights" in DOCKER.md for the full reasoning
 # (multi-GB, re-fetchable, and baking them in would make this image
 # multiple times larger for zero benefit over a persistent volume) and
 # docker-compose.yml for the concrete named-volume wiring:
-#   geper/model_cache          -- ClinGen/HPO/Orphanet/AlphaMissense
-#                                  bootstrap datasets + BLAST/gnomAD/etc.
-#                                  disk caches (small-to-modest; the
-#                                  AlphaMissense catalogue itself, if
-#                                  downloaded wholesale, is the one
-#                                  multi-GB exception living under here)
-#   geper/checkpoints           -- HyenaDNA pretrained checkpoint
-#   geper/plugin_model_cache    -- Enformer/Borzoi/SpliceBERT/SpliceFormer/
-#                                  SPiP weights (~3.1GB combined, verified
-#                                  against this session's own local
-#                                  checkout)
+#   geper/model_cache          -- ONE consolidated cache root (F2 +
+#                                  G2, report review rounds 4-5):
+#                                  ClinGen/HPO/Orphanet/AlphaMissense
+#                                  bootstrap datasets, BLAST/gnomAD/etc.
+#                                  disk caches, PLUS -- now that
+#                                  GEPER_CACHE_DIR is set above --
+#                                  hyenadna/ (checkpoint), torch/
+#                                  (RNA-FM), and plugin_model_cache/
+#                                  (Enformer/Borzoi/SpliceBERT/
+#                                  SpliceFormer/SPiP weights, ~3.1GB
+#                                  combined, verified against this
+#                                  session's own local checkout) as
+#                                  subdirectories under this same root.
 #   geper/geper_output          -- JSON/Markdown/PDF results, per-run
-#   /root/.cache/huggingface    -- transformers/huggingface_hub's own
-#                                  default cache (ESM-2, RNA-FM,
-#                                  SpliceBERT's tokenizer, etc.)
+#   /root/.cache/huggingface    -- kept as a defensive fallback for any
+#                                  HF-backed load path that does NOT
+#                                  take an explicit cache_dir (none
+#                                  identified in this pass -- ESM-2,
+#                                  Enformer, and Borzoi all pass one
+#                                  explicitly, and SpliceBERT/RNA-FM
+#                                  don't touch HF's default cache at
+#                                  all -- but not verified live, so this
+#                                  volume stays rather than being
+#                                  removed on an unconfirmed assumption)
 # One VOLUME instruction per path (not a single multi-line JSON array) --
 # unambiguous, no line-continuation-inside-JSON-array edge case to worry
 # about.
 VOLUME ["/app/geper/model_cache"]
-VOLUME ["/app/geper/checkpoints"]
-VOLUME ["/app/geper/plugin_model_cache"]
 VOLUME ["/app/geper/geper_output"]
 VOLUME ["/root/.cache/huggingface"]
 

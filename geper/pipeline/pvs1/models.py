@@ -286,7 +286,12 @@ class TranscriptContext:
     def cds_position(self, pos: int) -> Optional[int]:
         """1-based CDS (`c.`) coordinate of a genomic position, or None if it is intronic/UTR."""
         for span in self.coding_spans():
-            if span.length == 0 or not (span.start <= pos <= span.end):
+            # `span.cds_start is None` is redundant with `span.length ==
+            # 0` at runtime (see `CodingSpan`'s own docstring/`coding_spans`
+            # -- the two are always set together), but spelled out
+            # explicitly so mypy can narrow `cds_start` to `int` below
+            # instead of flagging `None + int` (G1, report review round 5).
+            if span.length == 0 or span.cds_start is None or not (span.start <= pos <= span.end):
                 continue
             offset = (pos - span.start) if self.strand > 0 else (span.end - pos)
             return span.cds_start + offset
@@ -333,7 +338,14 @@ class TranscriptContext:
     def genomic_position_for_cds(self, cds_pos: int) -> Optional[int]:
         """Inverse of `cds_position`: the genomic position of a 1-based CDS coordinate, or None if out of range."""
         for span in self.coding_spans():
-            if span.length == 0 or not (span.cds_start <= cds_pos <= span.cds_end):
+            # Same redundant-but-mypy-narrowing None checks as
+            # `cds_position` above (G1, report review round 5).
+            if (
+                span.length == 0
+                or span.cds_start is None
+                or span.cds_end is None
+                or not (span.cds_start <= cds_pos <= span.cds_end)
+            ):
                 continue
             offset = cds_pos - span.cds_start
             return (span.start + offset) if self.strand > 0 else (span.end - offset)
@@ -517,7 +529,14 @@ class TranscriptContext:
         """
         spans = [s for s in self.coding_spans() if s.length > 0]
         target = next((s for s in spans if s.exon_rank == exon_rank), None)
-        if target is None:
+        if target is None or target.cds_start is None:
+            # `target.cds_start is None` cannot actually happen here --
+            # `spans` is already filtered to `length > 0`, and
+            # `CodingSpan.cds_start`/`cds_end` are always set together
+            # with a positive `length` (see `coding_spans()`) -- but
+            # `cds_start`'s type is independently `Optional[int]`, so
+            # this is spelled out for mypy's narrowing rather than
+            # asserted blindly (G1, report review round 5).
             return None
 
         post_skip_sizes = [s.length for s in spans if s.exon_rank != exon_rank]

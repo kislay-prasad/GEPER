@@ -17,13 +17,15 @@ repos:
   # `files:` regex here must stay in sync with mypy.ini's `files =`
   # list: it's what keeps pre-commit from invoking mypy (and mypy from
   # falling back to checking whatever files pre-commit *did* pass) on
-  # commits that don't touch this path at all.
+  # commits that don't touch this path at all. Extended (report review
+  # round 5, G1) to cover the rest of pvs1/, conflict_resolution_engine.py,
+  # and provenance.py/models/status.py -- see mypy.ini for the full list.
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.0
     hooks:
       - id: mypy
         name: mypy (ACMG interpretation path)
-        files: ^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas)\.py$|^geper/pipeline/pvs1/utils\.py$|^geper/pipeline/interpro/lookup\.py$
+        files: ^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas|conflict_resolution_engine|provenance)\.py$|^geper/pipeline/pvs1/(__init__|cache|decision_tree|lookup|models|utils)\.py$|^geper/pipeline/interpro/lookup\.py$|^geper/pipeline/models/status\.py$
         args: [--config-file=mypy.ini]
         # mypy's pre-commit hook runs in its own isolated environment
         # (language: python) -- it doesn't inherit this project's venv,

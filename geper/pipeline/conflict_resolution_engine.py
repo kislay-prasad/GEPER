@@ -143,15 +143,15 @@ class ConflictResolutionEngine:
         confidence_conflict_explanation: str,
         priority_conflict_penalty: float,
         priority_conflict_explanation: str,
-        clinvar_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        alphamissense_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        alphafold_result: Dict[str, Any] = None,
-        blast_result: Dict[str, Any] = None,
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        blast_result: Optional[Dict[str, Any]] = None,
     ) -> ConflictResolutionResult:
         cfg = CONFIG.conflict
         conflicts: List[ConflictItem] = []
@@ -236,7 +236,15 @@ class ConflictResolutionEngine:
         # presentation of an existing, traceable one.
         items = []
         for entry in acmg_conflicting_evidence or []:
-            text = entry.get("text") if isinstance(entry, dict) else entry
+            raw_text = entry.get("text") if isinstance(entry, dict) else entry
+            # `entry.get("text")` can genuinely be missing/None (a
+            # malformed caveat entry from an ACMG rule) -- caught by
+            # mypy (G1, report review round 5) as `Any | None` flowing
+            # into `evidence_a`'s `Dict[str, str]`. Coerced to a real,
+            # honest string rather than letting `None` silently render
+            # as the literal text "None" wherever this dict is later
+            # interpolated into a report.
+            text = str(raw_text) if raw_text is not None else "(no caveat text recorded)"
             sources = entry.get("sources", []) if isinstance(entry, dict) else []
             items.append(
                 ConflictItem(
@@ -455,7 +463,12 @@ class ConflictResolutionEngine:
         if pathogenic_leaning:
             clinical_side.append(f"ACMG classification: {acmg_classification}")
             clinical_sources.append("GEPER ACMG engine")
-        if clinvar_pathogenic:
+        if clinvar_pathogenic and clinvar_primary:
+            # `clinvar_pathogenic` being True already implies
+            # `clinvar_primary` is truthy (line above), but mypy can't
+            # narrow `clinvar_primary`'s type across that separate bool
+            # variable -- the redundant `and clinvar_primary` here is
+            # purely a type-narrowing aid, not a behavior change.
             clinical_side.append(f"classification: {clinvar_primary.get('clinical_significance')}")
             clinical_sources.append("ClinVar")
         return ConflictItem(

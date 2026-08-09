@@ -58,5 +58,6 @@ Thumbs.db
 # --- Secrets / local overrides (none should ever exist, but never risk it) ---
 .env
 .env.*
+!.env.example
 config.yaml
 !config.yaml.example

@@ -47,13 +47,17 @@ services:
     volumes:
       # --- Model weights / bootstrap datasets: named volumes, so they
       #     survive `docker compose down` and are fetched at most once
-      #     regardless of how many times the container is recreated. See
-      #     the Dockerfile's own "Model weights" comment for what lives in
-      #     each of these and why none of it is baked into the image
-      #     itself (multi-GB, re-fetchable).
+      #     regardless of how many times the container is recreated.
+      #     `geper_model_cache` alone now covers everything the
+      #     Dockerfile's GEPER_CACHE_DIR env var roots there (HyenaDNA
+      #     checkpoint, plugin weights, RNA-FM's torch cache, plus the
+      #     bootstrap datasets that were already here) -- consolidated
+      #     from three separate named volumes into one (G2, report
+      #     review round 5; see the Dockerfile's own "Model weights"
+      #     comment for the full reasoning and what used to be separate).
+      #     `geper_hf_cache` is kept as a defensive fallback -- see that
+      #     same Dockerfile comment for why it wasn't also folded in.
       - geper_model_cache:/app/geper/model_cache
-      - geper_checkpoints:/app/geper/checkpoints
-      - geper_plugin_model_cache:/app/geper/plugin_model_cache
       - geper_hf_cache:/root/.cache/huggingface
       # --- Input/output: host bind mounts, so you can drop a VCF/FASTQ
       #     into ./data and read results out of ./output directly, no
@@ -71,6 +75,4 @@ services:
 
 volumes:
   geper_model_cache:
-  geper_checkpoints:
-  geper_plugin_model_cache:
   geper_hf_cache:

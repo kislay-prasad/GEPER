@@ -108,7 +108,13 @@ class TranscriptLookup:
         transcript = result.get("transcript")
         if transcript and variant is not None:
             start, end = transcript.get("transcript_span") or (None, None)
-            if start is not None and not (start <= variant.pos <= end):
+            # `end is not None` guarded separately from `start` (G1,
+            # report review round 5): the two were previously checked
+            # asymmetrically -- a malformed `transcript_span` of
+            # `(start, None)` would have passed the old `start is not
+            # None` guard and then raised a real `TypeError` comparing
+            # `variant.pos <= None` below, not just failed a mypy check.
+            if start is not None and end is not None and not (start <= variant.pos <= end):
                 result = dict(result)
                 result["variant_outside_transcript"] = True
                 result["reason"] = (

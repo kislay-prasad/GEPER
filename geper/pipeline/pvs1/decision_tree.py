@@ -233,9 +233,20 @@ class PVS1DecisionTree:
         relevant = self._exon_relevance(inp, transcript, checked, unchecked)
 
         # -- Step 5: the type-specific decision tree -------------------
+        # `transcript` is guaranteed non-None in both branches below:
+        # the only way to reach here with `transcript is None` is
+        # `null_variant_type == NULL_WHOLE_GENE_DELETION` (the early
+        # return above), which is mutually exclusive with both
+        # `null_variant_type` checks immediately following -- spelled
+        # out as an assert (not just implied by control flow) so mypy
+        # can narrow the type here instead of flagging `Optional[
+        # TranscriptContext]` against a non-Optional parameter (G1,
+        # report review round 5).
         if inp.null_variant_type in (NULL_NONSENSE, NULL_FRAMESHIFT):
+            assert transcript is not None
             outcome = self._nonsense_frameshift(inp, transcript, relevant, path, checked, unchecked, supporting)
         elif inp.null_variant_type == NULL_CANONICAL_SPLICE:
+            assert transcript is not None
             outcome = self._canonical_splice(inp, transcript, relevant, path, checked, unchecked, supporting)
         elif inp.null_variant_type == NULL_INITIATION_CODON:
             outcome = self._initiation_codon(inp, transcript, path, checked, unchecked, supporting)
@@ -569,8 +580,16 @@ class PVS1DecisionTree:
             )
         elif preserves_frame is not None:
             span = transcript.coding_span_for_rank(skipped_rank)
+            # `coding_span_for_rank` can return None if `skipped_rank`
+            # doesn't match any exon this transcript actually has (a
+            # stale/out-of-range rank) -- previously would have raised
+            # `AttributeError: 'NoneType' object has no attribute
+            # 'length'` here instead of degrading gracefully like every
+            # other "could not be determined" branch in this tree (G1,
+            # report review round 5; caught by mypy, not observed live).
+            removed_bp = f"{span.length}" if span is not None else "an unknown number of"
             checked.append(
-                f"Reading-frame effect: skipping exon {skipped_rank} removes {span.length} coding bp, "
+                f"Reading-frame effect: skipping exon {skipped_rank} removes {removed_bp} coding bp, "
                 f"which {'preserves' if preserves_frame else 'disrupts'} the reading frame."
             )
             unchecked.append(

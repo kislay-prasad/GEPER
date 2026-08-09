@@ -283,10 +283,20 @@ def read_dataset_provenance_sidecar(dest_path: str) -> Optional[Dict[str, Any]]:
         return None
     try:
         with open(sidecar, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except (OSError, ValueError) as exc:
         logger.warning(f"Could not read provenance sidecar '{sidecar}': {exc}")
         return None
+    if not isinstance(data, dict):
+        # `json.load` is typed `Any` -- a corrupted/hand-edited sidecar
+        # could in principle contain a JSON list/string/number instead
+        # of an object. Treated the same as "unreadable" (G1, report
+        # review round 5: mypy flagged this function silently returning
+        # `Any` where `Optional[Dict[str, Any]]` was declared) rather
+        # than trusting the on-disk shape blindly.
+        logger.warning(f"Provenance sidecar '{sidecar}' did not contain a JSON object; ignoring it.")
+        return None
+    return data
 
 
 def local_file_provenance(source: str, path: Optional[str], *, endpoint: Optional[str] = None) -> DataSourceProvenance:

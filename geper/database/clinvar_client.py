@@ -78,6 +78,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from config import CONFIG
+from pipeline.variant_normalization import bare_spdi
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
@@ -242,6 +243,22 @@ class ClinVarClient:
         # after the fact in `_esummary` (see `_variant_match`) so
         # multi-allelic sites can still be flagged without the risk of
         # a bad text filter discarding a true hit.
+        #
+        # Indels widen this to a 3-position range (pos-1:pos+1), not a
+        # single point. Confirmed live: BRCA1 c.1232_1233del
+        # (VCV000054169)'s own `chrpos38` indexes it at 43094298 --
+        # one MORE than the VCF anchor position 43094297 -- while VHL
+        # c.422dup (VCV000411979) indexes at 10146594, exactly the
+        # anchor position, no offset at all. ClinVar's own position
+        # field is evidently not indexed by a single fixed rule
+        # relative to the VCF anchor for indels (deletion vs. insertion
+        # land differently), so a single-point query can miss the
+        # correct record entirely -- a retrieval gap, not an allele-
+        # matching one (`_variant_match` still gates actual
+        # attribution). SNVs keep the tighter single-point query, since
+        # there's no anchor-base offset to account for.
+        if len(variant.ref) != len(variant.alt) and variant.pos > 1:
+            return f"{chrom}[chr] AND {variant.pos - 1}:{variant.pos + 1}[{position_field}]"
         return f"{chrom}[chr] AND {variant.pos}[{position_field}]"
 
     @staticmethod
@@ -332,19 +349,32 @@ class ClinVarClient:
         `canonical_spdi` but empty `ref`/`alt` fields directly on
         `variation_loc` -- SPDI is what actually carries the alleles.
 
-        KNOWN LIMITATION, disclosed rather than silently assumed away:
-        for indels, ClinVar's SPDI normalization can legitimately
-        represent the identical variant with different ref/alt
-        strings than GEPER's own (VCF-anchored) representation (e.g. a
-        different shared-anchor-base convention). This check does not
-        attempt indel re-normalization, so a genuine indel match can
-        come back `False` rather than `True` in that case. The safe
-        default either way is to NOT attribute an unconfirmed record's
-        classification to the query variant, so this asymmetry errs
-        toward under- rather than over-attribution -- consistent with
-        every other "never fabricate evidence" guarantee in this
-        codebase. SNV matching (the case that motivated this fix) is
-        unaffected: a single base has no alternate normalization.
+        Indel re-normalization: a `canonical_spdi` is not guaranteed to
+        use the same anchoring convention as GEPER's own (VCF-style,
+        single-base-anchored) query `variant`. Two confirmed-live
+        mismatch shapes, both closed by comparing both sides' *bare*
+        SPDI form (`pipeline/variant_normalization.bare_spdi` --
+        prefix/suffix trim with no anchor-base floor, so ref/alt may
+        end up fully empty; comparison-only, never used to emit a VCF
+        record):
+          1. VHL c.422dup (VCV000411979): canonical_spdi
+             `NC_000003.12:10146593:AA:AAA` is a non-minimal 2-base
+             window sharing a leading 'A'; the query variant normalizes
+             to `10146594 A>AA`. Raw-string comparison never matches;
+             both reduce to the same bare form `(10146594, '', 'A')`.
+          2. BRCA1 c.1232_1233del (VCV000054169): canonical_spdi
+             `NC_000017.11:43094297:AT:` is already fully bare (empty
+             inserted sequence), while the query variant's VCF-style
+             anchored form is `43094297 CAT>C` -- a plain parsimony
+             trim (which must keep >=1 anchor base) can't reduce `C`
+             any further, so it alone is not enough; both reduce to the
+             same bare form `(43094298, 'AT', '')`.
+        This is re-normalization to a shared comparison frame, not
+        loosened matching: a mismatch after both sides are
+        independently reduced to their own bare form is still a real
+        mismatch. No `fetch_base`/reference sequence is needed for
+        either case -- both are reference-free prefix/suffix trimming,
+        not repeat-region re-alignment.
 
         Returns None (not False) when no `variation_set` entry carries
         a usable SPDI at all, so "checked, doesn't match" and "could
@@ -364,6 +394,7 @@ class ClinVarClient:
         )
         ref, alt = variant.ref.upper(), variant.alt.upper()
         checked_any = False
+        query_bare_pos, query_bare_ref, query_bare_alt = bare_spdi(variant.pos, ref, alt)
 
         for v in variation_set:
             if not isinstance(v, dict):
@@ -373,17 +404,28 @@ class ClinVarClient:
                 continue
             checked_any = True
             _, spdi_pos, spdi_ref, spdi_alt = spdi.split(":", 3)
+
+            # SPDI's own position is 0-based; +1 makes it comparable to
+            # the VCF's 1-based `variant.pos` before bare-trimming
+            # (trimming a common *prefix* shifts position, so this must
+            # happen before, not after, the +1).
+            try:
+                spdi_pos_1based = int(spdi_pos) + 1
+            except ValueError:
+                spdi_pos_1based = None
+
+            if spdi_pos_1based is not None:
+                cand_pos, cand_ref, cand_alt = bare_spdi(spdi_pos_1based, spdi_ref.upper(), spdi_alt.upper())
+                if (cand_pos, cand_ref, cand_alt) == (query_bare_pos, query_bare_ref, query_bare_alt):
+                    return True
+
             if spdi_ref.upper() != ref or spdi_alt.upper() != alt:
                 continue
 
-            # Alleles agree -- confirm position too. SPDI's own
-            # position is 0-based; +1 makes it comparable to the VCF's
-            # 1-based `variant.pos`.
-            try:
-                if int(spdi_pos) + 1 == variant.pos:
-                    return True
-            except ValueError:
-                pass
+            # Untrimmed alleles already agree (the common SNV case) --
+            # confirm position too, same as above but without trimming.
+            if spdi_pos_1based is not None and spdi_pos_1based == variant.pos:
+                return True
             # Fall back to the assembly-matched variation_loc entry's
             # own (1-based) start, in case the SPDI position couldn't
             # be parsed cleanly.

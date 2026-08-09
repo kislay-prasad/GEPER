@@ -46,6 +46,7 @@ def _esummary_response(entries):
 
 def _mock_response(payload):
     import json
+
     return mock.Mock(status_code=200, raise_for_status=lambda: None, text=json.dumps(payload))
 
 
@@ -78,6 +79,57 @@ class TestVariantMatch(unittest.TestCase):
         self.assertFalse(DbSNPClient._variant_match(entry, _variant()))
 
 
+class TestIndelBareSpdiMatch(unittest.TestCase):
+    """
+    Regression tests for the I1 fix: `_variant_match` now reduces both
+    sides to SPDI's bare form (`pipeline/variant_normalization.
+    bare_spdi`) before comparing, and `lookup_variant` widens the
+    position search to a 3-position range for indels. Real, live-
+    verified fixture: VHL c.422dup, rs1553619976, confirmed live
+    2026-08-09 -- dbSNP's own `POSITION` field indexes this rsID at
+    10146593, one less than the variant's VCF/anchor position 10146594.
+    """
+
+    _VHL_DUP = _entry("1553619976", "NC_000003.12:10146593:AA:AAA", genes=("VHL",), clinical_significance="pathogenic")
+
+    def test_matches_after_bare_spdi_reduction(self):
+        query = _variant(chrom="3", pos=10146594, ref="A", alt="AA")
+        self.assertTrue(DbSNPClient._variant_match(self._VHL_DUP, query))
+
+    def test_lookup_variant_widens_search_for_indels_and_resolves_real_rsid(self):
+        """`lookup_variant`'s esearch term must cover position 10146593
+        (dbSNP's own indexed position for this rsID), not just the VCF
+        anchor position 10146594, or the correct candidate never even
+        reaches `_variant_match`."""
+        query = _variant(chrom="3", pos=10146594, ref="A", alt="AA", variant_id=".")
+        responses = [
+            _mock_response(_esearch_response(["1553619976"])),
+            _mock_response(_esummary_response([self._VHL_DUP])),
+        ]
+        with mock.patch("requests.get", side_effect=responses) as mocked_get:
+            with mock.patch.object(
+                DbSNPClient,
+                "_fetch_variation_detail",
+                return_value={"rsid": "rs1553619976", "genes": ["VHL"]},
+            ):
+                result = DbSNPClient().lookup_variant(query, assembly="GRCh38")
+
+        self.assertEqual(result["match_status"], DbSNPMatchStatus.MATCHED.value)
+        self.assertEqual(result["rsid"], "rs1553619976")
+        esearch_call = mocked_get.call_args_list[0]
+        term = esearch_call.kwargs["params"]["term"]
+        self.assertIn("10146593:10146595", term)  # pos-1:pos+1 range, covers dbSNP's own indexed position
+
+    def test_snv_still_uses_single_point_query_not_a_range(self):
+        query = _variant(chrom="17", pos=43094298, ref="A", alt="C")
+        responses = [_mock_response(_esearch_response([]))]
+        with mock.patch("requests.get", side_effect=responses) as mocked_get:
+            DbSNPClient().lookup_variant(query, assembly="GRCh38")
+        term = mocked_get.call_args_list[0].kwargs["params"]["term"]
+        self.assertIn("43094298[POSITION]", term)
+        self.assertNotIn(":", term.split("AND")[1])
+
+
 class TestSelectPrimary(unittest.TestCase):
     def test_prefers_lower_numbered_rsid(self):
         newer = {"rsid": "rs80357024"}
@@ -97,7 +149,11 @@ class TestLookupVariantIntegration(unittest.TestCase):
             _mock_response(_esummary_response(entries)),
         ]
         with mock.patch("requests.get", side_effect=responses):
-            with mock.patch.object(DbSNPClient, "_fetch_variation_detail", return_value={"rsid": "rs80357024", "genes": ["BRCA1"], "dbsnp_build": "157"}):
+            with mock.patch.object(
+                DbSNPClient,
+                "_fetch_variation_detail",
+                return_value={"rsid": "rs80357024", "genes": ["BRCA1"], "dbsnp_build": "157"},
+            ):
                 result = DbSNPClient().lookup_variant(_variant(variant_id="."), assembly="GRCh38")
 
         self.assertEqual(result["match_status"], DbSNPMatchStatus.MATCHED.value)

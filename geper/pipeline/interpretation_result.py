@@ -271,7 +271,27 @@ def build_interpretation_result(
     not_triggered_rules = acmg.get("not_triggered_criteria", [])
     not_evaluated_rules = acmg.get("not_evaluated_criteria", [])
 
-    supporting_evidence = list(interpretation.get("supporting_evidence") or [])
+    # Report review round 4, I8: `interpretation["supporting_evidence"]`
+    # (the "legacy" pre-Phase-1 evidence list `InterpretationEngine.
+    # interpret()` builds for its own -- unused by any report view,
+    # confirmed by search -- `legacy_summary`/`legacy_significance_score`)
+    # independently restates one fact PM2's own `supporting_evidence`
+    # also states, worded differently ("gnomAD: variant not found in
+    # the population database (PM2 evidence -- absent from gnomAD)."
+    # vs. PM2's own "gnomAD: variant not found."), so the exact-string
+    # `_dedupe` below never catches it and it showed twice. Dropped
+    # from the legacy seed here rather than kept in sync by hand: PM2's
+    # own criterion-level text is the more precise, current source.
+    # (InterPro's equivalent legacy/PM1 duplicate was removed at its
+    # source, `InterpretationEngine._biological_context_evidence`,
+    # since that duplicate had no `significance_score` weight riding on
+    # it to preserve.)
+    _SUPERSEDED_LEGACY_EVIDENCE = (
+        "gnomAD: variant not found in the population database (PM2 evidence -- absent from gnomAD).",
+    )
+    supporting_evidence = [
+        line for line in (interpretation.get("supporting_evidence") or []) if line not in _SUPERSEDED_LEGACY_EVIDENCE
+    ]
     conflicting_evidence: List[str] = []
     for rule in triggered_rules:
         supporting_evidence.extend(rule.get("supporting_evidence") or [])

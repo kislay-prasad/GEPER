@@ -35,7 +35,7 @@ import os
 import unittest
 
 from pipeline.acmg_rules import ACMGRuleEngine
-from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
+from pipeline.ps1_pm5.decision import PS1PM5Evaluator
 from pipeline.ps1_pm5.models import is_conflicting, star_rating
 from pipeline.ps1_pm5.utils import (
     clinvar_codon_match_from_esummary,
@@ -97,6 +97,7 @@ def transcript_result():
 # HGVS.p parsing -- the real ClinVar title strings, including the ones that
 # must be REJECTED (frameshift/deletion), not just the ones that parse.
 # ---------------------------------------------------------------------------
+
 
 class TestProteinChangeParsing(unittest.TestCase):
     def test_parses_real_missense_titles(self):
@@ -161,6 +162,7 @@ class TestClinVarCodonMatchParsing(unittest.TestCase):
 # Codon coordinate math (shared with PVS1, re-verified here for TP53 specifically)
 # ---------------------------------------------------------------------------
 
+
 class TestTP53CodonMath(unittest.TestCase):
     def test_maps_real_clinvar_positions_to_expected_amino_acid_changes(self):
         t = transcript()
@@ -180,6 +182,7 @@ class TestTP53CodonMath(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # PS1 -- real ground truth
 # ---------------------------------------------------------------------------
+
 
 class TestPS1KnownVariants(unittest.TestCase):
     def test_met237ile_via_a_different_allele_triggers_ps1(self):
@@ -253,6 +256,7 @@ class TestPS1KnownVariants(unittest.TestCase):
 # PM5 -- real ground truth
 # ---------------------------------------------------------------------------
 
+
 class TestPM5KnownVariants(unittest.TestCase):
     def test_arg175cys_triggers_pm5_citing_arg175his(self):
         """
@@ -270,7 +274,9 @@ class TestPM5KnownVariants(unittest.TestCase):
         anchor_uids = {m["uid"] for m in result.matched_anchors}
         self.assertIn("12374", anchor_uids)  # Arg175His
         self.assertNotIn("245851", anchor_uids)  # never its own record
-        self.assertTrue(any("not fully modeled" in c or "Substitution-similarity" in c for c in result.unchecked_caveats))
+        self.assertTrue(
+            any("not fully modeled" in c or "Substitution-similarity" in c for c in result.unchecked_caveats)
+        )
 
     def test_met237ile_does_not_trigger_pm5_against_itself(self):
         """The same amino acid as every anchor at this codon is PS1's evidence, not PM5's."""
@@ -333,6 +339,7 @@ class TestPM5KnownVariants(unittest.TestCase):
 # Splice-proximity caveat (structurally real: TP53's split codon 187)
 # ---------------------------------------------------------------------------
 
+
 class TestSpliceProximityCaveat(unittest.TestCase):
     """
     TP53 codon 187 (GGT=Gly) genuinely straddles intron 5: its first
@@ -352,13 +359,23 @@ class TestSpliceProximityCaveat(unittest.TestCase):
         self.assertEqual(positions, [7675053, 7674971, 7674970])
         self.assertEqual(t.distance_to_nearest_exon_boundary(7675053), 0)
 
-        constructed_anchor = [{
-            "uid": "constructed", "accession": None,
-            "title": "NM_000546.6(TP53):c.560G>A (p.Gly187Asp) [constructed for this test]",
-            "pos": 7674971, "ref": "G", "alt": "A", "protein_change": "G187D", "codon_number": 187,
-            "clinical_significance": "Pathogenic", "review_status": "reviewed by expert panel",
-            "star_rating": 3, "is_conflicting": False, "condition": [],
-        }]
+        constructed_anchor = [
+            {
+                "uid": "constructed",
+                "accession": None,
+                "title": "NM_000546.6(TP53):c.560G>A (p.Gly187Asp) [constructed for this test]",
+                "pos": 7674971,
+                "ref": "G",
+                "alt": "A",
+                "protein_change": "G187D",
+                "codon_number": 187,
+                "clinical_significance": "Pathogenic",
+                "review_status": "reviewed by expert panel",
+                "star_rating": 3,
+                "is_conflicting": False,
+                "condition": [],
+            }
+        ]
         detail = coding_consequence_detail(t, 7675053, "C", "G")  # genomic C>G at exon5's last base
         result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675053, "C", "G")
         self.assertFalse(result.applies)
@@ -369,12 +386,23 @@ class TestSpliceProximityCaveat(unittest.TestCase):
         """Control: codon 175 is safely interior (exon 5, codons 126-187) -- the caveat must not fire there."""
         t = transcript()
         self.assertGreater(t.distance_to_nearest_exon_boundary(7675088), 3)
-        constructed_anchor = [{
-            "uid": "constructed2", "accession": None, "title": "constructed control anchor",
-            "pos": 7675088, "ref": "C", "alt": "T", "protein_change": "R175D", "codon_number": 175,
-            "clinical_significance": "Pathogenic", "review_status": "reviewed by expert panel",
-            "star_rating": 3, "is_conflicting": False, "condition": [],
-        }]
+        constructed_anchor = [
+            {
+                "uid": "constructed2",
+                "accession": None,
+                "title": "constructed control anchor",
+                "pos": 7675088,
+                "ref": "C",
+                "alt": "T",
+                "protein_change": "R175D",
+                "codon_number": 175,
+                "clinical_significance": "Pathogenic",
+                "review_status": "reviewed by expert panel",
+                "star_rating": 3,
+                "is_conflicting": False,
+                "condition": [],
+            }
+        ]
         detail = coding_consequence_detail(t, 7675089, "G", "C")  # Arg175Gly
         result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675089, "G", "C")
         self.assertTrue(result.applies)
@@ -383,6 +411,7 @@ class TestSpliceProximityCaveat(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Rule-engine wiring / backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestEngineWiring(unittest.TestCase):
     def test_engine_still_works_for_callers_that_pass_no_ps1_pm5_inputs(self):
@@ -397,6 +426,27 @@ class TestEngineWiring(unittest.TestCase):
             clinvar_codon_result={"skipped": False, "found": False, "matches": []},
         )
         self.assertEqual(result["all_criteria"]["PS1"]["status"], "not_evaluated")
+
+    def test_indel_is_not_triggered_not_not_evaluated(self):
+        """
+        Regression test for I8 (report review round 4): an indel isn't
+        a substitution at all, so PS1/PM5 don't apply to it -- that's a
+        class-inapplicability, the same "checked, and the answer is no"
+        bucket a nonsense/synonymous SNV already gets, not a genuine
+        gap. Real ground truth: `test_data/conflict_tiers.vcf` Finding
+        5 is VHL c.422dup, an insertion at 3:10146594 -- this uses the
+        same TP53 fixture transcript with a synthetic 2-base insertion
+        at codon 175's position to isolate the "is this a SNV at all"
+        gate from any VHL-specific transcript-fetch questions.
+        """
+        result = ACMGRuleEngine().evaluate(
+            variant_dict=variant(7674221, "C", "CAA"),  # insertion, not a SNV
+            transcript_result=transcript_result(),
+            clinvar_codon_result={"skipped": False, "found": False, "matches": []},
+        )
+        for code in ("PS1", "PM5"):
+            self.assertEqual(result["all_criteria"][code]["status"], "not_triggered")
+            self.assertIn("not a single-nucleotide substitution", result["all_criteria"][code]["rationale"])
 
     def test_matches_from_clinvar_codon_result_handles_skipped_and_missing(self):
         self.assertEqual(matches_from_clinvar_codon_result(None), [])

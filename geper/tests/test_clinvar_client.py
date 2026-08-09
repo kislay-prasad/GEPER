@@ -36,8 +36,14 @@ def _esearch_response(uids):
 
 
 def _record(
-    uid, accession, title, significance, review_status, last_evaluated,
-    spdi=None, variation_loc=None,
+    uid,
+    accession,
+    title,
+    significance,
+    review_status,
+    last_evaluated,
+    spdi=None,
+    variation_loc=None,
 ):
     entry = {
         "uid": uid,
@@ -69,19 +75,30 @@ def _esummary_response(entries):
 
 # Real BRCA1 17:43094298 three-record scenario (see module docstring).
 _BRCA1_CONFLICTING_SNV = _record(
-    "619783", "VCV000619783", "NM_007294.4(BRCA1):c.1233T>C (p.Asp411=)",
-    "Conflicting classifications of pathogenicity", "criteria provided, conflicting classifications",
+    "619783",
+    "VCV000619783",
+    "NM_007294.4(BRCA1):c.1233T>C (p.Asp411=)",
+    "Conflicting classifications of pathogenicity",
+    "criteria provided, conflicting classifications",
     "2023/08/04 00:00",
     spdi="NC_000017.11:43094297:A:G",  # different ALT (T>C on coding strand => A>G genomic on the queried A>C's ref base... real value differs, ref stays A)
 )
 _BRCA1_UNRELATED_DELETION = _record(
-    "54169", "VCV000054169", "NM_007294.4(BRCA1):c.1232_1233del (p.Asp411fs)",
-    "Pathogenic", "reviewed by expert panel", "2016/10/18 00:00",
+    "54169",
+    "VCV000054169",
+    "NM_007294.4(BRCA1):c.1232_1233del (p.Asp411fs)",
+    "Pathogenic",
+    "reviewed by expert panel",
+    "2016/10/18 00:00",
     spdi="NC_000017.11:43094295:AT:",  # a deletion -- different ref/alt shape entirely
 )
 _BRCA1_CORRECT_SNV = _record(
-    "41804", "VCV000041804", "NM_007294.4(BRCA1):c.1233T>G (p.Asp411Glu)",
-    "Benign", "reviewed by expert panel", "2024/06/11 00:00",
+    "41804",
+    "VCV000041804",
+    "NM_007294.4(BRCA1):c.1233T>G (p.Asp411Glu)",
+    "Benign",
+    "reviewed by expert panel",
+    "2024/06/11 00:00",
     spdi="NC_000017.11:43094297:A:C",
     variation_loc=[
         {"assembly_name": "GRCh38", "start": "43094298", "stop": "43094298"},
@@ -117,8 +134,13 @@ class TestVariantMatch(unittest.TestCase):
         alone (the old `_check_ref_alt` behavior) is not sufficient --
         the SPDI/variation_loc position must also agree with the query."""
         entry = _record(
-            "999", "VCV999", "test", "Uncertain significance", "criteria provided, single submitter",
-            "2020/01/01 00:00", spdi="NC_000017.11:99999999:A:C",  # same ref/alt, very different position
+            "999",
+            "VCV999",
+            "test",
+            "Uncertain significance",
+            "criteria provided, single submitter",
+            "2020/01/01 00:00",
+            spdi="NC_000017.11:99999999:A:C",  # same ref/alt, very different position
         )
         self.assertFalse(ClinVarClient._variant_match(entry, _variant(), "GRCh38"))
 
@@ -128,14 +150,114 @@ class TestVariantMatch(unittest.TestCase):
         under GRCh37 -- exercises the assembly-qualified fallback path,
         not just the SPDI-position arithmetic."""
         entry = _record(
-            "2", "VCV2", "test", "Benign", "reviewed by expert panel", "2024/01/01 00:00",
+            "2",
+            "VCV2",
+            "test",
+            "Benign",
+            "reviewed by expert panel",
+            "2024/01/01 00:00",
             spdi="NC_000017.11:99999999:A:C",  # deliberately wrong/unrelated SPDI position
             variation_loc=[{"assembly_name": "GRCh37", "start": "41246315", "stop": "41246315"}],
         )
         result = ClinVarClient._variant_match(
-            entry, _variant(chrom="17", pos=41246315, ref="A", alt="C"), "GRCh37",
+            entry,
+            _variant(chrom="17", pos=41246315, ref="A", alt="C"),
+            "GRCh37",
         )
         self.assertTrue(result)
+
+
+class TestIndelBareSpdiMatch(unittest.TestCase):
+    """
+    Regression tests for the I1 fix (`ClinVarClient._variant_match` now
+    reduces both sides to SPDI's bare form via
+    `pipeline/variant_normalization.bare_spdi` before comparing).
+
+    Both fixtures are real, live-verified values, not synthesized:
+      - VHL c.422dup (VCV000411979), `NC_000003.12:10146593:AA:AAA` --
+        confirmed live 2026-08-09 via NCBI esummary. GEPER's own
+        normalization stage reduces the VCF record `3:10146594 AA>AAA`
+        to `10146594 A>AA` before this method ever sees it (parsimony
+        trim only -- no left-alignment happens here, since the base at
+        10146593 is 'C', not 'A': confirmed live via Ensembl). The old
+        code compared `"AA"/"AAA"` (SPDI, untrimmed) against `"A"/"AA"`
+        (query, trimmed) and never matched.
+      - BRCA1 c.1232_1233del (VCV000054169), `NC_000017.11:43094297:AT:`
+        -- ClinVar's own canonical_spdi is already fully bare (empty
+        ALT), while GEPER's VCF-anchored representation at that locus
+        is `43094297 CAT>C`. A plain parsimony trim (which must keep
+        >=1 anchor base) cannot reduce `"C"` any further, so this case
+        needed the anchor-free `bare_spdi` comparison specifically, not
+        just trimming.
+    """
+
+    def test_vhl_c422dup_matches_after_normalization(self):
+        entry = _record(
+            "411979",
+            "VCV000411979",
+            "NM_000551.4(VHL):c.422dup (p.Asn141fs)",
+            "Pathogenic",
+            "reviewed by expert panel",
+            "2023/01/01 00:00",
+            spdi="NC_000003.12:10146593:AA:AAA",
+        )
+        # GEPER's normalization stage has already trimmed the VCF
+        # record (3:10146594 AA>AAA) to this form by the time it
+        # reaches ClinVarClient -- see pipeline/orchestrator.py's
+        # `_run_normalization_stage`.
+        query = _variant(chrom="3", pos=10146594, ref="A", alt="AA")
+        self.assertTrue(ClinVarClient._variant_match(entry, query, "GRCh38"))
+
+    def test_brca1_deletion_matches_bare_spdi_against_anchored_query(self):
+        entry = _record(
+            "54169",
+            "VCV000054169",
+            "NM_007294.4(BRCA1):c.1232_1233del (p.Asp411fs)",
+            "Pathogenic",
+            "reviewed by expert panel",
+            "2016/10/18 00:00",
+            spdi="NC_000017.11:43094297:AT:",
+        )
+        query = _variant(chrom="17", pos=43094297, ref="CAT", alt="C")
+        self.assertTrue(ClinVarClient._variant_match(entry, query, "GRCh38"))
+
+    def test_still_rejects_a_genuinely_different_indel_at_same_bare_position(self):
+        """Defense-in-depth: bare-form equality must still require the
+        SAME deleted/inserted sequence, not just the same interbase
+        position -- a different single-base insertion at the identical
+        locus must not be conflated with the queried duplication."""
+        entry = _record(
+            "999999",
+            "VCV999999",
+            "test",
+            "Uncertain significance",
+            "criteria provided, single submitter",
+            "2020/01/01 00:00",
+            spdi="NC_000003.12:10146593:AA:AAG",  # inserts G, not A -- different variant
+        )
+        query = _variant(chrom="3", pos=10146594, ref="A", alt="AA")
+        self.assertFalse(ClinVarClient._variant_match(entry, query, "GRCh38"))
+
+
+class TestPositionalSearchTermWidensForIndels(unittest.TestCase):
+    """
+    Regression tests for the I1 retrieval-side fix: for an indel,
+    `_positional_search_term` must query a 3-position range (pos-1:
+    pos+1), because ClinVar's own `chrpos38` indexing offset relative
+    to the VCF anchor position is not consistent -- confirmed live,
+    BRCA1 c.1232_1233del (VCV000054169) is indexed at 43094298 (anchor
+    +1) while VHL c.422dup (VCV000411979) is indexed at 10146594
+    (anchor +0). A single-point query at the anchor position misses
+    the deletion case entirely.
+    """
+
+    def test_indel_uses_range_query(self):
+        term = ClinVarClient()._positional_search_term(_variant(chrom="17", pos=43094297, ref="CAT", alt="C"), "GRCh38")
+        self.assertIn("43094296:43094298[chrpos38]", term)
+
+    def test_snv_still_uses_single_point_query(self):
+        term = ClinVarClient()._positional_search_term(_variant(), "GRCh38")
+        self.assertEqual(term, "17[chr] AND 43094298[chrpos38]")
 
 
 class TestSelectPrimary(unittest.TestCase):
@@ -162,10 +284,18 @@ class TestQueryVariantIntegration(unittest.TestCase):
 
     def _mock_responses(self, esearch_payload, esummary_payload):
         return [
-            mock.Mock(status_code=200, json=lambda: esearch_payload, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(esearch_payload)),
-            mock.Mock(status_code=200, json=lambda: esummary_payload, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(esummary_payload)),
+            mock.Mock(
+                status_code=200,
+                json=lambda: esearch_payload,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(esearch_payload),
+            ),
+            mock.Mock(
+                status_code=200,
+                json=lambda: esummary_payload,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(esummary_payload),
+            ),
         ]
 
     def test_real_brca1_case_resolves_to_correct_benign_record(self):
@@ -212,10 +342,15 @@ class TestQueryVariantIntegration(unittest.TestCase):
         self.assertEqual(len(result["records"]), 2)
 
     def test_not_found_when_esearch_returns_nothing(self):
-        with mock.patch("requests.get", return_value=mock.Mock(
-            status_code=200, json=lambda: _esearch_response([]), raise_for_status=lambda: None,
-            text=__import__("json").dumps(_esearch_response([])),
-        )):
+        with mock.patch(
+            "requests.get",
+            return_value=mock.Mock(
+                status_code=200,
+                json=lambda: _esearch_response([]),
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response([])),
+            ),
+        ):
             result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
 
         self.assertEqual(result["match_status"], ClinVarMatchStatus.NOT_FOUND.value)
@@ -230,13 +365,21 @@ class TestQueryVariantIntegration(unittest.TestCase):
         submitter); must resolve to VCV000012347 (reviewed by expert
         panel, the actual queried allele)."""
         wrong_top = _record(
-            "2023589", "VCV002023589", "NM_000546.6(TP53):c.742dup (p.Arg248fs)",
-            "Pathogenic", "criteria provided, single submitter", "2022/08/12 00:00",
+            "2023589",
+            "VCV002023589",
+            "NM_000546.6(TP53):c.742dup (p.Arg248fs)",
+            "Pathogenic",
+            "criteria provided, single submitter",
+            "2022/08/12 00:00",
             spdi="NC_000017.11:7674219:C:CC",
         )
         correct = _record(
-            "12347", "VCV000012347", "NM_000546.6(TP53):c.742C>T (p.Arg248Trp)",
-            "Pathogenic", "reviewed by expert panel", "2024/08/05 00:00",
+            "12347",
+            "VCV000012347",
+            "NM_000546.6(TP53):c.742C>T (p.Arg248Trp)",
+            "Pathogenic",
+            "reviewed by expert panel",
+            "2024/08/05 00:00",
             spdi="NC_000017.11:7674220:G:A",
         )
         entries = [wrong_top, correct]
@@ -246,7 +389,9 @@ class TestQueryVariantIntegration(unittest.TestCase):
         )
         with mock.patch("requests.get", side_effect=responses):
             result = ClinVarClient().query_variant(
-                _variant(chrom="17", pos=7674221, ref="G", alt="A"), rsid=None, assembly="GRCh38",
+                _variant(chrom="17", pos=7674221, ref="G", alt="A"),
+                rsid=None,
+                assembly="GRCh38",
             )
 
         self.assertEqual(result["primary_record"]["accession"], "VCV000012347")
@@ -278,12 +423,21 @@ class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
         # esearch returns only the deletion's UID -- exactly the live
         # dbSNP behavior this reproduces.
         responses = [
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esearch_response(["619783", "54169", "41804"]))),
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esearch_response(["54169"]))),
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esummary_response(entries))),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["619783", "54169", "41804"])),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["54169"])),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esummary_response(entries)),
+            ),
         ]
         with mock.patch("requests.get", side_effect=responses) as mock_get:
             result = ClinVarClient().query_variant(_variant(), rsid="rs397508848", assembly="GRCh38")
@@ -299,12 +453,21 @@ class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
         already found must not double-fetch or double-list it."""
         entries = [_BRCA1_CORRECT_SNV]
         responses = [
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esearch_response(["41804"]))),
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esearch_response(["41804"]))),  # same UID again
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esummary_response(entries))),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["41804"])),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["41804"])),
+            ),  # same UID again
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esummary_response(entries)),
+            ),
         ]
         with mock.patch("requests.get", side_effect=responses):
             result = ClinVarClient().query_variant(_variant(), rsid="rs80357024", assembly="GRCh38")
@@ -315,10 +478,16 @@ class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
     def test_no_rsid_runs_only_the_positional_search(self):
         entries = [_BRCA1_CORRECT_SNV]
         responses = [
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esearch_response(["41804"]))),
-            mock.Mock(status_code=200, raise_for_status=lambda: None,
-                      text=__import__("json").dumps(_esummary_response(entries))),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["41804"])),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esummary_response(entries)),
+            ),
         ]
         with mock.patch("requests.get", side_effect=responses) as mock_get:
             result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")

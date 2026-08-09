@@ -26,6 +26,7 @@ import unittest
 from unittest import mock
 
 from pipeline.acmg_rules import ACMGRuleEngine
+from pipeline.pvs1.utils import ProteinEffectFlags
 
 
 def _cfg():
@@ -116,7 +117,9 @@ class TestMutualExclusivity(unittest.TestCase):
     def test_all_four_sources_all_agreeing_damaging_triggers_pp3_only(self):
         with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
             pp3, bp4 = ACMGRuleEngine._pp3_bp4(
-                _am("likely_pathogenic"), _mmsplice(damaging=True), _ensemble(damaging=True),
+                _am("likely_pathogenic"),
+                _mmsplice(damaging=True),
+                _ensemble(damaging=True),
                 _conservation(phylop=7.76, phastcons=1.0),
             )
         self.assertEqual(pp3.status, "triggered")
@@ -125,7 +128,9 @@ class TestMutualExclusivity(unittest.TestCase):
     def test_all_four_sources_all_agreeing_benign_triggers_bp4_only(self):
         with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
             pp3, bp4 = ACMGRuleEngine._pp3_bp4(
-                _am("likely_benign"), _mmsplice(damaging=False), _ensemble(damaging=False),
+                _am("likely_benign"),
+                _mmsplice(damaging=False),
+                _ensemble(damaging=False),
                 _conservation(phylop=-2.67, phastcons=0.0),
             )
         self.assertEqual(pp3.status, "not_triggered")
@@ -147,6 +152,74 @@ class TestMutualExclusivity(unittest.TestCase):
         self.assertEqual(bp4.status, "not_triggered")
         self.assertFalse(pp3.conflicting_evidence)
         self.assertFalse(bp4.conflicting_evidence)
+
+
+_MISSENSE = ProteinEffectFlags(
+    is_lof=False, is_inframe_indel=False, is_synonymous=False, is_missense=True, determined=True
+)
+_SYNONYMOUS = ProteinEffectFlags(
+    is_lof=False, is_inframe_indel=False, is_synonymous=True, is_missense=False, determined=True
+)
+
+
+class TestMmspliceGatedByConsequence(unittest.TestCase):
+    """
+    Regression tests for I5 (report review round 4): MMSplice must not
+    participate in the PP3/BP4 agree/disagree vote for a confirmed
+    missense variant -- that "no splice disruption" reading answers a
+    different question than "is this missense substitution damaging".
+
+    Real, live-verified scenario: `test_data/conflict_tiers.vcf`
+    Finding 2, VHL W88C -- AlphaMissense am_pathogenicity 0.997
+    ("likely_pathogenic") vs. MMSplice's unrelated "no significant
+    splice disruption" reading previously withheld both PP3 and BP4 as
+    self-contradictory. Finding 1 (MLH1 p.Gly181=, synonymous) is the
+    control case: MMSplice *is* the relevant signal there, and BP7
+    already depends on it, so this fix must leave it unchanged.
+    """
+
+    def test_missense_alphamissense_damaging_now_triggers_pp3_ignoring_mmsplice(self):
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(
+                _am("likely_pathogenic", score=0.997),
+                _mmsplice(damaging=False),
+                protein_flags=_MISSENSE,
+            )
+        self.assertEqual(pp3.status, "triggered")
+        self.assertEqual(bp4.status, "not_triggered")
+        self.assertNotIn("MMSplice", pp3.evidence_sources)
+        self.assertFalse(any("MMSplice" in c for c in pp3.conflicting_evidence))
+
+    def test_missense_mmsplice_damaging_also_excluded_not_just_benign_direction(self):
+        # Symmetric: a "damaging" MMSplice reading on a confirmed
+        # missense variant is excluded too, not only the misleading
+        # "benign" direction that motivated this fix -- MMSplice is
+        # simply not consulted for this consequence class.
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(
+                _am("likely_benign"),
+                _mmsplice(damaging=True),
+                protein_flags=_MISSENSE,
+            )
+        self.assertEqual(bp4.status, "triggered")
+        self.assertEqual(pp3.status, "not_triggered")
+        self.assertNotIn("MMSplice", bp4.evidence_sources)
+
+    def test_synonymous_finding1_style_case_is_unchanged(self):
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(None, _mmsplice(damaging=False), protein_flags=_SYNONYMOUS)
+        self.assertEqual(bp4.status, "triggered")
+        self.assertIn("MMSplice", bp4.evidence_sources)
+
+    def test_undetermined_protein_flags_stays_permissive_unchanged_behavior(self):
+        # No positive confirmation this is missense -> MMSplice still
+        # participates, same as before this fix (protein_flags=None is
+        # the default every existing caller/test already exercises).
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(_am("likely_pathogenic"), _mmsplice(damaging=False))
+        self.assertEqual(pp3.status, "not_triggered")
+        self.assertEqual(bp4.status, "not_triggered")
+        self.assertTrue(any("MMSplice" in c for c in pp3.conflicting_evidence))
 
 
 class TestMMSpliceNeutralNowFeedsBp4(unittest.TestCase):

@@ -390,6 +390,17 @@ class InterpretationEngine:
             priority_result = None  # pre-initialized so Phase 6 below can safely check "did this run"
             try:
                 triggered_codes = [c.get("code") for c in result_obj.triggered_rules]
+                # Report review round 4, I2: cheaply re-runs the same
+                # Critical-conflict check Phase 6 will do properly below
+                # (via `ConflictResolutionEngine.has_critical_conflict`,
+                # a thin wrapper around `_expert_panel_disagreement_
+                # conflict`) so Phase 4 can floor review priority at
+                # Critical when it fires -- Phase 6 itself can't run
+                # first here, since it needs Phase 4's own conflict-
+                # penalty output as one of its inputs.
+                critical_conflict = self._conflict_engine.has_critical_conflict(
+                    result_obj.acmg_classification, clinvar_result
+                )
                 priority_result = self._prioritization_engine.score(
                     acmg_classification=result_obj.acmg_classification,
                     confidence_score=result_obj.confidence_score,
@@ -408,6 +419,7 @@ class InterpretationEngine:
                     blast_result=blast_result,
                     ai_consensus=result_obj.ai_consensus,
                     conflicting_evidence=result_obj.conflicting_evidence,
+                    critical_conflict=critical_conflict,
                 )
                 result_obj.priority_score = priority_result.score
                 result_obj.priority_category = priority_result.category
@@ -727,14 +739,22 @@ class InterpretationEngine:
             and interpro_result.get("found")
         ):
             affected = interpro_result.get("affected_domains")
-            if affected:
-                names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
-                position = interpro_result.get("protein_position")
-                lines.append(
-                    f"InterPro/Pfam: residue {position} (transcript-verified) falls within {len(affected)} "
-                    f"annotated domain/family region(s): {names}."
-                )
-            elif interpro_result.get("domains"):
+            # Report review round 4, I8: this residue-specific
+            # "overlaps N domain(s)" sentence duplicated
+            # `ACMGRuleEngine._pm1`'s own `supporting_evidence` line for
+            # the identical fact (same `affected_domains`/
+            # `protein_position`), worded slightly differently, so the
+            # merged Supporting Evidence list showed it twice --
+            # `interpretation_result.py`'s exact-string `_dedupe` can't
+            # catch two different sentences about the same fact. PM1's
+            # criterion-level text is the more complete, more current
+            # source (it also carries the I7 count/truncation fix this
+            # one never had), so this purely-descriptive duplicate is
+            # dropped rather than kept in sync by hand. The
+            # protein-overall-domain-count branch just below states a
+            # genuinely different fact (not tied to this variant's
+            # residue) and is unaffected.
+            if not affected and interpro_result.get("domains"):
                 lines.append(
                     f"InterPro/Pfam: {len(interpro_result['domains'])} conserved domain/family region(s) "
                     f"are annotated on this protein overall."

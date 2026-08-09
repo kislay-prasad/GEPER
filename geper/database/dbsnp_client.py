@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from config import CONFIG
+from pipeline.variant_normalization import bare_spdi
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
@@ -123,7 +124,33 @@ class DbSNPClient:
 
         chrom = variant.chrom.replace("chr", "")
         position_field = self._position_field(assembly)
-        term = f"{chrom}[CHR] AND {variant.pos}[{position_field}]"
+        # Indels get a 3-position range (pos-1:pos+1), not a
+        # single-point query -- same reasoning and same fix shape as
+        # `database/clinvar_client.py::ClinVarClient._positional_search_term`,
+        # applied here because dbSNP's own `POSITION` field has an
+        # independent, differently-offset indexing convention.
+        # Confirmed live: VHL c.422dup's own rsID (rs1553619976, `spdi`
+        # NC_000003.12:10146593:AA:AAA, matching ClinVar's VCV000411979
+        # exactly) is indexed by dbSNP's `POSITION` field at 10146593 --
+        # one less than the variant's VCF/anchor position 10146594 --
+        # while a plain SNV at the same locus (rs1064796570, A>G/A>T)
+        # IS indexed at 10146594 itself. A single-point query at the
+        # anchor position can therefore miss the correct rsID entirely
+        # -- a retrieval gap, not an allele-matching one
+        # (`_variant_match` still gates actual attribution, same as
+        # ever). The range goes both directions (not just pos-1)
+        # because ClinVar's analogous field was confirmed to offset in
+        # the *other* direction for a deletion at a different locus --
+        # there is no single fixed sign for this offset across sources
+        # or indel types. SNVs are unaffected and keep the tighter
+        # single-point query, since there's no anchor-base offset to
+        # account for and widening it would just risk pulling in
+        # unrelated neighboring rsIDs for no benefit.
+        is_indel = len(variant.ref) != len(variant.alt)
+        if is_indel and variant.pos > 1:
+            term = f"{chrom}[CHR] AND {variant.pos - 1}:{variant.pos + 1}[{position_field}]"
+        else:
+            term = f"{chrom}[CHR] AND {variant.pos}[{position_field}]"
         uids = self._esearch(term)
 
         if not uids:
@@ -210,25 +237,38 @@ class DbSNPClient:
         Returns None (not False) when the entry carries no usable SPDI
         at all, so "checked, doesn't match" and "could not check" stay
         distinguishable -- same as `ClinVarMatchStatus`'s own reasoning.
+
+        Both sides are reduced to SPDI's *bare* form (`pipeline/
+        variant_normalization.bare_spdi` -- prefix/suffix trim with no
+        anchor-base floor) before comparing alleles -- an SPDI's
+        ref/alt is not guaranteed to use the same anchoring convention
+        as the query `variant`'s VCF-style representation (see
+        `database/clinvar_client.py::ClinVarClient._variant_match`'s
+        docstring for the two real, confirmed-live mismatch shapes this
+        closes; dbSNP's `spdi` field uses the same
+        `seq:0-based-pos:ref:alt` shape, so the same mismatches apply
+        here).
         """
         spdi_field = entry.get("spdi")
         if not spdi_field:
             return None
         ref, alt = variant.ref.upper(), variant.alt.upper()
         checked_any = False
+        query_bare = bare_spdi(variant.pos, ref, alt)
         for spdi in str(spdi_field).split(","):
             spdi = spdi.strip()
             if spdi.count(":") < 3:
                 continue
             checked_any = True
             _, pos_str, spdi_ref, spdi_alt = spdi.split(":", 3)
-            if spdi_ref.upper() != ref or spdi_alt.upper() != alt:
-                continue
             try:
-                if int(pos_str) + 1 == variant.pos:
-                    return True
+                pos_1based = int(pos_str) + 1
             except ValueError:
                 continue
+            if bare_spdi(pos_1based, spdi_ref.upper(), spdi_alt.upper()) == query_bare:
+                return True
+            if spdi_ref.upper() == ref and spdi_alt.upper() == alt and pos_1based == variant.pos:
+                return True
         return False if checked_any else None
 
     @staticmethod

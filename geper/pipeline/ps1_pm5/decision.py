@@ -66,7 +66,7 @@ class PS1PM5Evaluator:
         ref: Optional[str],
         alt: Optional[str],
     ) -> PS1PM5Evaluation:
-        gate = self._prerequisite_gate("PS1", query, matches)
+        gate = self._prerequisite_gate("PS1", query, matches, ref, alt)
         if gate is not None:
             return gate
 
@@ -87,14 +87,21 @@ class PS1PM5Evaluator:
         ref: Optional[str],
         alt: Optional[str],
     ) -> PS1PM5Evaluation:
-        gate = self._prerequisite_gate("PM5", query, matches)
+        gate = self._prerequisite_gate("PM5", query, matches, ref, alt)
         if gate is not None:
             return gate
 
         qualifying, rejected = self._qualifying_anchors(query, matches, pos, ref, alt, same_amino_acid=False)
         path = self._opening_path(query, matches, qualifying, "a DIFFERENT resulting amino acid")
         evaluation = self._finalize(
-            "PM5", "different amino acid change at the same codon", query, qualifying, rejected, transcript, pos, path,
+            "PM5",
+            "different amino acid change at the same codon",
+            query,
+            qualifying,
+            rejected,
+            transcript,
+            pos,
+            path,
         )
         if evaluation.applies:
             evaluation.unchecked_caveats.append(
@@ -116,7 +123,10 @@ class PS1PM5Evaluator:
 
     @staticmethod
     def _opening_path(
-        query: CodingConsequenceDetail, matches: List[Dict[str, Any]], qualifying: List[Dict[str, Any]], direction_label: str
+        query: CodingConsequenceDetail,
+        matches: List[Dict[str, Any]],
+        qualifying: List[Dict[str, Any]],
+        direction_label: str,
     ) -> List[str]:
         return [
             f"Qualifying missense substitution at codon {query.codon_number} "
@@ -128,16 +138,51 @@ class PS1PM5Evaluator:
 
     @staticmethod
     def _prerequisite_gate(
-        code: str, query: Optional[CodingConsequenceDetail], matches: List[Dict[str, Any]]
+        code: str,
+        query: Optional[CodingConsequenceDetail],
+        matches: List[Dict[str, Any]],
+        ref: Optional[str] = None,
+        alt: Optional[str] = None,
     ) -> Optional[PS1PM5Evaluation]:
-        """Not-evaluated/not-applicable short-circuits shared by both rules."""
+        """
+        Not-evaluated/not-applicable short-circuits shared by both
+        rules.
+
+        `query is None` collapses several distinct causes in
+        `pipeline/pvs1/utils.py::coding_consequence_detail` (see its own
+        docstring: not a substitution, no CDS fetched, position outside
+        the CDS, or a build/transcript mismatch) -- report review round
+        4, I8, split the one cause that is a genuine variant-class
+        inapplicability, not a gap: an indel (`ref`/`alt` present but
+        not both single bases). PS1/PM5 are ACMG/AMP-defined exclusively
+        for missense *substitutions* at a codon, the identical class
+        restriction the "wrong consequence" branch below already
+        reports as `not_triggered` for a SNV whose consequence is
+        nonsense/synonymous/etc. -- an indel is "checked, and the
+        answer is no" by the same logic, not "could not be checked".
+        Every other `query is None` cause (missing transcript/CDS, a
+        position genuinely outside the CDS, ref/alt not supplied at
+        all) still reports the genuine `not_evaluated` gap below.
+        """
         if query is None:
+            if ref and alt and (len(ref) != 1 or len(alt) != 1):
+                return PS1PM5Evaluation(
+                    code=code,
+                    applies=False,
+                    rationale=(
+                        f"{code} applies only to missense substitutions; this variant is not a "
+                        "single-nucleotide substitution (an insertion/deletion), so it is not a "
+                        "candidate consequence class for this criterion."
+                    ),
+                    decision_path=["Qualifying missense substitution? -> No (not a single-nucleotide substitution)."],
+                )
             return PS1PM5Evaluation(
-                code=code, applies=False,
+                code=code,
+                applies=False,
                 rationale=(
                     f"{code} was not evaluated: this variant's amino-acid consequence could not be "
-                    "determined in the transcript's reading frame (not a single-nucleotide substitution, "
-                    "no CDS sequence available, or the position falls outside the coding sequence)."
+                    "determined in the transcript's reading frame (no CDS sequence available, the "
+                    "position falls outside the coding sequence, or ref/alt were not supplied)."
                 ),
                 decision_path=["Qualifying missense substitution? -> Could not be determined."],
                 unchecked_caveats=["Query variant's amino-acid change could not be computed."],
@@ -145,17 +190,21 @@ class PS1PM5Evaluator:
             )
         if query.category != "missense":
             return PS1PM5Evaluation(
-                code=code, applies=False,
+                code=code,
+                applies=False,
                 rationale=(
                     f"{code} applies only to missense substitutions; this variant's predicted consequence "
                     f"is '{query.category}'."
                 ),
                 decision_path=[f"Qualifying missense substitution? -> No ({query.category})."],
-                query_codon_number=query.codon_number, query_ref_aa=query.ref_aa, query_alt_aa=query.alt_aa,
+                query_codon_number=query.codon_number,
+                query_ref_aa=query.ref_aa,
+                query_alt_aa=query.alt_aa,
             )
         if not matches:
             return PS1PM5Evaluation(
-                code=code, applies=False,
+                code=code,
+                applies=False,
                 rationale=(
                     f"{code} was not evaluated: no ClinVar record with a parseable missense protein change "
                     f"was found at codon {query.codon_number}."
@@ -165,7 +214,9 @@ class PS1PM5Evaluator:
                     "ClinVar records found at this codon? -> None.",
                 ],
                 evidence_sources=["ClinVar"],
-                query_codon_number=query.codon_number, query_ref_aa=query.ref_aa, query_alt_aa=query.alt_aa,
+                query_codon_number=query.codon_number,
+                query_ref_aa=query.ref_aa,
+                query_alt_aa=query.alt_aa,
                 confidence="Low",
             )
         return None
@@ -199,7 +250,9 @@ class PS1PM5Evaluator:
         qualifying, rejected = [], []
         for match in matches:
             if (
-                pos is not None and ref is not None and alt is not None
+                pos is not None
+                and ref is not None
+                and alt is not None
                 and match["pos"] == pos
                 and match["ref"].upper() == ref.upper()
                 and match["alt"].upper() == alt.upper()
@@ -265,7 +318,8 @@ class PS1PM5Evaluator:
 
         if not qualifying:
             return PS1PM5Evaluation(
-                code=code, applies=False,
+                code=code,
+                applies=False,
                 rationale=(
                     f"{code} does not apply: no ClinVar record at codon {query.codon_number} sharing "
                     f"{relation_label} met the confidence bar (>= {self.thresholds.min_star_rating}-star, "
@@ -273,14 +327,20 @@ class PS1PM5Evaluator:
                     + (f" {len(rejected)} record(s) were seen but excluded; see caveats_checked." if rejected else "")
                 ),
                 rejected_anchors=rejected,
-                decision_path=path, caveats_checked=caveats_checked, conflicting_evidence=conflicting,
+                decision_path=path,
+                caveats_checked=caveats_checked,
+                conflicting_evidence=conflicting,
                 evidence_sources=["ClinVar"],
-                query_codon_number=query.codon_number, query_ref_aa=query.ref_aa, query_alt_aa=query.alt_aa,
+                query_codon_number=query.codon_number,
+                query_ref_aa=query.ref_aa,
+                query_alt_aa=query.alt_aa,
                 confidence="Low",
             )
 
         # -- splice-proximity caveat (query's own position) ------------
-        near_boundary = transcript.distance_to_nearest_exon_boundary(pos) if (transcript is not None and pos is not None) else None
+        near_boundary = (
+            transcript.distance_to_nearest_exon_boundary(pos) if (transcript is not None and pos is not None) else None
+        )
         blocked_by_splice = near_boundary is not None and near_boundary <= self.thresholds.splice_proximity_exon_bp
 
         anchor_summary = "; ".join(
@@ -302,17 +362,24 @@ class PS1PM5Evaluator:
                 "though the amino-acid comparison matches."
             )
             return PS1PM5Evaluation(
-                code=code, applies=False,
+                code=code,
+                applies=False,
                 rationale=(
                     f"{code} would otherwise apply based on {relation_label} vs. {anchor_summary}, but is "
                     f"withheld: the query variant sits within {self.thresholds.splice_proximity_exon_bp} bp "
                     "of an exon-intron junction and could have a distinct splicing consequence the known "
                     "pathogenic anchor does not share."
                 ),
-                matched_anchors=qualifying, rejected_anchors=rejected,
-                decision_path=path, caveats_checked=caveats_checked, unchecked_caveats=unchecked,
-                conflicting_evidence=conflicting, evidence_sources=["ClinVar"],
-                query_codon_number=query.codon_number, query_ref_aa=query.ref_aa, query_alt_aa=query.alt_aa,
+                matched_anchors=qualifying,
+                rejected_anchors=rejected,
+                decision_path=path,
+                caveats_checked=caveats_checked,
+                unchecked_caveats=unchecked,
+                conflicting_evidence=conflicting,
+                evidence_sources=["ClinVar"],
+                query_codon_number=query.codon_number,
+                query_ref_aa=query.ref_aa,
+                query_alt_aa=query.alt_aa,
                 confidence="Moderate",
             )
 
@@ -323,7 +390,9 @@ class PS1PM5Evaluator:
                 f"splice-region window, so {code} is not withheld on this basis."
             )
         else:
-            unchecked.append("Splice-proximity caveat: transcript structure was unavailable, so this could not be checked.")
+            unchecked.append(
+                "Splice-proximity caveat: transcript structure was unavailable, so this could not be checked."
+            )
 
         path.append(f"{code} applies -> Yes, citing {len(qualifying)} qualifying ClinVar record(s).")
         supporting = [
@@ -333,17 +402,24 @@ class PS1PM5Evaluator:
             for m in qualifying
         ]
         return PS1PM5Evaluation(
-            code=code, applies=True,
+            code=code,
+            applies=True,
             rationale=(
                 f"{code} applies: this variant produces {query.ref_aa}{query.codon_number}{query.alt_aa}, "
                 f"{relation_label} as {len(qualifying)} ClinVar record(s) already classified at this codon "
                 f"(strongest: {qualifying[0]['title']}, {qualifying[0]['clinical_significance']}, "
                 f"{qualifying[0]['review_status']})."
             ),
-            matched_anchors=qualifying, rejected_anchors=rejected,
-            decision_path=path, caveats_checked=caveats_checked, unchecked_caveats=unchecked,
-            supporting_evidence=supporting, conflicting_evidence=conflicting,
+            matched_anchors=qualifying,
+            rejected_anchors=rejected,
+            decision_path=path,
+            caveats_checked=caveats_checked,
+            unchecked_caveats=unchecked,
+            supporting_evidence=supporting,
+            conflicting_evidence=conflicting,
             evidence_sources=["ClinVar"],
-            query_codon_number=query.codon_number, query_ref_aa=query.ref_aa, query_alt_aa=query.alt_aa,
+            query_codon_number=query.codon_number,
+            query_ref_aa=query.ref_aa,
+            query_alt_aa=query.alt_aa,
             confidence="High" if qualifying[0]["star_rating"] >= 3 else "Moderate",
         )

@@ -53,6 +53,19 @@ _CURATED_CLINVAR_REVIEW_STATUS = (
 )
 _PATHOGENIC_LEANING_CLASSIFICATIONS = ("pathogenic", "likely pathogenic")
 _BENIGN_LEANING_CLASSIFICATIONS = ("benign", "likely benign")
+# ClinVar's own non-committal tiers -- a record can land here two ways:
+# a single reviewed assertion of "Uncertain significance", or ClinVar's
+# submitters disagreeing with each other ("Conflicting classifications
+# of pathogenicity"/the older "Conflicting interpretations of
+# pathogenicity" wording) -- either way, ClinVar itself is not staking
+# out a pathogenic or benign direction, which is exactly the case
+# `_clinvar_disagrees` (report review round 4, I4) needed a name for to
+# stop silently treating it as agreement.
+_UNCERTAIN_LEANING_CLASSIFICATIONS = (
+    "uncertain significance",
+    "conflicting classifications of pathogenicity",
+    "conflicting interpretations of pathogenicity",
+)
 
 
 def _ai_directions(ai_consensus: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -132,6 +145,30 @@ class ConflictResolutionEngine:
     (e.g. PM1's "position is an estimate" caveat) rather than treating
     them as a second, separately-invented signal.
     """
+
+    @staticmethod
+    def has_critical_conflict(acmg_classification: Optional[str], clinvar_result: Optional[Dict[str, Any]]) -> bool:
+        """
+        Whether `_expert_panel_disagreement_conflict` -- the only
+        Critical-tier detector this engine has -- would fire for this
+        variant. Public (unlike the detector methods below, which stay
+        `_`-prefixed since `detect()` is their only normal caller):
+        `pipeline/interpretation.py` calls this BEFORE `detect()` runs
+        (report review round 4, I2), so `PrioritizationEngine.score()`
+        can floor a variant's review-priority category at "Critical"
+        when GEPER's own classification disagrees with an expert-panel/
+        practice-guideline ClinVar record -- the same floor shape
+        `_overall_severity` below already applies to conflict severity
+        itself. Deliberately re-runs the cheap, side-effect-free static
+        check rather than restructuring Phase 4/Phase 6's run order
+        (Phase 6 needs Phase 4's own conflict-penalty output as one of
+        its *inputs*, so a hard swap would create a real circular
+        dependency, not just a call-order preference).
+        """
+        return (
+            ConflictResolutionEngine._expert_panel_disagreement_conflict(acmg_classification, clinvar_result)
+            is not None
+        )
 
     def detect(
         self,
@@ -329,16 +366,58 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
+    def _classification_tier(classification: str) -> Optional[str]:
+        """
+        Maps a classification string (ClinVar's `clinical_significance`
+        or GEPER's own ACMG `classification`) to one of three coarse
+        tiers -- "pathogenic", "benign", "uncertain" -- or `None` when it
+        matches none of them (e.g. "risk factor", "drug response",
+        "not provided": genuinely not comparable, so `_clinvar_disagrees`
+        stays silent rather than guessing a direction for text it
+        doesn't recognize).
+        """
+        s = classification.strip().lower()
+        # Checked first: "conflicting classifications/interpretations OF
+        # PATHOGENICITY" contains the substring "pathogenic" too, so it
+        # must be matched before the pathogenic-leaning check below or
+        # it would be misread as a pathogenic-direction assertion.
+        if any(k in s for k in _UNCERTAIN_LEANING_CLASSIFICATIONS):
+            return "uncertain"
+        if any(k in s for k in _PATHOGENIC_LEANING_CLASSIFICATIONS):
+            return "pathogenic"
+        if any(k in s for k in _BENIGN_LEANING_CLASSIFICATIONS):
+            return "benign"
+        return None
+
+    @staticmethod
     def _clinvar_disagrees(acmg_classification: str, primary_record: Dict[str, Any]) -> bool:
-        """Shared pathogenic/benign-direction disagreement check used by
-        every ClinVar-vs-GEPER detector at every review-status tier."""
-        clinvar_sig = (primary_record.get("clinical_significance") or "").strip().lower()
-        geper_sig = acmg_classification.strip().lower()
-        clinvar_pathogenic = any(s in clinvar_sig for s in _PATHOGENIC_LEANING_CLASSIFICATIONS)
-        clinvar_benign = any(s in clinvar_sig for s in _BENIGN_LEANING_CLASSIFICATIONS)
-        geper_pathogenic = geper_sig in _PATHOGENIC_LEANING_CLASSIFICATIONS
-        geper_benign = geper_sig in _BENIGN_LEANING_CLASSIFICATIONS
-        return (clinvar_pathogenic and not geper_pathogenic) or (clinvar_benign and not geper_benign)
+        """
+        Shared classification-tier disagreement check used by every
+        ClinVar-vs-GEPER detector at every review-status tier.
+
+        Report review round 4, I4: the previous version only checked
+        one direction -- "ClinVar asserts pathogenic/benign and GEPER
+        doesn't assert the same direction" -- which silently missed the
+        mirror case where GEPER stakes out a specific pathogenic/benign
+        call and ClinVar's own expert panel explicitly could NOT
+        ("Uncertain significance"). That asymmetry meant a GEPER "Likely
+        Pathogenic" vs. an expert-panel "Uncertain significance" never
+        flagged, even though an expert panel being unable to reach a
+        confident call on the exact variant GEPER called confidently is
+        at least as reportable as the reverse. Comparing both sides'
+        *tier* (`_classification_tier`) instead of ClinVar's tier alone
+        is symmetric by construction: it disagrees whenever the two
+        tiers differ, in either direction, and -- deliberately --
+        Pathogenic vs. Likely Pathogenic (and Benign vs. Likely Benign)
+        still agree, since both land in the same tier; adjacent-tier
+        agreement was never the bug, only the missing uncertain-tier
+        comparison was.
+        """
+        clinvar_tier = ConflictResolutionEngine._classification_tier(primary_record.get("clinical_significance") or "")
+        geper_tier = ConflictResolutionEngine._classification_tier(acmg_classification)
+        if clinvar_tier is None or geper_tier is None:
+            return False
+        return clinvar_tier != geper_tier
 
     @staticmethod
     def _curated_clinvar_disagreement_conflict(acmg_classification, clinvar_result) -> Optional[ConflictItem]:

@@ -64,15 +64,38 @@ class NormalizedVariant:
 
     def to_dict(self) -> dict:
         return {
-            "chrom": self.chrom, "pos": self.pos, "ref": self.ref, "alt": self.alt,
-            "original_pos": self.original_pos, "original_ref": self.original_ref, "original_alt": self.original_alt,
-            "changed": self.changed, "was_trimmed": self.was_trimmed, "was_left_aligned": self.was_left_aligned,
+            "chrom": self.chrom,
+            "pos": self.pos,
+            "ref": self.ref,
+            "alt": self.alt,
+            "original_pos": self.original_pos,
+            "original_ref": self.original_ref,
+            "original_alt": self.original_alt,
+            "changed": self.changed,
+            "was_trimmed": self.was_trimmed,
+            "was_left_aligned": self.was_left_aligned,
             "left_align_skipped_reason": self.left_align_skipped_reason,
         }
 
 
-def _trim(pos: int, ref: str, alt: str) -> Tuple[int, str, str, bool]:
-    """Reference-free parsimony trimming: common suffix, then common prefix (Tan et al. 2015's first step)."""
+def trim_variant(pos: int, ref: str, alt: str) -> Tuple[int, str, str, bool]:
+    """
+    Reference-free parsimony trimming: common suffix, then common prefix
+    (Tan et al. 2015's first step). Public (not `_`-prefixed) because
+    `database/clinvar_client.py` and `database/dbsnp_client.py` also call
+    it directly, on the *candidate* record's SPDI-derived (pos, ref, alt)
+    -- not just on the query variant -- to bring both sides to the same
+    minimal representation before comparing. This matters because a
+    ClinVar/dbSNP `canonical_spdi` is not guaranteed to already be
+    parsimony-trimmed: confirmed live for VHL c.422dup (VCV000411979),
+    whose canonical_spdi is `NC_000003.12:10146593:AA:AAA` -- a
+    non-minimal 2-base window (trims to `A:AA`) -- while GEPER's own
+    query variant reaches this point already minimally trimmed by
+    `normalize_variant` below. Comparing the two representations without
+    trimming both first missed this exact genuine match (see
+    `database/clinvar_client.py::ClinVarClient._variant_match`'s
+    docstring for the full account).
+    """
     changed = False
 
     while len(ref) > 1 and len(alt) > 1 and ref[-1] == alt[-1]:
@@ -87,7 +110,39 @@ def _trim(pos: int, ref: str, alt: str) -> Tuple[int, str, str, bool]:
     return pos, ref, alt, changed
 
 
-def _left_align(chrom: str, pos: int, ref: str, alt: str, fetch_base: FetchBase, max_shift_bp: int = 200) -> Tuple[int, str, str, bool]:
+def bare_spdi(pos: int, ref: str, alt: str) -> Tuple[int, str, str]:
+    """
+    Trim to SPDI's bare form: unlike `trim_variant`, no single-base
+    anchor is kept -- `ref`/`alt` may end up fully empty (a pure
+    insertion or pure deletion). VCF representations cannot go this far
+    (a VCF record always keeps at least one anchor base), but
+    comparing two *different sources'* indel representations for
+    equivalence needs a form neither source's own convention biases,
+    so this is comparison-only, never used to produce a variant this
+    module (or any VCF-emitting code) would treat as valid on its own.
+
+    Confirmed live this resolves a second, distinct mismatch shape from
+    the one `trim_variant` alone closes: BRCA1 c.1232_1233del
+    (VCV000054169)'s canonical_spdi is `NC_000017.11:43094297:AT:`
+    (fully bare -- empty inserted sequence) while GEPER's own anchored
+    VCF-style representation at that locus is `43094297 CAT>C`.
+    `trim_variant` cannot reduce `alt="C"` any further (it must keep at
+    least 1 base), so the two never converge under it alone; both
+    become `(43094298, 'AT', '')` under this function.
+    """
+    while ref and alt and ref[-1] == alt[-1]:
+        ref, alt = ref[:-1], alt[:-1]
+
+    while ref and alt and ref[0] == alt[0]:
+        ref, alt = ref[1:], alt[1:]
+        pos += 1
+
+    return pos, ref, alt
+
+
+def _left_align(
+    chrom: str, pos: int, ref: str, alt: str, fetch_base: FetchBase, max_shift_bp: int = 200
+) -> Tuple[int, str, str, bool]:
     """
     Reference-guided left-alignment for a clean indel (VCF's mandatory
     single-base anchor convention: for a deletion, `alt` is a strict
@@ -151,12 +206,18 @@ def normalize_variant(
 
     if not ref or not alt or ref == alt or not ref.isalpha() or not alt.isalpha():
         return NormalizedVariant(
-            chrom=chrom, pos=pos, ref=ref, alt=alt,
-            original_pos=original_pos, original_ref=original_ref, original_alt=original_alt,
-            was_trimmed=False, was_left_aligned=False,
+            chrom=chrom,
+            pos=pos,
+            ref=ref,
+            alt=alt,
+            original_pos=original_pos,
+            original_ref=original_ref,
+            original_alt=original_alt,
+            was_trimmed=False,
+            was_left_aligned=False,
         )
 
-    pos, ref, alt, was_trimmed = _trim(pos, ref, alt)
+    pos, ref, alt, was_trimmed = trim_variant(pos, ref, alt)
 
     was_left_aligned = False
     left_align_skipped_reason = None
@@ -164,11 +225,19 @@ def normalize_variant(
         if fetch_base is not None:
             pos, ref, alt, was_left_aligned = _left_align(chrom, pos, ref, alt, fetch_base, max_shift_bp=max_shift_bp)
         else:
-            left_align_skipped_reason = "no reference sequence source provided; only reference-free trimming was applied"
+            left_align_skipped_reason = (
+                "no reference sequence source provided; only reference-free trimming was applied"
+            )
 
     return NormalizedVariant(
-        chrom=chrom, pos=pos, ref=ref, alt=alt,
-        original_pos=original_pos, original_ref=original_ref, original_alt=original_alt,
-        was_trimmed=was_trimmed, was_left_aligned=was_left_aligned,
+        chrom=chrom,
+        pos=pos,
+        ref=ref,
+        alt=alt,
+        original_pos=original_pos,
+        original_ref=original_ref,
+        original_alt=original_alt,
+        was_trimmed=was_trimmed,
+        was_left_aligned=was_left_aligned,
         left_align_skipped_reason=left_align_skipped_reason,
     )

@@ -97,6 +97,79 @@ class TestPM1WithRealBRCA1Domains(unittest.TestCase):
         self.assertIn("could not be determined", criterion.rationale)
 
 
+class TestPM1SynonymousGate(unittest.TestCase):
+    """
+    Regression tests for the I6 fix: PM1 must not trigger on a
+    synonymous variant, even when the residue genuinely overlaps a
+    domain -- domain-overlap evidence is a claim about an *altered*
+    residue, and a synonymous variant alters none.
+
+    Real, live-verified fixture: `test_data/conflict_tiers.vcf`
+    Finding 1, MLH1 (P40692) `p.Gly181=` -- residue 181 genuinely
+    overlaps MLH1's histidine-kinase-like ATPase domain (confirmed live
+    via `InterProLookup.query_variant`), which is exactly why the old
+    code triggered PM1 for 2 points despite no amino acid change.
+    """
+
+    def setUp(self):
+        self.lookup = InterProLookup()
+
+    def test_mlh1_g181_synonymous_does_not_trigger_pm1(self):
+        result = _skip_if_unreachable(
+            self, lambda: self.lookup.query_variant(uniprot_result={"accession": "P40692"}, protein_position=181)
+        )
+        self.assertTrue(result["affected_domains"])  # genuinely overlaps a domain -- the old trigger condition
+        criterion = ACMGRuleEngine._pm1(result, is_synonymous=True)
+        self.assertEqual(criterion.status, "not_triggered")
+        self.assertIn("synonymous", criterion.rationale.lower())
+        self.assertNotIn("Histidine kinase", criterion.rationale)
+
+    def test_mlh1_g181_still_triggers_when_missense(self):
+        # Same domain-overlap fixture, but a missense call at the same
+        # residue must still trigger -- this is not a blanket
+        # "MLH1/domain overlap never triggers" regression.
+        result = _skip_if_unreachable(
+            self, lambda: self.lookup.query_variant(uniprot_result={"accession": "P40692"}, protein_position=181)
+        )
+        criterion = ACMGRuleEngine._pm1(result, is_synonymous=False)
+        self.assertEqual(criterion.status, "triggered")
+
+    def test_domain_count_in_supporting_evidence_matches_names_listed(self):
+        # Regression test for I7: MLH1 residue 181 genuinely overlaps 4
+        # `affected_domains` entries (see this class's docstring) --
+        # the old code always reported `len(affected)` (4) while
+        # truncating the name list to 3, so the count and the names
+        # disagreed. Now the count in the text always matches what's
+        # actually named, with an explicit "(showing N of TOTAL)" note
+        # when truncated.
+        result = _skip_if_unreachable(
+            self, lambda: self.lookup.query_variant(uniprot_result={"accession": "P40692"}, protein_position=181)
+        )
+        self.assertEqual(len(result["affected_domains"]), 4)
+        criterion = ACMGRuleEngine._pm1(result, is_synonymous=False)
+        self.assertEqual(criterion.status, "triggered")
+        evidence_line = criterion.supporting_evidence[0]
+        stated_count = int(evidence_line.split("overlaps ")[1].split(" domain")[0])
+        # The names actually shown (first 3 of the 4 affected_domains entries).
+        expected_names = [
+            d.get("name") or d.get("member_accession") or "unnamed domain" for d in result["affected_domains"][:3]
+        ]
+        self.assertEqual(stated_count, len(expected_names))
+        for name in expected_names:
+            self.assertIn(name, evidence_line)
+        self.assertIn("(showing 3 of 4)", evidence_line)
+
+    def test_undetermined_synonymous_status_does_not_gate(self):
+        # is_synonymous=None (undetermined) must fall through to the
+        # existing protein_position-based logic unchanged, not be
+        # treated as "known synonymous".
+        result = _skip_if_unreachable(
+            self, lambda: self.lookup.query_variant(uniprot_result={"accession": "P40692"}, protein_position=181)
+        )
+        criterion = ACMGRuleEngine._pm1(result, is_synonymous=None)
+        self.assertEqual(criterion.status, "triggered")
+
+
 class TestPM1WithRealTP53Domains(unittest.TestCase):
     """TP53 (P04637): DNA-binding domain ~94-312 -- second independent real-data cross-check gene."""
 

@@ -677,6 +677,49 @@ class TestPS3BS3Rules(unittest.TestCase):
         ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
         self.assertEqual(ps3.strength, "moderate")
 
+    def test_vhl_w88c_ps3_supporting_is_a_real_vcep_downgrade_not_a_bug(self):
+        """
+        Regression test for I3 (report review round 4): confirmed live
+        2026-08 -- the VHL VCEP's own published evidence code for VHL
+        c.264G>T (p.Trp88Cys, VCV000223171) is literally 'PS3_Supporting',
+        not a bare 'PS3'. GEPER correctly parses that suffix and scores
+        1 point (Supporting), not 4 (Strong) -- this was flagged as a
+        possible regression, but tracing `parse_evidence_code_strength`
+        and this live ERepo record shows the VCEP genuinely assigned
+        Supporting strength for this specific variant; a different real
+        record (nuclear_test.vcf's, plain 'PS3: Met') correctly scores
+        Strong. Different variants/VCEPs legitimately get different
+        strengths under the SVI framework -- comparing the two isn't
+        apples to apples. What WAS a genuine (separate, smaller) bug:
+        the rationale sentence used to always print bare 'PS3: Met'
+        even when the VCEP's own code carried a strength suffix,
+        silently dropping the downgrade from the human-readable text
+        (the `strength` field itself was always correct). Now the
+        sentence names the VCEP's actual evidence code.
+        """
+        functional_evidence_result = {
+            "found": True,
+            "source": "clingen_erepo",
+            "gene_symbol": "VHL",
+            "records": [
+                {
+                    "source": "clingen_erepo",
+                    "call": "PS3",
+                    "strength": "supporting",
+                    "matched_hgvs": "NM_000551.4:c.264G>T",
+                    "expert_panel": "VHL VCEP",
+                    "classification_outcome": "Likely Pathogenic",
+                    "condition": "von Hippel-Lindau disease",
+                }
+            ],
+        }
+        ps3 = ACMGRuleEngine._ps3(functional_evidence_result)
+        self.assertEqual(ps3.status, "triggered")
+        self.assertEqual(ps3.strength, "supporting")
+        self.assertIn("PS3_Supporting: Met", ps3.rationale)
+        self.assertNotIn("'PS3: Met'", ps3.rationale)
+        self.assertIn("PS3_Supporting: Met", ps3.supporting_evidence[0])
+
     def test_mavedb_abnormal_record_triggers_ps3_at_moderate_strength(self):
         functional_evidence_result = {
             "found": True,

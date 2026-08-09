@@ -16,7 +16,7 @@ coordinates.
 
 import unittest
 
-from pipeline.variant_normalization import normalize_variant
+from pipeline.variant_normalization import bare_spdi, normalize_variant
 
 
 class TestParsimonyTrimOnly(unittest.TestCase):
@@ -42,7 +42,9 @@ class TestParsimonyTrimOnly(unittest.TestCase):
 
     def test_indel_without_reference_source_is_trimmed_but_not_left_aligned(self):
         r = normalize_variant("1", 103, "AA", "A")  # no fetch_base given
-        self.assertEqual((r.pos, r.ref, r.alt), (103, "AA", "A"))  # already minimal VCF-anchored form; nothing further to trim
+        self.assertEqual(
+            (r.pos, r.ref, r.alt), (103, "AA", "A")
+        )  # already minimal VCF-anchored form; nothing further to trim
         self.assertFalse(r.was_left_aligned)
         self.assertIn("no reference sequence source", r.left_align_skipped_reason)
 
@@ -125,6 +127,37 @@ class TestAlreadyMinimalSnvIsUnaffectedByOrientation(unittest.TestCase):
         r = normalize_variant("17", 43106487, "T", "G")
         self.assertEqual((r.pos, r.ref, r.alt), (43106487, "T", "G"))
         self.assertFalse(r.changed)
+
+
+class TestBareSpdi(unittest.TestCase):
+    """
+    `bare_spdi` (added for the I1 ClinVar/dbSNP indel-matching fix --
+    see `database/clinvar_client.py::ClinVarClient._variant_match`)
+    trims all the way to empty, unlike `trim_variant` which always
+    keeps a >=1-base VCF anchor.
+    """
+
+    def test_insertion_reduces_to_empty_ref(self):
+        # Real VHL c.422dup case: query variant 10146594 A>AA.
+        self.assertEqual(bare_spdi(10146594, "A", "AA"), (10146594, "", "A"))
+
+    def test_non_minimal_spdi_window_reduces_to_same_bare_form(self):
+        # ClinVar's own (non-minimal) canonical_spdi for the same variant.
+        self.assertEqual(bare_spdi(10146594, "AA", "AAA"), (10146594, "", "A"))
+
+    def test_deletion_reduces_to_empty_alt(self):
+        # Real BRCA1 c.1232_1233del case: VCF-anchored 43094297 CAT>C.
+        self.assertEqual(bare_spdi(43094297, "CAT", "C"), (43094298, "AT", ""))
+
+    def test_already_bare_deletion_is_unchanged(self):
+        # ClinVar's own canonical_spdi for the same deletion.
+        self.assertEqual(bare_spdi(43094298, "AT", ""), (43094298, "AT", ""))
+
+    def test_snv_is_unaffected(self):
+        self.assertEqual(bare_spdi(100, "A", "C"), (100, "A", "C"))
+
+    def test_no_shared_prefix_or_suffix_leaves_indel_unchanged(self):
+        self.assertEqual(bare_spdi(100, "GC", "T"), (100, "GC", "T"))
 
 
 if __name__ == "__main__":

@@ -560,7 +560,7 @@ def classify_pm4_variant(
         if length_delta % 3 != 0:
             notes.append(
                 f"Indel changes coding length by {length_delta} bp (not a multiple of 3): frameshift, "
-                "outside PM4's in-frame scope."
+                "not an in-frame indel."
             )
             return None, notes
         codon_number = transcript.first_affected_codon(int(pos), ref, alt)

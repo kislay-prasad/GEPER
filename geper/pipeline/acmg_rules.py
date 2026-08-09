@@ -273,7 +273,7 @@ class ACMGRuleEngine:
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
         )
-        criteria["PM1"] = self._pm1(interpro_result)
+        criteria["PM1"] = self._pm1(interpro_result, is_synonymous=is_synonymous)
         criteria["PM2"] = self._pm2(gnomad_result)
         criteria["PM4"] = self._pm4(
             variant_dict=variant_dict,
@@ -562,11 +562,32 @@ class ACMGRuleEngine:
         return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
 
     @staticmethod
-    def _pm1(interpro_result: Optional[Dict[str, Any]]) -> CriterionResult:
+    def _pm1(interpro_result: Optional[Dict[str, Any]], is_synonymous: Optional[bool] = None) -> CriterionResult:
         """
         PM1 (ACMG/AMP 2015): variant is located in a mutational hot
         spot and/or critical, well-established functional domain
         without benign variation.
+
+        `is_synonymous` (report review round 4, I6): PM1's domain-
+        overlap evidence is a claim about a residue being altered by
+        this variant, not merely co-located with one -- a synonymous
+        variant changes no amino acid, so "this position falls in a
+        conserved domain" is true but says nothing about this specific
+        variant. Confirmed live: `test_data/conflict_tiers.vcf` Finding
+        1 (MLH1 `p.Gly181=`, no amino acid change) triggered PM1 for 2
+        points on InterPro domain overlap at residue 181 anyway, purely
+        because a `protein_position` existed -- domain-overlap presence
+        was never checked against whether the protein was actually
+        altered there. Gated using `protein_effect_flags` (via
+        `evaluate()`'s already-computed `protein_flags`), the same
+        transcript-CDS-frame consequence call BP7/BP1 already gate on,
+        checked before the domain-overlap logic below so a confirmed
+        synonymous call short-circuits it outright -- reusing whatever
+        `interpro_result`/`protein_position` state happens to be
+        present would still be answering the wrong question.
+        `is_synonymous=None` (undetermined) does not gate here; the
+        existing `protein_position is None` check below already reports
+        that gap accurately on its own terms.
 
         The domain-overlap check below needs an actual protein residue
         number to compare against InterPro/Pfam's own (UniProt
@@ -574,9 +595,32 @@ class ACMGRuleEngine:
         `orchestrator._canonical_protein_position` -- a transcript-
         verified mapping (via `TranscriptContext.codon_at`, the same
         exon-aware, strand-aware coordinate arithmetic PM4/PS1/PM5
-        already rely on), computed only against this gene's MANE
-        Select / Ensembl-canonical transcript so the numbering is
+        already rely on), computed only against this gene's Ensembl-
+        canonical/MANE-tagged transcript (`TranscriptContext.is_canonical`/
+        `is_mane_select`, both sourced from Ensembl's own transcript
+        annotation -- see `pipeline/pvs1/utils.py::
+        canonical_protein_position`'s docstring) so the numbering is
         guaranteed to line up with InterPro's own coordinates.
+
+        Report review round 4, I8: this rationale used to say "MANE
+        Select/canonical transcript" unconditionally, which reads as
+        "the NCBI MANE Select dataset was consulted" -- while
+        Provenance's separate "MANE Select (NCBI)" entry (tracking
+        `pipeline/mane/provider.py`'s bootstrapped NCBI MANE summary
+        dataset) legitimately says "Not consulted this run" for the
+        same run. Both statements are true; they were never describing
+        the same source. Traced, not guessed: `canonical_protein_position`
+        checks only `transcript.is_mane_select or transcript.is_canonical`,
+        both populated from Ensembl's own transcript payload/GTF tags
+        (`pipeline/pvs1/utils.py::transcript_context_from_ensembl`,
+        `pipeline/ensembl/bootstrap.py`'s GTF `tag` parsing) -- it never
+        calls `pipeline.mane.provider.mane_select_transcript_id()`, the
+        only consumer of the NCBI dataset Provenance is tracking (used
+        exclusively by `pipeline/clingen/utils.py`'s gene-overlap
+        disambiguation, an unrelated code path). The wording below now
+        says "Ensembl-canonical/MANE-tagged transcript" to name the
+        source actually used, rather than a name that collides with a
+        different, genuinely-uninvolved source.
 
         `protein_position is None` (checked explicitly, separately
         from `affected_domains` being empty) covers every case that
@@ -593,6 +637,18 @@ class ACMGRuleEngine:
         that was wrong for almost every real variant).
         """
         direction, strength = _STRENGTH["PM1"]
+        if is_synonymous:
+            return CriterionResult(
+                "PM1",
+                direction,
+                strength,
+                "not_triggered",
+                "Variant is synonymous at the protein level (transcript-CDS-frame consequence call) -- "
+                "the protein is unaltered at this position, so domain-overlap evidence (which is a claim "
+                "about an altered residue) does not apply, regardless of whether this position falls "
+                "within an annotated domain.",
+                evidence_sources=["transcript_cds"],
+            )
         if (
             not interpro_result
             or interpro_result.get("skipped")
@@ -607,28 +663,49 @@ class ACMGRuleEngine:
                 "PM1",
                 "InterPro domain annotation was available for this gene, but this variant's protein "
                 "residue could not be determined from the transcript structure (no transcript structure "
-                "was fetched, the resolved transcript is not this gene's MANE Select/canonical one, or "
-                "the position falls outside the coding sequence) -- domain overlap cannot be checked "
-                "without a residue number, so this is a gap, not a negative finding.",
+                "was fetched, the resolved transcript is not this gene's Ensembl-canonical/MANE-tagged "
+                "one, or the position falls outside the coding sequence) -- domain overlap cannot be "
+                "checked without a residue number, so this is a gap, not a negative finding.",
             )
 
         affected = interpro_result.get("affected_domains") or []
         if affected:
-            names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in affected[:3])
+            # Report review round 4, I7: the domain count previously
+            # always reported `len(affected)` (every overlapping
+            # region) while the name list following it was silently cut
+            # to the first 3 (`affected[:3]`) -- readable for a residue
+            # that genuinely overlaps a couple dozen near-duplicate
+            # member-database entries, but it made the count and the
+            # list disagree on every finding that had more than 3.
+            # Confirmed live: MLH1 (P40692) residue 181 overlaps 4
+            # `affected_domains` entries (3 separate member databases --
+            # cathgene3d, interpro, ssf -- annotating essentially the
+            # same histidine-kinase-like ATPase domain, plus a distinct
+            # CDD entry), so this was not a rare edge case. Now: the
+            # name list is still capped at 3 for readability, but the
+            # count text always describes exactly what's shown, with an
+            # explicit "(showing N of TOTAL)" note when truncated --
+            # never a bare number the names don't back up.
+            shown = affected[:3]
+            names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed domain" for d in shown)
+            truncated_note = f" (showing {len(shown)} of {len(affected)})" if len(affected) > len(shown) else ""
             return CriterionResult(
                 "PM1",
                 direction,
                 strength,
                 "triggered",
-                f"Residue {protein_position} (transcript-verified against this gene's MANE Select/"
-                f"canonical transcript) falls within an annotated functional domain/family region "
+                f"Residue {protein_position} (transcript-verified against this gene's Ensembl-canonical/"
+                f"MANE-tagged transcript) falls within an annotated functional domain/family region "
                 f"({names}), a location InterPro/Pfam curation flags as structurally/functionally "
                 f"significant.",
                 supporting_evidence=[
-                    f"InterPro/Pfam: residue {protein_position} overlaps {len(affected)} domain/family region(s): {names}."
+                    f"InterPro/Pfam: residue {protein_position} overlaps {len(shown)} domain/family "
+                    f"region(s){truncated_note}: {names}."
                 ],
                 conflicting_evidence=[
-                    "Checked only against this gene's MANE Select/Ensembl-canonical transcript; a different disease-relevant transcript could number this residue differently."
+                    "Checked only against this gene's Ensembl-canonical/MANE-tagged transcript (Ensembl's "
+                    "own annotation -- not the separately-tracked NCBI MANE Select dataset, see Provenance); "
+                    "a different disease-relevant transcript could number this residue differently."
                 ],
                 evidence_sources=["InterPro"],
                 confidence="Moderate",
@@ -638,8 +715,8 @@ class ACMGRuleEngine:
             direction,
             strength,
             "not_triggered",
-            f"Residue {protein_position} (transcript-verified against this gene's MANE Select/canonical "
-            f"transcript) does not overlap any annotated InterPro/Pfam domain region.",
+            f"Residue {protein_position} (transcript-verified against this gene's Ensembl-canonical/"
+            f"MANE-tagged transcript) does not overlap any annotated InterPro/Pfam domain region.",
             evidence_sources=["InterPro"],
             confidence="Moderate",
         )
@@ -1241,7 +1318,37 @@ class ACMGRuleEngine:
                     )
                 )
 
-        if mmsplice_result and mmsplice_result.get("predicted"):
+        # Report review round 4, I5: MMSplice previously participated
+        # in the agree/disagree vote for every variant regardless of
+        # consequence, including ordinary missense -- so a missense
+        # variant's own "no splice disruption" reading (a question
+        # MMSplice was never asked to answer for this variant's actual
+        # mechanism) counted as BP4-direction "benign" evidence,
+        # contradicting a real AlphaMissense damaging call and starving
+        # PP3 on exactly the variants AlphaMissense is best at.
+        # Confirmed live: VHL W88C (missense) -- AlphaMissense
+        # am_pathogenicity 0.997 ("likely_pathogenic") vs. MMSplice's
+        # unrelated "no significant splice disruption" reading withheld
+        # both PP3 and BP4 as self-contradictory. Gated on
+        # `protein_flags.is_missense` (the same transcript-CDS-frame
+        # consequence call BP7/BP1/PM1 already reuse) rather than a new
+        # detector: canonical +-1/+-2 splice sites are already excluded
+        # entirely above (`_pp3_bp4_inapplicability_reason`, before
+        # this function even reaches here), so what remains eligible
+        # for MMSplice's vote once missense is excluded is exactly
+        # "not confirmed missense" -- synonymous (MLH1 p.Gly181=, where
+        # this same reading genuinely IS the relevant BP4 signal),
+        # splice-region/intronic, in-frame indels, and undetermined
+        # consequence (kept permissive on purpose: MMSplice ran, and
+        # there is no positive confirmation this is a case it shouldn't
+        # have an opinion on). Excluded in BOTH directions, not just
+        # the misleading "benign" one that motivated this fix: the
+        # question is inapplicable to a missense variant regardless of
+        # which answer MMSplice happens to return, the same symmetric
+        # treatment the canonical-splice branch above already gives
+        # AlphaMissense/conservation.
+        is_confirmed_missense = protein_flags is not None and protein_flags.determined and protein_flags.is_missense
+        if mmsplice_result and mmsplice_result.get("predicted") and not is_confirmed_missense:
             category = mmsplice_result.get("interpretation_category")
             sources.append("MMSplice")
             if category in (
@@ -2501,9 +2608,24 @@ class ACMGRuleEngine:
 
         if source == "clingen_erepo":
             gene_clause = f" ({record['expert_panel']})" if record.get("expert_panel") else ""
+            # Report review round 4, I3: `strength` above is always the
+            # VCEP's own explicit assignment when their evidence code
+            # carries a strength suffix (e.g. real live data, VHL VCEP
+            # on VHL c.264G>T p.Trp88Cys: evidence code literally
+            # "PS3_Supporting", not a bug or a GEPER default -- see
+            # this method's/`_ps3`'s docstrings). The rationale sentence
+            # used to always say bare "'PS3: Met'" regardless, silently
+            # dropping that suffix -- correct evidence code, misleading
+            # prose, since a reader who only reads the sentence (not the
+            # separate `strength` field) would see "Met" and reasonably
+            # assume the criterion's own ACMG-default strength (Strong)
+            # applied. Now states the VCEP's strength explicitly
+            # whenever it differs from that default, so "PS3: Met" only
+            # ever appears bare when it genuinely was bare.
+            code_label = code if strength == default_strength else f"{code}_{strength.capitalize()}"
             rationale = (
                 f"ClinGen Evidence Repository: an expert panel{gene_clause} curated this variant "
-                f"({record.get('matched_hgvs')}) with '{code}: Met'"
+                f"({record.get('matched_hgvs')}) with '{code_label}: Met'"
                 + (
                     f", classifying it as {record['classification_outcome']}"
                     if record.get("classification_outcome")
@@ -2513,7 +2635,7 @@ class ACMGRuleEngine:
                 + "."
             )
             supporting = [
-                f"ClinGen ERepo {code}: Met"
+                f"ClinGen ERepo {code_label}: Met"
                 + (f" ({record['expert_panel']})" if record.get("expert_panel") else "")
                 + "."
             ]

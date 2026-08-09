@@ -24,7 +24,7 @@ computed (PM1 = domain overlap, PVS1/PM4 = protein-impact), and reuses
 factor instead of duplicating its AlphaFold-band mapping.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import CONFIG
@@ -47,14 +47,22 @@ _CLINVAR_DIRECTIONAL_SCORE = {
 }
 
 _CLINGEN_VALIDITY_SCORE = {
-    "definitive": 1.0, "strong": 0.85, "moderate": 0.5, "limited": 0.25,
-    "disputed": 0.05, "refuted": 0.0,
+    "definitive": 1.0,
+    "strong": 0.85,
+    "moderate": 0.5,
+    "limited": 0.25,
+    "disputed": 0.05,
+    "refuted": 0.0,
 }
 
 _SPLICE_SEVERITY_SCORE = {
-    "strong_donor_loss": 1.0, "strong_acceptor_loss": 1.0,
-    "exon_skipping": 1.0, "intron_retention": 0.9,
-    "strong": 1.0, "moderate": 0.6, "weak": 0.2,
+    "strong_donor_loss": 1.0,
+    "strong_acceptor_loss": 1.0,
+    "exon_skipping": 1.0,
+    "intron_retention": 0.9,
+    "strong": 1.0,
+    "moderate": 0.6,
+    "weak": 0.2,
 }
 
 
@@ -134,6 +142,7 @@ class PrioritizationEngine:
         blast_result: Dict[str, Any] = None,
         ai_consensus: List[Dict[str, Any]] = None,
         conflicting_evidence: List[str] = None,
+        critical_conflict: bool = False,
     ) -> PriorityResult:
         cfg = CONFIG.prioritization
         triggered = set(triggered_rule_codes or [])
@@ -150,7 +159,9 @@ class PrioritizationEngine:
         factors.append(self._conserved_domain_factor(triggered, interpro_result, cfg.CONSERVED_DOMAIN_WEIGHT, reasons))
         factors.append(self._structural_factor(alphafold_result, cfg.STRUCTURAL_WEIGHT, reasons))
         factors.append(self._splicing_factor(mmsplice_result, cfg.SPLICING_WEIGHT, reasons))
-        factors.append(self._sequence_context_factor(dna_models_used, rna_result, protein_result, cfg.SEQUENCE_CONTEXT_WEIGHT))
+        factors.append(
+            self._sequence_context_factor(dna_models_used, rna_result, protein_result, cfg.SEQUENCE_CONTEXT_WEIGHT)
+        )
         factors.append(self._additional_factor(blast_result, cfg.ADDITIONAL_WEIGHT))
 
         max_possible = sum(f.weight for f in factors)
@@ -163,6 +174,26 @@ class PrioritizationEngine:
         final_score = max(0.0, raw_score * (1.0 - penalty))
 
         category = self._category(final_score, cfg)
+        if critical_conflict and category != "Critical":
+            # Report review round 4, I2: review priority was previously
+            # driven purely by this engine's own evidence-completeness
+            # factors, which are near-orthogonal to whether GEPER's
+            # classification disagrees with an expert-panel/practice-
+            # guideline ClinVar record (a synonymous or otherwise
+            # evidence-sparse variant scores low on Protein Impact/
+            # Conserved Domain/Splicing regardless of how urgent the
+            # classification disagreement itself is) -- so a Critical
+            # clinical conflict could rank *below* findings with no
+            # conflict at all. Floored here the same shape
+            # `ConflictResolutionEngine._overall_severity` already uses
+            # for conflict severity itself: a single Critical-tier
+            # signal overrides the score-threshold tier outright, never
+            # diluted by averaging against this engine's other factors.
+            category = "Critical"
+            reasons.append(
+                "✗ Review priority floored at Critical: GEPER's classification disagrees with an "
+                "expert-panel/practice-guideline ClinVar record."
+            )
 
         return PriorityResult(
             score=final_score,
@@ -188,20 +219,24 @@ class PrioritizationEngine:
         if classification in ("Pathogenic", "Likely Pathogenic"):
             reasons.append(f"✓ ACMG classification: {classification}")
         rationale = (
-            f"ACMG classification is '{classification}'."
-            if classification else "No ACMG classification available."
+            f"ACMG classification is '{classification}'." if classification else "No ACMG classification available."
         )
         return PriorityFactor("ACMG Classification", weight, value, weight * value, rationale)
 
     @staticmethod
     def _confidence_factor(confidence_score, weight, reasons) -> PriorityFactor:
         if confidence_score is None:
-            return PriorityFactor("Confidence Score", weight, 0.0, 0.0, "Confidence score not yet available for this variant.")
+            return PriorityFactor(
+                "Confidence Score", weight, 0.0, 0.0, "Confidence score not yet available for this variant."
+            )
         value = max(0.0, min(1.0, confidence_score / 100.0))
         if confidence_score >= CONFIG.confidence.HIGH_THRESHOLD:
             reasons.append(f"✓ High confidence score ({confidence_score:.1f}%)")
         return PriorityFactor(
-            "Confidence Score", weight, value, weight * value,
+            "Confidence Score",
+            weight,
+            value,
+            weight * value,
             f"Confidence score is {confidence_score:.1f}%.",
         )
 
@@ -217,7 +252,9 @@ class PrioritizationEngine:
             if v >= 0.75:
                 reasons.append(f"✓ {'Pathogenic' if v == 1.0 else 'Likely pathogenic'} ClinVar record")
         elif clinvar_result and clinvar_result.get("match_status") == "position_only":
-            notes.append("No ClinVar record found for this exact variant (other, non-matching variants exist at this position).")
+            notes.append(
+                "No ClinVar record found for this exact variant (other, non-matching variants exist at this position)."
+            )
         else:
             notes.append("No ClinVar record found.")
         if clingen_result and clingen_result.get("found"):
@@ -240,55 +277,120 @@ class PrioritizationEngine:
             return PriorityFactor("Population Rarity", weight, 1.0, weight, "Variant absent from gnomAD.")
         af = gnomad_result.get("global_af")
         if af is None:
-            return PriorityFactor("Population Rarity", weight, 0.3, weight * 0.3, "gnomAD record found but no allele frequency reported.")
+            return PriorityFactor(
+                "Population Rarity", weight, 0.3, weight * 0.3, "gnomAD record found but no allele frequency reported."
+            )
         if af >= gcfg.BA1_AF_THRESHOLD:
-            return PriorityFactor("Population Rarity", weight, 0.0, 0.0, f"Common variant (gnomAD AF={af:.2e} >= BA1 threshold); low priority on rarity grounds.")
+            return PriorityFactor(
+                "Population Rarity",
+                weight,
+                0.0,
+                0.0,
+                f"Common variant (gnomAD AF={af:.2e} >= BA1 threshold); low priority on rarity grounds.",
+            )
         if af >= gcfg.BS1_AF_THRESHOLD:
-            return PriorityFactor("Population Rarity", weight, 0.15, weight * 0.15, f"gnomAD AF={af:.2e} exceeds expected disease frequency (BS1 range).")
+            return PriorityFactor(
+                "Population Rarity",
+                weight,
+                0.15,
+                weight * 0.15,
+                f"gnomAD AF={af:.2e} exceeds expected disease frequency (BS1 range).",
+            )
         if af <= gcfg.PM2_AF_THRESHOLD:
             reasons.append(f"✓ Very rare in gnomAD (AF={af:.2e})")
-            return PriorityFactor("Population Rarity", weight, 1.0, weight, f"gnomAD AF={af:.2e} is at/below the PM2 rarity threshold.")
-        return PriorityFactor("Population Rarity", weight, 0.5, weight * 0.5, f"gnomAD AF={af:.2e} is intermediate (below BS1, above PM2 threshold).")
+            return PriorityFactor(
+                "Population Rarity", weight, 1.0, weight, f"gnomAD AF={af:.2e} is at/below the PM2 rarity threshold."
+            )
+        return PriorityFactor(
+            "Population Rarity",
+            weight,
+            0.5,
+            weight * 0.5,
+            f"gnomAD AF={af:.2e} is intermediate (below BS1, above PM2 threshold).",
+        )
 
     @staticmethod
     def _ai_agreement_factor(ai_consensus, weight, reasons) -> PriorityFactor:
         if not ai_consensus:
-            return PriorityFactor("AI Agreement", weight, 0.0, 0.0, "No classifying AI model (AlphaMissense/MMSplice) produced a result.")
+            return PriorityFactor(
+                "AI Agreement", weight, 0.0, 0.0, "No classifying AI model (AlphaMissense/MMSplice) produced a result."
+            )
         directions = set()
         names = []
         for v in ai_consensus:
             pred = (v.get("prediction") or "").lower()
             names.append(v.get("source") or v.get("model") or "model")
-            if "pathogenic" in pred or pred in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+            if "pathogenic" in pred or pred in (
+                "strong_donor_loss",
+                "strong_acceptor_loss",
+                "exon_skipping",
+                "intron_retention",
+                "strong",
+                "moderate",
+            ):
                 directions.add("damaging")
             elif "benign" in pred:
                 directions.add("benign")
         if len(directions) > 1:
-            return PriorityFactor("AI Agreement", weight, 0.4, weight * 0.4, f"AI models disagree in direction ({', '.join(names)}).")
+            return PriorityFactor(
+                "AI Agreement", weight, 0.4, weight * 0.4, f"AI models disagree in direction ({', '.join(names)})."
+            )
         if directions == {"damaging"}:
             reasons.append(f"✓ {' and '.join(names)} predicts damaging effect")
-            return PriorityFactor("AI Agreement", weight, 1.0, weight, f"{', '.join(names)} concordantly predict a damaging effect.")
+            return PriorityFactor(
+                "AI Agreement", weight, 1.0, weight, f"{', '.join(names)} concordantly predict a damaging effect."
+            )
         if directions == {"benign"}:
-            return PriorityFactor("AI Agreement", weight, 0.0, 0.0, f"{', '.join(names)} concordantly predict a benign effect.")
-        return PriorityFactor("AI Agreement", weight, 0.3, weight * 0.3, f"{', '.join(names)} produced results with no clear damaging/benign direction.")
+            return PriorityFactor(
+                "AI Agreement", weight, 0.0, 0.0, f"{', '.join(names)} concordantly predict a benign effect."
+            )
+        return PriorityFactor(
+            "AI Agreement",
+            weight,
+            0.3,
+            weight * 0.3,
+            f"{', '.join(names)} produced results with no clear damaging/benign direction.",
+        )
 
     @staticmethod
     def _protein_impact_factor(triggered_codes, weight, reasons) -> PriorityFactor:
         if "PVS1" in triggered_codes:
             reasons.append("✓ Predicted loss-of-function (PVS1)")
-            return PriorityFactor("Protein Impact", weight, 1.0, weight, "PVS1 triggered: predicted null variant with established LOF disease mechanism.")
+            return PriorityFactor(
+                "Protein Impact",
+                weight,
+                1.0,
+                weight,
+                "PVS1 triggered: predicted null variant with established LOF disease mechanism.",
+            )
         if "PM4" in triggered_codes:
             reasons.append("✓ In-frame protein-length change (PM4)")
-            return PriorityFactor("Protein Impact", weight, 0.6, weight * 0.6, "PM4 triggered: in-frame insertion/deletion.")
-        return PriorityFactor("Protein Impact", weight, 0.0, 0.0, "No ACMG protein-impact criterion (PVS1/PM4) triggered.")
+            return PriorityFactor(
+                "Protein Impact", weight, 0.6, weight * 0.6, "PM4 triggered: in-frame insertion/deletion."
+            )
+        return PriorityFactor(
+            "Protein Impact", weight, 0.0, 0.0, "No ACMG protein-impact criterion (PVS1/PM4) triggered."
+        )
 
     @staticmethod
     def _conserved_domain_factor(triggered_codes, interpro_result, weight, reasons) -> PriorityFactor:
         if "PM1" in triggered_codes:
             reasons.append("✓ Overlaps a conserved/functional domain (PM1)")
-            return PriorityFactor("Conserved Domain", weight, 1.0, weight, "PM1 triggered: variant residue overlaps an annotated InterPro/Pfam domain.")
+            return PriorityFactor(
+                "Conserved Domain",
+                weight,
+                1.0,
+                weight,
+                "PM1 triggered: variant residue overlaps an annotated InterPro/Pfam domain.",
+            )
         if interpro_result and interpro_result.get("found"):
-            return PriorityFactor("Conserved Domain", weight, 0.0, 0.0, "InterPro annotation available but variant does not overlap an annotated domain.")
+            return PriorityFactor(
+                "Conserved Domain",
+                weight,
+                0.0,
+                0.0,
+                "InterPro annotation available but variant does not overlap an annotated domain.",
+            )
         return PriorityFactor("Conserved Domain", weight, 0.0, 0.0, "No InterPro/Pfam domain annotation available.")
 
     def _structural_factor(self, alphafold_result, weight, reasons) -> PriorityFactor:
@@ -304,12 +406,20 @@ class PrioritizationEngine:
     @staticmethod
     def _splicing_factor(mmsplice_result, weight, reasons) -> PriorityFactor:
         if not mmsplice_result or not mmsplice_result.get("predicted"):
-            return PriorityFactor("Splicing Impact", weight, 0.0, 0.0, "No MMSplice prediction available for this variant.")
+            return PriorityFactor(
+                "Splicing Impact", weight, 0.0, 0.0, "No MMSplice prediction available for this variant."
+            )
         category = mmsplice_result.get("interpretation_category")
         value = _SPLICE_SEVERITY_SCORE.get(category, 0.0)
         if value >= 0.9:
             reasons.append(f"✓ Strong predicted splicing disruption ({mmsplice_result.get('interpretation')})")
-        return PriorityFactor("Splicing Impact", weight, value, weight * value, f"MMSplice predicts: {mmsplice_result.get('interpretation', category)}.")
+        return PriorityFactor(
+            "Splicing Impact",
+            weight,
+            value,
+            weight * value,
+            f"MMSplice predicts: {mmsplice_result.get('interpretation', category)}.",
+        )
 
     @staticmethod
     def _sequence_context_factor(dna_models_used, rna_result, protein_result, weight) -> PriorityFactor:
@@ -322,7 +432,10 @@ class PrioritizationEngine:
             ran += 1
         presence = min(1.0, ran / 5.0)
         return PriorityFactor(
-            "Sequence Context", weight, presence, weight * presence,
+            "Sequence Context",
+            weight,
+            presence,
+            weight * presence,
             f"{ran} sequence-context model(s) ran; contributes completeness only, not a priority verdict.",
         )
 
@@ -330,9 +443,18 @@ class PrioritizationEngine:
     def _additional_factor(blast_result, weight) -> PriorityFactor:
         if blast_result and blast_result.get("hit_count", 0) > 0:
             value = 0.3  # homology hits are context, not a priority driver on their own
-            return PriorityFactor("Additional Evidence", weight, value, weight * value, f"BLAST returned {blast_result.get('hit_count')} homology hit(s).")
+            return PriorityFactor(
+                "Additional Evidence",
+                weight,
+                value,
+                weight * value,
+                f"BLAST returned {blast_result.get('hit_count')} homology hit(s).",
+            )
         return PriorityFactor(
-            "Additional Evidence", weight, 0.0, 0.0,
+            "Additional Evidence",
+            weight,
+            0.0,
+            0.0,
             "BLAST returned no hits (or was skipped/unavailable). Ensembl contributes indirectly via sequence-context "
             "retrieval and is not independently scorable here (same as in the Phase 3 confidence engine).",
         )
@@ -353,7 +475,14 @@ class PrioritizationEngine:
             directions = set()
             for v in ai_consensus:
                 pred = (v.get("prediction") or "").lower()
-                if "pathogenic" in pred or pred in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+                if "pathogenic" in pred or pred in (
+                    "strong_donor_loss",
+                    "strong_acceptor_loss",
+                    "exon_skipping",
+                    "intron_retention",
+                    "strong",
+                    "moderate",
+                ):
                     directions.add("damaging")
                 elif "benign" in pred:
                     directions.add("benign")

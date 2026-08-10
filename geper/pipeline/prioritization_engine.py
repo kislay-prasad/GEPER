@@ -503,6 +503,69 @@ class PrioritizationEngine:
         return "Low"
 
 
+_CATEGORY_RANK = {"Low": 0, "Moderate": 1, "High": 2, "Critical": 3}
+
+_CONFLICT_SEVERITY_PRIORITY_FLOOR = {
+    "Critical": "Critical",
+    "Major": "High",
+    "Moderate": "Moderate",
+}
+
+
+def floor_category_for_conflict_severity(
+    category: Optional[str], conflict_severity: Optional[str]
+) -> Tuple[str, Optional[str]]:
+    """
+    Report review round 5, J3: I2's floor above only special-cased
+    Critical-severity conflicts, so every other conflict tier stayed
+    free to sort below score-driven categories with no conflict at
+    all. Confirmed live: nuclear_test PRNP P102L (GEPER VUS vs.
+    ClinVar Pathogenic at 2-star) carries the run's only conflict flag
+    ("Conflicting evidence (Moderate)"), yet its Protein
+    Impact/Conserved Domain/Splicing factors are all quiet, so it
+    scored "Low" -- the one finding a reviewer most needs to see
+    sorted to the bottom of a five-finding report.
+
+    Extends I2's same floor shape monotonically across every
+    conflict-severity tier `ConflictResolutionEngine._overall_severity`
+    itself produces, rather than special-casing Critical alone: Major
+    conflicts floor at High, Moderate conflicts floor at Moderate.
+    Minor/None apply no floor -- a single caveat-level conflict item
+    is not by itself a reason to escalate review urgency.
+
+    Only ever raises the category, never lowers it (a variant that
+    already scored High on its own merits keeps High even if its only
+    conflict is Moderate-severity) -- the same "never diluted"
+    principle `_overall_severity` already applies to conflict severity
+    itself.
+
+    Called from `pipeline/interpretation.py` after Phase 6
+    (`ConflictResolutionEngine.detect`) runs, since that is the first
+    point the real, full-tier `conflict_severity` is known -- Phase 4's
+    own `score()` above still applies its own cheap Critical-only
+    pre-check (`ConflictResolutionEngine.has_critical_conflict`)
+    immediately, rather than waiting for this, since Phase 6 needs
+    Phase 4's conflict-penalty output as one of its own inputs and
+    can't run first (see `has_critical_conflict`'s docstring). The two
+    checks agree on the Critical tier by construction (both trace back
+    to the same `_expert_panel_disagreement_conflict` detector), so
+    this is a genuine no-op for Critical, not a second, divergent rule.
+    """
+    floor = _CONFLICT_SEVERITY_PRIORITY_FLOOR.get(conflict_severity or "")
+    current = category or "Low"
+    if floor is None:
+        return current, None
+    current_rank = _CATEGORY_RANK.get(current, 0)
+    floor_rank = _CATEGORY_RANK[floor]
+    if floor_rank <= current_rank:
+        return current, None
+    reason = (
+        f"✗ Review priority floored at {floor}: conflict resolution found a '{conflict_severity}'-severity "
+        "disagreement for this finding."
+    )
+    return floor, reason
+
+
 def rank_batch(priority_scores: List[Optional[float]]) -> List[Optional[int]]:
     """
     Given the `priority_score` of every variant in a run (in processing

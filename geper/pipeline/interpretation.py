@@ -16,7 +16,7 @@ from utils.logger import get_logger
 from pipeline.acmg_rules import ACMGRuleEngine
 from pipeline.interpretation_result import build_interpretation_result
 from pipeline.confidence_engine import ConfidenceEngine
-from pipeline.prioritization_engine import PrioritizationEngine
+from pipeline.prioritization_engine import PrioritizationEngine, floor_category_for_conflict_severity
 from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.explainability_engine import ExplainabilityEngine
 from pipeline.pvs1.utils import protein_effect_flags, protein_effect_undetermined_reason, transcript_from_result
@@ -271,8 +271,28 @@ class InterpretationEngine:
             evidence.append(text)
 
         # DNA model routing context.
-        if dna_models_used:
-            evidence.append(f"Sequence context analyzed with: {', '.join(dna_models_used)}.")
+        #
+        # Report review round 5, J4: this line only ever listed
+        # `dna_models_used` (the routed HyenaDNA/Evo2 model), while the
+        # Limitations block (`ai_context_models`, built in
+        # `build_interpretation_result`) and the Evidence Completeness
+        # table (`ConfidenceEngine._sequence_context_quality`) both
+        # already counted RNA-FM/ESM2 too whenever they actually ran --
+        # so a finding could read "Sequence context analyzed with:
+        # hyenadna" in Supporting Evidence right next to "Sequence-
+        # context model(s) actually used for this variant: hyenadna,
+        # RNA-FM, ESM2" in Limitations, contradicting itself within the
+        # same report. Same eligibility check as both of those (RNA-FM
+        # ran and didn't error/skip; ESM2 present on the protein
+        # result), so all three now agree on what "ran" rather than
+        # "routed to" vs. "ran for" silently meaning different things.
+        sequence_context_models = list(dna_models_used or [])
+        if rna_result and not rna_result.get("skipped") and not rna_result.get("error"):
+            sequence_context_models.append("RNA-FM")
+        if protein_result and protein_result.get("esm2"):
+            sequence_context_models.append("ESM2")
+        if sequence_context_models:
+            evidence.append(f"Sequence context analyzed with: {', '.join(sequence_context_models)}.")
 
         # BLAST context.
         if blast_result and blast_result.get("hit_count", 0) > 0:
@@ -473,6 +493,26 @@ class InterpretationEngine:
                 result_obj.conflict_score = conflict_result.conflict_score
                 result_obj.conflict_severity = conflict_result.conflict_severity
                 result_obj.conflict_resolution = conflict_result.conflict_resolution
+
+                # Report review round 5, J3: I2's Critical-only floor
+                # (applied inside Phase 4 above, from the cheap
+                # pre-check) left Moderate/Major conflicts free to sort
+                # below no-conflict findings. Now that Phase 6 has
+                # computed the real, full-tier conflict_severity, apply
+                # the same floor shape monotonically across every tier
+                # -- see `floor_category_for_conflict_severity`'s own
+                # docstring for why this has to happen here rather than
+                # inside Phase 4 itself.
+                if priority_result is not None and not result_obj.priority_pending:
+                    floored_category, floor_reason = floor_category_for_conflict_severity(
+                        result_obj.priority_category, result_obj.conflict_severity
+                    )
+                    if floor_reason is not None:
+                        result_obj.priority_category = floored_category
+                        result_obj.priority_explanation = list(result_obj.priority_explanation or []) + [floor_reason]
+                        if isinstance(result_obj.priority_breakdown, dict):
+                            result_obj.priority_breakdown["category"] = floored_category
+                            result_obj.priority_breakdown["explanation"] = result_obj.priority_explanation
             except Exception:
                 logger.exception("Conflict resolution engine failed; conflict_severity remains unset.")
 

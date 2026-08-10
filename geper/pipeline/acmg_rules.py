@@ -301,12 +301,15 @@ class ACMGRuleEngine:
         )
         criteria["PP1"] = self._pp1(clingen_result)
         criteria["BS4"] = self._bs4(clingen_result)
+        criteria["PS3"] = self._ps3(functional_evidence_result)
+        criteria["BS3"] = self._bs3(functional_evidence_result)
         criteria["BP1"] = self._bp1(
             is_missense,
             clingen_result,
             undetermined_reason=protein_undetermined_reason,
             alphamissense_result=alphamissense_result,
             pm1_result=criteria["PM1"],
+            bs3_result=criteria["BS3"],
         )
         criteria["BP3"] = self._bp3(
             variant_dict=variant_dict,
@@ -315,8 +318,6 @@ class ACMGRuleEngine:
         )
         criteria["BP6"] = self._bp6(clinvar_result)
         criteria["PP4"] = self._pp4(phenotype_result, hpo_result)
-        criteria["PS3"] = self._ps3(functional_evidence_result)
-        criteria["BS3"] = self._bs3(functional_evidence_result)
 
         # Criteria GEPER has no integrated evidence source for. Listed
         # explicitly (rather than silently omitted) so every one of the 28
@@ -1376,7 +1377,30 @@ class ACMGRuleEngine:
         #   1 model used  -> that single model's own prediction, labeled
         #     as such in the rationale (not a "consensus").
         #   2 models used -> the genuine two-model consensus.
-        if ensemble_result and ensemble_result.get("models_used"):
+        #
+        # Report review round 5, J1: same defect as I5 (MMSplice above),
+        # same fix, same `is_confirmed_missense` gate -- Enformer/Borzoi
+        # predict *regulatory/expression* effects from sequence context,
+        # which is not the mechanism in play for an ordinary coding
+        # missense substitution. A "no_significant_effect" ensemble
+        # reading on a missense variant was being counted as BP4-direction
+        # benign evidence and contradicting genuine AlphaMissense damaging
+        # calls, e.g. TP53 R248W (AlphaMissense 0.997,
+        # PhastCons/GERP++ both deleterious) and PRNP P102L (AlphaMissense
+        # 0.664, PhyloP/PhastCons/GERP++ all deleterious) both had PP3
+        # withheld as "self-contradictory" purely because of this
+        # off-topic ensemble vote -- and because the ensemble only ever
+        # fires in the pathogenic direction on real hits (its "no effect"
+        # reading is common, its "large/moderate effect" reading is rare
+        # on true regulatory variants), the bug was asymmetric: it could
+        # only ever suppress PP3, never suppress BP4. MMSplice and the
+        # ensemble ask the same underlying question (splicing/regulatory
+        # mechanism, not amino-acid tolerance), so they share this one
+        # gate rather than each declaring their own applicability --
+        # revisit with a genuine per-predictor declaration only if a
+        # future model's applicability actually diverges from this
+        # missense/non-missense split.
+        if ensemble_result and ensemble_result.get("models_used") and not is_confirmed_missense:
             models_used = ensemble_result["models_used"]
             classification = ensemble_result.get("classification")
             consensus_score = ensemble_result.get("consensus_score")
@@ -1992,7 +2016,9 @@ class ACMGRuleEngine:
 
     @staticmethod
     def _bp1_opposing_missense_evidence(
-        alphamissense_result: Optional[Dict[str, Any]], pm1_result: Optional[CriterionResult]
+        alphamissense_result: Optional[Dict[str, Any]],
+        pm1_result: Optional[CriterionResult],
+        bs3_result: Optional[CriterionResult] = None,
     ) -> Optional[str]:
         """
         Gate for BP1's blanket "gene where LOF is established => this
@@ -2007,30 +2033,68 @@ class ACMGRuleEngine:
         haploinsufficiency curation) -- BP1's own rationale already
         concedes "no gene-specific BP1 point calibration is integrated
         here". Rather than leaving that caveat as text alongside a
-        benign-supporting trigger, this blocks BP1 outright when a
-        strong, independent, variant-specific signal argues the
-        opposite direction: AlphaMissense's own top-confidence call
+        benign-supporting trigger, this blocks BP1 when a strong,
+        independent, variant-specific signal argues the opposite
+        direction: AlphaMissense's own top-confidence call
         (`likely_pathogenic`), or PM1 (this same engine's conserved-
         functional-domain criterion) independently triggering for this
         residue.
 
+        Report review round 5, J2: PM1 alone used to be treated as
+        automatically decisive against BP1's benign inference, on par
+        with an AlphaMissense `likely_pathogenic` call. That's too
+        strong a reading of PM1 -- "this residue falls inside some
+        annotated domain" is a much weaker, more generic signal than a
+        variant-specific pathogenicity prediction, and nothing stopped
+        it from outvoting actual variant-specific *benign* evidence
+        (ClinGen ERepo BS3, or AlphaMissense's own benign call) on the
+        same variant. Confirmed live: BRCA1 D411E -- ClinVar Benign
+        (expert panel), ClinGen ERepo BS3 'Met' (ENIGMA VCEP),
+        AlphaMissense `likely_benign` (0.122) all agree, and PM1 firing
+        on bare domain overlap (BRCA1's serine-rich domain) was enough
+        by itself to block BP1. AlphaMissense `likely_pathogenic`
+        remains decisive on its own regardless of what else is present
+        -- it is itself a variant-specific pathogenicity call, not a
+        generic domain-overlap heuristic, so it is not weighed against
+        counter-evidence here (that would relitigate PP3/BP4's own
+        agree/disagree logic inside BP1). PM1-only opposition, however,
+        is now outweighed when direct variant-specific benign evidence
+        (BS3 'Met', or AlphaMissense `likely_benign`) is also present
+        for the same variant -- and continues to block BP1 as before
+        when nothing contradicts it.
+
         Returns the opposing-evidence text, or `None` when BP1's
         default gene-level inference is not contradicted by anything
-        GEPER has for this specific variant.
+        GEPER has for this specific variant (including the case where
+        PM1's opposition is outweighed by benign evidence).
         """
-        reasons = []
+        am_pathogenic_reason = None
+        am_benign_present = False
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             if am_class == "likely_pathogenic":
-                reasons.append(
+                am_pathogenic_reason = (
                     "AlphaMissense predicts 'likely_pathogenic' "
                     f"(am_pathogenicity={alphamissense_result.get('am_pathogenicity')}) for this substitution."
                 )
-        if pm1_result is not None and pm1_result.status == "triggered":
-            reasons.append(f"PM1 (conserved functional domain) independently triggered: {pm1_result.rationale}")
-        if not reasons:
+            elif am_class == "likely_benign":
+                am_benign_present = True
+
+        # AlphaMissense's own pathogenicity call is decisive on its own
+        # -- it is variant-specific evidence, not a generic heuristic,
+        # so it is never weighed against countervailing evidence here.
+        if am_pathogenic_reason is not None:
+            return am_pathogenic_reason
+
+        if pm1_result is None or pm1_result.status != "triggered":
             return None
-        return " ".join(reasons)
+
+        bs3_met = bs3_result is not None and bs3_result.status == "triggered"
+        if bs3_met or am_benign_present:
+            # PM1 alone (bare domain overlap) does not outvote direct
+            # variant-specific benign evidence on the same variant.
+            return None
+        return f"PM1 (conserved functional domain) independently triggered: {pm1_result.rationale}"
 
     @staticmethod
     def _bp1(
@@ -2040,6 +2104,7 @@ class ACMGRuleEngine:
         undetermined_reason: Optional[str] = None,
         alphamissense_result: Optional[Dict[str, Any]] = None,
         pm1_result: Optional[CriterionResult] = None,
+        bs3_result: Optional[CriterionResult] = None,
     ) -> CriterionResult:
         """
         BP1 (ACMG/AMP 2015): "Missense variant in a gene for which
@@ -2101,7 +2166,7 @@ class ACMGRuleEngine:
             )
 
         if mechanism in (LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE):
-            opposing = ACMGRuleEngine._bp1_opposing_missense_evidence(alphamissense_result, pm1_result)
+            opposing = ACMGRuleEngine._bp1_opposing_missense_evidence(alphamissense_result, pm1_result, bs3_result)
             if opposing is not None:
                 return CriterionResult(
                     "BP1",

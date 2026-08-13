@@ -100,26 +100,30 @@ class FunctionalEvidenceLookup:
 
         errors: List[str] = []
         unavailable_sources: List[str] = []
+        consulted_sources: List[str] = []
 
-        erepo_records = self._match_erepo(gene_symbol, hgvs_g, errors, unavailable_sources)
+        erepo_records = self._match_erepo(gene_symbol, hgvs_g, errors, unavailable_sources, consulted_sources)
         if erepo_records:
             return FunctionalEvidenceResult(
                 gene_symbol=gene_symbol,
                 source="clingen_erepo",
                 found=True,
                 records=erepo_records,
+                consulted_sources=list(consulted_sources),
             ).to_dict()
 
-        mavedb_record = self._match_mavedb(gene_symbol, hgvs_c, errors, unavailable_sources)
+        mavedb_record = self._match_mavedb(gene_symbol, hgvs_c, errors, unavailable_sources, consulted_sources)
         if mavedb_record:
             return FunctionalEvidenceResult(
                 gene_symbol=gene_symbol,
                 source="mavedb",
                 found=True,
                 records=[mavedb_record],
+                consulted_sources=list(consulted_sources),
             ).to_dict()
 
         result = FunctionalEvidenceResult.not_found(gene_symbol, "none")
+        result.consulted_sources = list(consulted_sources)
         if errors:
             result.error = "; ".join(errors)
         if unavailable_sources:
@@ -129,7 +133,12 @@ class FunctionalEvidenceLookup:
     # -- ClinGen ERepo (primary) ----------------------------------------
 
     def _match_erepo(
-        self, gene_symbol: str, hgvs_g: Optional[str], errors: List[str], unavailable_sources: List[str]
+        self,
+        gene_symbol: str,
+        hgvs_g: Optional[str],
+        errors: List[str],
+        unavailable_sources: List[str],
+        consulted_sources: List[str],
     ) -> List[FunctionalEvidenceRecord]:
         if not hgvs_g:
             return []
@@ -142,6 +151,11 @@ class FunctionalEvidenceLookup:
             logger.warning(f"ClinGen ERepo lookup failed for gene '{gene_symbol}': {exc}")
             errors.append(f"ClinGen ERepo: {exc}")
             return []
+        # The gene index fetch itself succeeded (network call, or this
+        # run's own cache) -- ERepo was genuinely consulted for this
+        # variant regardless of whether its index happens to contain
+        # this exact HGVS below.
+        consulted_sources.append("ClinGen ERepo")
         matches = index.get(hgvs_g, [])
         return [dataclasses.replace(r, matched_hgvs=hgvs_g) for r in matches]
 
@@ -161,7 +175,12 @@ class FunctionalEvidenceLookup:
     # -- MaveDB (secondary) ----------------------------------------------
 
     def _match_mavedb(
-        self, gene_symbol: str, hgvs_c: Optional[str], errors: List[str], unavailable_sources: List[str]
+        self,
+        gene_symbol: str,
+        hgvs_c: Optional[str],
+        errors: List[str],
+        unavailable_sources: List[str],
+        consulted_sources: List[str],
     ) -> Optional[FunctionalEvidenceRecord]:
         key = normalize_hgvs_c(hgvs_c)
         if key is None:
@@ -175,6 +194,10 @@ class FunctionalEvidenceLookup:
             logger.warning(f"MaveDB lookup failed for gene '{gene_symbol}': {exc}")
             errors.append(f"MaveDB: {exc}")
             return None
+        # Same reasoning as `_match_erepo`: the index fetch itself
+        # succeeded, so MaveDB was genuinely consulted for this variant
+        # even if it turns out to have no record for this exact HGVS.
+        consulted_sources.append("MaveDB")
         match = index.get(key)
         if match is None:
             return None

@@ -131,6 +131,10 @@ _TOOL_LIMITATIONS = (
     "isoform. When the resolved transcript is a different one, or no transcript could be "
     "resolved at all, no residue position is reported and the corresponding domain/structure "
     "criteria are marked not evaluated rather than shown against a mismatched coordinate.",
+    "PS3/BS3 functional-evidence lookups query the ClinGen Evidence Repository (ERepo) first; "
+    "MaveDB is consulted only as a fallback, and only for a variant ERepo has no record for. "
+    "The two sources are never queried together and never cross-checked against each other for "
+    "the same variant -- a PS3/BS3 call always comes from a single source, not a combination.",
 )
 
 

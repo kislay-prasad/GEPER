@@ -169,6 +169,21 @@ _MODEL_DISPLAY_NAMES = {
     "splicebert": "SpliceBERT",
 }
 
+# Maps a `FunctionalEvidenceResult.consulted_sources` entry (see
+# `pipeline/functional_evidence/models.py`) onto the `KNOWN_SOURCES`
+# provenance name it corresponds to, and the note to record alongside
+# it -- kept here rather than inline so the functional-evidence
+# provenance-capture block below (`_run_functional_evidence_stage`'s
+# caller) stays a plain loop.
+_FUNCTIONAL_EVIDENCE_PROVENANCE_NAME = {
+    "ClinGen ERepo": "Functional evidence (ClinGen ERepo)",
+    "MaveDB": "Functional evidence (MaveDB)",
+}
+_FUNCTIONAL_EVIDENCE_PROVENANCE_NOTE = {
+    "ClinGen ERepo": "No source-wide API version exposed; individual records carry their own 'publishedDate'.",
+    "MaveDB": "No source-wide API version exposed; individual score sets carry their own 'publishedDate'/'modificationDate'.",
+}
+
 
 class GeperPipeline:
     """End-to-end orchestrator for the GEPER variant analysis pipeline."""
@@ -1561,23 +1576,34 @@ class GeperPipeline:
 
         try:
             if functional_evidence_result:
-                source = functional_evidence_result.get("source")
-                if source == "clingen_erepo":
-                    self.provenance.record(
-                        "Functional evidence (ClinGen ERepo)",
-                        VersionStatus.TIMESTAMP_ONLY,
-                        notes="No source-wide API version exposed; individual records carry their own 'publishedDate'.",
-                    )
-                elif source == "mavedb":
-                    self.provenance.record(
-                        "Functional evidence (MaveDB)",
-                        VersionStatus.TIMESTAMP_ONLY,
-                        notes="No source-wide API version exposed; individual score sets carry their own 'publishedDate'/'modificationDate'.",
-                    )
-                elif functional_evidence_result.get("error"):
+                # `consulted_sources` (see
+                # `pipeline/functional_evidence/models.py::
+                # FunctionalEvidenceResult`) names every source whose
+                # gene index was actually fetched while resolving this
+                # variant, regardless of whether it ended up having a
+                # record for this exact HGVS. Recording TIMESTAMP_ONLY
+                # from this list (rather than branching on `source`/
+                # `found` alone, as before) is what makes a genuinely-
+                # queried-but-empty MaveDB or ClinGen ERepo distinct
+                # from a never-consulted one in the provenance table --
+                # report review round 6, "MaveDB provenance masking".
+                for consulted in functional_evidence_result.get("consulted_sources") or []:
+                    provenance_name = _FUNCTIONAL_EVIDENCE_PROVENANCE_NAME.get(consulted)
+                    if provenance_name:
+                        self.provenance.record(
+                            provenance_name,
+                            VersionStatus.TIMESTAMP_ONLY,
+                            notes=_FUNCTIONAL_EVIDENCE_PROVENANCE_NOTE.get(consulted, ""),
+                        )
+                if functional_evidence_result.get("error"):
                     # The composite provider doesn't disclose which of
                     # ERepo/MaveDB the failure was in -- honestly
                     # recorded against both rather than guessing one.
+                    # `RunProvenanceCollector.record`'s own priority
+                    # ordering (UNKNOWN < TIMESTAMP_ONLY) means this can
+                    # never downgrade a source the loop above already
+                    # recorded as genuinely consulted, this variant or
+                    # an earlier one.
                     note = f"A functional-evidence query failed this run: {functional_evidence_result['error']}"
                     self.provenance.record("Functional evidence (ClinGen ERepo)", VersionStatus.UNKNOWN, notes=note)
                     self.provenance.record("Functional evidence (MaveDB)", VersionStatus.UNKNOWN, notes=note)

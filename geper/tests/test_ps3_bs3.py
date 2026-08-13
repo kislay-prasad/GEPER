@@ -618,6 +618,90 @@ class TestFunctionalEvidenceLookupComposite(unittest.TestCase):
 
         self.assertEqual(result["unavailable_sources"], [])
 
+    # -----------------------------------------------------------------
+    # `consulted_sources` -- report review round 6, "MaveDB provenance
+    # masking": a source whose gene index was genuinely queried but had
+    # nothing for this exact variant must be distinguishable from a
+    # source that was never queried at all (ERepo short-circuit) or one
+    # that produced an actual hit. Three states, three tests.
+    # -----------------------------------------------------------------
+
+    def test_never_called_source_is_absent_from_consulted_sources(self):
+        """ERepo hits -> MaveDB is short-circuited (never queried at
+        all for this variant), so it must NOT appear in
+        `consulted_sources` -- appearing there would claim a network
+        call that never happened."""
+        erepo = mock.Mock()
+        erepo.is_available.return_value = True
+        erepo.fetch_gene_index.return_value = {"NC_000017.11:g.1A>T": [self._record("PS3")]}
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+
+        lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+        result = lookup.query_variant("BRCA1", hgvs_g="NC_000017.11:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        mavedb.fetch_gene_index.assert_not_called()
+        self.assertIn("ClinGen ERepo", result["consulted_sources"])
+        self.assertNotIn("MaveDB", result["consulted_sources"])
+
+    def test_called_and_empty_source_is_present_in_consulted_sources(self):
+        """Neither source has a record for this exact variant, but both
+        gene indexes were genuinely fetched -- both must be marked
+        consulted despite `found` being False and `source` being
+        "none"."""
+        erepo = mock.Mock()
+        erepo.is_available.return_value = True
+        erepo.fetch_gene_index.return_value = {}
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+        mavedb.fetch_gene_index.return_value = {}
+
+        lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+        result = lookup.query_variant("CFTR", hgvs_g="NC_000007.14:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        self.assertFalse(result["found"])
+        self.assertEqual(result["source"], "none")
+        self.assertEqual(sorted(result["consulted_sources"]), ["ClinGen ERepo", "MaveDB"])
+
+    def test_called_and_matched_source_is_present_in_consulted_sources(self):
+        """A source that actually produces a hit was, by definition,
+        consulted -- confirmed here for the MaveDB-fallback path, where
+        ERepo is also genuinely consulted (queried, empty) on the way
+        there and must be recorded too, not just the source that
+        eventually matched."""
+        erepo = mock.Mock()
+        erepo.is_available.return_value = True
+        erepo.fetch_gene_index.return_value = {}
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+        mavedb.fetch_gene_index.return_value = {"NM_1:c.1A>T": self._record("BS3", source="mavedb")}
+
+        lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+        result = lookup.query_variant("BRCA1", hgvs_g="NC_000017.11:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["source"], "mavedb")
+        self.assertEqual(sorted(result["consulted_sources"]), ["ClinGen ERepo", "MaveDB"])
+
+    def test_offline_source_is_neither_consulted_nor_unavailable_free(self):
+        """An offline-skipped source (see
+        `test_erepo_offline_is_skipped_and_recorded_distinct_from_a_generic_error`
+        above) must land in `unavailable_sources`, never in
+        `consulted_sources` -- it was never actually queried."""
+        erepo = mock.Mock()
+        mavedb = mock.Mock()
+        mavedb.is_available.return_value = True
+        mavedb.fetch_gene_index.return_value = {}
+
+        offline = _offline_registry("ClinGen ERepo")
+        with mock.patch("pipeline.functional_evidence.lookup.HEALTH", offline):
+            lookup = FunctionalEvidenceLookup(erepo_provider=erepo, mavedb_provider=mavedb, cache=None)
+            result = lookup.query_variant("BRCA1", hgvs_g="NC_000017.11:g.1A>T", hgvs_c="NM_1.1:c.1A>T")
+
+        self.assertEqual(result["unavailable_sources"], ["ClinGen ERepo"])
+        self.assertNotIn("ClinGen ERepo", result["consulted_sources"])
+        self.assertIn("MaveDB", result["consulted_sources"])
+
 
 # ---------------------------------------------------------------------------
 # PS3/BS3 -- ACMGRuleEngine, through real fixture-derived evidence

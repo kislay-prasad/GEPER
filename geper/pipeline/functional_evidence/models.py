@@ -90,6 +90,23 @@ class FunctionalEvidenceResult:
     # "this source was never queried this run" -- they are not the
     # same finding.
     unavailable_sources: List[str] = field(default_factory=list)
+    # Names ("ClinGen ERepo" / "MaveDB") of sources whose gene index was
+    # actually fetched (network call made, or served from this run's own
+    # cache) while resolving this variant -- regardless of whether that
+    # source ended up having a record for this exact variant. Populated
+    # by `lookup.py`'s `_match_erepo`/`_match_mavedb` the moment their
+    # respective `_..._gene_index()` call returns without raising, i.e.
+    # strictly before the per-variant match lookup that decides `found`.
+    # A source can therefore appear here even when `found` is False and
+    # `source` is "none": that combination means "queried this source,
+    # it genuinely has nothing for this variant" -- provenance-wise that
+    # is a *consulted* source, not an unconsulted one, and this is the
+    # only place that distinction survives past `query_variant` (see
+    # `pipeline/orchestrator.py`'s functional-evidence provenance
+    # capture, which reads this field rather than inferring consultation
+    # from `source`/`found` alone -- report review round 6, MaveDB
+    # provenance masking).
+    consulted_sources: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -99,6 +116,7 @@ class FunctionalEvidenceResult:
             "records": [r.to_dict() for r in self.records],
             "error": self.error,
             "unavailable_sources": list(self.unavailable_sources),
+            "consulted_sources": list(self.consulted_sources),
         }
 
     @staticmethod

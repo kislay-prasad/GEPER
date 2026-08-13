@@ -378,3 +378,39 @@ accepting the narrower guard as "better than nothing" and relying on
 `extract_fixture.py`'s regeneration-from-a-fresh-real-run discipline
 (see this directory's README.md) to catch drift in the unguarded 8
 instead.
+
+---
+
+## Round 11 (ClinVar variant-match investigation)
+
+A reported bug -- ClinVar record UID 440440 (a GRCh37-titled large
+deletion, `variant_match: null`) apparently being treated as the
+attribution source for BRCA1 17:43106534's "Pathogenic (reviewed by
+expert panel)" classification -- did not reproduce. Traced live against
+the real captured run (commit `3c854c9`, this exact variant, read
+straight from `geper/tests/fixtures/offline_evidence/raw_geper_results.json`
+-- no pipeline run needed): `primary_record` is UID 37404, the correct
+splice-acceptor SNV, `variant_match: true`, and every consumer
+(`_bp6`, `_clinvar_crossref`, the interpretation's supporting-evidence
+text, `report/clinical_report_builder.py::_clinical_evidence`) reads
+`primary_record`/`matched_records`, never raw `records[]`, for
+attribution. No code change came out of this round. Two things worth
+recording anyway, surfaced while tracing it:
+
+### 1. `variant_match: None` has no attached reason -- indistinguishable from "we didn't check," and `records[]` invites exactly the misreading that caused this round's own false alarm
+
+**What:** UID 440440's title is `NC_000017.10:g.(41258551_41267742)_(41276114_?)del` -- an open/uncertain-breakpoint structural deletion (note the trailing `?`). ClinVar itself has no exact `canonical_spdi` for a variant it can't pin down to precise coordinates, so `ClinVarClient._variant_match` correctly returns `None` ("could not check") rather than `False` or a fabricated `True` -- confirmed correct, and confirmed to change no downstream output (a `None` is excluded from `matched_records` exactly as reliably as a `False` would be, since only `is True` qualifies). But nothing in the returned record explains *why* it's `None` -- a reader looking at raw JSON sees `"variant_match": null` with no reason attached, and has to go read `_variant_match`'s source to learn that ClinVar's own open breakpoints, not a shortcoming in GEPER's matching, are why this couldn't be checked.
+
+Separately, and this is the part that actually caused this round's false alarm: `database/clinvar_client.py`'s own module docstring already states plainly that `records` is "kept for context/audit display... never for attributing a classification" -- and it was still misread as the attribution source during this investigation, corrected only by reading `primary_record` directly instead. If that misreading happened here, with the docstring available, a future reader doing a quick "does this variant have a ClinVar hit" scan by eyeballing `records[0]`/`records[]` is a predictable repeat of the exact `records[0]` bug this module's whole allele-matching design already exists to prevent (see the module docstring's own BRCA1 17:43094298 case).
+
+**Why this is a candidate, not a round-11 fix:** both are clarity/auditability improvements with zero behavior change -- confirmed live that every current consumer already reads the right field and no classification is affected. This round was scoped to determining whether the reported mismatch was real; it wasn't, so no fix belongs to it.
+
+**Decision needed:** (a) whether to attach a reason to the `None` case -- ESummary already carries enough (`variation_set[].variant_type`, or just the title's own `"del"` substring) to say something like "structural deletion with uncertain breakpoints; no exact allele to compare" instead of a bare `null`; (b) whether `records[]` is worth a stronger deterrent than the existing module-docstring note -- either an inline comment directly at `"records": records,` in `query_variant`'s return (a reader jumping straight to a JSON dump won't see the module docstring), or a rename to something less attribution-shaped (e.g. `all_candidate_records` -- bigger footprint, touches every current consumer/test reading the `records` key, so weigh that against just strengthening the comment).
+
+### 2. Positional vs. rsID ClinVar search asymmetry: a deletion's full genomic span surfaces under every position it contains; an rsID doesn't carry that breadth
+
+**What:** confirmed live (one read-only NCBI query, no pipeline run): `17[chr] AND 43106534[chrpos38]` returns `['440440', '373864', '245755', '54215', '37404']` -- including the two large deletions -- while `rs80358158[rs]` (the queried SNV's own rsID) returns only `['245755', '54215', '37404']`, the three actual point-substitution alleles at that locus. The deletions are absent from the rsID search because an rsID identifies one specific small variant, not a genomic span, while ClinVar indexes a large structural variant's `chrpos38` field across its *entire* covered range -- any position search landing anywhere inside a large deletion's span surfaces it, however far that position sits from the deletion's own titled/described locus. This is exactly why `query_variant`'s positional search will keep returning large structural variants as `records[]` noise at any position they span, and why `_variant_match`'s per-record allele check (not merely "was this returned by search") is load-bearing, not decorative.
+
+**Why this is a candidate, not a round-11 fix:** documentation of existing, already-correct behavior discovered while investigating a bug that didn't reproduce -- no code to change, only knowledge worth not re-deriving next time this path gets traced.
+
+**Decision needed:** none -- a pointer for future debugging, like round 8's item 3. Worth folding into `database/clinvar_client.py`'s module docstring or `_positional_search_term`'s docstring the next time that file is touched, so the explanation lives next to the code it explains rather than only in this document.

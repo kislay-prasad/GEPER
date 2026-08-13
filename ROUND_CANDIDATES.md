@@ -266,3 +266,115 @@ fallback path should independently exclude ClinVar-derived weight when
 BP6 has triggered (mirroring `_combine`'s own exclusion), or whether
 the fallback's rare, exception-only role makes that not worth the
 added complexity.
+
+---
+
+## Round 11 (offline-verification harness investigation)
+
+### 1. `transcript_structure` cold-cache cost -- ~1660s in a single call (Ensembl GTF bootstrap)
+
+**What:** on a cold cache, the transcript-structure stage's Ensembl
+GTF bootstrap alone took ~1660s (~28 of a 47-minute, 6-variant run) in
+the Colab session used to verify round 9/10's `geper_results.json`
+fixture. Every subsequent variant's transcript lookup was cheap once
+the GTF was materialized; the cost is a one-time-per-cache-lifetime
+bootstrap, not a per-variant cost, but it dominates any cold-cache
+verification run's wall-clock time regardless of how small the VCF is.
+
+**Why this is a candidate, not a round-11 fix:** round 11 was scoped
+to investigating an offline path that avoids needing this bootstrap at
+all for ACMG-engine/report-layer changes (see the round's report). A
+faster or pre-warmed GTF bootstrap is a different, orthogonal
+improvement that would still matter for any verification that
+genuinely needs live transcript resolution (e.g. changes inside
+`pipeline/ensembl/provider.py` itself, which recorded-evidence fixtures
+can't cover).
+
+**Decision needed:** whether it's worth pre-building and persisting a
+warm GTF cache (e.g. committing a prepared cache artifact, or a
+documented one-time Colab warm-up step reused across sessions) versus
+just accepting the cost on the rare occasions a change actually
+requires re-running this stage for real.
+
+### 2. SpliceBERT has never loaded successfully -- hits `GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS` on every run
+
+**What:** in every observed run (local-disk cache path and Google
+Drive cache path both), SpliceBERT hits the 180s
+`GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS` guard and is treated as a load
+failure. The guard itself behaves exactly as designed -- the question
+is that "treat as load failure" has become the permanent, 100%-of-runs
+outcome rather than the rare exception the timeout was presumably
+sized for. Two candidate root causes, neither confirmed: the timeout is
+simply too short for this checkpoint's real load time, or the
+transformers TensorFlow-backend-detection issue already described in
+`build_model_and_tokenizer`'s own docstring is unresolved and adds
+enough overhead to blow the budget regardless of its size. Separately:
+the generated reports still list SpliceBERT in the model-checkpoint
+manifest as though it were available, which is misleading given it has
+never actually run.
+
+**Why this is a candidate, not a round-11 fix:** diagnosing which of
+the two causes (or both) is responsible requires a real, heavy,
+network-and-model-loading Colab run instrumented specifically around
+SpliceBERT's load path -- exactly the kind of run round 11's
+investigation is trying to make verification *not* depend on for
+routine ACMG/report-layer changes. Fixing the manifest's "available"
+claim is a small, separate change but was left alone this round to
+avoid mixing an unrelated report-accuracy fix into an investigation
+task.
+
+**Decision needed:** (a) get a real timed load of the SpliceBERT
+checkpoint to see whether it's simply slower than 180s or genuinely
+hanging on the TensorFlow-backend-detection issue; (b) once the cause
+is known, either raise the timeout, fix the backend-detection issue, or
+both; (c) separately, decide whether the model-checkpoint manifest
+should stop listing SpliceBERT as available until it has a single
+confirmed successful load.
+
+### 3. The offline-evidence loader's schema guard covers 11 of ~19 captured evidence dicts -- 8 can still drift unnoticed
+
+**What:** `geper/tests/fixtures/offline_evidence/loader.py::load_fixture`
+validates every captured variant's evidence against
+`pipeline/stage_schemas.py::RawEvidenceBundle` before handing it to a
+test -- but `RawEvidenceBundle` only types 11 of the ~19 evidence dicts
+`InterpretationEngine.interpret()`/`ACMGRuleEngine.evaluate()` actually
+consume (clinvar, dbsnp, protein, blast, alphamissense, mmsplice,
+gnomad, clingen, uniprot, interpro, alphafold). The other 8
+(conservation, transcript, clinvar_codon, hpo, functional_evidence,
+rna, ensemble, spliceformer/splicebert) have no Pydantic schema in
+`stage_schemas.py` at all -- that module's own docstring documents this
+as a deliberate scope decision ("Provider-internal shapes ... are NOT
+typed here"), not an oversight the loader introduced. `load_fixture`
+loads those 8 as-is, unvalidated, exactly as production itself treats
+them.
+
+**Why this matters:** this is the same class of risk the schema guard
+was built to close (a recorded fixture silently no longer matching what
+production's stages currently emit, passing green forever against a
+shape production no longer produces) -- just narrower than the guard's
+current coverage suggests at a glance. A future change to, say,
+`pipeline/transcript`'s result shape, or a renamed key in the
+functional-evidence result, would not be caught by
+`load_fixture`'s validation at all; it would only surface as a
+confusing downstream `KeyError`/`AttributeError` inside `interpret()`
+itself (if the shape change is severe enough to break something) or,
+worse, as a silently wrong `net_points` if the shape change is subtle
+enough that `interpret()`'s `.get(...)`-based reads just quietly start
+returning `None`/defaults instead of erroring.
+
+**Why this is a candidate, not a round-11 fix:** closing this gap means
+typing 8 more provider-internal shapes in `pipeline/stage_schemas.py`
+-- exactly the "much larger effort" that module's own docstring already
+called out and deferred when it was built (round 8-adjacent). That's a
+scope decision for whoever owns `stage_schemas.py`'s typing effort, not
+something to bolt onto the offline-evidence harness round in passing.
+
+**Decision needed:** whether to extend `RawEvidenceBundle` (or add a
+sibling schema) to cover some or all of the remaining 8 stage-result
+shapes, prioritized by which ones actually feed `ACMGRuleEngine`
+criteria most directly (transcript_result and clinvar_codon_result feed
+PVS1/PS1/PM4/PM5/BP3 -- probably the highest-value targets) versus
+accepting the narrower guard as "better than nothing" and relying on
+`extract_fixture.py`'s regeneration-from-a-fresh-real-run discipline
+(see this directory's README.md) to catch drift in the unguarded 8
+instead.

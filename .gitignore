@@ -38,6 +38,12 @@ geper/geper_output/
 geper/logs/
 *.log
 
+# --- Offline-evidence fixture staging (geper/tests/fixtures/offline_evidence) -
+# Raw geper_results.json dropped here temporarily to run extract_fixture.py
+# against -- only the extracted *_evidence.json this script produces is
+# meant to be committed. See that directory's README.md.
+geper/tests/fixtures/offline_evidence/raw_*.json
+
 # --- Small, checked-in test fixtures are intentionally NOT excluded here ----
 # geper/testdata/, geper/testdata_bench/, test_data/ are tiny
 # (low hundreds of KB combined), purpose-built fixture files (a

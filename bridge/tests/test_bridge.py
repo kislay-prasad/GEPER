@@ -30,9 +30,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bridge.combined_pipeline import (
     BridgeError,
+    qc_metrics_from_kim_checkpoint,
     run_combined,
     run_geper_vcf_to_report,
     run_kim_fastq_to_vcf,
+    write_qc_metrics_sidecar,
 )
 
 
@@ -61,6 +63,8 @@ FAKE_KIM_MAIN = textwrap.dedent(
 
     checkpoint = {
         "completed_stages": ["fastq_validation", "qc", "alignment", "variant_calling"],
+        "qc_r1": {"q30_fraction": 0.934},
+        "alignment": {"metrics": {"mean_depth": 42.7}},
         "variant_calling": {"filtered_vcf_path": str(vcf_path)},
     }
     (work_dir / "checkpoint.json").write_text(json.dumps(checkpoint))
@@ -93,11 +97,16 @@ FAKE_GEPER_MAIN = textwrap.dedent(
     p.add_argument("--assembly", default=None)
     p.add_argument("--max-variants", type=int, default=None)
     p.add_argument("--no-resume", action="store_true")
+    p.add_argument("--hpo-terms", default=None)
+    p.add_argument("--phenotype-file", default=None)
+    p.add_argument("--qc-metrics-json", default=None)
     args = p.parse_args()
 
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "geper_results.json").write_text(json.dumps({"source_vcf": args.vcf, "variants": []}))
+    (out / "geper_results.json").write_text(
+        json.dumps({"source_vcf": args.vcf, "variants": [], "qc_metrics_json": args.qc_metrics_json})
+    )
     (out / "geper_report.md").write_text("# GEPER Clinical Report\\nSource VCF: %s\\n" % args.vcf)
     print("FAKE GEPER: processed %s" % args.vcf)
     """
@@ -199,6 +208,40 @@ class TestCombinedWorkflow:
         report_text = Path(result.geper_report_md).read_text()
         assert result.filtered_vcf_path in report_text
 
+    def test_qc_metrics_sidecar_is_written_and_threaded_to_geper(self, tmp_path):
+        """report review round 7: kim's real checkpoint values must
+        reach GEPER's --qc-metrics-json, not stay stranded in Kim's own
+        output directory."""
+        kim_root = tmp_path / "kim_pipeline"
+        kim_root.mkdir()
+        _write(kim_root / "main.py", FAKE_KIM_MAIN)
+
+        geper_root = tmp_path / "geper"
+        geper_root.mkdir()
+        _write(geper_root / "main.py", FAKE_GEPER_MAIN)
+
+        result = run_combined(
+            fastq_r1="r1.fastq",
+            reference_fasta="ref.fasta",
+            kim_output_dir=str(tmp_path / "kim_out"),
+            geper_output_dir=str(tmp_path / "geper_out"),
+            sample_id="S_QC",
+            kim_root=kim_root,
+            geper_root=geper_root,
+        )
+        assert result.success is True
+
+        sidecar_path = tmp_path / "kim_out" / "S_QC" / "qc_metrics.json"
+        assert sidecar_path.exists()
+        sidecar = json.loads(sidecar_path.read_text())
+        assert sidecar["mean_coverage_depth"] == {"status": "found", "value": 42.7, "reason": None}
+        assert sidecar["q30_score"] == {"status": "found", "value": 93.4, "reason": None}
+        assert sidecar["bases_at_20x"]["status"] == "not_run"
+        assert "mosdepth" in sidecar["bases_at_20x"]["reason"] or "samtools depth" in sidecar["bases_at_20x"]["reason"]
+
+        geper_results = json.loads(Path(result.geper_results_json).read_text())
+        assert geper_results["qc_metrics_json"] == str(sidecar_path)
+
     def test_combined_workflow_stops_if_kim_fails(self, tmp_path):
         kim_root = tmp_path / "kim_pipeline"
         kim_root.mkdir()
@@ -238,9 +281,7 @@ class TestRelativePathResolution:
     values, and asserts the whole workflow still succeeds.
     """
 
-    def test_relative_paths_resolve_against_bridge_cwd_not_project_root(
-        self, tmp_path, monkeypatch
-    ):
+    def test_relative_paths_resolve_against_bridge_cwd_not_project_root(self, tmp_path, monkeypatch):
         kim_root = tmp_path / "kim_pipeline"
         kim_root.mkdir()
         _write(kim_root / "main.py", FAKE_KIM_MAIN)
@@ -258,10 +299,10 @@ class TestRelativePathResolution:
         monkeypatch.chdir(invocation_dir)
 
         result = run_combined(
-            fastq_r1="r1.fastq",              # relative, relative to invocation_dir
-            reference_fasta="ref.fasta",       # relative, relative to invocation_dir
-            kim_output_dir="work/kim",         # relative -- this is the exact case that failed
-            geper_output_dir="work/geper",     # relative
+            fastq_r1="r1.fastq",  # relative, relative to invocation_dir
+            reference_fasta="ref.fasta",  # relative, relative to invocation_dir
+            kim_output_dir="work/kim",  # relative -- this is the exact case that failed
+            geper_output_dir="work/geper",  # relative
             sample_id="TEST01",
             kim_root=kim_root,
             geper_root=geper_root,
@@ -280,3 +321,98 @@ class TestRelativePathResolution:
         assert str(invocation_dir / "work" / "kim") in result.filtered_vcf_path
         assert str(invocation_dir / "work" / "geper") in result.geper_results_json
 
+
+class TestQcMetricsFromKimCheckpoint:
+    """
+    report review round 7: `checkpoint["qc_r1"]` is written under the
+    SAME key by two different kim_pipeline stages -- Stage 1
+    (`fastq_validation`, no `q30_fraction`) always runs; Stage 1b (`qc`,
+    the real QCStage, has `q30_fraction`) can silently fail to overwrite
+    it if QCStage raises past its own generic-`except Exception`
+    handler. A missing `q30_fraction` key is therefore ambiguous on its
+    own -- these tests pin down that `qc_metrics_from_kim_checkpoint`
+    resolves the ambiguity via `completed_stages`, not via key presence.
+    """
+
+    def test_both_stages_completed_with_real_values_are_found(self):
+        checkpoint = {
+            "completed_stages": ["fastq_validation", "qc", "alignment", "variant_calling"],
+            "qc_r1": {"q30_fraction": 0.912},
+            "alignment": {"metrics": {"mean_depth": 35.6}},
+        }
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["mean_coverage_depth"] == {"status": "found", "value": 35.6, "reason": None}
+        assert metrics["q30_score"] == {"status": "found", "value": 91.2, "reason": None}
+
+    def test_q30_fraction_is_converted_from_fraction_to_percent(self):
+        checkpoint = {
+            "completed_stages": ["qc", "alignment"],
+            "qc_r1": {"q30_fraction": 1.0},
+            "alignment": {"metrics": {"mean_depth": 10.0}},
+        }
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["q30_score"]["value"] == 100.0
+
+    def test_bases_at_20x_is_always_not_run(self):
+        checkpoint = {
+            "completed_stages": ["fastq_validation", "qc", "alignment", "variant_calling"],
+            "qc_r1": {"q30_fraction": 0.9},
+            "alignment": {"metrics": {"mean_depth": 30.0}},
+        }
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["bases_at_20x"]["status"] == "not_run"
+        assert metrics["bases_at_20x"]["value"] is None
+        assert metrics["bases_at_20x"]["reason"]  # non-empty, names the missing tool step
+
+    def test_qc_stage_not_in_completed_stages_is_error_not_not_run(self):
+        """The exact landmine: 'qc' never completed (QCStage raised past
+        its own generic-except handler), so checkpoint['qc_r1'] -- if
+        present at all -- may still be Stage 1's FastqStats dict, which
+        has no q30_fraction. Must render ERROR (an upstream step was
+        genuinely attempted and expected), never NOT_RUN (which would
+        misreport this as never having been applicable)."""
+        checkpoint = {
+            "completed_stages": ["fastq_validation", "alignment", "variant_calling"],  # no "qc"
+            "qc_r1": {"path": "r1.fastq", "total_records": 1000},  # Stage 1's FastqStats shape
+            "alignment": {"metrics": {"mean_depth": 30.0}},
+        }
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["q30_score"]["status"] == "error"
+        assert metrics["q30_score"]["value"] is None
+        assert (
+            "fastq_validation" in metrics["q30_score"]["reason"] or "did not complete" in metrics["q30_score"]["reason"]
+        )
+
+    def test_qc_stage_missing_key_even_though_completed_is_error(self):
+        """'qc' IS in completed_stages but the key is somehow still
+        unusable (malformed checkpoint) -- must not crash, must not
+        fabricate a value, ERROR with a clear reason."""
+        checkpoint = {"completed_stages": ["qc", "alignment"], "qc_r1": {}, "alignment": {"metrics": {}}}
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["q30_score"]["status"] == "error"
+        assert metrics["mean_coverage_depth"]["status"] == "error"
+
+    def test_alignment_stage_not_completed_is_error(self):
+        checkpoint = {"completed_stages": ["fastq_validation", "qc"], "qc_r1": {"q30_fraction": 0.9}}
+        metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+        assert metrics["mean_coverage_depth"]["status"] == "error"
+        assert "did not complete" in metrics["mean_coverage_depth"]["reason"]
+
+    def test_empty_checkpoint_is_all_error_except_bases_at_20x(self):
+        metrics = qc_metrics_from_kim_checkpoint({})
+        assert metrics["mean_coverage_depth"]["status"] == "error"
+        assert metrics["q30_score"]["status"] == "error"
+        assert metrics["bases_at_20x"]["status"] == "not_run"
+
+    def test_write_qc_metrics_sidecar_writes_valid_json(self, tmp_path):
+        checkpoint = {
+            "completed_stages": ["qc", "alignment"],
+            "qc_r1": {"q30_fraction": 0.88},
+            "alignment": {"metrics": {"mean_depth": 25.0}},
+        }
+        out_path = tmp_path / "nested" / "qc_metrics.json"
+        result_path = write_qc_metrics_sidecar(checkpoint, str(out_path))
+        assert result_path == str(out_path)
+        assert out_path.exists()
+        written = json.loads(out_path.read_text())
+        assert written["mean_coverage_depth"]["value"] == 25.0

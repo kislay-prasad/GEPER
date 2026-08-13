@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -110,7 +110,134 @@ class CombinedPipelineResult:
         }
 
 
+# ─── QC-metrics translation (kim_pipeline checkpoint.json -> GEPER's
+#      {status, value, reason} sidecar shape) ──────────────────────────────
+#
+# Deliberately lives here, not in either project: GEPER must not know
+# kim_pipeline's internal field names/units (checkpoint schema, fraction
+# vs percent), and kim_pipeline has no reason to know GEPER's report
+# schema. Translating between the two projects' own JSON shapes is
+# exactly what this bridge module already exists to do (see its own
+# docstring's "no annotation/ACMG/... logic is copied or reimplemented
+# here" -- this is schema/unit translation, not evidence logic).
+
+# kim_pipeline has no coverage-breadth (>=Nx) computation anywhere --
+# confirmed by tracing pipeline/alignment/bam_utils.py (samtools
+# coverage's own "coverage" column is "% positions with depth>0", a
+# different question) and grepping for mosdepth/genomecov/20x, all
+# empty. This is a permanent NOT_RUN, not a TODO -- see
+# ROUND_CANDIDATES.md for the decision this round deliberately did not
+# make (add the step, or drop the row).
+_BASES_AT_20X_NOT_RUN_REASON = (
+    "kim_pipeline does not currently compute bases-at->=20x coverage breadth for any sample -- no "
+    "'samtools depth -a' threshold count or 'mosdepth --thresholds 20' step exists in "
+    "pipeline/alignment/ (see ROUND_CANDIDATES.md)."
+)
+
+
+def qc_metrics_from_kim_checkpoint(checkpoint: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Translates one sample's kim_pipeline `checkpoint.json` into the
+    `{"status": "found"|"not_run"|"error", "value": float|None,
+    "reason": str|None}`-per-metric shape
+    `report/summary.py::_parse_qc_metrics` requires. Pure function of
+    the checkpoint dict -- no I/O, independently testable.
+
+    The `completed_stages` guard below is the fix for a real ambiguity
+    in kim_pipeline's own checkpoint schema (report review round 7):
+    `checkpoint["qc_r1"]` is written under the SAME key by two
+    different stages -- Stage 1 (`fastq_validation`, always runs,
+    `FastqStats.to_dict()`, no `q30_fraction` field at all) and Stage 1b
+    (`qc`, the real `QCStage`, `QCMetrics.to_dict()`, has
+    `q30_fraction`). Stage 1b's own generic `except Exception` handler
+    (kim_pipeline/pipeline/orchestration/runner.py) can log a warning
+    and continue WITHOUT ever reaching the `checkpoint["qc_r1"] = ...`
+    assignment -- so a missing `q30_fraction` key is ambiguous on its
+    own: it could mean "Stage 1b hasn't run yet" or "Stage 1b ran and
+    failed," and checkpoint["qc_r1"] would silently still hold Stage
+    1's older, incompatible dict either way. Checking `"qc" in
+    completed_stages` (not just whether the key happens to be present)
+    is what tells these apart. This function does NOT change
+    kim_pipeline's own error handling (that generic-`except Exception`
+    is a separate, deliberately untouched decision -- see
+    ROUND_CANDIDATES.md); it only refuses to guess past the ambiguity
+    that handler creates.
+
+    A combined-workflow run always attempts both `qc` and `alignment`
+    (unlike GEPER's own VCF-only invocation, which has no "not
+    applicable" state to fall back to here) -- so anything that didn't
+    complete or didn't produce a usable number is reported `ERROR`, on
+    the theory that a combined run promised an upstream pipeline ran
+    and something specifically went wrong, never silently downgraded to
+    `NOT_RUN` (which would misrepresent "this was expected and
+    attempted" as "this was never applicable").
+    """
+    completed = set(checkpoint.get("completed_stages") or [])
+    metrics: Dict[str, Dict[str, Any]] = {}
+
+    # -- mean_coverage_depth: alignment stage, samtools coverage --------
+    if "alignment" not in completed:
+        metrics["mean_coverage_depth"] = {
+            "status": "error",
+            "value": None,
+            "reason": "kim_pipeline's alignment stage did not complete this run (not recorded in "
+            "checkpoint['completed_stages']).",
+        }
+    else:
+        mean_depth = ((checkpoint.get("alignment") or {}).get("metrics") or {}).get("mean_depth")
+        if isinstance(mean_depth, (int, float)) and not isinstance(mean_depth, bool):
+            metrics["mean_coverage_depth"] = {"status": "found", "value": float(mean_depth), "reason": None}
+        else:
+            metrics["mean_coverage_depth"] = {
+                "status": "error",
+                "value": None,
+                "reason": "kim_pipeline's alignment stage completed but reported no usable mean_depth "
+                "(samtools coverage may have found zero covered bases).",
+            }
+
+    # -- q30_score: QC stage ONLY, never the fastq_validation stage -----
+    if "qc" not in completed:
+        metrics["q30_score"] = {
+            "status": "error",
+            "value": None,
+            "reason": "kim_pipeline's QC stage did not complete this run (not recorded in "
+            "checkpoint['completed_stages']) -- checkpoint['qc_r1'], if present at all, is from the "
+            "simpler fastq_validation stage instead, which does not compute Q30.",
+        }
+    else:
+        q30_fraction = (checkpoint.get("qc_r1") or {}).get("q30_fraction")
+        if isinstance(q30_fraction, (int, float)) and not isinstance(q30_fraction, bool):
+            metrics["q30_score"] = {
+                "status": "found",
+                "value": round(float(q30_fraction) * 100.0, 3),
+                "reason": None,
+            }
+        else:
+            metrics["q30_score"] = {
+                "status": "error",
+                "value": None,
+                "reason": "kim_pipeline's QC stage completed but checkpoint['qc_r1'] carried no usable q30_fraction.",
+            }
+
+    # -- bases_at_20x: no computation exists anywhere in kim_pipeline ---
+    metrics["bases_at_20x"] = {"status": "not_run", "value": None, "reason": _BASES_AT_20X_NOT_RUN_REASON}
+
+    return metrics
+
+
+def write_qc_metrics_sidecar(checkpoint: Dict[str, Any], output_path: str) -> str:
+    """Writes `qc_metrics_from_kim_checkpoint(checkpoint)` as JSON to
+    `output_path` and returns that path. `output_path`'s parent
+    directory is created if needed."""
+    metrics = qc_metrics_from_kim_checkpoint(checkpoint)
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(metrics, indent=2))
+    return str(out)
+
+
 # ─── Stage 1: Kim (FASTQ -> filtered_variants.vcf) ─────────────────────────
+
 
 def run_kim_fastq_to_vcf(
     fastq_r1: str,
@@ -149,12 +276,19 @@ def run_kim_fastq_to_vcf(
 
     python_bin = kim_python or sys.executable
     cmd = [
-        python_bin, "main.py", "analyze",
-        "--r1", fastq_r1,
-        "--ref", reference_fasta,
-        "--output-dir", output_dir,
-        "--sample-id", sample_id,
-        "--mode", "vcf_only",
+        python_bin,
+        "main.py",
+        "analyze",
+        "--r1",
+        fastq_r1,
+        "--ref",
+        reference_fasta,
+        "--output-dir",
+        output_dir,
+        "--sample-id",
+        sample_id,
+        "--mode",
+        "vcf_only",
     ]
     if fastq_r2:
         cmd += ["--r2", fastq_r2]
@@ -167,9 +301,7 @@ def run_kim_fastq_to_vcf(
 
     proc = subprocess.run(cmd, cwd=str(kim_root))
     if proc.returncode != 0:
-        raise BridgeError(
-            "kim", f"Kim pipeline exited with code {proc.returncode} (cmd={' '.join(cmd)})"
-        )
+        raise BridgeError("kim", f"Kim pipeline exited with code {proc.returncode} (cmd={' '.join(cmd)})")
 
     checkpoint_path = Path(output_dir) / sample_id / "checkpoint.json"
     if not checkpoint_path.exists():
@@ -181,13 +313,29 @@ def run_kim_fastq_to_vcf(
     if not filtered_vcf_path or not Path(filtered_vcf_path).exists():
         raise BridgeError(
             "kim",
-            f"Kim did not produce a usable filtered_variants.vcf "
-            f"(checkpoint variant_calling={vc!r})",
+            f"Kim did not produce a usable filtered_variants.vcf (checkpoint variant_calling={vc!r})",
         )
+
+    # QC-metrics sidecar for GEPER's Sequencing Quality Control Metrics
+    # table (see `qc_metrics_from_kim_checkpoint`'s docstring). Written
+    # unconditionally alongside checkpoint.json -- same discoverable-by-
+    # path-convention pattern this function already uses for
+    # checkpoint.json itself, so `run_combined` below can locate it
+    # without `run_kim_fastq_to_vcf`'s own return type changing. Never
+    # fatal: a translation bug here must not fail an otherwise-
+    # successful Kim run any more than a PDF rendering bug is allowed to
+    # fail an otherwise-successful GEPER run (report/orchestrator.py's
+    # own convention for additive output).
+    try:
+        write_qc_metrics_sidecar(checkpoint, str(Path(output_dir) / sample_id / "qc_metrics.json"))
+    except Exception as exc:  # noqa: BLE001 - additive output, must never fail an otherwise-successful Kim run
+        print(f"WARNING: could not write qc_metrics.json sidecar ({exc}); GEPER's QC table will render ERROR rows.")
+
     return filtered_vcf_path
 
 
 # ─── Stage 2: GEPER (filtered_variants.vcf -> Clinical Report) ─────────────
+
 
 def run_geper_vcf_to_report(
     vcf_path: str,
@@ -204,6 +352,7 @@ def run_geper_vcf_to_report(
     no_resume: bool = False,
     hpo_terms: Optional[str] = None,
     phenotype_file: Optional[str] = None,
+    qc_metrics_json: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     """Run GEPER's own `main.py --vcf ...` entry point in a subprocess.
@@ -214,6 +363,13 @@ def run_geper_vcf_to_report(
     ClinGen/UniProt/InterPro/Pfam/AlphaFold DB, BLAST+, ACMG automation,
     confidence engine, prioritization, conflict resolution,
     explainability, and clinical report generation).
+
+    `qc_metrics_json`: path to the sidecar `run_kim_fastq_to_vcf` wrote
+    (see `qc_metrics_from_kim_checkpoint`) -- always supplied by
+    `run_combined` below when Kim actually ran, never a separate
+    caller-facing override (a combined run has exactly one source of
+    truth for its own QC metrics: Kim's own checkpoint, not a second
+    value someone could pass that disagrees with it).
     """
     geper_root = Path(geper_root).expanduser().resolve()
     if not (geper_root / "main.py").exists():
@@ -228,6 +384,7 @@ def run_geper_vcf_to_report(
     blast_db = _abs(blast_db)
     blast_reference_fasta = _abs(blast_reference_fasta)
     phenotype_file = _abs(phenotype_file)
+    qc_metrics_json = _abs(qc_metrics_json)
 
     python_bin = geper_python or sys.executable
     cmd = [python_bin, "main.py", "--vcf", vcf_path, "--output-dir", output_dir]
@@ -251,14 +408,14 @@ def run_geper_vcf_to_report(
         cmd += ["--hpo-terms", hpo_terms]
     if phenotype_file:
         cmd += ["--phenotype-file", phenotype_file]
+    if qc_metrics_json:
+        cmd += ["--qc-metrics-json", qc_metrics_json]
     if extra_args:
         cmd += list(extra_args)
 
     proc = subprocess.run(cmd, cwd=str(geper_root))
     if proc.returncode != 0:
-        raise BridgeError(
-            "geper", f"GEPER pipeline exited with code {proc.returncode} (cmd={' '.join(cmd)})"
-        )
+        raise BridgeError("geper", f"GEPER pipeline exited with code {proc.returncode} (cmd={' '.join(cmd)})")
 
     results_json = Path(output_dir) / "geper_results.json"
     report_md = Path(output_dir) / "geper_report.md"
@@ -269,6 +426,7 @@ def run_geper_vcf_to_report(
 
 
 # ─── Combined workflow ──────────────────────────────────────────────────────
+
 
 def run_combined(
     fastq_r1: str,
@@ -295,7 +453,7 @@ def run_combined(
 ) -> CombinedPipelineResult:
     """Run the complete FASTQ -> Clinical Report workflow:
 
-        FASTQ -> Kim Pipeline -> filtered_variants.vcf -> GEPER -> Report
+    FASTQ -> Kim Pipeline -> filtered_variants.vcf -> GEPER -> Report
     """
     result = CombinedPipelineResult(sample_id=sample_id)
     result.kim_work_dir = str(Path(_abs(kim_output_dir)) / sample_id)
@@ -315,6 +473,16 @@ def run_combined(
         )
         result.filtered_vcf_path = filtered_vcf
 
+        # Written by run_kim_fastq_to_vcf as a side effect, next to its
+        # own checkpoint.json, using the same discoverable-by-path-
+        # convention pattern -- see that function's docstring. Passed
+        # through unconditionally (even if the write failed and the
+        # file doesn't exist): GEPER's own `--qc-metrics-json` handling
+        # already treats a missing file as "not applicable", never a
+        # crash, so there is no need for run_combined to duplicate that
+        # existence check here.
+        qc_metrics_json = str(Path(_abs(kim_output_dir)) / sample_id / "qc_metrics.json")
+
         geper_out = run_geper_vcf_to_report(
             vcf_path=filtered_vcf,
             output_dir=geper_output_dir,
@@ -330,6 +498,7 @@ def run_combined(
             no_resume=no_resume,
             hpo_terms=hpo_terms,
             phenotype_file=phenotype_file,
+            qc_metrics_json=qc_metrics_json,
         )
         result.geper_results_json = geper_out["geper_results_json"]
         result.geper_report_md = geper_out["geper_report_md"]

@@ -140,6 +140,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--qc-metrics-json",
+        default=None,
+        help=(
+            "Path to a JSON file describing this run's upstream sequencing/alignment QC metrics "
+            "(mean_coverage_depth, bases_at_20x, q30_score), for the clinical PDF's Sequencing "
+            "Quality Control Metrics table. GEPER's own VCF-only pipeline cannot compute these "
+            "itself -- this flag exists for callers like bridge/combined_pipeline.py that ran "
+            "kim_pipeline's real alignment/QC stages first. Optional -- if omitted (the default "
+            "for a bare `--vcf` invocation), the table renders each metric 'Not applicable' "
+            "rather than a placeholder value, since GEPER genuinely never touched any upstream "
+            "FASTQ/BAM in that case. See report/summary.py::_parse_qc_metrics for the required "
+            'per-metric {"status": "found"|"not_run"|"error", "value": float|null, '
+            '"reason": str|null} shape; a missing/corrupt file or a bare number where that '
+            "shape is expected is logged as a warning and rendered as not-applicable/failed, "
+            "never fatal and never coerced into a number."
+        ),
+    )
+    parser.add_argument(
         "--hpo-terms",
         default=None,
         help=(
@@ -192,6 +210,7 @@ def main() -> int:
         enable_profiling=(False if args.no_profiling else None),
         blast_disk_cache=(False if args.no_blast_cache else None),
         patient_meta_path=args.patient_meta,
+        qc_metrics_path=args.qc_metrics_json,
         phenotype_result=phenotype_result,
     )
 

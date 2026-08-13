@@ -55,6 +55,7 @@ from pipeline.models.status import FAILED as _STATUS_FAILED
 from pipeline.models.status import SKIPPED as _STATUS_SKIPPED
 from pipeline.models.status import USED as _STATUS_USED
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
+from pipeline.stage_schemas import StageStatus as _StageStatus
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.service_health import HEALTH
@@ -154,15 +155,15 @@ def _icmr_ai_disclosure_footer_text(patient: Dict[str, Any]) -> str:
     )
 
 
-# Mock QC metrics, used only when the caller supplies none. GEPER's
-# pipeline consumes an already-called VCF, not raw FASTQ/BAM, so it
-# cannot compute these itself -- see QCReportConfig's docstring
-# (config.py). Never presented as a real result: the rendered report
-# footnotes this explicitly whenever it is used (see `_build_qc_flowables`).
-_MOCK_QC_METRICS: Dict[str, Dict[str, Any]] = {
-    "mean_coverage_depth": {"value": 42.5, "unit": "x"},
-    "bases_at_20x": {"value": 96.8, "unit": "%"},
-    "q30_score": {"value": 93.2, "unit": "%"},
+# Display units for each QC metric -- not a "mock" value (renamed from
+# `_MOCK_QC_METRICS`, report review round 7: the old name predated the
+# honest not-supplied/not-applicable rendering and had stopped
+# describing what this dict is actually used for, which is only ever
+# the unit suffix below).
+_QC_METRIC_UNITS: Dict[str, str] = {
+    "mean_coverage_depth": "x",
+    "bases_at_20x": "%",
+    "q30_score": "%",
 }
 
 _QC_METRIC_LABELS = {
@@ -185,6 +186,144 @@ def _qc_threshold_pass_min(metric_key: str) -> float:
 
 def _qc_status(metric_key: str, value: float) -> str:
     return "PASS" if value >= _qc_threshold_pass_min(metric_key) else "WARNING"
+
+
+# ---------------------------------------------------------------------------
+# QC metrics parsing (report review round 7)
+#
+# Three states, not two: kim_pipeline genuinely measured a value
+# (FOUND), GEPER was invoked in VCF-only mode so no run-level QC could
+# ever exist (NOT_RUN, "not applicable" -- not a gap), or an upstream
+# step was attempted and failed / a tool to produce this metric simply
+# doesn't exist yet (also NOT_RUN or ERROR depending on which, each
+# with its own `reason`). Reuses `pipeline.stage_schemas.StageStatus`
+# rather than inventing a fourth status vocabulary in this codebase --
+# NOT_FOUND is deliberately unused here (a QC metric either was
+# measured or wasn't; there's no "checked, confirmed absent" reading
+# for a number the way there is for a database lookup).
+# ---------------------------------------------------------------------------
+
+_QC_METRICS_NOT_APPLICABLE_REASON = (
+    "This report was generated directly from a VCF (no --qc-metrics-json was supplied), so GEPER "
+    "never ran or observed any upstream sequencing/alignment step for this sample -- there is no "
+    "run-level QC to show here, not merely an unreported one."
+)
+
+_VALID_QC_STATUSES = {_StageStatus.NOT_RUN.value, _StageStatus.ERROR.value, _StageStatus.FOUND.value}
+
+
+def _parse_one_qc_metric(key: str, entry: Any) -> Dict[str, Any]:
+    """
+    Validates one `qc_metrics[key]` entry against the required
+    `{"status", "value", "reason"}` shape. This is the single choke
+    point a raw number must pass through before `_qc_status`'s `>=`
+    comparison can ever see it -- anything that doesn't parse into
+    exactly this shape (a bare float where the dict belongs, a missing
+    or unrecognized `status`, a `status: "found"` with no usable
+    numeric `value`) fails THIS metric closed to ERROR rather than
+    being coerced into a number to compare against a threshold. This
+    is what makes the B-series fabricated-PASS-on-placeholder-numbers
+    regression structurally impossible here, not merely avoided by
+    convention: there is no code path from an untrusted input to
+    `_qc_status` that skips this validation.
+    """
+    if entry is None:
+        return {
+            "status": _StageStatus.NOT_RUN.value,
+            "value": None,
+            "reason": "Not reported by the upstream sequencing/alignment pipeline for this run.",
+        }
+    if not isinstance(entry, dict):
+        logger.warning(
+            f"qc_metrics['{key}'] was not an object ({entry!r}); a bare number is never accepted here -- "
+            "a real value must be wrapped in {'status': 'found', 'value': ..., 'reason': ...}. Rendering "
+            "as a failed measurement rather than trusting an unvalidated number."
+        )
+        return {
+            "status": _StageStatus.ERROR.value,
+            "value": None,
+            "reason": f"Malformed qc_metrics entry for '{key}': expected an object, got {type(entry).__name__}.",
+        }
+
+    status = entry.get("status")
+    if status not in _VALID_QC_STATUSES:
+        logger.warning(f"qc_metrics['{key}']['status']={status!r} is not a recognized status; treating as ERROR.")
+        return {
+            "status": _StageStatus.ERROR.value,
+            "value": None,
+            "reason": entry.get("reason") or f"Unrecognized status {status!r} reported for '{key}'.",
+        }
+
+    reason = entry.get("reason")
+    if status == _StageStatus.FOUND.value:
+        value = entry.get("value")
+        # bool is an int subclass -- excluded explicitly so a stray
+        # `"value": true` can never be silently read as `1.0`.
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            logger.warning(
+                f"qc_metrics['{key}'] status was 'found' but 'value' was not a real number ({value!r}); "
+                "treating as ERROR rather than coercing it."
+            )
+            return {
+                "status": _StageStatus.ERROR.value,
+                "value": None,
+                "reason": f"'{key}' was reported found but carried no usable numeric value.",
+            }
+        return {"status": _StageStatus.FOUND.value, "value": float(value), "reason": reason}
+
+    # NOT_RUN / ERROR: `value` is deliberately discarded even if present
+    # -- only a FOUND status may ever hand a number to `_qc_status`.
+    return {"status": status, "value": None, "reason": reason}
+
+
+def _parse_qc_metrics(qc_metrics: Optional[Union[Dict[str, Any], str]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Accepts a dict (already-parsed, e.g. from an in-process caller), a
+    path to a JSON sidecar file (see `bridge/combined_pipeline.py`'s
+    translation of kim_pipeline's `checkpoint.json` into this shape),
+    or `None`. Always returns exactly `_QC_METRIC_ORDER`'s three keys,
+    each mapped to a validated `{"status", "value", "reason"}` dict --
+    never a partial result, so `_build_qc_flowables` never has to guess
+    whether a missing key means "not applicable" or "forgot to check".
+
+    `None` (no `--qc-metrics-json` was ever passed to `generate_pdf` --
+    the default for `main.py --vcf` today, and for every fixture/Colab
+    run so far) is NOT "missing data to apologize for". A hospital
+    handing GEPER a bare VCF has no run-level QC GEPER could ever have
+    computed -- GEPER never touched their FASTQ or BAM. Every metric is
+    therefore explicitly NOT_RUN with a reason saying exactly that,
+    distinct from a kim_pipeline-combined run where a metric was
+    genuinely attempted and failed (ERROR), or where the tool to
+    produce it has never been wired at all (also NOT_RUN, but with a
+    per-metric reason naming the missing step -- see
+    `bridge/combined_pipeline.py`'s fixed reason for `bases_at_20x`,
+    which has no computation anywhere in kim_pipeline as of this round).
+
+    A missing file, corrupt JSON, or non-object body all fall back to
+    the same all-NOT_RUN default as `None` (logged for operators, never
+    raised) -- a malformed sidecar must never look like a real
+    measurement any more than an absent one would.
+    """
+    not_applicable = {
+        key: {"status": _StageStatus.NOT_RUN.value, "value": None, "reason": _QC_METRICS_NOT_APPLICABLE_REASON}
+        for key in _QC_METRIC_ORDER
+    }
+    if not qc_metrics:
+        return not_applicable
+
+    try:
+        if isinstance(qc_metrics, dict):
+            raw = qc_metrics
+        else:
+            with open(qc_metrics, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        if not isinstance(raw, dict):
+            raise ValueError("qc_metrics JSON must be an object")
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning(f"Could not parse qc_metrics ({exc}); rendering the not-applicable default instead.")
+        return not_applicable
+
+    return {key: _parse_one_qc_metric(key, raw.get(key)) for key in _QC_METRIC_ORDER}
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +730,13 @@ def _build_stylesheet() -> Dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#9a6a00"),
             fontName="Helvetica-Bold",
         ),
+        "StatusError": ParagraphStyle(
+            "GeperStatusError",
+            parent=base["BodyText"],
+            fontSize=9,
+            textColor=colors.HexColor("#a11d1d"),
+            fontName="Helvetica-Bold",
+        ),
         "Footnote": ParagraphStyle(
             "GeperFootnote", parent=base["BodyText"], fontSize=7.5, textColor=colors.grey, leading=10
         ),
@@ -912,17 +1058,33 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
     return flow
 
 
-def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str, ParagraphStyle]) -> List[Any]:
+def _build_qc_flowables(qc_metrics: Dict[str, Dict[str, Any]], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
     Sequencing QC status table -- PASS/WARNING against
-    `CONFIG.qc_report`'s configurable thresholds, computed only from
-    real, caller-supplied `qc_metrics`. When no `qc_metrics` were
-    supplied, this never invents numbers to compute a PASS/WARNING
-    status against: a clinical PDF asserting "PASS" against a fake
-    coverage/Q30 value is exactly the kind of fabricated-evidence bug
-    this pipeline works to eliminate elsewhere (see e.g. PP3/BP4's
-    conflicting-evidence discipline). Rows render as "Not supplied"
-    with no status cell instead.
+    `CONFIG.qc_report`'s configurable thresholds, computed only from a
+    real, validated `status: "found"` entry (see `_parse_qc_metrics`,
+    which the caller -- `generate_pdf` -- has already run this dict
+    through). This function itself never invents numbers, never
+    coerces one, and never reads a `value` from anything but a `found`
+    entry: a clinical PDF asserting "PASS" against a fake coverage/Q30
+    value is exactly the kind of fabricated-evidence bug this pipeline
+    works to eliminate elsewhere (see e.g. PP3/BP4's conflicting-
+    evidence discipline; this is the report-review-round-7 fix for the
+    same bug class in this specific table, after a B-series round had
+    to fix an earlier instance of it here).
+
+    Three distinct row renderings, not two:
+      - FOUND   -> the existing PASS/WARNING logic, unchanged.
+      - NOT_RUN -> "Not applicable", grey -- covers both "this
+        invocation never had an upstream sequencing pipeline to
+        measure from" (VCF-only mode) and "no tool to compute this
+        metric has been wired yet" (bases_at_20x, this round) --
+        distinguished from each other only by each row's own `reason`,
+        surfaced in the footnote below.
+      - ERROR   -> "Measurement failed", red -- an upstream step was
+        genuinely attempted and did not succeed. Must never render
+        identically to NOT_RUN: a reviewer needs to know "nobody
+        tried" is a different fact from "somebody tried and it broke".
     """
     header = [
         Paragraph("Metric", styles["TableHeader"]),
@@ -931,32 +1093,57 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
         Paragraph("Status", styles["TableHeader"]),
     ]
     rows = [header]
-    row_statuses: List[Optional[str]] = []
+    row_statuses: List[str] = []  # "PASS" | "WARNING" | "NOT_RUN" | "ERROR", one per data row
+    not_run_entries: List[Tuple[str, Dict[str, Any]]] = []
+    error_entries: List[Tuple[str, Dict[str, Any]]] = []
+
     for key in _QC_METRIC_ORDER:
-        unit = _MOCK_QC_METRICS[key]["unit"]
+        unit = _QC_METRIC_UNITS[key]
         threshold = _qc_threshold_pass_min(key)
-        value = qc_metrics.get(key) if qc_metrics else None
-        if value is None:
-            row_statuses.append(None)
+        label = _QC_METRIC_LABELS[key]
+        entry = qc_metrics.get(key) or {"status": _StageStatus.NOT_RUN.value, "value": None, "reason": None}
+        status = entry.get("status")
+        value = entry.get("value")
+
+        if status == _StageStatus.FOUND.value and isinstance(value, (int, float)) and not isinstance(value, bool):
+            pass_status = _qc_status(key, value)
+            row_statuses.append(pass_status)
             rows.append(
                 [
-                    Paragraph(_QC_METRIC_LABELS[key], styles["TableLabel"]),
-                    Paragraph("Not supplied", styles["TableValue"]),
+                    Paragraph(label, styles["TableLabel"]),
+                    Paragraph(f"{value:g}{unit}", styles["TableValue"]),
                     Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
-                    Paragraph("--", styles["TableValue"]),
+                    Paragraph(pass_status, styles["StatusPass"] if pass_status == "PASS" else styles["StatusWarn"]),
                 ]
             )
-            continue
-        status = _qc_status(key, value)
-        row_statuses.append(status)
-        rows.append(
-            [
-                Paragraph(_QC_METRIC_LABELS[key], styles["TableLabel"]),
-                Paragraph(f"{value:g}{unit}", styles["TableValue"]),
-                Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
-                Paragraph(status, styles["StatusPass"] if status == "PASS" else styles["StatusWarn"]),
-            ]
-        )
+        elif status == _StageStatus.ERROR.value:
+            row_statuses.append("ERROR")
+            error_entries.append((label, entry))
+            rows.append(
+                [
+                    Paragraph(label, styles["TableLabel"]),
+                    Paragraph("Measurement failed", styles["TableValue"]),
+                    Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
+                    Paragraph("ERROR", styles["StatusError"]),
+                ]
+            )
+        else:
+            # NOT_RUN, or anything that failed `_parse_qc_metrics`'s own
+            # validation and fell back here -- deliberately the same
+            # rendering as an explicit NOT_RUN rather than a fourth
+            # visual state, since by the time this function runs, an
+            # unrecognized/malformed input has already been turned into
+            # a validated status by `_parse_qc_metrics`.
+            row_statuses.append("NOT_RUN")
+            not_run_entries.append((label, entry))
+            rows.append(
+                [
+                    Paragraph(label, styles["TableLabel"]),
+                    Paragraph("Not applicable", styles["TableValue"]),
+                    Paragraph(f"{threshold:g}{unit}", styles["TableValue"]),
+                    Paragraph("N/A", styles["TableValue"]),
+                ]
+            )
 
     table = Table(rows, colWidths=[55 * mm, 35 * mm, 40 * mm, 30 * mm], hAlign="LEFT")
     style_cmds = [
@@ -967,36 +1154,45 @@ def _build_qc_flowables(qc_metrics: Optional[Dict[str, float]], styles: Dict[str
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
+    _QC_ROW_BG = {
+        "PASS": colors.HexColor("#e3f6e8"),
+        "WARNING": colors.HexColor("#fdf1d6"),
+        "ERROR": colors.HexColor("#fbe0e0"),
+        "NOT_RUN": colors.HexColor("#eeeeee"),
+    }
     for i, status in enumerate(row_statuses, start=1):
-        if status == "PASS":
-            bg = colors.HexColor("#e3f6e8")
-        elif status == "WARNING":
-            bg = colors.HexColor("#fdf1d6")
-        else:
-            bg = colors.HexColor("#eeeeee")
-        style_cmds.append(("BACKGROUND", (0, i), (-1, i), bg))
+        style_cmds.append(("BACKGROUND", (0, i), (-1, i), _QC_ROW_BG[status]))
     table.setStyle(TableStyle(style_cmds))
 
     flowables: List[Any] = [table]
-    if not qc_metrics:
+
+    if not_run_entries:
         flowables.append(Spacer(1, 2 * mm))
+        reasons = "; ".join(
+            f"{label} -- {entry.get('reason') or 'not applicable this run.'}" for label, entry in not_run_entries
+        )
         flowables.append(
             Paragraph(
-                "No run-level QC metrics were supplied to this report -- the rows above reflect that "
-                "gap, not a real sequencing QC result. Pass real values via "
-                "generate_pdf(qc_metrics={...}) from the upstream sequencing/alignment pipeline.",
+                f"Not applicable this run: {reasons} To supply real values from a kim_pipeline-combined "
+                "run, see bridge/combined_pipeline.py's --qc-metrics-json handoff to "
+                "generate_pdf(qc_metrics=...).",
                 styles["Footnote"],
             )
         )
-    elif any(status is None for status in row_statuses):
+
+    if error_entries:
         flowables.append(Spacer(1, 2 * mm))
+        reasons = "; ".join(
+            f"{label} -- {entry.get('reason') or 'measurement failed.'}" for label, entry in error_entries
+        )
         flowables.append(
             Paragraph(
-                "Some run-level QC metrics were not supplied to this report; those rows show 'Not "
-                "supplied' rather than an invented value.",
-                styles["Footnote"],
+                f"Measurement failed this run (an upstream step was attempted and did not succeed, not "
+                f"merely unreported): {reasons}",
+                styles["StatusError"],
             )
         )
+
     return flowables
 
 
@@ -1927,7 +2123,7 @@ def generate_pdf(
     document: Dict[str, Any],
     output_path: str,
     patient_meta: Optional[Union[Dict[str, Any], str]] = None,
-    qc_metrics: Optional[Dict[str, float]] = None,
+    qc_metrics: Optional[Union[Dict[str, Any], str]] = None,
     run_id: Optional[str] = None,
     logo_path: Optional[str] = None,
 ) -> str:
@@ -1945,10 +2141,14 @@ def generate_pdf(
     `patient_meta`: dict, path to a JSON file, or None -- see
     `_parse_patient_meta`'s docstring for the DPDP Act framing and
     de-identified fallback.
-    `qc_metrics`: optional {"mean_coverage_depth": float,
-    "bases_at_20x": float, "q30_score": float}; see
+    `qc_metrics`: dict, path to a JSON sidecar file, or None -- see
+    `_parse_qc_metrics`'s docstring for the three-state (found/not
+    applicable/failed) shape each of "mean_coverage_depth",
+    "bases_at_20x", "q30_score" is validated into, and
     `config.py::QCReportConfig`'s docstring for why GEPER cannot
-    compute these itself from a VCF-only pipeline.
+    compute these itself from a VCF-only pipeline. `bridge/
+    combined_pipeline.py` is the reference producer of this file when
+    kim_pipeline supplied the upstream FASTQ->BAM run.
     `run_id`: optional caller-supplied run/accession identifier; see
     `_derive_run_id`'s docstring for the fallback when not given.
     `logo_path`: optional per-call override for the header logo image
@@ -1978,6 +2178,7 @@ def generate_pdf(
         variants = []
 
     patient = _parse_patient_meta(patient_meta)
+    parsed_qc_metrics = _parse_qc_metrics(qc_metrics)
     sample_id = _derive_sample_id(document)
     resolved_run_id = _derive_run_id(document, run_id)
     assembly = document.get("assembly")
@@ -2019,7 +2220,7 @@ def generate_pdf(
             Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),
         ]
     )
-    story.extend(_build_qc_flowables(qc_metrics, styles))
+    story.extend(_build_qc_flowables(parsed_qc_metrics, styles))
     story.append(Spacer(1, 6 * mm))
 
     story.extend(

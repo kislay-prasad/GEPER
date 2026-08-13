@@ -202,6 +202,7 @@ class GeperPipeline:
         blast_enable_prefetch: Optional[bool] = None,
         mmsplice_enable_prefetch: Optional[bool] = None,
         patient_meta_path: Optional[str] = None,
+        qc_metrics_path: Optional[str] = None,
         phenotype_result: Optional[Dict[str, Any]] = None,
     ):
         log_environment_versions()
@@ -328,6 +329,18 @@ class GeperPipeline:
         # never crashes the pipeline (see generate_pdf's docstring); the
         # PDF stage itself is also wrapped in try/except in run() below.
         self.patient_meta_path = patient_meta_path
+
+        # Optional path to a QC-metrics JSON sidecar (mean coverage
+        # depth, bases at >20x, Q30) for the clinical PDF's Sequencing
+        # Quality Control Metrics table (report/summary.py::generate_pdf,
+        # ::_parse_qc_metrics). None by default -- this is the normal
+        # case for `main.py --vcf` run directly against a hospital's own
+        # VCF, where GEPER never touched any upstream FASTQ/BAM and
+        # genuinely has no run-level QC to report; the table renders
+        # each metric "Not applicable" rather than a gap to fill. Only
+        # `bridge/combined_pipeline.py`'s FASTQ->Report workflow (which
+        # actually ran kim_pipeline's alignment/QC stages) supplies this.
+        self.qc_metrics_path = qc_metrics_path
 
         # Patient-observed HPO phenotype terms (see pipeline/hpo/utils.py::
         # build_phenotype_result), the input ACMG's PP4 rule
@@ -856,7 +869,7 @@ class GeperPipeline:
         pdf_filename = "geper_report_full.pdf"
         pdf_path = os.path.join(self.output_dir, pdf_filename)
         try:
-            generate_pdf(json_document, pdf_path, patient_meta=self.patient_meta_path)
+            generate_pdf(json_document, pdf_path, patient_meta=self.patient_meta_path, qc_metrics=self.qc_metrics_path)
         except Exception as exc:  # noqa: BLE001 - additive output, must never fail an otherwise-successful run
             logger.error(f"Clinical PDF report generation failed ({exc}); JSON/Markdown outputs are unaffected.")
             pdf_path = None

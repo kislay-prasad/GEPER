@@ -2340,16 +2340,22 @@ class QCReportConfig:
     IMPORTANT -- these are PLACEHOLDER thresholds, not clinically
     validated ones. GEPER's own pipeline consumes an already-called
     VCF, not raw FASTQ/BAM, so it cannot itself compute mean coverage
-    depth, %>20x, or Q30 from its own inputs -- these three metrics
-    must be supplied by the caller (the upstream sequencing/alignment
-    pipeline or LIMS) via `generate_pdf(..., qc_metrics={...})`; when
-    none are supplied, `report/summary.py` renders clearly-labeled mock
-    values so the report layout can still be reviewed, and this is
-    never to be mistaken for a real QC result. Before any diagnostic/
-    production use, GEPER's own validation studies against a truth set
-    (e.g. GIAB) must determine what PASS/WARNING actually means for
-    this lab's assay and instrument -- these numbers are placeholders
-    for that work, not a substitute for it.
+    depth, %>20x, or Q30 from its own inputs. When GEPER is run from
+    the bridge's combined FASTQ->Report workflow (`bridge/
+    combined_pipeline.py`), these are supplied by kim_pipeline's own
+    alignment/QC stages via a `--qc-metrics-json` sidecar file (see
+    `report/summary.py::_parse_qc_metrics` for the validated
+    found/not-applicable/failed shape each metric is parsed into --
+    never a bare number, so a placeholder value can never reach the
+    PASS/WARNING comparison below by accident). When GEPER is invoked
+    directly against a VCF (`main.py --vcf`, with no `--qc-metrics-json`),
+    there genuinely is no run-level QC to report -- `report/summary.py`
+    renders each metric "Not applicable" rather than a mock value, and
+    this must never be mistaken for a real QC result either way.
+    Before any diagnostic/production use, GEPER's own validation
+    studies against a truth set (e.g. GIAB) must determine what PASS/
+    WARNING actually means for this lab's assay and instrument -- these
+    numbers are placeholders for that work, not a substitute for it.
     """
 
     MEAN_COVERAGE_DEPTH_PASS_MIN: float = float(os.environ.get("GEPER_QC_MEAN_COVERAGE_DEPTH_PASS_MIN", "30.0"))

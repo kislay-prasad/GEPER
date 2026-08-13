@@ -297,6 +297,29 @@ class ReportGenerator:
         lines.append(f"- **Filter status:** {variant.get('filter') or 'n/a'}")
         lines.append("")
 
+        out_of_scope = result.get("out_of_scope")
+        if out_of_scope:
+            # Report review round 8: a chrM variant never entered any
+            # evidence-source stage or the ACMG engine at all (see
+            # `pipeline/orchestrator.py::GeperPipeline
+            # ._mitochondrial_out_of_scope_result`) -- rendering the
+            # normal Annotation Detail / audit-trail sections below
+            # would show a wall of "not found"/"skipped" boilerplate
+            # that reads as "checked, nothing there" when the honest
+            # statement is "never checked, by design". This is a
+            # distinct status, not a Variant of Uncertain Significance
+            # and not a stage failure.
+            lines.append(f"**Status:** Out of scope ({out_of_scope.get('scope', 'unspecified')})")
+            lines.append("")
+            lines.append(out_of_scope.get("reason") or "This variant is out of scope for this GEPER build.")
+            lines.append("")
+            lines.append(
+                "*No ACMG/AMP criteria were evaluated for this variant. This is not a Variant of "
+                "Uncertain Significance -- it was never assessed.*"
+            )
+            lines.append("")
+            return lines
+
         lines.extend(self._render_ai_model_status(result.get("ai_model_status", {})))
 
         lines.extend(self._render_clinical_report(result.get("clinical_report"), result.get("interpretation", {})))

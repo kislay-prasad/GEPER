@@ -405,6 +405,31 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     this at roughly one variant per third of a page rather than the
     full report's multiple pages each.
     """
+    out_of_scope = variant_result.get("out_of_scope")
+    if out_of_scope:
+        # Report review round 8: bypasses the classification/confidence
+        # strip and reviewer-flag machinery entirely, same reasoning as
+        # `report/summary.py::_build_variant_section`'s identical
+        # branch -- this variant was never evaluated, not merely
+        # unclassified.
+        variant = variant_result.get("variant", {})
+        locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+        heading = f"Finding {idx}: {locus}"
+        return [
+            Paragraph(heading, styles["VariantHeading"]),
+            Paragraph(
+                f"Out of scope ({out_of_scope.get('scope', 'unspecified')}): "
+                f"{out_of_scope.get('reason') or 'This variant is out of scope for this GEPER build.'}",
+                styles["BodyText"],
+            ),
+            Paragraph(
+                "No ACMG/AMP criteria were evaluated for this variant. This is not a Variant of "
+                "Uncertain Significance -- it was never assessed.",
+                styles["Flag"],
+            ),
+            Spacer(1, 3 * mm),
+        ]
+
     clinical = variant_result.get("clinical_report")
     gene = _variant_gene(variant_result)
     hgvs = _variant_hgvs(variant_result)

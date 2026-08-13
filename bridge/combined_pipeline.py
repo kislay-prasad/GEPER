@@ -236,6 +236,47 @@ def write_qc_metrics_sidecar(checkpoint: Dict[str, Any], output_path: str) -> st
     return str(out)
 
 
+# ─── Reference-build forwarding (kim_pipeline checkpoint -> GEPER
+#      --assembly) ──────────────────────────────────────────────────────────
+#
+# Report review round 8, Task C. Investigated first (this is NOT a
+# dropped-field bug the way MaveDB provenance/QC metrics were): before
+# this round, nothing anywhere computed an assembly value for a
+# combined-workflow run to lose in the first place -- kim's own
+# genome-build detection (`pipeline/utils/genome_build.py`) existed but
+# was positioned after `--mode vcf_only`'s early return in
+# `runner.py`, so it never even ran for the bridge's workflow. That
+# reordering fix is what makes `checkpoint["detected_genome_build"]`
+# exist at all; this function just reads it.
+
+
+def _detected_assembly_from_kim_checkpoint(kim_output_dir: str, sample_id: str) -> Optional[str]:
+    """
+    Reads `checkpoint["detected_genome_build"]["build"]` (see
+    `runner.py`'s genome-build-detection reordering fix) for one
+    sample, if present and non-null. Returns `None` -- never a
+    fabricated default -- when the checkpoint doesn't exist, doesn't
+    have the key (an older kim_pipeline checkpoint, or a run that never
+    reached this stage), or the detection itself came back
+    undetermined (e.g. a single-contig VCF with no ##reference/##contig
+    markers to detect from, the common case for a mitochondrial-only
+    VCF -- rCRS numbering is build-invariant anyway, so "undetermined"
+    is often the honest answer there, not a gap).
+    """
+    kim_dir_abs = _abs(kim_output_dir)
+    if kim_dir_abs is None:
+        return None
+    checkpoint_path = Path(kim_dir_abs) / sample_id / "checkpoint.json"
+    if not checkpoint_path.exists():
+        return None
+    try:
+        checkpoint = json.loads(checkpoint_path.read_text())
+    except (OSError, ValueError):
+        return None
+    detected = checkpoint.get("detected_genome_build") or {}
+    return detected.get("build") or None
+
+
 # ─── Stage 1: Kim (FASTQ -> filtered_variants.vcf) ─────────────────────────
 
 
@@ -483,6 +524,19 @@ def run_combined(
         # existence check here.
         qc_metrics_json = str(Path(_abs(kim_output_dir)) / sample_id / "qc_metrics.json")
 
+        # Report review round 8, Task C: forward kim's own
+        # `checkpoint["detected_genome_build"]` (see runner.py's
+        # reordering fix) to GEPER's existing `--assembly` flag, ONLY
+        # when the caller didn't already supply one explicitly --
+        # `assembly` is a human-authored, deliberate choice (and
+        # GEPER's `validate_assembly` treats a mismatch between it and
+        # what the VCF header itself declares as a hard error), so an
+        # auto-detected value must never override it, only fill the gap
+        # when nothing was said at all.
+        resolved_assembly = assembly
+        if not resolved_assembly:
+            resolved_assembly = _detected_assembly_from_kim_checkpoint(kim_output_dir, sample_id)
+
         geper_out = run_geper_vcf_to_report(
             vcf_path=filtered_vcf,
             output_dir=geper_output_dir,
@@ -493,7 +547,7 @@ def run_combined(
             blast_reference_fasta=blast_reference_fasta,
             ai_only=ai_only,
             species=species,
-            assembly=assembly,
+            assembly=resolved_assembly,
             max_variants=max_variants,
             no_resume=no_resume,
             hpo_terms=hpo_terms,

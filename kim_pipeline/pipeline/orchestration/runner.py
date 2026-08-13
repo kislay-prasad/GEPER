@@ -42,23 +42,22 @@ from __future__ import annotations
 import json
 import logging
 import os
-import signal
-import subprocess
 import time
-from dataclasses import dataclass, field, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
-from pipeline.fastq.validator import FastqValidator, FastqValidationError
-from pipeline.alignment.stage import AlignmentStage, AlignmentResult
-from pipeline.variant_calling.stage import VariantCallingStage, VariantCallingResult
-from pipeline.annotation.stage import AnnotationStage, AnnotationResult
-from pipeline.reporting.stage import ReportingStage, ReportResult
-from pipeline.config_validator import validate_config, ConfigValidationError
+from pipeline.alignment.stage import AlignmentStage
+from pipeline.annotation.stage import AnnotationStage
+from pipeline.config_validator import validate_config
 from pipeline.fastq.errors import FastqPipelineError
-from pipeline.qc.stage import QCStage, QCResult, QCThresholdError
+from pipeline.fastq.validator import FastqValidator
+from pipeline.qc.stage import QCStage, QCThresholdError
+from pipeline.reporting.stage import ReportingStage
+from pipeline.utils.reference_cache import ReferenceCacheError, resolve_reference
+from pipeline.variant_calling.stage import VariantCallingStage
 from pipeline.vep.stage import VEPAnnotationStage
-from pipeline.utils.reference_cache import resolve_reference, ReferenceCacheError
 
 logger = logging.getLogger("geper.pipeline.orchestration.runner")
 
@@ -78,7 +77,7 @@ def _checkpoint_path(work_dir: Path) -> Path:
     return work_dir / "checkpoint.json"
 
 
-def _load_checkpoint(work_dir: Path) -> Dict[str, Any]:
+def _load_checkpoint(work_dir: Path) -> dict[str, Any]:
     cp = _checkpoint_path(work_dir)
     if cp.exists():
         try:
@@ -88,11 +87,11 @@ def _load_checkpoint(work_dir: Path) -> Dict[str, Any]:
     return {}
 
 
-def _save_checkpoint(work_dir: Path, data: Dict[str, Any]) -> None:
+def _save_checkpoint(work_dir: Path, data: dict[str, Any]) -> None:
     _checkpoint_path(work_dir).write_text(json.dumps(data, indent=2))
 
 
-def _collect_reference_versions(cfg: Dict, reference_fasta: str) -> Dict[str, str]:
+def _collect_reference_versions(cfg: dict, reference_fasta: str) -> dict[str, str]:
     """Collect file paths / MD5 prefixes for reference databases.
 
     FIX 14: Records the versions of all reference data used in a run so that
@@ -100,9 +99,8 @@ def _collect_reference_versions(cfg: Dict, reference_fasta: str) -> Dict[str, st
     Only captures what is available without network access; values are
     path + mtime so a database replacement is always detected.
     """
-    import os
 
-    def _file_stamp(path: Optional[str]) -> Optional[str]:
+    def _file_stamp(path: str | None) -> str | None:
         """Return 'path@mtime' or None if path is absent/unconfigured."""
         if not path:
             return None
@@ -113,12 +111,12 @@ def _collect_reference_versions(cfg: Dict, reference_fasta: str) -> Dict[str, st
             return f"{path}@MISSING"
 
     ann_cfg = cfg.get("annotation", {}) or {}
-    cv_cfg  = cfg.get("clinvar", {}) or {}
-    gn_cfg  = cfg.get("gnomad", {}) or {}
+    cv_cfg = cfg.get("clinvar", {}) or {}
+    gn_cfg = cfg.get("gnomad", {}) or {}
     rna_cfg = cfg.get("rna_analysis", {}) or {}
-    up_cfg  = cfg.get("uniprot", {}) or {}
+    up_cfg = cfg.get("uniprot", {}) or {}
 
-    versions: Dict[str, str] = {}
+    versions: dict[str, str] = {}
 
     ref_stamp = _file_stamp(reference_fasta)
     if ref_stamp:
@@ -146,43 +144,46 @@ def _collect_reference_versions(cfg: Dict, reference_fasta: str) -> Dict[str, st
 
 # ─── Pipeline result ──────────────────────────────────────────────────────────
 
+
 @dataclass
 class PipelineResult:
     """Complete result of a FASTQ → Report run."""
+
     sample_id: str = ""
     work_dir: str = ""
     fastq_r1: str = ""
-    fastq_r2: Optional[str] = None
+    fastq_r2: str | None = None
     reference_fasta: str = ""
 
     # Per-stage results
-    qc_r1: Optional[Dict] = None
-    qc_r2: Optional[Dict] = None
-    alignment: Optional[Dict] = None
-    variant_calling: Optional[Dict] = None
-    annotation: Optional[Dict] = None
-    acmg_results: Optional[List[Dict]] = None
-    report: Optional[Dict] = None
+    qc_r1: dict | None = None
+    qc_r2: dict | None = None
+    alignment: dict | None = None
+    variant_calling: dict | None = None
+    annotation: dict | None = None
+    acmg_results: list[dict] | None = None
+    report: dict | None = None
 
     # Bookkeeping
-    stages_completed: List[str] = field(default_factory=list)
-    stages_skipped: List[str] = field(default_factory=list)
+    stages_completed: list[str] = field(default_factory=list)
+    stages_skipped: list[str] = field(default_factory=list)
     total_elapsed_seconds: float = 0.0
     success: bool = False
-    error: Optional[str] = None
-    errors: List[str] = field(default_factory=list)  # non-fatal per-stage errors
+    error: str | None = None
+    errors: list[str] = field(default_factory=list)  # non-fatal per-stage errors
     log_path: str = ""  # path to per-sample pipeline.log file
-    reference_versions: Dict[str, str] = field(default_factory=dict)  # FIX 14
+    reference_versions: dict[str, str] = field(default_factory=dict)  # FIX 14
 
     # Set when the run was intentionally halted early (e.g. mode="vcf_only").
     # None for a normal, full FASTQ -> Report run.
-    stopped_after: Optional[str] = None
+    stopped_after: str | None = None
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return asdict(self)
 
 
 # ─── Runner ───────────────────────────────────────────────────────────────────
+
 
 class PipelineRunner:
     """Single orchestrator for the full GEPER genomic pipeline.
@@ -195,12 +196,12 @@ class PipelineRunner:
 
     def __init__(
         self,
-        cfg: Optional[Dict] = None,
+        cfg: dict | None = None,
         resume: bool = True,
     ) -> None:
         self._cfg = cfg or {}
         self._resume = resume
-        self._kill_callback: Optional[Callable] = None
+        self._kill_callback: Callable | None = None
 
     def register_kill_callback(self, callback: Callable) -> None:
         """Register a callback called with each Popen object at stage start.
@@ -218,12 +219,12 @@ class PipelineRunner:
         fastq_r1: str,
         reference_fasta: str,
         output_dir: str,
-        fastq_r2: Optional[str] = None,
+        fastq_r2: str | None = None,
         sample_id: str = "SAMPLE",
-        acmg_results: Optional[Dict] = None,
-        pedigree_json: Optional[str] = None,
+        acmg_results: dict | None = None,
+        pedigree_json: str | None = None,
         mode: str = "full",
-        stop_after: Optional[str] = None,
+        stop_after: str | None = None,
     ) -> PipelineResult:
         """Execute the pipeline: FASTQ → QC → Alignment → Variant Calling
         → Annotation → Report (default), or a truncated subset of it.
@@ -259,9 +260,7 @@ class PipelineRunner:
             output VCF; ``result.report`` remains ``None`` in that case.
         """
         if mode not in self._VALID_MODES:
-            raise ValueError(
-                f"Invalid mode {mode!r} — must be one of {self._VALID_MODES}."
-            )
+            raise ValueError(f"Invalid mode {mode!r} — must be one of {self._VALID_MODES}.")
         if stop_after is not None and stop_after not in self._VALID_STOP_AFTER:
             raise ValueError(
                 f"Invalid stop_after {stop_after!r} — must be one of {self._VALID_STOP_AFTER}."
@@ -286,10 +285,11 @@ class PipelineRunner:
         # needs its own decompression logic, and a `.gz` reference is
         # decompressed exactly once per source file (cached by fingerprint;
         # re-running against an unchanged `.gz` reuses the existing copy).
-        ref_cfg = (self._cfg.get("reference") or {})
+        ref_cfg = self._cfg.get("reference") or {}
         try:
             reference_fasta = resolve_reference(
-                reference_fasta, cache_dir=ref_cfg.get("local_cache_dir"),
+                reference_fasta,
+                cache_dir=ref_cfg.get("local_cache_dir"),
             )
         except ReferenceCacheError as exc:
             raise FastqPipelineError(str(exc), stage="reference_cache") from exc
@@ -321,7 +321,9 @@ class PipelineRunner:
 
         logger.info(
             "=== PipelineRunner START [%s] resume=%s completed=%s ===",
-            sample_id, self._resume, sorted(completed_stages),
+            sample_id,
+            self._resume,
+            sorted(completed_stages),
         )
 
         # FIX 14: Capture database/reference versions and record in checkpoint.
@@ -336,8 +338,7 @@ class PipelineRunner:
             }
             if _mismatches:
                 _mm_str = "; ".join(
-                    f"{k}: saved={sv!r} current={cv!r}"
-                    for k, (sv, cv) in _mismatches.items()
+                    f"{k}: saved={sv!r} current={cv!r}" for k, (sv, cv) in _mismatches.items()
                 )
                 raise RuntimeError(
                     f"[{sample_id}] Reference version mismatch on resume — "
@@ -366,7 +367,11 @@ class PipelineRunner:
                 checkpoint["qc_r2"] = result.qc_r2
                 _save_checkpoint(work_dir, checkpoint)
                 result.stages_completed.append("fastq_validation")
-                logger.info("[TIMING] stage=%s elapsed=%.2fs", "fastq_validation", time.monotonic() - _stage_t0_fastq_validation)
+                logger.info(
+                    "[TIMING] stage=%s elapsed=%.2fs",
+                    "fastq_validation",
+                    time.monotonic() - _stage_t0_fastq_validation,
+                )
             else:
                 logger.info("[%s] Stage 1/5: FASTQ validation — SKIPPED (checkpoint)", sample_id)
                 result.qc_r1 = checkpoint.get("qc_r1")
@@ -397,11 +402,14 @@ class PipelineRunner:
                     checkpoint["qc_report_html"] = qc_result.report_html_path
                     _save_checkpoint(work_dir, checkpoint)
                     result.stages_completed.append("qc")
-                    logger.info("[TIMING] stage=%s elapsed=%.2fs", "qc", time.monotonic() - _stage_t0_qc)
+                    logger.info(
+                        "[TIMING] stage=%s elapsed=%.2fs", "qc", time.monotonic() - _stage_t0_qc
+                    )
                     if not qc_result.qc_passed:
                         logger.warning(
                             "[%s] QC did not pass all thresholds — check %s",
-                            sample_id, qc_result.report_json_path,
+                            sample_id,
+                            qc_result.report_json_path,
                         )
                 except QCThresholdError as qc_exc:
                     logger.error("[%s] QC threshold failure: %s", sample_id, qc_exc)
@@ -413,7 +421,6 @@ class PipelineRunner:
             else:
                 logger.info("[%s] Stage 1b/5: QC Analysis — SKIPPED (checkpoint)", sample_id)
                 result.stages_skipped.append("qc")
-
 
             # ── Stage 2: Alignment ────────────────────────────────────────
             align_out = str(work_dir / "alignment")
@@ -434,7 +441,11 @@ class PipelineRunner:
                 checkpoint["alignment"] = result.alignment
                 _save_checkpoint(work_dir, checkpoint)
                 result.stages_completed.append("alignment")
-                logger.info("[TIMING] stage=%s elapsed=%.2fs", "alignment", time.monotonic() - _stage_t0_alignment)
+                logger.info(
+                    "[TIMING] stage=%s elapsed=%.2fs",
+                    "alignment",
+                    time.monotonic() - _stage_t0_alignment,
+                )
             else:
                 logger.info("[%s] Stage 2/5: Alignment — SKIPPED (checkpoint)", sample_id)
                 result.alignment = checkpoint.get("alignment", {})
@@ -466,7 +477,11 @@ class PipelineRunner:
                 checkpoint["variant_calling"] = result.variant_calling
                 _save_checkpoint(work_dir, checkpoint)
                 result.stages_completed.append("variant_calling")
-                logger.info("[TIMING] stage=%s elapsed=%.2fs", "variant_calling", time.monotonic() - _stage_t0_variant_calling)
+                logger.info(
+                    "[TIMING] stage=%s elapsed=%.2fs",
+                    "variant_calling",
+                    time.monotonic() - _stage_t0_variant_calling,
+                )
             else:
                 logger.info("[%s] Stage 3/5: Variant Calling — SKIPPED (checkpoint)", sample_id)
                 result.variant_calling = checkpoint.get("variant_calling", {})
@@ -480,6 +495,49 @@ class PipelineRunner:
 
             filtered_vcf = result.variant_calling["filtered_vcf_path"]  # type: ignore[index]
 
+            # ── Genome build detection (item 2) ────────────────────────────
+            # Report review round 8, Task C: moved ahead of the vcf_only
+            # early-stop below (was previously positioned after it,
+            # meaning this detection never ran at all for a `--mode
+            # vcf_only` invocation — exactly the mode
+            # `bridge/combined_pipeline.py::run_kim_fastq_to_vcf` always
+            # uses). This is real, already-existing detection logic
+            # (`pipeline/utils/genome_build.py`, header-based, the same
+            # ##reference/##contig-length signals GEPER's own
+            # `pipeline/assembly_validator.py::detect_vcf_assembly`
+            # uses independently) -- it was simply never given the
+            # chance to run for the one workflow that actually needs its
+            # result downstream. The result is now captured (not just
+            # logged) and recorded in the checkpoint so
+            # `bridge/combined_pipeline.py` can forward it to GEPER via
+            # the existing `--assembly` flag, the same
+            # checkpoint-field-forwarding shape the QC-metrics sidecar
+            # (report review round 7) already established -- see
+            # `qc_metrics_from_kim_checkpoint`'s docstring there for the
+            # precedent this mirrors.
+            #
+            # Still best-effort and non-fatal either way: a VCF this
+            # can't determine a build for (no ##reference/##contig
+            # markers, e.g. a single-contig mitochondrial-only VCF,
+            # where "build" is nearly meaningless anyway since rCRS
+            # numbering doesn't vary between GRCh37/GRCh38) legitimately
+            # yields `build=None`, which the checkpoint records
+            # honestly rather than fabricating a default.
+            detected_build = None
+            try:
+                from pipeline.utils.genome_build import warn_if_unsupported_build
+
+                detection = warn_if_unsupported_build(filtered_vcf, sample_id=sample_id)
+                detected_build = {
+                    "build": detection.build,
+                    "confidence": detection.confidence,
+                    "source": detection.source,
+                }
+            except Exception as _build_exc:
+                logger.debug("[%s] Genome build detection failed: %s", sample_id, _build_exc)
+            checkpoint["detected_genome_build"] = detected_build
+            _save_checkpoint(work_dir, checkpoint)
+
             # ── Early stop (mode="vcf_only" / stop_after="variant_calling") ──
             # Kim acting purely as the FASTQ-to-VCF engine: QC, Alignment, and
             # Variant Calling have already completed above. Do NOT continue
@@ -491,18 +549,13 @@ class PipelineRunner:
             if stop_after == "variant_calling":
                 logger.info(
                     "[%s] mode=vcf_only — stopping after Stage 3/5 Variant "
-                    "Calling. filtered_vcf=%s", sample_id, filtered_vcf,
+                    "Calling. filtered_vcf=%s",
+                    sample_id,
+                    filtered_vcf,
                 )
                 result.stopped_after = "variant_calling"
                 result.success = True
                 return result
-
-            # ── Genome build detection (item 2) ────────────────────────────
-            try:
-                from pipeline.utils.genome_build import warn_if_unsupported_build
-                warn_if_unsupported_build(filtered_vcf, sample_id=sample_id)
-            except Exception as _build_exc:
-                logger.debug("[%s] Genome build detection skipped: %s", sample_id, _build_exc)
 
             # ── Stage 2b: VEP Annotation ──────────────────────────────────
             vep_out = str(work_dir / "vep_annotation")
@@ -517,7 +570,10 @@ class PipelineRunner:
                         output_dir=vep_out,
                         sample_id=sample_id,
                     )
-                    if vep_result.annotated_vcf_path and vep_result.annotated_vcf_path != filtered_vcf:
+                    if (
+                        vep_result.annotated_vcf_path
+                        and vep_result.annotated_vcf_path != filtered_vcf
+                    ):
                         filtered_vcf = vep_result.annotated_vcf_path
                     completed_stages.add("vep_annotation")
                     checkpoint["completed_stages"] = list(completed_stages)
@@ -527,8 +583,16 @@ class PipelineRunner:
                     }
                     _save_checkpoint(work_dir, checkpoint)
                     result.stages_completed.append("vep_annotation")
-                    logger.info("[TIMING] stage=%s elapsed=%.2fs", "vep_annotation", time.monotonic() - _stage_t0_vep_annotation)
-                    logger.info("[%s] VEP annotation complete: %d variants", sample_id, vep_result.variant_count)
+                    logger.info(
+                        "[TIMING] stage=%s elapsed=%.2fs",
+                        "vep_annotation",
+                        time.monotonic() - _stage_t0_vep_annotation,
+                    )
+                    logger.info(
+                        "[%s] VEP annotation complete: %d variants",
+                        sample_id,
+                        vep_result.variant_count,
+                    )
                 except FastqPipelineError as vep_exc:
                     logger.warning("[%s] VEP annotation failed (non-fatal): %s", sample_id, vep_exc)
                     result.stages_skipped.append("vep_annotation")
@@ -544,24 +608,31 @@ class PipelineRunner:
                     filtered_vcf = _vep_vcf
                 result.stages_skipped.append("vep_annotation")
 
-
             blast_cfg = self._cfg.get("blast", {}) or {}
             blast_enabled = bool(blast_cfg.get("enabled", False))
-            blast_result_data: Optional[Dict] = None
+            blast_result_data: dict | None = None
 
             if blast_enabled and "blast" not in completed_stages:
                 _stage_t0_blast = time.monotonic()
                 logger.info("[%s] Stage 3b: BLAST alignment", sample_id)
                 try:
-                    from pipeline.blast.stage import BLASTStage, BLASTNotInstalledError, BLASTDatabaseError
+                    from pipeline.blast.stage import (
+                        BLASTDatabaseError,
+                        BLASTNotInstalledError,
+                        BLASTStage,
+                    )
+
                     blast_stage = BLASTStage(cfg=self._cfg)
                     if blast_stage.is_available():
-                        blast_sequences: Dict[str, str] = {}
+                        blast_sequences: dict[str, str] = {}
                         # FIX 8: provide meaningful flanking context from FASTA
                         _flank = blast_cfg.get("flank_bp", 100)
-                        _ref_fasta = self._cfg.get("reference_fasta") or self._cfg.get("annotation", {}).get("reference_fasta")
+                        _ref_fasta = self._cfg.get("reference_fasta") or self._cfg.get(
+                            "annotation", {}
+                        ).get("reference_fasta")
                         try:
                             import gzip as _gz
+
                             open_fn = _gz.open if filtered_vcf.endswith(".gz") else open
                             with open_fn(filtered_vcf, "rt") as _vcf_fh:
                                 for _line in _vcf_fh:
@@ -570,16 +641,27 @@ class PipelineRunner:
                                     _cols = _line.rstrip("\n").split("\t")
                                     if len(_cols) < 5:
                                         continue
-                                    _chrom, _pos_s, _ref, _alt = _cols[0], _cols[1], _cols[3], _cols[4]
+                                    _chrom, _pos_s, _ref, _alt = (
+                                        _cols[0],
+                                        _cols[1],
+                                        _cols[3],
+                                        _cols[4],
+                                    )
                                     _id = f"{_chrom}:{_pos_s}:{_ref}:{_alt.split(',')[0]}"
                                     _seq = None
                                     # FIX 8: extract flanking sequence from FASTA if available
                                     if _ref_fasta:
                                         try:
-                                            from pipeline.annotation.codon_provider import FastaCodonContextProvider
+                                            from pipeline.annotation.codon_provider import (
+                                                FastaCodonContextProvider,
+                                            )
+
                                             _pos_i = int(_pos_s)
                                             _seq = FastaCodonContextProvider.fetch_sequence(
-                                                _ref_fasta, _chrom, _pos_i - _flank, _pos_i + len(_ref) + _flank - 1
+                                                _ref_fasta,
+                                                _chrom,
+                                                _pos_i - _flank,
+                                                _pos_i + len(_ref) + _flank - 1,
                                             )
                                         except Exception:
                                             _seq = None
@@ -591,13 +673,16 @@ class PipelineRunner:
                                         else:
                                             logger.debug(
                                                 "[%s] BLAST: skipping %s — REF too short and no FASTA configured",
-                                                sample_id, _id,
+                                                sample_id,
+                                                _id,
                                             )
                                             continue
                                     if len(_seq) >= 11:
                                         blast_sequences[_id] = _seq
                         except Exception as _seq_exc:
-                            logger.warning("[%s] BLAST seq extraction failed: %s", sample_id, _seq_exc)
+                            logger.warning(
+                                "[%s] BLAST seq extraction failed: %s", sample_id, _seq_exc
+                            )
 
                         if blast_sequences:
                             _br = blast_stage.run(
@@ -610,7 +695,11 @@ class PipelineRunner:
                             checkpoint["blast_hit_count"] = _br.hit_count
                             _save_checkpoint(work_dir, checkpoint)
                             result.stages_completed.append("blast")
-                            logger.info("[TIMING] stage=%s elapsed=%.2fs", "blast", time.monotonic() - _stage_t0_blast)
+                            logger.info(
+                                "[TIMING] stage=%s elapsed=%.2fs",
+                                "blast",
+                                time.monotonic() - _stage_t0_blast,
+                            )
                             logger.info("[%s] BLAST done: %d hits", sample_id, _br.hit_count)
                         else:
                             logger.info("[%s] BLAST skipped: no sequences long enough", sample_id)
@@ -628,7 +717,9 @@ class PipelineRunner:
                 logger.info("[%s] Stage 3b: BLAST — SKIPPED (checkpoint)", sample_id)
                 result.stages_skipped.append("blast")
             else:
-                logger.debug("[%s] Stage 3b: BLAST disabled (set blast.enabled=true to activate)", sample_id)
+                logger.debug(
+                    "[%s] Stage 3b: BLAST disabled (set blast.enabled=true to activate)", sample_id
+                )
 
             # ── Stage 4: Annotation ───────────────────────────────────────
             ann_out = str(work_dir / "annotation")
@@ -667,7 +758,8 @@ class PipelineRunner:
                     }
                     logger.info(
                         "[%s] BLAST results integrated into annotation: %d hits",
-                        sample_id, blast_result_data.get("hit_count", 0),
+                        sample_id,
+                        blast_result_data.get("hit_count", 0),
                     )
 
                 completed_stages.add("annotation")
@@ -677,7 +769,11 @@ class PipelineRunner:
                 }
                 _save_checkpoint(work_dir, checkpoint)
                 result.stages_completed.append("annotation")
-                logger.info("[TIMING] stage=%s elapsed=%.2fs", "annotation", time.monotonic() - _stage_t0_annotation)
+                logger.info(
+                    "[TIMING] stage=%s elapsed=%.2fs",
+                    "annotation",
+                    time.monotonic() - _stage_t0_annotation,
+                )
             else:
                 logger.info("[%s] Stage 4/5: Annotation — SKIPPED (checkpoint)", sample_id)
                 # Reload annotation from its JSON output
@@ -695,13 +791,13 @@ class PipelineRunner:
                 try:
                     from pipeline.orchestration.shared import run_acmg_evidence_batch
 
-                    ann_variants: List[Dict] = []
+                    ann_variants: list[dict] = []
                     if result.annotation and isinstance(result.annotation.get("variants"), list):
                         ann_variants = result.annotation["variants"]
 
                     # ── FIX 11: load pedigree/phenotype sidecar ───────────
-                    _pedigree_data: Dict = {}
-                    _global_inheritance: Optional[str] = None
+                    _pedigree_data: dict = {}
+                    _global_inheritance: str | None = None
                     if pedigree_json:
                         _pedigree_path = Path(pedigree_json)
                         if _pedigree_path.exists():
@@ -711,17 +807,21 @@ class PipelineRunner:
                                 _pedigree_data = _ped_raw.get("variants", {})
                                 logger.info(
                                     "[%s] Loaded pedigree sidecar: %d variant entries, inheritance=%s",
-                                    sample_id, len(_pedigree_data), _global_inheritance,
+                                    sample_id,
+                                    len(_pedigree_data),
+                                    _global_inheritance,
                                 )
                             except Exception as _ped_exc:
                                 logger.warning(
                                     "[%s] Pedigree sidecar malformed — skipping: %s",
-                                    sample_id, _ped_exc,
+                                    sample_id,
+                                    _ped_exc,
                                 )
                         else:
                             logger.warning(
                                 "[%s] Pedigree sidecar not found at %s — skipping",
-                                sample_id, pedigree_json,
+                                sample_id,
+                                pedigree_json,
                             )
 
                     # FIX (vcf-wiring refactor): the per-variant ClinVar/gnomAD/
@@ -729,7 +829,7 @@ class PipelineRunner:
                     # pipeline/orchestration/shared.run_acmg_evidence_batch so
                     # that `python main.py vcf` can reuse the identical,
                     # already-tested logic instead of skipping these stages.
-                    acmg_batch: List[Dict] = run_acmg_evidence_batch(
+                    acmg_batch: list[dict] = run_acmg_evidence_batch(
                         ann_variants=ann_variants,
                         cfg=self._cfg,
                         sample_id=sample_id,
@@ -744,14 +844,22 @@ class PipelineRunner:
                     checkpoint["acmg_evidence_count"] = len(acmg_batch)
                     _save_checkpoint(work_dir, checkpoint)
                     result.stages_completed.append("acmg_evidence")
-                    logger.info("[TIMING] stage=%s elapsed=%.2fs", "acmg_evidence", time.monotonic() - _stage_t0_acmg_evidence)
-                    logger.info("[%s] Stage 4b complete: %d variants classified", sample_id, len(acmg_batch))
+                    logger.info(
+                        "[TIMING] stage=%s elapsed=%.2fs",
+                        "acmg_evidence",
+                        time.monotonic() - _stage_t0_acmg_evidence,
+                    )
+                    logger.info(
+                        "[%s] Stage 4b complete: %d variants classified", sample_id, len(acmg_batch)
+                    )
                 except Exception as exc:
                     # This except only fires for setup failures (classifier construction,
                     # missing imports) — per-variant errors are already caught above.
                     logger.error(
                         "[%s] Stage 4b ACMG/Evidence setup failed: %s",
-                        sample_id, exc, exc_info=True,
+                        sample_id,
+                        exc,
+                        exc_info=True,
                     )
                     result.acmg_results = []
                     acmg_results = []
@@ -769,7 +877,12 @@ class PipelineRunner:
                 logger.info("[%s] Stage 4c: Pharmacogenomics (PGx)", sample_id)
                 try:
                     from pipeline.pgx.stage import PGxStage
-                    vcf_for_pgx = result.variant_calling.get("filtered_vcf_path", "") if result.variant_calling else ""
+
+                    vcf_for_pgx = (
+                        result.variant_calling.get("filtered_vcf_path", "")
+                        if result.variant_calling
+                        else ""
+                    )
                     pgx_stage = PGxStage(cfg=self._cfg)
                     pgx_result = pgx_stage.run(
                         vcf_path=vcf_for_pgx,
@@ -781,8 +894,14 @@ class PipelineRunner:
                     checkpoint["pgx_json_path"] = pgx_result.report_json_path
                     _save_checkpoint(work_dir, checkpoint)
                     result.stages_completed.append("pgx")
-                    logger.info("[TIMING] stage=%s elapsed=%.2fs", "pgx", time.monotonic() - _stage_t0_pgx)
-                    logger.info("[%s] Stage 4c complete: PGx annotated %d genes", sample_id, len(pgx_result.annotations))
+                    logger.info(
+                        "[TIMING] stage=%s elapsed=%.2fs", "pgx", time.monotonic() - _stage_t0_pgx
+                    )
+                    logger.info(
+                        "[%s] Stage 4c complete: PGx annotated %d genes",
+                        sample_id,
+                        len(pgx_result.annotations),
+                    )
                 except Exception as exc:
                     logger.warning("[%s] Stage 4c PGx failed (non-fatal): %s", sample_id, exc)
                     result.stages_skipped.append("pgx")
@@ -798,7 +917,12 @@ class PipelineRunner:
                 logger.info("[%s] Stage 4d: Ancestry Inference", sample_id)
                 try:
                     from pipeline.ancestry.stage import AncestryStage
-                    vcf_for_ancestry = result.variant_calling.get("filtered_vcf_path", "") if result.variant_calling else ""
+
+                    vcf_for_ancestry = (
+                        result.variant_calling.get("filtered_vcf_path", "")
+                        if result.variant_calling
+                        else ""
+                    )
                     ancestry_stage = AncestryStage(cfg=self._cfg)
                     ancestry_result = ancestry_stage.run(
                         vcf_path=vcf_for_ancestry,
@@ -810,10 +934,16 @@ class PipelineRunner:
                     checkpoint["ancestry_json_path"] = ancestry_result.report_json_path
                     _save_checkpoint(work_dir, checkpoint)
                     result.stages_completed.append("ancestry")
-                    logger.info("[TIMING] stage=%s elapsed=%.2fs", "ancestry", time.monotonic() - _stage_t0_ancestry)
+                    logger.info(
+                        "[TIMING] stage=%s elapsed=%.2fs",
+                        "ancestry",
+                        time.monotonic() - _stage_t0_ancestry,
+                    )
                     logger.info(
                         "[%s] Stage 4d complete: Ancestry=%s (confidence=%s)",
-                        sample_id, ancestry_result.primary_population, ancestry_result.confidence,
+                        sample_id,
+                        ancestry_result.primary_population,
+                        ancestry_result.confidence,
                     )
                 except Exception as exc:
                     logger.warning("[%s] Stage 4d Ancestry failed (non-fatal): %s", sample_id, exc)
@@ -846,7 +976,11 @@ class PipelineRunner:
                 checkpoint["report"] = result.report
                 _save_checkpoint(work_dir, checkpoint)
                 result.stages_completed.append("reporting")
-                logger.info("[TIMING] stage=%s elapsed=%.2fs", "reporting", time.monotonic() - _stage_t0_reporting)
+                logger.info(
+                    "[TIMING] stage=%s elapsed=%.2fs",
+                    "reporting",
+                    time.monotonic() - _stage_t0_reporting,
+                )
             else:
                 logger.info("[%s] Stage 5/5: Report — SKIPPED (checkpoint)", sample_id)
                 result.report = checkpoint.get("report", {})
@@ -864,7 +998,9 @@ class PipelineRunner:
             result.total_elapsed_seconds = round(time.time() - t_total, 3)
             logger.info(
                 "=== PipelineRunner END [%s] success=%s elapsed=%.2fs ===",
-                sample_id, result.success, result.total_elapsed_seconds,
+                sample_id,
+                result.success,
+                result.total_elapsed_seconds,
             )
             # ── Flush, close, and remove per-sample file handler ─────────────
             try:
@@ -886,11 +1022,13 @@ class PipelineRunner:
 
 # ─── CLI entry point ──────────────────────────────────────────────────────────
 
+
 def _build_cli_parser():
     import argparse
+
     p = argparse.ArgumentParser(
         description="GEPER genomic pipeline: FASTQ → QC → Alignment → Variant Calling "
-                    "→ Annotation → Report",
+        "→ Annotation → Report",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--r1", required=True, metavar="FASTQ", help="R1 FASTQ path (plain or .gz)")
@@ -899,12 +1037,16 @@ def _build_cli_parser():
     p.add_argument("--output-dir", required=True, metavar="DIR", help="Output root directory")
     p.add_argument("--sample-id", default="SAMPLE", metavar="ID", help="Sample identifier")
     p.add_argument(
-        "--config", default=None, metavar="YAML",
+        "--config",
+        default=None,
+        metavar="YAML",
         help="Path to config YAML (default: config/default.yaml)",
     )
     p.add_argument("--no-resume", action="store_true", help="Disable checkpoint/resume")
     p.add_argument(
-        "--mode", default="full", choices=["full", "vcf_only"],
+        "--mode",
+        default="full",
+        choices=["full", "vcf_only"],
         help=(
             "'full' (default) runs FASTQ through Report generation. "
             "'vcf_only' stops after Variant Calling and returns "
@@ -914,7 +1056,9 @@ def _build_cli_parser():
         ),
     )
     p.add_argument(
-        "--stop-after", default=None, choices=["variant_calling"],
+        "--stop-after",
+        default=None,
+        choices=["variant_calling"],
         help="Explicit stage name to stop after (equivalent to --mode vcf_only).",
     )
     p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -924,6 +1068,7 @@ def _build_cli_parser():
 def main() -> None:
     """CLI entry point: ``python -m pipeline.orchestration.runner``."""
     import sys
+
     import yaml  # type: ignore  # graceful error below if absent
 
     parser = _build_cli_parser()
@@ -935,7 +1080,7 @@ def main() -> None:
     )
 
     # Load config
-    cfg: Dict = {}
+    cfg: dict = {}
     config_path = args.config
     if config_path is None:
         default_cfg = Path(__file__).resolve().parents[3] / "config" / "default.yaml"
@@ -949,8 +1094,7 @@ def main() -> None:
             logger.info("Config loaded from %s", config_path)
         except ImportError:
             logger.warning(
-                "PyYAML not installed — config file ignored. "
-                "Install it: pip install pyyaml"
+                "PyYAML not installed — config file ignored. Install it: pip install pyyaml"
             )
         except Exception as exc:
             logger.error("Failed to load config %s: %s", config_path, exc)
@@ -968,8 +1112,10 @@ def main() -> None:
             stop_after=args.stop_after,
         )
         if result.stopped_after:
-            print(f"\nPipeline stopped after {result.stopped_after} — "
-                  f"filtered VCF: {result.variant_calling.get('filtered_vcf_path')}")
+            print(
+                f"\nPipeline stopped after {result.stopped_after} — "
+                f"filtered VCF: {result.variant_calling.get('filtered_vcf_path')}"
+            )
         else:
             print(f"\nPipeline complete — report: {result.report}")
         sys.exit(0)

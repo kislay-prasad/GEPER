@@ -61,21 +61,57 @@ _COMPLEMENT = {"A": "T", "T": "A", "C": "G", "G": "C", "N": "N"}
 # a build/version this hasn't been checked against.
 _REFSEQ_CHROM_ACCESSIONS: Dict[str, Dict[str, str]] = {
     "GRCh38": {
-        "1": "NC_000001.11", "2": "NC_000002.12", "3": "NC_000003.12", "4": "NC_000004.12",
-        "5": "NC_000005.10", "6": "NC_000006.12", "7": "NC_000007.14", "8": "NC_000008.11",
-        "9": "NC_000009.12", "10": "NC_000010.11", "11": "NC_000011.10", "12": "NC_000012.12",
-        "13": "NC_000013.11", "14": "NC_000014.9", "15": "NC_000015.10", "16": "NC_000016.10",
-        "17": "NC_000017.11", "18": "NC_000018.10", "19": "NC_000019.10", "20": "NC_000020.11",
-        "21": "NC_000021.9", "22": "NC_000022.11", "X": "NC_000023.11", "Y": "NC_000024.10",
+        "1": "NC_000001.11",
+        "2": "NC_000002.12",
+        "3": "NC_000003.12",
+        "4": "NC_000004.12",
+        "5": "NC_000005.10",
+        "6": "NC_000006.12",
+        "7": "NC_000007.14",
+        "8": "NC_000008.11",
+        "9": "NC_000009.12",
+        "10": "NC_000010.11",
+        "11": "NC_000011.10",
+        "12": "NC_000012.12",
+        "13": "NC_000013.11",
+        "14": "NC_000014.9",
+        "15": "NC_000015.10",
+        "16": "NC_000016.10",
+        "17": "NC_000017.11",
+        "18": "NC_000018.10",
+        "19": "NC_000019.10",
+        "20": "NC_000020.11",
+        "21": "NC_000021.9",
+        "22": "NC_000022.11",
+        "X": "NC_000023.11",
+        "Y": "NC_000024.10",
         "MT": "NC_012920.1",
     },
     "GRCh37": {
-        "1": "NC_000001.10", "2": "NC_000002.11", "3": "NC_000003.11", "4": "NC_000004.11",
-        "5": "NC_000005.9", "6": "NC_000006.11", "7": "NC_000007.13", "8": "NC_000008.10",
-        "9": "NC_000009.11", "10": "NC_000010.10", "11": "NC_000011.9", "12": "NC_000012.11",
-        "13": "NC_000013.10", "14": "NC_000014.8", "15": "NC_000015.9", "16": "NC_000016.9",
-        "17": "NC_000017.10", "18": "NC_000018.9", "19": "NC_000019.9", "20": "NC_000020.10",
-        "21": "NC_000021.8", "22": "NC_000022.10", "X": "NC_000023.10", "Y": "NC_000024.9",
+        "1": "NC_000001.10",
+        "2": "NC_000002.11",
+        "3": "NC_000003.11",
+        "4": "NC_000004.11",
+        "5": "NC_000005.9",
+        "6": "NC_000006.11",
+        "7": "NC_000007.13",
+        "8": "NC_000008.10",
+        "9": "NC_000009.11",
+        "10": "NC_000010.10",
+        "11": "NC_000011.9",
+        "12": "NC_000012.11",
+        "13": "NC_000013.10",
+        "14": "NC_000014.8",
+        "15": "NC_000015.9",
+        "16": "NC_000016.9",
+        "17": "NC_000017.10",
+        "18": "NC_000018.9",
+        "19": "NC_000019.9",
+        "20": "NC_000020.10",
+        "21": "NC_000021.8",
+        "22": "NC_000022.10",
+        "X": "NC_000023.10",
+        "Y": "NC_000024.9",
         "MT": "NC_012920.1",
     },
 }
@@ -86,6 +122,45 @@ def _strip_chr(chrom: str) -> str:
     return "MT" if normalized in ("M", "mt", "Mt") else normalized
 
 
+# The rCRS mitochondrial accession every build maps "MT" to in
+# `_REFSEQ_CHROM_ACCESSIONS` above -- MT numbering is invariant across
+# GRCh37/GRCh38 (both use the same NC_012920.1-derived contig), which is
+# exactly why a VCF's CHROM column sometimes carries the accession
+# itself rather than a build-relative name like "MT".
+_MITOCHONDRIAL_ACCESSION_RE = re.compile(r"^NC_012920(\.\d+)?$")
+_MITOCHONDRIAL_CHROM_NAMES = frozenset({"MT", "M"})
+
+
+def is_mitochondrial_chrom(chrom: Optional[str]) -> bool:
+    """
+    True for any spelling of the human mitochondrial contig this
+    codebase is known to encounter in a VCF's CHROM column: 'MT', 'M',
+    'chrM', 'chrMT' (any case), or the rCRS RefSeq accession itself,
+    'NC_012920.<version>' (see `_REFSEQ_CHROM_ACCESSIONS['...']['MT']`
+    above -- the same accession every build maps 'MT' to, and the one
+    `_HGVS_KIND_PATTERNS["m"]`/`_parse_hgvs`'s "m" kind already
+    recognizes for HGVS.m notation).
+
+    This is the compartment gate `pipeline/orchestrator.py::
+    GeperPipeline._process_variant` uses to skip mitochondrial variants
+    entirely (report review round 8, option (a): reject at the top of
+    per-variant processing, not silently). It is intentionally a single
+    boolean, not a per-evidence-source NOT_APPLICABLE distinction --
+    see ROUND_CANDIDATES.md for the larger per-criterion compartment
+    gate (option (b)) this narrower check defers, and for why (a)
+    doesn't foreclose (b) later.
+    """
+    if not chrom:
+        return False
+    stripped = chrom.strip()
+    if _MITOCHONDRIAL_ACCESSION_RE.match(stripped):
+        return True
+    upper = stripped.upper()
+    if upper.startswith("CHR"):
+        upper = upper[3:]
+    return upper in _MITOCHONDRIAL_CHROM_NAMES
+
+
 def _revcomp(seq: str) -> str:
     return "".join(_COMPLEMENT.get(b, "N") for b in reversed(seq.upper()))
 
@@ -94,6 +169,7 @@ def _revcomp(seq: str) -> str:
 # Shared del/ins/delins string formatting (identical logic for g. and c.
 # once a caller has resolved a single 1-based numbering system to use)
 # ---------------------------------------------------------------------------
+
 
 def _format_variant_description(pos: int, ref: str, alt: str) -> str:
     if len(ref) == 1 and len(alt) == 1:
@@ -107,7 +183,7 @@ def _format_variant_description(pos: int, ref: str, alt: str) -> str:
 
     if len(alt) > len(ref) and alt.startswith(ref):
         # Insertion, VCF anchor-base convention (ref is a prefix of alt).
-        inserted = alt[len(ref):]
+        inserted = alt[len(ref) :]
         left = pos + len(ref) - 1
         return f"{left}_{left + 1}ins{inserted}"
 
@@ -119,6 +195,7 @@ def _format_variant_description(pos: int, ref: str, alt: str) -> str:
 # ---------------------------------------------------------------------------
 # g. (genomic) notation
 # ---------------------------------------------------------------------------
+
 
 def refseq_chrom_accession(chrom: str, assembly: str) -> Optional[str]:
     return _REFSEQ_CHROM_ACCESSIONS.get(assembly, {}).get(_strip_chr(chrom))
@@ -135,6 +212,7 @@ def to_hgvs_g(chrom: str, pos: int, ref: str, alt: str, assembly: str = "GRCh38"
 # ---------------------------------------------------------------------------
 # c. (coding) notation
 # ---------------------------------------------------------------------------
+
 
 def to_hgvs_c(transcript_context: TranscriptContext, genomic_pos: int, ref: str, alt: str) -> Optional[str]:
     """
@@ -167,6 +245,7 @@ def to_hgvs_c(transcript_context: TranscriptContext, genomic_pos: int, ref: str,
 # ---------------------------------------------------------------------------
 # p. (protein) notation
 # ---------------------------------------------------------------------------
+
 
 def _translate_codon(codon_dna: str) -> Optional[str]:
     if len(codon_dna) != 3:
@@ -209,7 +288,9 @@ def to_hgvs_p(transcript_context: TranscriptContext, codon_number: int) -> Optio
     return f"p.({ref_three}{codon_number}=)"
 
 
-def to_hgvs_p_for_substitution(transcript_context: TranscriptContext, codon_number: int, alt_cds_sequence: str) -> Optional[str]:
+def to_hgvs_p_for_substitution(
+    transcript_context: TranscriptContext, codon_number: int, alt_cds_sequence: str
+) -> Optional[str]:
     """Same as `to_hgvs_p`, but translates `alt_cds_sequence` (the transcript's CDS with the variant's ALT allele already substituted in) at `codon_number` and reports the resulting amino-acid change (or '=' if synonymous, 'Ter' if it creates a stop)."""
     ref_codon = _codon_from_cds(transcript_context, codon_number)
     alt_codon = _codon_from_cds_string(alt_cds_sequence, codon_number)
@@ -234,7 +315,7 @@ def _codon_from_cds_string(cds_sequence: Optional[str], codon_number: int) -> Op
     if not cds_sequence or codon_number < 1:
         return None
     start = (codon_number - 1) * 3
-    codon = cds_sequence[start:start + 3]
+    codon = cds_sequence[start : start + 3]
     return codon if len(codon) == 3 else None
 
 
@@ -273,8 +354,12 @@ class HGVSValidationResult:
 
     def to_dict(self) -> Dict[str, object]:
         return {
-            "hgvs_string": self.hgvs_string, "is_valid": self.is_valid, "kind": self.kind,
-            "accession": self.accession, "errors": self.errors, "warnings": self.warnings,
+            "hgvs_string": self.hgvs_string,
+            "is_valid": self.is_valid,
+            "kind": self.kind,
+            "accession": self.accession,
+            "errors": self.errors,
+            "warnings": self.warnings,
         }
 
 
@@ -322,7 +407,9 @@ def validate_hgvs(
     accession_pattern = _ACCESSION_PATTERNS.get(kind)
     if accession_pattern is None:
         result.is_valid = False
-        result.errors.append(f"Unrecognized HGVS notation kind '{kind}.' in '{hgvs_string}' (expected one of g./c./n./m./p.).")
+        result.errors.append(
+            f"Unrecognized HGVS notation kind '{kind}.' in '{hgvs_string}' (expected one of g./c./n./m./p.)."
+        )
         return result
     if not accession_pattern.match(accession):
         expected = {"g": "NC_######.#", "c": "NM_#.#", "n": "NR_#.#", "p": "NP_#.#", "m": "NC_012920.#"}[kind]
@@ -376,8 +463,12 @@ def _validate_description(
 
 
 def _cross_check_substitution(
-    match: "re.Match", result: HGVSValidationResult, fetch_reference_base: Optional[FetchBase],
-    kind: str, accession: str, chrom_hint: Optional[str],
+    match: "re.Match",
+    result: HGVSValidationResult,
+    fetch_reference_base: Optional[FetchBase],
+    kind: str,
+    accession: str,
+    chrom_hint: Optional[str],
 ) -> None:
     pos_str, stated_ref = match.group("pos"), match.group("ref").upper()
     if pos_str.startswith(("*", "-")) or "+" in pos_str or "-" in pos_str[1:]:
@@ -388,25 +479,33 @@ def _cross_check_substitution(
         )
         return
     if fetch_reference_base is None:
-        result.warnings.append("No reference sequence source was supplied -- the stated reference base was not cross-checked against real sequence.")
+        result.warnings.append(
+            "No reference sequence source was supplied -- the stated reference base was not cross-checked against real sequence."
+        )
         return
     if kind != "g":
-        result.warnings.append(f"Reference-base cross-check is only implemented for g. notation in this validator -- '{kind}.' was not checked against sequence (see module docstring).")
+        result.warnings.append(
+            f"Reference-base cross-check is only implemented for g. notation in this validator -- '{kind}.' was not checked against sequence (see module docstring)."
+        )
         return
 
     chrom = chrom_hint or _chrom_for_accession(accession)
     if chrom is None:
-        result.warnings.append(f"Accession '{accession}' is not in this validator's known chromosome table and no chrom_hint was given -- reference cross-check skipped.")
+        result.warnings.append(
+            f"Accession '{accession}' is not in this validator's known chromosome table and no chrom_hint was given -- reference cross-check skipped."
+        )
         return
 
     pos = int(pos_str)
     try:
         real_base = fetch_reference_base(chrom, pos)
     except Exception as exc:  # noqa: BLE001 - a fetch failure must not be mistaken for "reference base confirmed"
-        result.warnings.append(f"Could not fetch the real reference base at {chrom}:{pos} to cross-check ({exc}) -- cross-check skipped.")
+        result.warnings.append(
+            f"Could not fetch the real reference base at {chrom}:{pos} to cross-check ({exc}) -- cross-check skipped."
+        )
         return
 
-    if real_base.upper() != stated_ref[:len(real_base)]:
+    if real_base.upper() != stated_ref[: len(real_base)]:
         result.is_valid = False
         result.errors.append(
             f"'{result.hgvs_string}' states reference base '{stated_ref}' at position {pos}, but the real "

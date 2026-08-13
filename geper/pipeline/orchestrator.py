@@ -82,7 +82,7 @@ from pipeline.provenance import (
 from pipeline.ps1_pm5.lookup import ClinVarCodonLookup
 from pipeline.pvs1.lookup import TranscriptLookup
 from pipeline.pvs1.utils import canonical_protein_position, transcript_from_result
-from pipeline.hgvs_utils import to_hgvs_c, to_hgvs_g
+from pipeline.hgvs_utils import is_mitochondrial_chrom, to_hgvs_c, to_hgvs_g
 from pipeline.variant_normalization import normalize_variant
 from pipeline.rna_generator import RNAGenerator
 from pipeline.router import HYENADNA, SequenceRouter
@@ -168,6 +168,33 @@ _MODEL_DISPLAY_NAMES = {
     "spliceformer": "SpliceFormer",
     "splicebert": "SpliceBERT",
 }
+
+# Report review round 8: a chrM variant used to reach the full ACMG
+# engine and pick up PM2 (gnomAD queried its nuclear-only callset,
+# found nothing, and that "not found" was read as a rarity signal
+# rather than "queried the wrong resource") and BP4 (MMSplice/Enformer/
+# Borzoi -- nuclear-trained sequence models, out of distribution on
+# mitochondrial DNA, which has no spliceosome at all) -- both firing
+# specifically BECAUSE nothing else could (no transcript resolves for
+# chrM against GEPER's nuclear GTF/Ensembl data, so the 23 criteria
+# that correctly gate on transcript resolution stayed silent while the
+# two that don't gate on it fired on out-of-distribution inputs, on a
+# real MELAS-causing variant). Option (a) of two considered: reject at
+# this single compartment gate, entirely bypassing the 28-criterion
+# engine, rather than (b) a NOT_APPLICABLE status threaded through
+# every affected evidence source individually -- see ROUND_CANDIDATES.md
+# for why (b) is deferred, not abandoned, and for the audit of exactly
+# which call sites it would need to touch.
+_MITOCHONDRIAL_OUT_OF_SCOPE_REASON = (
+    "Mitochondrial variants are out of scope for this GEPER build. GEPER's evidence sources have "
+    "no validity on chrM: gnomAD's queryable callset here is the nuclear one, a separate resource "
+    "from gnomAD's mitochondrial callset (never queried by this pipeline); the nuclear-trained "
+    "sequence/splicing models (MMSplice, Enformer, Borzoi, SpliceFormer, SpliceBERT) are out of "
+    "distribution on mtDNA, which has no spliceosome; and transcript resolution depends on nuclear "
+    "GTF/Ensembl data that does not cover chrM. This variant was not evaluated against any ACMG/AMP "
+    "criterion -- it is reported here as an explicit out-of-scope entry, never as a Variant of "
+    "Uncertain Significance assembled from criteria that should not have been able to fire."
+)
 
 # Maps a `FunctionalEvidenceResult.consulted_sources` entry (see
 # `pipeline/functional_evidence/models.py`) onto the `KNOWN_SOURCES`
@@ -754,7 +781,7 @@ class GeperPipeline:
             patient_consent=patient_consent,
         )
         completed_keys = set()
-        stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
+        stats = {"processed": 0, "success": 0, "skipped": 0, "out_of_scope": 0, "failed": 0}
 
         if resume and os.path.exists(json_path):
             try:
@@ -785,7 +812,7 @@ class GeperPipeline:
                     patient_consent=patient_consent,
                 )
                 completed_keys = set()
-                stats = {"processed": 0, "success": 0, "skipped": 0, "failed": 0}
+                stats = {"processed": 0, "success": 0, "skipped": 0, "out_of_scope": 0, "failed": 0}
 
         total = len(variants)
         for i, variant in enumerate(variants, start=1):
@@ -1224,11 +1251,21 @@ class GeperPipeline:
     @staticmethod
     def _classify_variant_result(variant_result: Dict[str, Any]) -> str:
         """
-        Buckets one variant's result into success/skipped/failed for the
-        run summary. A variant with no sequence context could never
-        have been analyzed by any model, so it's "skipped". A variant
-        is "failed" only when it has no usable ACMG interpretation to
-        show for it (`interpretation_result` missing or itself an
+        Buckets one variant's result into success/skipped/out_of_scope/
+        failed for the run summary. A variant this run deliberately
+        never evaluated at all (`out_of_scope` -- currently only the
+        mitochondrial compartment gate, see
+        `_mitochondrial_out_of_scope_result`) is checked FIRST and
+        returned as its own bucket, distinct from "skipped": "skipped"
+        means GEPER tried to build sequence context and couldn't
+        (a real gap), while "out_of_scope" means GEPER never attempted
+        anything for this variant by design -- collapsing the two would
+        repeat the exact missing-vs-empty bug class this project keeps
+        fixing, just at the run-summary level instead of a single
+        field's. A variant with no sequence context could never have
+        been analyzed by any model, so it's "skipped". A variant is
+        "failed" only when it has no usable ACMG interpretation to show
+        for it (`interpretation_result` missing or itself an
         `{"error": ...}` record -- the same check `_apply_priority_ranks`
         already uses) -- NOT merely because `errors` is non-empty.
         `errors` accumulates every independently-caught, non-fatal
@@ -1240,6 +1277,8 @@ class GeperPipeline:
         here; per-stage detail remains visible in `errors` on the
         variant itself for anyone who wants it.
         """
+        if variant_result.get("out_of_scope"):
+            return "out_of_scope"
         context = variant_result.get("sequence_context", {})
         if context.get("error"):
             return "skipped"
@@ -1266,14 +1305,59 @@ class GeperPipeline:
         lines.append(f"Processed variants: {stats['processed']}")
         lines.append(f"Successful predictions: {stats['success']}")
         lines.append(f"Skipped: {stats['skipped']}")
+        lines.append(f"Out of scope (mitochondrial): {stats['out_of_scope']}")
         lines.append(f"Failed: {stats['failed']}")
         lines.append("==============================")
         logger.info("\n".join(lines))
+
+    @staticmethod
+    def _mitochondrial_out_of_scope_result(variant: Variant) -> Dict[str, Any]:
+        """
+        The entire result for a chrM variant, deliberately minimal: no
+        sequence context, no evidence-source stage, no ACMG evaluation
+        was ever attempted, so none of `build_variant_result`'s ~25
+        stage-result kwargs apply here -- constructing a fake "everything
+        skipped" version of that full shape would run
+        `build_clinical_report`/`build_raw_evidence_bundle` against
+        entirely fabricated inputs, producing a misleading "checked,
+        nothing there" clinical_report instead of an honest "never
+        checked at all". `report/report_generator.py` (Markdown) and
+        `report/summary.py`/`summary_short.py` (PDF) each check for the
+        `out_of_scope` key explicitly, before touching `clinical_report`/
+        `interpretation_result`, and render a short, distinct notice
+        instead of the normal multi-section finding -- see each
+        renderer's own `out_of_scope` branch.
+        """
+        return {
+            "variant": variant.to_dict(),
+            "out_of_scope": {
+                "scope": "mitochondrial_genome",
+                "reason": _MITOCHONDRIAL_OUT_OF_SCOPE_REASON,
+            },
+            "errors": [],
+        }
 
     # ------------------------------------------------------------------
     # Per-variant pipeline
     # ------------------------------------------------------------------
     def _process_variant(self, variant: Variant) -> Dict[str, Any]:
+        # Compartment gate (report review round 8, option (a)): checked
+        # before anything else in this method -- before normalization,
+        # before sequence-context fetching, before any evidence-source
+        # stage -- so a chrM variant never reaches gnomAD's nuclear
+        # callset, the nuclear-trained splice-model ensemble, or the
+        # 28-criterion ACMG engine at all. See
+        # `_mitochondrial_out_of_scope_result`'s docstring and
+        # `_MITOCHONDRIAL_OUT_OF_SCOPE_REASON` above for why, and
+        # ROUND_CANDIDATES.md for the larger per-criterion compartment
+        # gate (option (b)) this single early exit defers.
+        if is_mitochondrial_chrom(variant.chrom):
+            logger.info(
+                f"Variant {variant.chrom}:{variant.pos} is mitochondrial -- out of scope for this "
+                "GEPER build, skipping ACMG evaluation entirely (see ROUND_CANDIDATES.md)."
+            )
+            return self._mitochondrial_out_of_scope_result(variant)
+
         errors: List[str] = []
 
         # --- Variant normalization: early gate (see pipeline/variant_normalization.py) ---

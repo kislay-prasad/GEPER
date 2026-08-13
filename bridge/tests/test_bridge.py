@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bridge.combined_pipeline import (
     BridgeError,
+    _detected_assembly_from_kim_checkpoint,
     qc_metrics_from_kim_checkpoint,
     run_combined,
     run_geper_vcf_to_report,
@@ -73,6 +74,45 @@ FAKE_KIM_MAIN = textwrap.dedent(
     """
 )
 
+FAKE_KIM_MAIN_WITH_DETECTED_BUILD = textwrap.dedent(
+    """
+    import argparse, json, sys
+    from pathlib import Path
+
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd")
+    a = sub.add_parser("analyze")
+    a.add_argument("--r1", required=True)
+    a.add_argument("--r2", default=None)
+    a.add_argument("--ref", required=True)
+    a.add_argument("--output-dir", required=True)
+    a.add_argument("--sample-id", required=True)
+    a.add_argument("--mode", default="full")
+    a.add_argument("--config", default=None)
+    a.add_argument("--no-resume", action="store_true")
+    args = p.parse_args()
+
+    work_dir = Path(args.output_dir) / args.sample_id
+    work_dir.mkdir(parents=True, exist_ok=True)
+    vcf_path = work_dir / "filtered_variants.vcf"
+    vcf_path.write_text("##fileformat=VCFv4.2\\n#CHROM\\tPOS\\tID\\tREF\\tALT\\n")
+
+    # Mirrors runner.py's genome-build-detection reordering fix
+    # (report review round 8, Task C): the checkpoint carries a
+    # real detection result even in --mode vcf_only.
+    checkpoint = {
+        "completed_stages": ["fastq_validation", "qc", "alignment", "variant_calling"],
+        "qc_r1": {"q30_fraction": 0.934},
+        "alignment": {"metrics": {"mean_depth": 42.7}},
+        "variant_calling": {"filtered_vcf_path": str(vcf_path)},
+        "detected_genome_build": {"build": "GRCh38", "confidence": "high", "source": "##reference/##assembly header"},
+    }
+    (work_dir / "checkpoint.json").write_text(json.dumps(checkpoint))
+    print("FAKE KIM: mode=%s -> %s" % (args.mode, vcf_path))
+    sys.exit(0)
+    """
+)
+
 FAKE_KIM_MAIN_FAILS = textwrap.dedent(
     """
     import sys
@@ -105,7 +145,14 @@ FAKE_GEPER_MAIN = textwrap.dedent(
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "geper_results.json").write_text(
-        json.dumps({"source_vcf": args.vcf, "variants": [], "qc_metrics_json": args.qc_metrics_json})
+        json.dumps(
+            {
+                "source_vcf": args.vcf,
+                "variants": [],
+                "qc_metrics_json": args.qc_metrics_json,
+                "assembly": args.assembly,
+            }
+        )
     )
     (out / "geper_report.md").write_text("# GEPER Clinical Report\\nSource VCF: %s\\n" % args.vcf)
     print("FAKE GEPER: processed %s" % args.vcf)
@@ -416,3 +463,131 @@ class TestQcMetricsFromKimCheckpoint:
         assert out_path.exists()
         written = json.loads(out_path.read_text())
         assert written["mean_coverage_depth"]["value"] == 25.0
+
+
+class TestDetectedAssemblyFromKimCheckpoint:
+    """
+    report review round 8, Task C. Corrected premise: there was no
+    dropped field between kim_pipeline and generate_pdf -- nothing
+    computed an assembly value for a combined-workflow run to lose in
+    the first place, because kim's own genome-build detection
+    (pipeline/utils/genome_build.py) was positioned after --mode
+    vcf_only's early return in runner.py and so never ran for the
+    bridge's workflow at all. These tests cover the fix: runner.py now
+    runs detection before that early return and records the result in
+    checkpoint["detected_genome_build"]; this reads it back.
+    """
+
+    def test_missing_checkpoint_returns_none(self, tmp_path):
+        assert _detected_assembly_from_kim_checkpoint(str(tmp_path), "NOPE") is None
+
+    def test_checkpoint_without_detected_build_key_returns_none(self, tmp_path):
+        sample_dir = tmp_path / "S01"
+        sample_dir.mkdir(parents=True)
+        (sample_dir / "checkpoint.json").write_text(json.dumps({"completed_stages": ["qc"]}))
+        assert _detected_assembly_from_kim_checkpoint(str(tmp_path), "S01") is None
+
+    def test_detected_build_none_returns_none_not_a_fabricated_default(self, tmp_path):
+        # The honest "undetermined" case -- e.g. a single-contig
+        # mitochondrial-only VCF with no ##reference/##contig markers.
+        sample_dir = tmp_path / "S01"
+        sample_dir.mkdir(parents=True)
+        (sample_dir / "checkpoint.json").write_text(
+            json.dumps(
+                {"detected_genome_build": {"build": None, "confidence": "none", "source": "no header metadata found"}}
+            )
+        )
+        assert _detected_assembly_from_kim_checkpoint(str(tmp_path), "S01") is None
+
+    def test_detected_build_present_is_returned(self, tmp_path):
+        sample_dir = tmp_path / "S01"
+        sample_dir.mkdir(parents=True)
+        (sample_dir / "checkpoint.json").write_text(
+            json.dumps(
+                {"detected_genome_build": {"build": "GRCh38", "confidence": "high", "source": "##reference header"}}
+            )
+        )
+        assert _detected_assembly_from_kim_checkpoint(str(tmp_path), "S01") == "GRCh38"
+
+    def test_corrupt_checkpoint_returns_none_never_raises(self, tmp_path):
+        sample_dir = tmp_path / "S01"
+        sample_dir.mkdir(parents=True)
+        (sample_dir / "checkpoint.json").write_text("{not valid json")
+        assert _detected_assembly_from_kim_checkpoint(str(tmp_path), "S01") is None
+
+
+class TestAssemblyForwardingEndToEnd:
+    def test_detected_build_is_forwarded_to_geper_assembly_flag(self, tmp_path):
+        kim_root = tmp_path / "kim_pipeline"
+        kim_root.mkdir()
+        _write(kim_root / "main.py", FAKE_KIM_MAIN_WITH_DETECTED_BUILD)
+
+        geper_root = tmp_path / "geper"
+        geper_root.mkdir()
+        _write(geper_root / "main.py", FAKE_GEPER_MAIN)
+
+        result = run_combined(
+            fastq_r1="r1.fastq",
+            reference_fasta="ref.fasta",
+            kim_output_dir=str(tmp_path / "kim_out"),
+            geper_output_dir=str(tmp_path / "geper_out"),
+            sample_id="S_BUILD",
+            kim_root=kim_root,
+            geper_root=geper_root,
+            # No explicit --assembly given -- must be auto-filled from
+            # kim's own detection.
+        )
+        assert result.success is True
+        geper_results = json.loads(Path(result.geper_results_json).read_text())
+        assert geper_results["assembly"] == "GRCh38"
+
+    def test_explicit_assembly_is_never_overridden_by_detection(self, tmp_path):
+        # kim's checkpoint says GRCh38; the caller explicitly asked for
+        # GRCh37 -- the explicit, human-supplied value must win, never
+        # silently replaced by auto-detection.
+        kim_root = tmp_path / "kim_pipeline"
+        kim_root.mkdir()
+        _write(kim_root / "main.py", FAKE_KIM_MAIN_WITH_DETECTED_BUILD)
+
+        geper_root = tmp_path / "geper"
+        geper_root.mkdir()
+        _write(geper_root / "main.py", FAKE_GEPER_MAIN)
+
+        result = run_combined(
+            fastq_r1="r1.fastq",
+            reference_fasta="ref.fasta",
+            kim_output_dir=str(tmp_path / "kim_out"),
+            geper_output_dir=str(tmp_path / "geper_out"),
+            sample_id="S_BUILD_EXPLICIT",
+            kim_root=kim_root,
+            geper_root=geper_root,
+            assembly="GRCh37",
+        )
+        assert result.success is True
+        geper_results = json.loads(Path(result.geper_results_json).read_text())
+        assert geper_results["assembly"] == "GRCh37"
+
+    def test_undetermined_build_leaves_assembly_unset(self, tmp_path):
+        # The real MT:3243-only fixture's shape: kim's own fake main
+        # here uses the plain FAKE_KIM_MAIN, which carries no
+        # detected_genome_build key at all -- must not fabricate one.
+        kim_root = tmp_path / "kim_pipeline"
+        kim_root.mkdir()
+        _write(kim_root / "main.py", FAKE_KIM_MAIN)
+
+        geper_root = tmp_path / "geper"
+        geper_root.mkdir()
+        _write(geper_root / "main.py", FAKE_GEPER_MAIN)
+
+        result = run_combined(
+            fastq_r1="r1.fastq",
+            reference_fasta="ref.fasta",
+            kim_output_dir=str(tmp_path / "kim_out"),
+            geper_output_dir=str(tmp_path / "geper_out"),
+            sample_id="S_NO_BUILD",
+            kim_root=kim_root,
+            geper_root=geper_root,
+        )
+        assert result.success is True
+        geper_results = json.loads(Path(result.geper_results_json).read_text())
+        assert geper_results["assembly"] is None

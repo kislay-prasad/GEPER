@@ -1,0 +1,19 @@
+##fileformat=VCFv4.2
+##fileDate=20260813
+##source=GEPER_manual_curation_v1
+##reference=GRCh38
+##contig=<ID=17,length=83257441,assembly=GRCh38,species="Homo sapiens">
+##contig=<ID=20,length=64444167,assembly=GRCh38,species="Homo sapiens">
+##contig=<ID=MT,length=16569,assembly=GRCh38,species="Homo sapiens">
+##INFO=<ID=GENE,Number=1,Type=String,Description="HGNC gene symbol">
+##INFO=<ID=HGVSC,Number=1,Type=String,Description="Coding HGVS (RefSeq transcript)">
+##INFO=<ID=HGVSP,Number=1,Type=String,Description="Protein HGVS">
+##INFO=<ID=CLINSIG,Number=1,Type=String,Description="Cited clinical significance (ClinVar / ClinGen ERepo)">
+##INFO=<ID=EXPECTED_RULE,Number=1,Type=String,Description="ACMG/AMP criterion this record is a positive control for; see test_data/README.md for full rationale and caveats">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+17	43106534	BRCA1_PS3_pos	C	A	.	.	GENE=BRCA1;HGVSC=NM_007294.4:c.135-1G>T;HGVSP=.;CLINSIG=Pathogenic;EXPECTED_RULE=PS3
+17	43094298	BRCA1_BS3_pos	A	C	.	.	GENE=BRCA1;HGVSC=NM_007294.4:c.1233T>G;HGVSP=p.Asp411Glu;CLINSIG=Benign;EXPECTED_RULE=BS3
+17	7674221	TP53_PS3_pos	G	A	.	.	GENE=TP53;HGVSC=NM_000546.6:c.742C>T;HGVSP=p.Arg248Trp;CLINSIG=Pathogenic;EXPECTED_RULE=PS3
+17	7676152	TP53_BS3_pos	C	T	.	.	GENE=TP53;HGVSC=NM_000546.6:c.217G>A;HGVSP=p.Val73Met;CLINSIG=Benign;EXPECTED_RULE=BS3
+20	4699525	PRNP_PM1_pos	C	T	.	.	GENE=PRNP;HGVSC=NM_000311.5:c.305C>T;HGVSP=p.Pro102Leu;CLINSIG=Pathogenic;EXPECTED_RULE=PM1
+MT	3243	MT_TL1_MELAS	A	G	.	.	GENE=MT-TL1;HGVSC=m.3243A>G;HGVSP=.;CLINSIG=Pathogenic;EXPECTED_RULE=OUT_OF_SCOPE_MITOCHONDRIAL

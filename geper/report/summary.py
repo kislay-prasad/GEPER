@@ -1386,6 +1386,27 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
     for row_num, (idx, variant_result) in enumerate(indexed, start=1):
         variant = variant_result.get("variant", {})
         locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+
+        if variant_result.get("out_of_scope"):
+            # Report review round 8: must never render as "Not
+            # classified" / "Pending" -- those are today's rendering
+            # for a variant GEPER genuinely tried to classify and
+            # couldn't, which is a different claim from "never
+            # evaluated, by design". No reviewer-attention flag either
+            # (that column signals something needs review; this
+            # variant needs no ACMG review at all).
+            row = [
+                Paragraph(str(idx), val),
+                Paragraph(locus, small),
+                Paragraph("Out of scope (mitochondrial)", small),
+                Paragraph("N/A", small),
+            ]
+            if has_case_ranking:
+                row.append(Paragraph("N/A", small))
+            row += [Paragraph("—", small), Paragraph("—", small)]
+            rows.append(row)
+            continue
+
         clinical = variant_result.get("clinical_report")
         gene = (variant_result.get("interpretation_result") or {}).get("gene_symbol")
         gene_line = f"{locus}<br/><b>{gene}</b>" if gene else locus
@@ -1816,6 +1837,33 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         Spacer(1, 4 * mm),
         Paragraph(f"Finding {idx}: {locus}", styles["SectionHeading"]),
     ]
+
+    out_of_scope = variant_result.get("out_of_scope")
+    if out_of_scope:
+        # Report review round 8: distinct from the "no clinical
+        # interpretation available" fallback just below -- that one
+        # means GEPER tried and the interpretation engine produced
+        # nothing; this means GEPER never attempted anything for this
+        # variant at all, by design (see
+        # `pipeline/orchestrator.py::GeperPipeline
+        # ._mitochondrial_out_of_scope_result`).
+        flow.append(
+            Paragraph(f"<b>Status:</b> Out of scope ({out_of_scope.get('scope', 'unspecified')})", styles["StatusWarn"])
+        )
+        flow.append(
+            Paragraph(
+                out_of_scope.get("reason") or "This variant is out of scope for this GEPER build.",
+                styles["BodyText"],
+            )
+        )
+        flow.append(
+            Paragraph(
+                "No ACMG/AMP criteria were evaluated for this variant. This is not a Variant of "
+                "Uncertain Significance -- it was never assessed.",
+                styles["Footnote"],
+            )
+        )
+        return flow
 
     if not clinical:
         flow.append(

@@ -414,3 +414,122 @@ Separately, and this is the part that actually caused this round's false alarm: 
 **Why this is a candidate, not a round-11 fix:** documentation of existing, already-correct behavior discovered while investigating a bug that didn't reproduce -- no code to change, only knowledge worth not re-deriving next time this path gets traced.
 
 **Decision needed:** none -- a pointer for future debugging, like round 8's item 3. Worth folding into `database/clinvar_client.py`'s module docstring or `_positional_search_term`'s docstring the next time that file is touched, so the explanation lives next to the code it explains rather than only in this document.
+
+---
+
+## Round 12 (SpliceBERT manifest investigation)
+
+A reported bug -- SpliceBERT rendering as a bare identifier string in the AI
+model-checkpoint manifest, indistinguishable from a model that ran, after it
+failed to load on every one of three Colab sessions in one day -- did not
+reproduce. The renderer was proven correct three separate ways: synthetically
+(`build_ai_model_status` -> `rollup_run_status` -> `finalize_model_checkpoint_provenance`
+run end-to-end against a fabricated FAILED-splicebert scenario), at the data
+layer (tracing `_probe_standalone_plugins_at_startup` / `ModelManager.get` /
+`_standalone_plugin_status` confirms a demoted SpliceBERT is correctly recorded
+as FAILED with its real timeout message, not silently dropped), and directly
+against the one real, complete artifact available -- a live, offline
+`ReportGenerator._render_provenance` call against the commit-`3c854c9`,
+6-variant `geper_results.json` (byte-identical to
+`geper/tests/fixtures/offline_evidence/raw_geper_results.json`) rendered
+SpliceBERT as `-- attempted, failed to load/run this run` with its full
+180-second-timeout reason text, exactly as designed. No artifact found on disk
+(3 real `geper_results.json` files checked) reproduces the reported bare
+string. No code change came out of this round. Two things worth recording
+anyway, surfaced while tracing it:
+
+### 1. An interim checkpoint write is structurally indistinguishable from a completed run's manifest
+
+**What:** `model_checkpoints` starts as plain identifier strings from
+`get_model_checkpoint_identifiers()` (config-only, set once at
+`orchestrator.py:485`). It is enriched with per-model run status EXACTLY ONCE,
+via `rollup_run_status` + `finalize_model_checkpoint_provenance` at
+`orchestrator.py:850-851` -- only after the entire per-variant loop finishes.
+The periodic in-loop checkpoint write (`orchestrator.py:829-830`,
+`CHECKPOINT_INTERVAL` default 25) writes `geper_results.json` BEFORE that
+enrichment ever runs. So any file left behind by a run that disconnects
+mid-loop (a Colab disconnect, a crash, a kill -9) shows bare identifiers for
+EVERY model, not just SpliceBERT, and that file is structurally
+indistinguishable from a genuinely completed run's manifest -- there is
+currently no field anywhere in the document that says "this enrichment step
+never ran." This is a genuine missing-vs-empty instance in the provenance
+layer, the same class of bug `StageStatus`/`VersionStatus`/`ClinVarMatchStatus`
+already exist to prevent elsewhere.
+
+**This gap was found while investigating a reported bare-string manifest, and
+it never reproduced that report.** It is not the fix for the round-12
+SpliceBERT manifest bug, because that bug does not exist -- see this section's
+own opening paragraph. This entry stands on its own as a real, independently
+found gap, not as the explanation for round 12's original report.
+
+**Why this is a candidate, not a round-12 fix:** round 12 was scoped to
+determining whether the reported manifest bug was real; it wasn't, and this
+gap is a different, adjacent finding surfaced while checking. It also affects
+every model's manifest entry, not a SpliceBERT-specific fix, so it doesn't
+belong bundled into a SpliceBERT-scoped change.
+
+**Decided shape, if this is ever built:** an explicit `"run_complete": false`
+boolean at the top level of `geper_results.json` on every interim write, set
+`true` only on the final write after the post-loop
+rollup/enrichment (`orchestrator.py:850-851`). Absent must read as `false`
+everywhere it's checked -- no reader may default a missing key to `true`.
+
+**Explicitly REJECTED:** a partial rollup at the periodic write (i.e., calling
+`rollup_run_status`/`finalize_model_checkpoint_provenance` over whatever
+variants have been processed so far, at the in-loop checkpoint itself). This
+creates a second code path producing enrichment from incomplete data, and
+"splicebert: FAILED, based on 12 of 300 variants" is exactly the half-true
+provenance line twelve rounds have been spent eliminating. Recording the
+rejection and this reason here so it isn't re-proposed later without this
+context.
+
+**Decision needed:** whether to actually implement the `run_complete` marker
+(and the report-layer branch that reads it: "this run did not complete;
+per-model status is unavailable" instead of rendering bare identifiers), or
+leave this as a documented, understood gap until an interim file actually
+causes real confusion.
+
+### 2. The `transformers` pin: no verified SpliceBERT run has ever used the committed environment
+
+**What:** `git log -p --follow -- geper/requirements.txt` -- four commits ever
+touch the file (`cb79edc` initial commit, `15150f8`, `b82bd52`, `99ec99d`). The
+`transformers` line appears exactly once across all four, as a `+` addition in
+`cb79edc`, never as a `-`/`+` pair. The committed pin has always been
+`transformers>=5.12.1,<6.0.0`. There is no `4.56.2` revert target anywhere in
+this repo's history and no "the pin moved" regression to point at.
+`enformer`/`borzoi` are not pinned in `requirements.txt` at all -- both are
+config-gated and auto-installed at runtime, with the file's own comment saying
+so -- so the file carries no record of an enformer/borzoi-vs-5.x conflict
+either.
+
+**The actual point of this entry:** every run where SpliceBERT loaded fast
+(`smoke_test_7`'s 40s load, the `fix/report-review-A1-B7` run) recorded
+`transformers==4.56.2` "per requirements.txt" -- but that was never the
+committed pin, in any commit, at any point. Those were almost certainly ad-hoc
+`pip install "transformers==4.56.2"` overrides made in-session and recorded as
+if they described the file. So SpliceBERT has arguably never been proven to
+load successfully under the environment this repo actually declares --
+`transformers>=5.12.1,<6.0.0`. This is a reproducibility hole, not a
+regression: nothing here was ever working and then broken by a later commit.
+
+**Why this is a candidate, not a round-12 fix:** confirming or fixing the
+actual v5 load behavior needs a real GPU session with network access to
+attempt a real checkpoint load -- explicitly out of scope for an investigation
+round on an 8GB machine with no GPU/network.
+
+**Decision needed / diagnostic for whoever next gets a working GPU session:**
+1. Check whether `transformers.utils.import_utils._tf_available` still exists
+   under the actually-installed `5.x`. If it does not,
+   `_force_transformers_to_prefer_torch_over_tf`'s own `try`/`except` is
+   silently falling back to the env-var-only (`USE_TF=0`) behavior its own
+   docstring (Fix #1) already documents as insufficient once `transformers`
+   has been imported elsewhere first (`models/esm2.py` always does, before
+   SpliceBERT loads) -- and that would be the confirmed second cause of the
+   100%-reproducing load hang.
+2. Separately, note the unreproduced warning already flagged in
+   `splicebert_plugin.py`'s own docstring ("You are using a model of type
+   'bert' to instantiate a model of type ''"), observed under `transformers
+   5.13.1` immediately preceding the two most recent verified failures --
+   consistent with a second, distinct, transformers-v5-specific issue Fix #1
+   was never verified against, independent of whether (1) above also turns
+   out to be true.

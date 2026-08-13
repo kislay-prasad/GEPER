@@ -1168,12 +1168,38 @@ def _build_qc_flowables(qc_metrics: Dict[str, Dict[str, Any]], styles: Dict[str,
 
     if not_run_entries:
         flowables.append(Spacer(1, 2 * mm))
-        reasons = "; ".join(
-            f"{label} -- {entry.get('reason') or 'not applicable this run.'}" for label, entry in not_run_entries
-        )
+        # Grouped by the EXACT reason string, not a fixed enum of the
+        # three reasons known at the time this was written
+        # (VCF-only's `_QC_METRICS_NOT_APPLICABLE_REASON`, the per-key
+        # "not reported" fallback in `_parse_one_qc_metric`, and
+        # `bridge/combined_pipeline.py`'s per-metric tool-absence
+        # reason for bases_at_20x). `_parse_one_qc_metric` passes any
+        # caller-supplied `reason` through verbatim for a NOT_RUN
+        # entry, so a future or third-party --qc-metrics-json producer
+        # can introduce a reason this code has never seen -- keying on
+        # the string itself, not a name-based special case, is what
+        # keeps grouping correct for that reason too, not just the
+        # three known today. When two or more metrics share the exact
+        # same reason (round 13: this was previously the SAME ~40-word
+        # VCF-only sentence repeated once per metric, verbatim, in one
+        # paragraph), it is now stated once, naming every metric label
+        # that shares it -- content and wording untouched, see
+        # `_QC_METRICS_NOT_APPLICABLE_REASON`'s and
+        # `_BASES_AT_20X_NOT_RUN_REASON`'s own docstrings/comments for
+        # why neither may be shortened. Distinct reasons (e.g. Run 2's
+        # real shape: two metrics found, bases_at_20x NOT_RUN for a
+        # tool-absence reason wholly unrelated to VCF-only) still each
+        # get their own clause -- grouping only ever merges entries
+        # whose reason text is identical, never entries whose reasons
+        # merely both happen to be NOT_RUN.
+        reason_groups: Dict[str, List[str]] = {}
+        for label, entry in not_run_entries:
+            reason = entry.get("reason") or "not applicable this run."
+            reason_groups.setdefault(reason, []).append(label)
+        clauses = "; ".join(f"{', '.join(labels)} -- {reason}" for reason, labels in reason_groups.items())
         flowables.append(
             Paragraph(
-                f"Not applicable this run: {reasons} To supply real values from a kim_pipeline-combined "
+                f"Not applicable this run: {clauses} To supply real values from a kim_pipeline-combined "
                 "run, see bridge/combined_pipeline.py's --qc-metrics-json handoff to "
                 "generate_pdf(qc_metrics=...).",
                 styles["Footnote"],

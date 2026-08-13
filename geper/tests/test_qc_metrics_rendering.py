@@ -321,5 +321,150 @@ class TestQCFlowablesRendering(unittest.TestCase):
         self.assertEqual(len({not_run_hex, pass_hex, warn_hex, error_hex}), 4)
 
 
+# Mirrors `bridge/combined_pipeline.py::_BASES_AT_20X_NOT_RUN_REASON`
+# verbatim (a real, currently-shipped tool-absence reason) -- kept as a
+# literal string here rather than a cross-package import, matching
+# this test file's existing convention of representative literal
+# reason strings (see `test_mixed_states_render_independently` above)
+# and avoiding a new geper<->bridge test-time coupling that has no
+# precedent elsewhere in this suite.
+_REAL_BASES_AT_20X_REASON = (
+    "kim_pipeline does not currently compute bases-at->=20x coverage breadth for any sample -- no "
+    "'samtools depth -a' threshold count or 'mosdepth --thresholds 20' step exists in "
+    "pipeline/alignment/ (see ROUND_CANDIDATES.md)."
+)
+
+_MECHANISM_SENTENCE_FRAGMENT = "To supply real values from a kim_pipeline-combined run"
+
+
+class TestQCFootnoteGroupedByReason(unittest.TestCase):
+    """
+    Round 13: the NOT_RUN footnote used to list one `label -- reason`
+    clause per metric unconditionally, so three metrics sharing the
+    exact same ~40-word VCF-only sentence rendered that sentence three
+    times, verbatim, in one paragraph. `_build_qc_flowables` now groups
+    `not_run_entries` by the EXACT reason string (see the grouping
+    block's own comment in `report/summary.py` for why this must be
+    string-keyed, never a hardcoded enum of the reasons known when this
+    was written) -- one clause per distinct reason, naming every metric
+    label that shares it. Content/wording of every reason string is
+    unchanged; only how many times identical text is repeated changes.
+    """
+
+    def setUp(self):
+        self.styles = summary_module._build_stylesheet()
+
+    def _footnote_text(self, qc_metrics):
+        flowables = _build_qc_flowables(qc_metrics, self.styles)
+        texts = [_cell_text(f) for f in flowables[1:] if hasattr(f, "text")]
+        not_applicable = [t for t in texts if t.startswith("Not applicable this run")]
+        self.assertEqual(len(not_applicable), 1, "expected exactly one not-applicable footnote paragraph")
+        return not_applicable[0]
+
+    # -- (a) true VCF-only: all three share the real production reason ------
+
+    def test_true_vcf_only_reason_stated_once_naming_all_three_metrics(self):
+        parsed = _parse_qc_metrics(None)  # the real, unmodified `_parse_qc_metrics` VCF-only path
+        footnote = self._footnote_text(parsed)
+
+        self.assertEqual(
+            footnote.count(summary_module._QC_METRICS_NOT_APPLICABLE_REASON),
+            1,
+            "the ~40-word VCF-only sentence must appear exactly once, not once per metric",
+        )
+        for label in ("Mean Coverage Depth", "Bases at >20x Coverage", "Q30 Score"):
+            self.assertIn(label, footnote)
+        self.assertEqual(footnote.count(_MECHANISM_SENTENCE_FRAGMENT), 1)
+
+    # -- (b) Run 2's real shape: two real values, one tool-absence NOT_RUN --
+
+    def test_run2_shape_states_tool_absence_reason_without_vcf_only_text(self):
+        qc_metrics = {
+            "mean_coverage_depth": _found(16.5218),
+            "q30_score": _found(99.897),
+            "bases_at_20x": _not_run(_REAL_BASES_AT_20X_REASON),
+        }
+        footnote = self._footnote_text(qc_metrics)
+
+        self.assertIn(_REAL_BASES_AT_20X_REASON, footnote)
+        self.assertNotIn(summary_module._QC_METRICS_NOT_APPLICABLE_REASON, footnote)
+        self.assertIn("Bases at >20x Coverage", footnote)
+        # The two FOUND metrics must not be pulled into the NOT_RUN clause.
+        self.assertNotIn("Mean Coverage Depth --", footnote)
+        self.assertNotIn("Q30 Score --", footnote)
+
+    # -- (c) the third reason: a dict was supplied, but a key was absent ----
+
+    def test_missing_key_reason_stays_distinct_from_vcf_only_reason(self):
+        # `_not_run()`'s literal argument is the same fallback text
+        # `_parse_one_qc_metric`'s own `entry is None` branch produces
+        # (report/summary.py:234) -- reproduced here as a literal
+        # rather than round-tripped through `_parse_qc_metrics` so this
+        # test can put it in the SAME footnote as the VCF-only reason
+        # and prove neither swallows the other, which a single
+        # `_parse_qc_metrics` call can't produce (it only ever emits
+        # one specific reason per code path).
+        qc_metrics = {
+            "mean_coverage_depth": _not_run(summary_module._QC_METRICS_NOT_APPLICABLE_REASON),
+            "bases_at_20x": _not_run("Not reported by the upstream sequencing/alignment pipeline for this run."),
+            "q30_score": _found(95.0),
+        }
+        footnote = self._footnote_text(qc_metrics)
+
+        self.assertIn(
+            f"Mean Coverage Depth -- {summary_module._QC_METRICS_NOT_APPLICABLE_REASON}",
+            footnote,
+        )
+        self.assertIn(
+            "Bases at >20x Coverage -- Not reported by the upstream sequencing/alignment pipeline for this run.",
+            footnote,
+        )
+        # Each reason's own text appears exactly once -- neither merged
+        # into, nor duplicated by, the other's clause.
+        self.assertEqual(footnote.count(summary_module._QC_METRICS_NOT_APPLICABLE_REASON), 1)
+        self.assertEqual(footnote.count("Not reported by the upstream sequencing/alignment pipeline for this run."), 1)
+
+    # -- (d) two distinct reasons, one of them shared by two metrics --------
+
+    def test_two_distinct_reasons_grouped_separately_mechanism_once(self):
+        reason_x = "Reason X: sequencing depth track was never requested for this sample."
+        reason_y = "Reason Y: a wholly different, unrelated not-applicable reason."
+        qc_metrics = {
+            "mean_coverage_depth": _not_run(reason_x),
+            "bases_at_20x": _not_run(reason_x),
+            "q30_score": _not_run(reason_y),
+        }
+        footnote = self._footnote_text(qc_metrics)
+
+        self.assertIn(f"Mean Coverage Depth, Bases at >20x Coverage -- {reason_x}", footnote)
+        self.assertIn(f"Q30 Score -- {reason_y}", footnote)
+        self.assertEqual(footnote.count(reason_x), 1)
+        self.assertEqual(footnote.count(reason_y), 1)
+        self.assertEqual(footnote.count(_MECHANISM_SENTENCE_FRAGMENT), 1)
+
+    # -- (e) generic-mechanism proof: reasons unknown to this code entirely -
+
+    def test_arbitrary_unknown_reasons_group_by_string_not_by_special_case(self):
+        # Neither string below resembles any of the three reasons this
+        # module or bridge/combined_pipeline.py currently define -- if
+        # grouping were secretly keyed on a hardcoded enum of "the
+        # known reasons" instead of the literal string, these would
+        # either fail to group at all or be mis-bucketed.
+        reason_z = "Reason-Z-9f3a: a completely unrelated third-party sidecar producer's own explanation."
+        reason_w = "Reason-W-2b7c: a different unrelated third-party explanation."
+        qc_metrics = {
+            "mean_coverage_depth": _not_run(reason_z),
+            "q30_score": _not_run(reason_z),
+            "bases_at_20x": _not_run(reason_w),
+        }
+        footnote = self._footnote_text(qc_metrics)
+
+        self.assertIn(f"Mean Coverage Depth, Q30 Score -- {reason_z}", footnote)
+        self.assertIn(f"Bases at >20x Coverage -- {reason_w}", footnote)
+        self.assertEqual(footnote.count(reason_z), 1)
+        self.assertEqual(footnote.count(reason_w), 1)
+        self.assertEqual(footnote.count(_MECHANISM_SENTENCE_FRAGMENT), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

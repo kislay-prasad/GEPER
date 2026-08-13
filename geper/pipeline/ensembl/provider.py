@@ -54,8 +54,45 @@ def _normalize_gene_symbol(symbol: Optional[str]) -> str:
 
 
 def _normalize_chrom(chrom: Optional[str]) -> str:
-    chrom = (chrom or "").strip()
-    return chrom[3:] if chrom.lower().startswith("chr") else chrom
+    """
+    Reuses `hgvs_utils.py::_strip_chr` rather than a second, independent
+    prefix-strip (round 14, B1): the previous local implementation here
+    (`chrom[3:] if chrom.lower().startswith("chr") else chrom`) mapped
+    both `"chrM"` and bare `"M"` to `"M"` -- neither of which matches
+    Ensembl's own GTF/REST seqname for the mitochondrial contig, `"MT"`
+    -- while `MT`-spelled input (Ensembl's own convention) happened to
+    pass through unchanged and work by coincidence. `_strip_chr` already
+    canonicalizes `M`/`mt`/`Mt` (bare or `chr`-prefixed) to `MT`
+    correctly and is the normalizer `pipeline/hgvs_utils.py`'s own
+    RefSeq-accession lookup already relies on; duplicating its logic
+    here would create two normalizers free to drift apart on the next
+    edge case, exactly what this fix exists to avoid for nuclear
+    chromosome names too (`chr17`/`17`/`chrX`/`X`, all unaffected --
+    `_strip_chr` reduces to the same prefix strip for every non-MT
+    input).
+
+    Imported inside the function, not at module level: a module-level
+    `from pipeline.hgvs_utils import _strip_chr` creates a real import
+    cycle -- `hgvs_utils` -> `pipeline.ps1_pm5.utils` -> (package
+    `__init__`) -> `pipeline.ps1_pm5.decision` -> `pipeline.pvs1.models`
+    -> (package `__init__`) -> `pipeline.pvs1.lookup` -> back to
+    `pipeline.ensembl.provider.transcript_for_gene`, which doesn't exist
+    yet on this still-initializing module -- confirmed by direct import
+    (`ImportError: cannot import name 'transcript_for_gene' from
+    partially initialized module`). That chain runs entirely through
+    eager re-exports in `pipeline/pvs1/__init__.py` and
+    `pipeline/ps1_pm5/__init__.py`, not through anything this fix
+    touches, so restructuring those packages is out of scope here. By
+    the time `_normalize_chrom` is actually CALLED (not merely
+    imported), every module in that chain has already finished loading,
+    so the deferred import resolves cleanly -- the same "defer to avoid
+    forcing an eager import at module-load time" idiom this codebase
+    already uses for optional heavy dependencies (e.g.
+    `pipeline/models/spliceformer/loader.py`'s vendored-model import).
+    """
+    from pipeline.hgvs_utils import _strip_chr
+
+    return _strip_chr((chrom or "").strip())
 
 
 class LocalDatasetEnsemblProvider:

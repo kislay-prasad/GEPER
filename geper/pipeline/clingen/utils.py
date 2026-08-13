@@ -137,7 +137,19 @@ class GeneResolution:
 def _fetch_overlapping_genes(chrom: str, pos: int, build: str) -> Optional[List[Dict[str, Any]]]:
     """Raw Ensembl `overlap/region?feature=gene` fetch. Returns None (distinct from an empty list) only on a genuine request failure."""
     base_url = CONFIG.api.ENSEMBL_REST_BASE
-    bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    # Round 14, B1: was a bare `chrom[3:] if startswith("chr")` prefix
+    # strip -- the same bug `pipeline/ensembl/provider.py::_normalize_chrom`
+    # had (`chrM`/bare `M` both -> `M`, which Ensembl's REST API does not
+    # recognize as the mitochondrial contig; only `MT` is). This is the
+    # live-REST fallback `resolve_gene_symbol_detail` uses when a VCF
+    # record carries no `GENE=` INFO field, so a chrM/M-spelled VCF with
+    # no GENE= hint would have failed gene resolution for mitochondrial
+    # variants even after the provider.py fix. Local import for the same
+    # reason as `provider.py::_normalize_chrom` -- see that function's
+    # docstring for the import-cycle this avoids.
+    from pipeline.hgvs_utils import _strip_chr
+
+    bare_chrom = _strip_chr(chrom)
     url = f"{base_url}/overlap/region/{_species_for_build(build)}/{bare_chrom}:{pos}-{pos}"
     params = {"feature": "gene", "content-type": "application/json"}
 

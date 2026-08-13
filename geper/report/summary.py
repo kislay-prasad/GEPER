@@ -1413,6 +1413,14 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
 
         acmg = (clinical or {}).get("acmg_classification") or {}
         classification = acmg.get("classification") or "Not classified"
+        # Report review round 10: net Tavtigian points inline, right on
+        # the front-page dashboard row -- a reviewer skimming this table
+        # can see why without opening the detailed finding section.
+        # Absent (no second line) only for BA1's stand-alone-benign
+        # short-circuit or an unclassified variant.
+        net_points = acmg.get("net_points")
+        if net_points is not None:
+            classification = f"{classification}<br/>net {net_points:g}"
 
         # No percentage in this front-page table (C2, report review
         # round 2): "Pathogenic / Low (25%)" reads as doubt about the
@@ -1885,6 +1893,23 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
                 styles["BodyText"],
             )
         )
+        # Report review round 10: the real Tavtigian point total this
+        # classification was actually decided from, plus the threshold
+        # band it landed in -- see `pipeline/acmg_rules.py::
+        # CombineResult`'s docstring. `None` only for BA1's stand-alone-
+        # benign short-circuit (no point tally ran), never fabricated.
+        net_points = acmg.get("net_points")
+        if net_points is not None:
+            band = acmg.get("net_points_band")
+            band_text = f" -- threshold band: {band}" if band else ""
+            flow.append(
+                Paragraph(
+                    f"<b>Net points:</b> {net_points:g} "
+                    f"(pathogenic {acmg.get('pathogenic_points', 0):g} − "
+                    f"benign {acmg.get('benign_points', 0):g}){band_text}",
+                    styles["BodyText"],
+                )
+            )
 
     # Clinician override (geper/review/signoff.py's "override" command) --
     # layered on top of, never substituting for, GEPER's own

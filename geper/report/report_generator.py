@@ -390,6 +390,23 @@ class ReportGenerator:
         lines.append("")
         lines.append(f"**Classification:** {acmg.get('classification') or 'Not classified'}")
         lines.append("")
+        # Report review round 10: the real Tavtigian point total next
+        # to the classification it actually decided, with the
+        # threshold band it landed in -- see `pipeline/acmg_rules.py::
+        # CombineResult`'s docstring for why this was previously
+        # discarded. `None` only for BA1's stand-alone-benign
+        # short-circuit (no point tally ran) or an unclassified
+        # variant -- neither fabricates a number.
+        net_points = acmg.get("net_points")
+        if net_points is not None:
+            band = acmg.get("net_points_band")
+            band_text = f" -- threshold band: {band}" if band else ""
+            lines.append(
+                f"**Net points (Tavtigian 2018):** {net_points:g} "
+                f"(pathogenic {acmg.get('pathogenic_points', 0):g} − benign {acmg.get('benign_points', 0):g})"
+                f"{band_text}"
+            )
+            lines.append("")
         # Clinician override (geper/review/signoff.py's "override" command)
         # -- layered on top of, never substituting for, GEPER's own
         # classification above: both are shown, explicitly labelled,

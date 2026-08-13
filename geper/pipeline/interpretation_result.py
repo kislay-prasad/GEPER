@@ -46,6 +46,18 @@ class InterpretationResult:
     not_triggered_rules: List[Dict[str, Any]] = field(default_factory=list)
     not_evaluated_rules: List[Dict[str, Any]] = field(default_factory=list)
     combining_rule_trace: List[str] = field(default_factory=list)
+    # Report review round 10: the actual Tavtigian 2018 point totals
+    # `ACMGRuleEngine._combine` computes its threshold comparisons
+    # against (>= 10 Pathogenic, 6-9 Likely Pathogenic, 0-5 Uncertain
+    # Significance, <= -1 Likely Benign, <= -7 Benign) -- see
+    # `pipeline/acmg_rules.py::CombineResult`'s docstring for why this
+    # used to be discarded after picking `acmg_classification` and
+    # never recorded anywhere. `None` on all three (never a fabricated
+    # `0.0`) only when BA1's stand-alone-benign short-circuit fired --
+    # that path never ran the point tally at all.
+    acmg_net_points: Optional[float] = None
+    acmg_pathogenic_points: Optional[float] = None
+    acmg_benign_points: Optional[float] = None
 
     # Aggregated evidence (deduplicated, sourced from the ACMG criteria
     # plus the legacy free-text evidence list -- nothing new is derived
@@ -134,7 +146,17 @@ class InterpretationResult:
     # `interpretation` dict shape directly.
     legacy_summary: Optional[str] = None
     legacy_confidence: Optional[str] = None
-    legacy_significance_score: Optional[float] = None
+    # Renamed from `legacy_significance_score` (report review round 10):
+    # a JSON consumer with no repo access read this field, sitting right
+    # next to `acmg_classification`, as if it WERE the ACMG/Tavtigian
+    # score -- it is not. This is `InterpretationEngine.interpret()`'s
+    # own pre-`ACMGRuleEngine` scoring system (ClinVar-concordance +
+    # gnomAD/ClinGen/MMSplice weights, see `pipeline/interpretation.py`'s
+    # `_SIGNIFICANCE_WEIGHT`), kept only as the fallback summary/
+    # confidence source when the real ACMG rule engine itself raises
+    # (`interpretation.py`: "falling back to legacy summary only").
+    # `acmg_net_points` above is the real Tavtigian number.
+    legacy_pre_acmg_significance_score: Optional[float] = None
 
     # Raw per-stage evidence dicts, kept by reference (not copied/
     # re-parsed) so Phase 3/4/6/7 engines can consume the *same* source
@@ -152,6 +174,9 @@ class InterpretationResult:
             "not_triggered_rules": self.not_triggered_rules,
             "not_evaluated_rules": self.not_evaluated_rules,
             "combining_rule_trace": self.combining_rule_trace,
+            "acmg_net_points": self.acmg_net_points,
+            "acmg_pathogenic_points": self.acmg_pathogenic_points,
+            "acmg_benign_points": self.acmg_benign_points,
             "supporting_evidence": self.supporting_evidence,
             "conflicting_evidence": self.conflicting_evidence,
             "ai_consensus": self.ai_consensus,
@@ -178,7 +203,7 @@ class InterpretationResult:
             "ai_model_errors": self.ai_model_errors,
             "legacy_summary": self.legacy_summary,
             "legacy_confidence": self.legacy_confidence,
-            "legacy_significance_score": self.legacy_significance_score,
+            "legacy_pre_acmg_significance_score": self.legacy_pre_acmg_significance_score,
             # `raw_evidence` is intentionally NOT included in `to_dict()`
             # output by default -- it duplicates data already emitted
             # under the top-level `clinvar`/`gnomad`/`clingen`/etc. keys
@@ -274,7 +299,7 @@ def build_interpretation_result(
     # Report review round 4, I8: `interpretation["supporting_evidence"]`
     # (the "legacy" pre-Phase-1 evidence list `InterpretationEngine.
     # interpret()` builds for its own -- unused by any report view,
-    # confirmed by search -- `legacy_summary`/`legacy_significance_score`)
+    # confirmed by search -- `legacy_summary`/`legacy_pre_acmg_significance_score`)
     # independently restates one fact PM2's own `supporting_evidence`
     # also states, worded differently ("gnomAD: variant not found in
     # the population database (PM2 evidence -- absent from gnomAD)."
@@ -391,6 +416,13 @@ def build_interpretation_result(
         not_triggered_rules=not_triggered_rules,
         not_evaluated_rules=not_evaluated_rules,
         combining_rule_trace=acmg.get("combining_rule_trace", []),
+        # Report review round 10: the real Tavtigian point totals --
+        # see `InterpretationResult.acmg_net_points`'s own docstring.
+        # `None` (never `.get(..., 0)`) when absent, matching every
+        # other not-yet-known field in this codebase.
+        acmg_net_points=acmg.get("net_points"),
+        acmg_pathogenic_points=acmg.get("pathogenic_points"),
+        acmg_benign_points=acmg.get("benign_points"),
         supporting_evidence=_dedupe(supporting_evidence),
         conflicting_evidence=_dedupe(conflicting_evidence),
         ai_consensus=ai_consensus,
@@ -401,7 +433,7 @@ def build_interpretation_result(
         ai_model_errors=ai_model_errors,
         legacy_summary=interpretation.get("summary"),
         legacy_confidence=interpretation.get("confidence"),
-        legacy_significance_score=interpretation.get("significance_score"),
+        legacy_pre_acmg_significance_score=interpretation.get("legacy_pre_acmg_significance_score"),
         raw_evidence={
             "clinvar": clinvar_result,
             "dbsnp": dbsnp_result,

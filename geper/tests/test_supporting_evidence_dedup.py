@@ -40,7 +40,7 @@ def _interpretation_with_gnomad_not_found():
     return {
         "summary": "s",
         "confidence": "Low",
-        "significance_score": 1,
+        "legacy_pre_acmg_significance_score": 1,
         "supporting_evidence": [_LEGACY_GNOMAD_NOT_FOUND_TEXT],
         "acmg_evaluation": {
             "classification": "Uncertain Significance",

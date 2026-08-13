@@ -141,6 +141,35 @@ class CriterionResult:
         return payload
 
 
+@dataclass
+class CombineResult:
+    """
+    Full result of `ACMGRuleEngine._combine` -- report review round 10.
+    Before this, `_combine` computed `pathogenic_points`/`benign_points`/
+    `net_points` purely to pick `classification`, then discarded them:
+    the number that actually decides every classification this engine
+    ever produces was never recorded anywhere, in a pipeline built on
+    provenance for every other decision it makes. `net_points` is what
+    `_combine`'s own threshold comparisons (`>= 10`, `>= 6`, `<= -1`,
+    `<= -7`) are evaluated against -- see `evaluate()`'s
+    `"net_points"`/`"pathogenic_points"`/`"benign_points"` keys, and
+    `pipeline/interpretation_result.py`'s `acmg_net_points` field, for
+    where this now surfaces downstream.
+
+    `pathogenic_points`/`benign_points`/`net_points` are `None` (never a
+    fabricated `0.0`) specifically on the BA1 stand-alone-benign
+    short-circuit: that path never ran the point tally at all, so
+    "not computed" is the honest state, not "computed and totalled
+    zero".
+    """
+
+    classification: str
+    trace: List[str]
+    pathogenic_points: Optional[float]
+    benign_points: Optional[float]
+    net_points: Optional[float]
+
+
 def _functional_evidence_not_evaluated_reason(functional_evidence_result: Optional[Dict[str, Any]]) -> str:
     """
     Honest PS3/BS3 "not evaluated" rationale -- distinguishes a source
@@ -351,15 +380,26 @@ class ACMGRuleEngine:
         # own ACMG engine concludes from primary evidence").
         clinvar_note = self._clinvar_crossref(clinvar_result)
 
-        classification, combining_trace = self._combine(criteria)
+        combine_result = self._combine(criteria)
 
         triggered = [c.to_dict() for c in criteria.values() if c.status == "triggered"]
         not_triggered = [c.to_dict() for c in criteria.values() if c.status == "not_triggered"]
         not_evaluated = [c.to_dict() for c in criteria.values() if c.status == "not_evaluated"]
 
         return {
-            "classification": classification,
-            "combining_rule_trace": combining_trace,
+            "classification": combine_result.classification,
+            "combining_rule_trace": combine_result.trace,
+            # Report review round 10: the actual number `_combine`'s own
+            # threshold comparisons decide the classification against --
+            # see `CombineResult`'s docstring for why this used to be
+            # discarded, and `pipeline/interpretation_result.py`'s
+            # `acmg_net_points` for where it surfaces from here.
+            # `None` on all three (never a fabricated `0.0`) only on the
+            # BA1 stand-alone-benign short-circuit, which never ran the
+            # point tally.
+            "pathogenic_points": combine_result.pathogenic_points,
+            "benign_points": combine_result.benign_points,
+            "net_points": combine_result.net_points,
             "clinvar_crossreference": clinvar_note,
             "triggered_criteria": triggered,
             "not_triggered_criteria": not_triggered,
@@ -2820,13 +2860,21 @@ class ACMGRuleEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _combine(criteria: Dict[str, CriterionResult]) -> "tuple[str, List[str]]":
+    def _combine(criteria: Dict[str, CriterionResult]) -> "CombineResult":
         trace: List[str] = []
         triggered = {code: c for code, c in criteria.items() if c.status == "triggered"}
 
         if "BA1" in triggered:
             trace.append("BA1 triggered (stand-alone benign) -> classification = Benign.")
-            return "Benign", trace
+            # BA1 short-circuits the whole point system -- no tally was
+            # computed on this path, so `pathogenic_points`/
+            # `benign_points`/`net_points` are honestly `None` here
+            # (report review round 10), not a fabricated 0: "the point
+            # system wasn't consulted" is a different claim from "the
+            # point system was consulted and totalled zero."
+            return CombineResult(
+                classification="Benign", trace=trace, pathogenic_points=None, benign_points=None, net_points=None
+            )
 
         path_points = 0.0
         benign_points = 0.0
@@ -2864,11 +2912,20 @@ class ACMGRuleEngine:
         # BP4 -1 reported "Pathogenic" from path_points=10 alone,
         # dropping BP4's point entirely instead of netting to 9).
         if net <= -7:
-            return "Benign", trace
-        if net <= -1:
-            return "Likely Benign", trace
-        if net >= 10:
-            return "Pathogenic", trace
-        if net >= 6:
-            return "Likely Pathogenic", trace
-        return "Uncertain Significance", trace
+            classification = "Benign"
+        elif net <= -1:
+            classification = "Likely Benign"
+        elif net >= 10:
+            classification = "Pathogenic"
+        elif net >= 6:
+            classification = "Likely Pathogenic"
+        else:
+            classification = "Uncertain Significance"
+
+        return CombineResult(
+            classification=classification,
+            trace=trace,
+            pathogenic_points=path_points,
+            benign_points=benign_points,
+            net_points=net,
+        )

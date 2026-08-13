@@ -337,7 +337,20 @@ class InterpretationEngine:
         legacy_result = {
             "summary": summary,
             "confidence": confidence,
-            "significance_score": significance_score,
+            # Renamed from "significance_score" (report review round 10):
+            # this is `InterpretationEngine`'s own pre-`ACMGRuleEngine`
+            # scoring system (ClinVar-concordance + gnomAD/ClinGen/
+            # MMSplice weights, `_SIGNIFICANCE_WEIGHT` above) -- not
+            # derived from the 28 Tavtigian ACMG/AMP criteria at all.
+            # The bare name "significance_score", serialized verbatim
+            # into geper_results.json right beside
+            # interpretation.acmg_evaluation.classification, reads as
+            # the ACMG score to a JSON consumer with no repo access --
+            # confirmed as a real, made-that-mistake-myself failure
+            # mode, not a hypothetical one. `acmg_evaluation.net_points`
+            # is the real Tavtigian number (see `ACMGRuleEngine.
+            # _combine`/`CombineResult` in pipeline/acmg_rules.py).
+            "legacy_pre_acmg_significance_score": significance_score,
             "supporting_evidence": evidence,
             "acmg_evaluation": acmg_evaluation,
         }

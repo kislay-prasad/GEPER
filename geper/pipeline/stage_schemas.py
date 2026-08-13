@@ -490,11 +490,14 @@ class AcmgEvaluationSchema(BaseModel):
     the earliest place it can be caught.
 
     Kept deliberately smaller than `InterpretationResultForReport`:
-    only the 5 keys `build_interpretation_result` actually reads
+    only the keys `build_interpretation_result` actually reads
     (`classification`, `triggered_criteria`, `not_triggered_criteria`,
-    `not_evaluated_criteria`, `combining_rule_trace`) -- see
-    `pipeline/interpretation_result.py` lines around
-    `acmg.get("triggered_criteria", [])` etc.
+    `not_evaluated_criteria`, `combining_rule_trace`, and -- report
+    review round 10 -- `net_points`/`pathogenic_points`/`benign_points`,
+    the Tavtigian point totals `ACMGRuleEngine._combine` used to discard
+    after picking `classification`; see `pipeline/acmg_rules.py::
+    CombineResult`) -- see `pipeline/interpretation_result.py` lines
+    around `acmg.get("triggered_criteria", [])` etc.
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
@@ -504,6 +507,9 @@ class AcmgEvaluationSchema(BaseModel):
     not_triggered_criteria: List[Dict[str, Any]] = Field(default_factory=list)
     not_evaluated_criteria: List[Dict[str, Any]] = Field(default_factory=list)
     combining_rule_trace: List[str] = Field(default_factory=list)
+    net_points: Optional[float] = None
+    pathogenic_points: Optional[float] = None
+    benign_points: Optional[float] = None
 
 
 def validate_acmg_evaluation(

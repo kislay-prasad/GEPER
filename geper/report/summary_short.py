@@ -191,7 +191,17 @@ def _variant_gene(variant_result: Dict[str, Any]) -> Optional[str]:
 
 
 def _classification_text(clinical: Optional[Dict[str, Any]]) -> str:
-    return ((clinical or {}).get("acmg_classification") or {}).get("classification") or "Not classified"
+    acmg = (clinical or {}).get("acmg_classification") or {}
+    text = acmg.get("classification") or "Not classified"
+    # Report review round 10: net Tavtigian points inline -- same
+    # rendering the full report's Clinician Summary table uses (see
+    # `report/summary.py::_build_clinician_summary_table`), so the two
+    # documents never disagree. Absent only for BA1's stand-alone-
+    # benign short-circuit or an unclassified variant.
+    net_points = acmg.get("net_points")
+    if net_points is not None:
+        text = f"{text}<br/>net {net_points:g}"
+    return text
 
 
 def _confidence_text(clinical: Optional[Dict[str, Any]]) -> str:

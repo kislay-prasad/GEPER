@@ -43,19 +43,28 @@ from report.json_builder import build_variant_result
 from report.report_generator import ReportGenerator
 
 _VARIANT_DICT = {
-    "chrom": "MT", "pos": 100, "ref": "A", "alt": "G",
-    "variant_type": "SNV", "id": ".", "filter": "PASS",
+    "chrom": "MT",
+    "pos": 100,
+    "ref": "A",
+    "alt": "G",
+    "variant_type": "SNV",
+    "id": ".",
+    "filter": "PASS",
 }
 
 
 def _legacy_interpretation(overrides=None):
     base = {
-        "summary": "s", "confidence": "Low", "significance_score": 0,
+        "summary": "s",
+        "confidence": "Low",
+        "legacy_pre_acmg_significance_score": 0,
         "supporting_evidence": [],
         "acmg_evaluation": {
             "classification": "Uncertain Significance",
-            "triggered_criteria": [], "not_triggered_criteria": [],
-            "not_evaluated_criteria": [], "combining_rule_trace": [],
+            "triggered_criteria": [],
+            "not_triggered_criteria": [],
+            "not_evaluated_criteria": [],
+            "combining_rule_trace": [],
         },
     }
     base.update(overrides or {})
@@ -71,18 +80,23 @@ def _build_variant_result_with_serialized_interpretation(**raw_results):
     re-extracted from the (already-stripped) interpretation_result."""
     interpretation = _legacy_interpretation()
     result_obj = build_interpretation_result(
-        variant_dict=_VARIANT_DICT, interpretation=interpretation, **raw_results,
+        variant_dict=_VARIANT_DICT,
+        interpretation=interpretation,
+        **raw_results,
     )
     interpretation["interpretation_result"] = result_obj.to_dict()
 
     return build_variant_result(
-        variant_dict=_VARIANT_DICT, sequence_context={}, dna_model_results={},
+        variant_dict=_VARIANT_DICT,
+        sequence_context={},
+        dna_model_results={},
         rna_result=raw_results.get("rna_result", {}),
         protein_result=raw_results.get("protein_result", {}),
         blast_result=raw_results.get("blast_result", {}),
         clinvar_result=raw_results.get("clinvar_result", {}),
         dbsnp_result=raw_results.get("dbsnp_result", {}),
-        interpretation=interpretation, errors=[],
+        interpretation=interpretation,
+        errors=[],
         alphamissense_result=raw_results.get("alphamissense_result"),
         mmsplice_result=raw_results.get("mmsplice_result"),
         gnomad_result=raw_results.get("gnomad_result"),
@@ -99,9 +113,14 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
 
     def test_resolved_uniprot_entry_is_reflected_in_protein_knowledge(self):
         uniprot_result = {
-            "found": True, "skipped": False, "error": None,
-            "accession": "A0A3G1DJQ2", "protein_name": "Small humanin-like peptide 3",
-            "reviewed": True, "organism": "Homo sapiens", "gene_symbol": "MTRNR2L3",
+            "found": True,
+            "skipped": False,
+            "error": None,
+            "accession": "A0A3G1DJQ2",
+            "protein_name": "Small humanin-like peptide 3",
+            "reviewed": True,
+            "organism": "Homo sapiens",
+            "gene_symbol": "MTRNR2L3",
         }
         vr = _build_variant_result_with_serialized_interpretation(uniprot_result=uniprot_result)
 
@@ -127,14 +146,25 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
         raw-evidence-derived section agrees with real stage output too,
         not just UniProt."""
         gnomad_result = {"skipped": False, "error": None, "found": True, "global_af": 0.0001}
-        clinvar_primary = {"clinical_significance": "Pathogenic", "review_status": "criteria provided", "variant_match": True}
+        clinvar_primary = {
+            "clinical_significance": "Pathogenic",
+            "review_status": "criteria provided",
+            "variant_match": True,
+        }
         clinvar_result = {"records": [clinvar_primary], "match_status": "matched", "primary_record": clinvar_primary}
         clingen_result = {"found": True, "gene_symbol": "BRCA1", "clinical_validity_summary": "Definitive"}
-        alphafold_result = {"found": True, "mean_plddt": 91.2, "model_version": "v4", "affected_residue_band": "Very high"}
+        alphafold_result = {
+            "found": True,
+            "mean_plddt": 91.2,
+            "model_version": "v4",
+            "affected_residue_band": "Very high",
+        }
 
         vr = _build_variant_result_with_serialized_interpretation(
-            gnomad_result=gnomad_result, clinvar_result=clinvar_result,
-            clingen_result=clingen_result, alphafold_result=alphafold_result,
+            gnomad_result=gnomad_result,
+            clinvar_result=clinvar_result,
+            clingen_result=clingen_result,
+            alphafold_result=alphafold_result,
         )
         cr = vr["clinical_report"]
 
@@ -152,9 +182,14 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
         Knowledge section vs. Annotation Detail section disagreeing)
         must not reproduce in the rendered Markdown."""
         uniprot_result = {
-            "found": True, "skipped": False, "error": None,
-            "accession": "A0A3G1DJQ2", "protein_name": "Small humanin-like peptide 3",
-            "reviewed": True, "organism": "Homo sapiens", "gene_symbol": "MTRNR2L3",
+            "found": True,
+            "skipped": False,
+            "error": None,
+            "accession": "A0A3G1DJQ2",
+            "protein_name": "Small humanin-like peptide 3",
+            "reviewed": True,
+            "organism": "Homo sapiens",
+            "gene_symbol": "MTRNR2L3",
         }
         vr = _build_variant_result_with_serialized_interpretation(uniprot_result=uniprot_result)
         doc = {"generated_at": "now", "input_vcf": "x.vcf", "variant_count": 1, "variants": [vr]}
@@ -201,7 +236,9 @@ class TestErrorStateNeverConflatedWithNotFound(unittest.TestCase):
     def test_clinvar_and_clingen_errors_are_distinct_from_no_record(self):
         clinvar_error = {"records": [], "error": "ClinVar E-utilities request failed"}
         clingen_error = {"found": False, "error": "ClinGen API request failed"}
-        vr = _build_variant_result_with_serialized_interpretation(clinvar_result=clinvar_error, clingen_result=clingen_error)
+        vr = _build_variant_result_with_serialized_interpretation(
+            clinvar_result=clinvar_error, clingen_result=clingen_error
+        )
         clin = vr["clinical_report"]["clinical_evidence"]
         self.assertIsNotNone(clin["clinvar_error"])
         self.assertIsNotNone(clin["clingen_error"])
@@ -237,7 +274,13 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
     """
 
     def test_blast_error_is_distinct_from_no_hits(self):
-        blast_error = {"hits": [], "hit_count": 0, "skipped": True, "reason": "boom", "error": "BLAST server unreachable: boom"}
+        blast_error = {
+            "hits": [],
+            "hit_count": 0,
+            "skipped": True,
+            "reason": "boom",
+            "error": "BLAST server unreachable: boom",
+        }
         vr = _build_variant_result_with_serialized_interpretation(blast_result=blast_error)
         seq = vr["clinical_report"]["sequence_context"]
         self.assertEqual(seq["blast"]["error"], "BLAST server unreachable: boom")
@@ -258,8 +301,11 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
 
     def test_mmsplice_error_is_distinct_from_ineligible(self):
         mmsplice_error = {
-            "supported": False, "predicted": False, "skip_reason": "Keras inference crashed",
-            "interpretation": "Keras inference crashed", "error": "Keras inference crashed",
+            "supported": False,
+            "predicted": False,
+            "skip_reason": "Keras inference crashed",
+            "interpretation": "Keras inference crashed",
+            "error": "Keras inference crashed",
         }
         vr = _build_variant_result_with_serialized_interpretation(mmsplice_result=mmsplice_error)
         ai = vr["clinical_report"]["ai_consensus"]
@@ -288,8 +334,15 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
     def test_a_real_verdict_and_a_crash_can_coexist_in_ai_consensus(self):
         # AlphaMissense crashing must never hide MMSplice's real result.
         am_error = {"skipped": True, "reason": "x", "error": "tabix crashed"}
-        mmsplice_ok = {"supported": True, "predicted": True, "interpretation_category": "likely_no_effect", "delta_logit_psi": 0.1}
-        vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_error, mmsplice_result=mmsplice_ok)
+        mmsplice_ok = {
+            "supported": True,
+            "predicted": True,
+            "interpretation_category": "likely_no_effect",
+            "delta_logit_psi": 0.1,
+        }
+        vr = _build_variant_result_with_serialized_interpretation(
+            alphamissense_result=am_error, mmsplice_result=mmsplice_ok
+        )
         ai = vr["clinical_report"]["ai_consensus"]
         self.assertEqual(len(ai["classifying_models"]), 1)
         self.assertEqual(ai["classifying_models"][0]["source"], "MMSplice")
@@ -312,8 +365,10 @@ class TestBuildClinicalReportBackwardCompatibility(unittest.TestCase):
 
     def test_omitting_raw_evidence_does_not_raise(self):
         ir = {
-            "acmg_classification": "Uncertain Significance", "triggered_rules": [],
-            "confidence_pending": True, "priority_pending": True,
+            "acmg_classification": "Uncertain Significance",
+            "triggered_rules": [],
+            "confidence_pending": True,
+            "priority_pending": True,
         }
         report = build_clinical_report(ir, _VARIANT_DICT)
         self.assertIsNotNone(report)

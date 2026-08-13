@@ -211,3 +211,58 @@ a standard nuclear one doesn't have it" from scratch. Building parallel
 machinery in GEPER when kim_pipeline already has a working answer to
 the same underlying question would be redundant effort, not a genuine
 architectural difference between the two projects.
+
+---
+
+## Round 10 (Tavtigian net-points exposure)
+
+### 1. Whether `legacy_pre_acmg_significance_score`'s ClinVar-weight branch double-counts BP6's evidence -- untraced
+
+**What:** `pipeline/interpretation.py::InterpretationEngine.interpret()`
+computes its own pre-`ACMGRuleEngine` scoring system
+(`legacy_pre_acmg_significance_score`, renamed this round from the
+misleading `significance_score` -- see round 10's main fix). Its first
+and heaviest-weighted term reads the variant's own matched ClinVar
+record and adds `_SIGNIFICANCE_WEIGHT[sig]` (±3/±2/±1) for whatever
+`clinical_significance` ClinVar reports.
+
+`ACMGRuleEngine._combine`'s BP6 ("consistent with a benign ClinVar/
+ClinGen classification") is verified -- confirmed in source, not
+assumed -- to be structurally unable to reach `_combine`'s own
+`net_points`: `acmg_rules.py`'s combining loop `continue`s past BP6
+immediately after logging it to the trace, before either point
+accumulator runs. That guarantee is round 10's whole point and is now
+covered by `tests/test_acmg_net_points.py::
+test_bp6_still_structurally_excluded_from_net`.
+
+**What is NOT verified:** whether `legacy_pre_acmg_significance_score`'s
+independent ClinVar-weight term is drawing on the *same underlying
+fact* BP6 represents (ClinVar concordance with a benign call) for the
+same variant, at the same time BP6 has also triggered. If so, a
+variant could show BP6 triggered (correctly excluded from
+`acmg_net_points`) while `legacy_pre_acmg_significance_score` still
+moves in the benign direction from the very same ClinVar record BP6
+cites -- not a bug in `_combine` (which never sees it), but exactly
+the circularity concern `_bp6`'s own docstring and the ClinGen SVI 2018
+PP5/BP6 deprecation warn against, now potentially reappearing one
+layer over, in a field kept only as an exception-path fallback.
+
+**Why this is a candidate, not a round-10 fix:** tracing this needs a
+real matched-ClinVar-record variant where BP6 also triggers, run
+through `InterpretationEngine.interpret()` end to end, and both
+numbers compared -- round 10 was scoped to exposing `net_points`, not
+auditing the legacy fallback path's own evidence sourcing. Also worth
+weighing before investing effort here: `legacy_pre_acmg_significance_score`
+is a fallback used only when the real ACMG rule engine raises
+(`interpret()`'s own `except Exception: logger.exception("ACMG rule
+engine failed; falling back to legacy summary only.")`) -- rare by
+design, and confirmed this round not to be a documented LIMS export
+field (`LIMS_EXPORT_MAPPING.md`) or to appear in any rendered report.
+
+**Decision needed:** trace `_build_summary`/the ClinVar-weight branch
+in `pipeline/interpretation.py` against a real triggered-BP6 variant
+and determine whether the concern is real; if so, decide whether the
+fallback path should independently exclude ClinVar-derived weight when
+BP6 has triggered (mirroring `_combine`'s own exclusion), or whether
+the fallback's rare, exception-only role makes that not worth the
+added complexity.

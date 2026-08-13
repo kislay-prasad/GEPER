@@ -49,6 +49,34 @@ ACMG_METHODOLOGY_STATEMENT = (
     "the 2015 categorical table)."
 )
 
+# Display-only label for the net-points band a classification landed
+# in -- report review round 10, so a reviewer can see why a variant got
+# its classification without recomputing `ACMGRuleEngine._combine`'s
+# thresholds by hand. Keyed off the classification string itself
+# (already the authoritative output of `_combine`'s own threshold
+# comparisons), never a second, independent re-implementation of those
+# thresholds -- that would risk drifting from `_combine`'s real
+# `>= 10` / `>= 6` / `<= -1` / `<= -7` comparisons (`pipeline/
+# acmg_rules.py`) the way the discarded net ever could have. "Benign"
+# has no band label since BA1's stand-alone short-circuit never runs
+# the point tally at all (see `CombineResult`'s docstring) -- there is
+# no band to name for that classification.
+_ACMG_NET_POINTS_BAND_LABEL = {
+    "Pathogenic": "≥10",  # >=10
+    "Likely Pathogenic": "6–9",  # 6-9 (en dash)
+    "Uncertain Significance": "0–5",  # 0-5
+    "Likely Benign": "≤−1",  # <=-1
+}
+
+
+def acmg_net_points_band_label(classification: Optional[str]) -> Optional[str]:
+    """The Tavtigian net-points band (e.g. "≥10") for `classification`,
+    or `None` when there is no band to show (no classification yet, or
+    Benign via BA1's stand-alone short-circuit -- see this module's
+    `_ACMG_NET_POINTS_BAND_LABEL` comment)."""
+    return _ACMG_NET_POINTS_BAND_LABEL.get(classification or "")
+
+
 # Single source of truth for the clarifying caption shown next to every
 # place `ConfidenceEngine.score()`'s output is displayed (full PDF,
 # short PDF, Markdown) -- C2, report review round 2: this score
@@ -326,6 +354,16 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
         ],
         "combining_rule_trace": ir.get("combining_rule_trace", []),
         "not_evaluated_count": len(ir.get("not_evaluated_rules", [])),
+        # Report review round 10: the real Tavtigian point totals next
+        # to the classification they actually decided -- see
+        # `InterpretationResult.acmg_net_points`'s docstring and
+        # `acmg_net_points_band_label` above. `None` on all three only
+        # when BA1's stand-alone-benign short-circuit fired (no point
+        # tally was run), never a fabricated `0`.
+        "net_points": ir.get("acmg_net_points"),
+        "pathogenic_points": ir.get("acmg_pathogenic_points"),
+        "benign_points": ir.get("acmg_benign_points"),
+        "net_points_band": acmg_net_points_band_label(ir.get("acmg_classification")),
     }
 
 

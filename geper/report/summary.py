@@ -1022,6 +1022,21 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
 
     checkpoints = document.get("model_checkpoints") or {}
     flow.append(Paragraph("<b>AI model checkpoints:</b>", styles["BodyText"]))
+    # Round 17: see `report/report_generator.py::_render_provenance`'s
+    # identical branch for the full reasoning (ROUND_CANDIDATES.md,
+    # round 12) -- a run that died mid-loop leaves `run_complete` at its
+    # honest `False` default (also what a pre-round-17 file with no
+    # such key reads as, via `bool(...)`), and every checkpoint below is
+    # then still a bare config identifier with no real run status.
+    if not bool(document.get("run_complete")):
+        flow.append(
+            Paragraph(
+                "This run did not complete (no post-loop status enrichment was recorded) -- the "
+                "identifiers below are configuration only. Whether each model actually ran, failed to "
+                "load, or was skipped this run is not yet known.",
+                styles["StatusWarn"],
+            )
+        )
     if checkpoints:
         for name, value in sorted(checkpoints.items()):
             # See `report/report_generator.py`'s identical branch for

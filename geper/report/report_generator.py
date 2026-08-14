@@ -149,6 +149,23 @@ class ReportGenerator:
         checkpoints = json_document.get("model_checkpoints") or {}
         lines.append("**AI model checkpoints:**")
         lines.append("")
+        # Round 17: `run_complete` is `False` (its honest default, and
+        # what an absent key -- any pre-round-17 file -- also reads as
+        # via `bool(...)`, never a bare `.get(..., True)`) for a
+        # geper_results.json left behind by a run that died mid-loop.
+        # Every checkpoint below is then still the bare config
+        # identifier `pipeline/provenance.py::get_model_checkpoint_
+        # identifiers` set at startup -- correct data, but rendering it
+        # with no caveat reads as "this model's status is unremarkable",
+        # not "unknown", which is the actual honest claim
+        # (ROUND_CANDIDATES.md, round 12).
+        if not bool(json_document.get("run_complete")):
+            lines.append(
+                "_This run did not complete (no post-loop status enrichment was recorded) -- the "
+                "identifiers below are configuration only. Whether each model actually ran, failed to "
+                "load, or was skipped this run is not yet known._"
+            )
+            lines.append("")
         if checkpoints:
             for name, value in sorted(checkpoints.items()):
                 # `value` is either the enriched

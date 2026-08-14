@@ -489,6 +489,27 @@ per-model status is unavailable" instead of rendering bare identifiers), or
 leave this as a documented, understood gap until an interim file actually
 causes real confusion.
 
+**RESOLVED, round 17:** implemented exactly this decided shape after
+re-confirming it against current source (ordering unchanged since round 12:
+in-loop write still strictly precedes the post-loop
+`rollup_run_status`/`finalize_model_checkpoint_provenance` enrichment).
+`report/json_builder.py::JSONResultBuilder` gained a `run_complete: bool`
+field, `False` by default (every interim write), set `True` by
+`pipeline/orchestrator.py::run()` only after the enrichment call, immediately
+before the final write. Confirmed round 12's rejected alternative (partial
+rollup at the interim write) is still the wrong call, and that round 16's
+`NotEvaluatedReason` doesn't change this decision -- that machinery
+partitions per-criterion inapplicability reasons; this is a document-level
+"did the post-loop enrichment step run" flag, a different question.
+Also fixed the report-layer half: `report/report_generator.py::
+_render_provenance` and `report/summary.py::_build_provenance_flowables`
+(the 2 of GEPER's 3 renderers that touch `model_checkpoints`/`provenance` at
+all -- `summary_short.py` renders neither, confirmed by grep) now print an
+explicit "this run did not complete" notice ahead of the checkpoint list
+whenever `run_complete` is falsy, including when the key is absent entirely
+(a pre-round-17 file), via `bool(document.get("run_complete"))`, never a
+bare `.get("run_complete", True)`. See `tests/test_round17_run_complete_marker.py`.
+
 ### 2. The `transformers` pin: no verified SpliceBERT run has ever used the committed environment
 
 **What:** `git log -p --follow -- geper/requirements.txt` -- four commits ever
@@ -694,3 +715,36 @@ offline, one test class per fixed site, each asserting its own site's
 real expected target token for all four MT spellings (not one shared
 parametrized expectation, since the targets differ) plus a nuclear-
 chrom-unaffected case per site.
+
+---
+
+## Round 17 (checkpoint run_complete marker)
+
+Implemented round 12's decided `run_complete` shape (see that round's own
+entry above, now marked RESOLVED) -- no new candidate from the fix itself.
+One thing found while running this round's regression pass, unrelated to
+the fix:
+
+### 1. `test_provenance.py::TestOrchestratorStageProvenanceCapture::test_functional_evidence_source_routes_to_the_right_record` fails on a clean checkout, before any round-17 change
+
+**What:** `python -m pytest tests/test_provenance.py -q` fails this one test
+on `master` @ `60493fe` (confirmed via `git stash push -u` back to a fully
+clean tree, no round-17 changes present) -- `fake_self.provenance.get(
+"Functional evidence (MaveDB)").status` is `VersionStatus.NOT_CONSULTED`,
+the test expects `VersionStatus.TIMESTAMP_ONLY`, for a
+`functional_evidence_result={"found": True, "source": "mavedb"}` input. Not
+caused or touched by round 17 -- none of this round's changes (`report/
+json_builder.py`, `pipeline/orchestrator.py`, `report/report_generator.py`,
+`report/summary.py`) touch functional-evidence routing or `VersionStatus`.
+
+**Why this is a candidate, not a round-17 fix:** out of scope for a
+checkpoint-provenance round; this is PS3/BS3 functional-evidence provenance
+routing (`pipeline/orchestrator.py`'s stage-provenance capture, MaveDB
+source specifically), a different subsystem than `model_checkpoints`.
+
+**Decision needed:** whether this is a genuine regression (something
+already broke functional-evidence provenance routing and nobody's run this
+specific test since) or the test itself is stale against a since-changed
+`VersionStatus` default. Needs someone to trace `_capture_functional_evidence_provenance`
+(or wherever MaveDB routing actually lives) against what this test assumes,
+which round 17 didn't have scope to do.

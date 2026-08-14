@@ -60,6 +60,33 @@ class JSONResultBuilder:
         self.provenance_collector = provenance_collector
         self.code_version = code_version
         self.model_checkpoints = model_checkpoints or {}
+        # Round 17: `model_checkpoints` is enriched with each model's
+        # real per-run status (USED/FAILED/DISABLED/SKIPPED --
+        # `pipeline/provenance.py::finalize_model_checkpoint_provenance`)
+        # exactly once, after `pipeline/orchestrator.py::run()`'s entire
+        # per-variant loop finishes -- but `write()` is also called
+        # periodically DURING that loop (`CONFIG.CHECKPOINT_INTERVAL`),
+        # before that enrichment has run. Without this flag, a
+        # geper_results.json left behind by a run that died mid-loop
+        # (Colab idle disconnect, quota exhaustion, a kill -9 -- all
+        # confirmed to actually happen against this pipeline) is
+        # structurally indistinguishable from a genuinely completed
+        # run's manifest: every model shows its bare config identifier,
+        # with nothing saying the enrichment step never ran (ROUND_CANDIDATES.md,
+        # round 12, "An interim checkpoint write is structurally
+        # indistinguishable from a completed run's manifest").
+        #
+        # Starts `False` (the honest default for a `write()` mid-loop);
+        # the orchestrator sets it `True` only after the post-loop
+        # rollup/enrichment, immediately before the final `write()`.
+        # Absent must read as `False` everywhere this is checked -- see
+        # `report/report_generator.py::_render_provenance` and
+        # `report/summary.py::_build_provenance_flowables`, both of
+        # which use `bool(document.get("run_complete"))` rather than a
+        # bare `.get("run_complete", True)`/truthiness-assumed default,
+        # so a pre-round-17 file (no `run_complete` key at all) reads as
+        # incomplete rather than silently claiming completeness.
+        self.run_complete = False
         # DPDP Act 2023 consent metadata (minimal, capture-only -- see
         # report/summary.py::_parse_consent's docstring for exactly
         # what this is and, more importantly, is NOT: no storage
@@ -90,6 +117,8 @@ class JSONResultBuilder:
             # the DATA each variant's evidence came from).
             "code_version": self.code_version,
             "model_checkpoints": self.model_checkpoints,
+            # Round 17 -- see this class's own `self.run_complete` comment.
+            "run_complete": self.run_complete,
             # Data-source provenance (task points 1-4, 6): one entry
             # per known external source, always present (never omitted)
             # -- a source this run never consulted still appears, with

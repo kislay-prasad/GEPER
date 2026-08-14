@@ -850,6 +850,15 @@ class GeperPipeline:
         run_model_status = rollup_run_status([vr.get("ai_model_status") for vr in result_builder.variant_results])
         self.model_checkpoints.update(finalize_model_checkpoint_provenance(self.model_checkpoints, run_model_status))
 
+        # Round 17: only true here, after the enrichment immediately
+        # above -- every earlier `result_builder.write(json_path)` call
+        # (the periodic in-loop checkpoint a few lines up) left this
+        # `False`, its honest default, since `model_checkpoints` at that
+        # point was still bare config identifiers with no real run
+        # status attached. See `report/json_builder.py::
+        # JSONResultBuilder.__init__`'s `self.run_complete` comment.
+        result_builder.run_complete = True
+
         json_document = result_builder.build()
 
         # Phase 4: batch-relative priority ranking. `priority_score` is

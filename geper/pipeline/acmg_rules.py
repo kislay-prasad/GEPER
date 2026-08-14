@@ -180,40 +180,104 @@ _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS: Dict[str, str] = {
 # section docstring above).
 _MTDNA_PROTEIN_DEPENDENT_CODES = ("PS1", "PM1", "PM4", "PM5", "BP1", "BP3")
 
-# Round 14, B2: rendered on every mitochondrial finding (Markdown, full PDF,
-# short PDF), not report-level -- a clinical reviewer reads findings, not
-# preambles, and a chrM finding showing some evaluated criteria and a
-# classification looks like a complete interpretation to anyone who skipped
-# the header. Counts are round 14 B1's own corrected numbers, restated
-# verbatim rather than re-derived: 28 total ACMG/AMP criteria, 9 GEPER never
-# evaluates for any variant (no data source integrated), 19 remain "live",
-# of which 7 are inapplicable to the mitochondrial compartment specifically
-# (see `_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS`) and 12 can run once
-# transcript resolution works (fewer for a gene with no protein-coding
-# transcript -- see `_MTDNA_PROTEIN_DEPENDENT_CODES`).
-MTDNA_INTERPRETATION_DISCLAIMER = (
-    "Mitochondrial (mtDNA) compartment notice: this variant is on the mitochondrial genome. "
-    "Of the 28 standard ACMG/AMP criteria, GEPER never evaluates 9 for any variant (no data source "
-    "integrated), and a further 7 are inapplicable specifically to the mitochondrial compartment "
-    "(PVS1, PM2, BA1, BS1, PP3, BP4, BP7 -- each marked not_evaluated below with its own stated "
-    "reason, never silently skipped). Of the remaining 12, only those with a protein-coding "
-    "transcript for this gene actually ran. This evaluation does NOT incorporate heteroplasmy "
-    "level, maternal inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has a separate "
-    "mitochondrial DNA variant interpretation specification (McCormick et al. 2020) that this "
-    "evaluation does not fully implement. The classification below reflects only the criteria "
-    "GEPER actually evaluated for this compartment -- it is not a complete, "
-    "mtDNA-specification-compliant interpretation."
-)
+# Round 14, B3: fixes a factual error in round 14 B2's disclaimer, caught
+# on review. The original text said "of the remaining 12, only those with a
+# protein-coding transcript for this gene actually ran" -- false: only 6 of
+# those 12 (`_MTDNA_PROTEIN_DEPENDENT_CODES`) need a protein-coding
+# transcript. The other 6 (PS3, BS3, PP1, PP4, BS4, BP6) apply to ANY
+# mitochondrial gene class and ran on the MT-TL1 (tRNA) case exactly as they
+# ran on the MT-ATP6 (protein-coding) case -- the rendered per-criterion
+# table already proved this; the disclaimer's prose just didn't match it.
+# On a signed clinical document, understating what was actually evaluated
+# is the opposite of this round's purpose.
+#
+# Rendered on every mitochondrial finding (Markdown, full PDF, short PDF),
+# not report-level -- a clinical reviewer reads findings, not preambles.
+# Now a function of `transcript_result` (already available to every
+# renderer via `variant_result["transcript"]`, no new plumbing) rather than
+# a fixed string, so the wording states what actually happened for THIS
+# finding's gene class instead of describing both cases generically every
+# time. Counts are round 14 B1's own corrected numbers, restated verbatim:
+# 28 total ACMG/AMP criteria, 9 GEPER never evaluates for any variant (no
+# data source integrated), 19 remain "live", of which 7 are inapplicable to
+# the mitochondrial compartment specifically
+# (`_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS`) and 12 can in principle run,
+# 6 of those unconditionally (`_MTDNA_UNGATED_APPLICABLE_CODES`) and 6 only
+# for a protein-coding gene (`_MTDNA_PROTEIN_DEPENDENT_CODES`).
+_MTDNA_UNGATED_APPLICABLE_CODES = ("PS3", "BS3", "PP1", "PP4", "BS4", "BP6")
 
-# Compact one-line form for the short PDF's tight per-variant space budget
-# -- same substance (heteroplasmy/inheritance/tissue/MITOMAP not
-# incorporated, separate mtDNA spec not fully implemented), no criterion
-# counts (the full PDF/Markdown carry those).
-MTDNA_INTERPRETATION_DISCLAIMER_SHORT = (
-    "Mitochondrial (mtDNA) finding: does not incorporate heteroplasmy level, maternal inheritance, "
-    "tissue distribution, or MITOMAP; ACMG/AMP's separate mtDNA specification (McCormick et al. "
-    "2020) is not fully implemented. Not a complete mtDNA-specification-compliant interpretation."
-)
+
+def _mtdna_gene_class(transcript_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """`"protein_coding"` / the real Ensembl biotype string / `None`
+    (undetermined) -- see `_mtdna_rna_gene_reason` for the same read of
+    `transcript_result`."""
+    transcript_result = transcript_result or {}
+    if transcript_result.get("found") and transcript_result.get("transcript"):
+        return "protein_coding"
+    return transcript_result.get("gene_biotype")
+
+
+def mtdna_interpretation_disclaimer(transcript_result: Optional[Dict[str, Any]] = None) -> str:
+    """The full-length per-finding mtDNA disclaimer (Markdown, full PDF).
+    Adapts its middle clause to this finding's actual gene class -- see
+    this module's own comment above for why a fixed string was wrong."""
+    gene_class = _mtdna_gene_class(transcript_result)
+    if gene_class == "protein_coding":
+        middle = (
+            "a further 7 are inapplicable specifically to the mitochondrial compartment (PVS1, PM2, "
+            "BA1, BS1, PP3, BP4, BP7 -- each marked not_evaluated below with its own stated reason). "
+            "The remaining 12 (PS1, PM1, PM4, PM5, BP1, BP3, PS3, BS3, PP1, PP4, BS4, BP6) were "
+            "evaluated for real against this gene's protein-coding transcript."
+        )
+    elif gene_class:
+        middle = (
+            "a further 7 are inapplicable specifically to the mitochondrial compartment (PVS1, PM2, "
+            "BA1, BS1, PP3, BP4, BP7), and 6 more (PS1, PM1, PM4, PM5, BP1, BP3) are inapplicable for "
+            f"this specific gene because it has no protein-coding transcript (Ensembl biotype "
+            f"'{gene_class}' -- 22 of the 37 mitochondrial genes encode tRNAs, 2 encode rRNAs; this "
+            "is mitochondrial gene biology, not a missing lookup). The remaining 6 (PS3, BS3, PP1, "
+            "PP4, BS4, BP6) were still evaluated for real, since they apply to any mitochondrial gene "
+            "class."
+        )
+    else:
+        middle = (
+            "a further 7 are inapplicable specifically to the mitochondrial compartment (PVS1, PM2, "
+            "BA1, BS1, PP3, BP4, BP7). Of the remaining 12, 6 (PS3, BS3, PP1, PP4, BS4, BP6) apply to "
+            "any mitochondrial gene class and were evaluated for real; the other 6 (PS1, PM1, PM4, "
+            "PM5, BP1, BP3) additionally need a protein-coding transcript for this specific gene, "
+            "which could not be confirmed for this variant."
+        )
+    return (
+        "Mitochondrial (mtDNA) compartment notice: this variant is on the mitochondrial genome. Of "
+        f"the 28 standard ACMG/AMP criteria, GEPER never evaluates 9 for any variant (no data source "
+        f"integrated), and {middle} This evaluation does NOT incorporate heteroplasmy level, maternal "
+        "inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has a separate mitochondrial "
+        "DNA variant interpretation specification (McCormick et al. 2020) that this evaluation does "
+        "not fully implement. The classification below reflects only the criteria GEPER actually "
+        "evaluated for this compartment -- it is not a complete, mtDNA-specification-compliant "
+        "interpretation."
+    )
+
+
+def mtdna_interpretation_disclaimer_short(transcript_result: Optional[Dict[str, Any]] = None) -> str:
+    """Compact one-line form for the short PDF's tight per-variant space
+    budget -- same substance (heteroplasmy/inheritance/tissue/MITOMAP not
+    incorporated, separate mtDNA spec not fully implemented) plus a short,
+    still gene-class-accurate clause on what actually ran; no criterion
+    counts (the full PDF/Markdown carry those)."""
+    gene_class = _mtdna_gene_class(transcript_result)
+    if gene_class == "protein_coding":
+        scope = "criteria needing a protein-coding transcript ran for this gene"
+    elif gene_class:
+        scope = f"only gene-class-independent criteria ran (biotype '{gene_class}', no protein-coding transcript)"
+    else:
+        scope = "gene-class-independent criteria ran; protein-dependent criteria could not be confirmed"
+    return (
+        f"Mitochondrial (mtDNA) finding: {scope}. Does not incorporate heteroplasmy level, maternal "
+        "inheritance, tissue distribution, or MITOMAP; ACMG/AMP's separate mtDNA specification "
+        "(McCormick et al. 2020) is not fully implemented. Not a complete mtDNA-specification-"
+        "compliant interpretation."
+    )
 
 
 _MTDNA_EVIDENCE_SKIP_REASON = (

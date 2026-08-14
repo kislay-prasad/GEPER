@@ -1,5 +1,5 @@
 """
-Round 14, B2: the mtDNA compartment gate.
+Round 14, B2/B3: the mtDNA compartment gate.
 
 Replaces round 8's whole-variant rejection (`is_mitochondrial_chrom` at
 the top of `_process_variant`, returning a bare `out_of_scope` record --
@@ -13,13 +13,39 @@ non-protein-coding mitochondrial genes (22 tRNA + 2 rRNA), derived from
 the real Ensembl `biotype` on `transcript_result["gene_biotype"]`
 (round 14, B1), never a hardcoded gene list.
 
+B3 correction: the per-finding disclaimer originally said "of the
+remaining 12, only those with a protein-coding transcript for this gene
+actually ran" -- false for 6 of those 12 (PS3, BS3, PP1, PP4, BS4, BP6
+apply to any mitochondrial gene class and ran on the RNA-gene case too).
+`mtdna_interpretation_disclaimer(transcript_result)` is now a function of
+gene class, not a fixed string; the tests below assert its actual
+factual claims per gene class, not just its presence.
+
+B3 also resolved a real missing-vs-empty ambiguity: PM1 previously
+landed on the generic "InterPro domain annotation was unavailable"
+message for the MT-ATP6 case purely because this file's own fixture
+passed empty `uniprot_result`/`interpro_result` dicts -- an artifact of
+an incomplete test fixture, not a real compartment gap. Confirmed live
+against the real InterPro REST API this round: MT-ATP6 (P00846), MT-CO1
+(P00395), and MT-ND1 (P03886) all have real, substantial domain/
+active-site/conserved-site annotations (12, 13, and 7 entries
+respectively) -- InterPro genuinely covers mitochondrially-encoded
+proteins. m.8993T>G's real residue, 156, falls inside MT-ATP6's real
+InterPro active-site region IPR023011/PS00449 (155-164), confirmed via
+the same live query. `_MT_ATP6_INTERPRO_RESULT` below uses that real
+data, so PM1 now genuinely triggers in `TestProteinCodingMtVariant`
+rather than landing on an artifact "unavailable" message -- no gating
+change was needed (PM1 was never moved into the compartment-inapplicable
+set), only the test fixture's own completeness.
+
 Real facts used below, not invented: MT-ATP6's real GRCh38 transcript
-structure (`ENST00000361899`, single exon 8527-9207, real CDS sequence)
-and m.8993T>G's real, textbook consequence (p.Leu156Arg, the NARP/Leigh
-variant) -- both independently confirmed live against Ensembl in round
-14, B1. MT-TL1's real biotype (`Mt_tRNA`, confirmed live against Ensembl
-in this same round) and m.3243A>G, the real ClinVar-pathogenic MELAS
-variant already used by the (now-removed) round-8 test fixture.
+structure (`ENST00000361899`, single exon 8527-9207, real CDS sequence),
+m.8993T>G's real, textbook consequence (p.Leu156Arg, the NARP/Leigh
+variant), and its real InterPro/UniProt domain data (all independently
+confirmed live in round 14, B1/B3). MT-TL1's real biotype (`Mt_tRNA`,
+confirmed live against Ensembl) and m.3243A>G, the real
+ClinVar-pathogenic MELAS variant already used by the (now-removed)
+round-8 test fixture.
 
 SCOPE BOUNDARY: `pipeline.orchestrator` is deliberately NOT imported
 here -- confirmed this round (`import pipeline.orchestrator` alone took
@@ -43,11 +69,11 @@ import unittest
 
 from pipeline.acmg_rules import (
     ACMGRuleEngine,
-    MTDNA_INTERPRETATION_DISCLAIMER,
-    MTDNA_INTERPRETATION_DISCLAIMER_SHORT,
     mtdna_alphamissense_skip_result,
     mtdna_ensemble_skip_result,
     mtdna_gnomad_skip_result,
+    mtdna_interpretation_disclaimer,
+    mtdna_interpretation_disclaimer_short,
     mtdna_mmsplice_skip_result,
     mtdna_splice_plugin_skip_result,
 )
@@ -91,6 +117,72 @@ _MT_ATP6_TRANSCRIPT_RESULT = {
         "source": "ensembl_gtf_cache",
         "cds_sequence": _MT_ATP6_CDS_SEQUENCE,
     },
+}
+
+# MT-ATP6's real UniProt accession and a real subset of its InterPro
+# domain/site annotations (confirmed live against the InterPro REST API,
+# `entry/all/protein/uniprot/P00846/`, round 14 B3) -- see this module's
+# docstring. `IPR000568` is a `family`-type entry (excluded from PM1's
+# domain-overlap check, same as every other criterion's family-entry
+# exclusion); `IPR023011`/`PS00449` is the real active-site region
+# (155-164) that m.8993T>G's real residue, 156, falls inside.
+_MT_ATP6_UNIPROT_RESULT = {
+    "skipped": False,
+    "found": True,
+    "accession": "P00846",
+    "entry_name": "ATP6_HUMAN",
+    "protein_name": "ATP synthase F0 subunit 6",
+    "reviewed": True,
+}
+
+_MT_ATP6_INTERPRO_DOMAINS = [
+    {
+        "interpro_accession": "IPR000568",
+        "name": "ATP synthase, F0 complex, subunit A",
+        "short_name": None,
+        "type": "family",
+        "member_database": "interpro",
+        "member_accession": "IPR000568",
+        "start": 1,
+        "end": 226,
+    },
+    {
+        "interpro_accession": "IPR023011",
+        "name": "ATP synthase, F0 complex, subunit A, active site",
+        "short_name": None,
+        "type": "active_site",
+        "member_database": "prosite_profiles",
+        "member_accession": "PS00449",
+        "start": 155,
+        "end": 164,
+    },
+    {
+        "interpro_accession": "IPR000568",
+        "name": "ATP synthase A chain",
+        "short_name": None,
+        "type": "domain",
+        "member_database": "pfam",
+        "member_accession": "PF00119",
+        "start": 20,
+        "end": 222,
+    },
+]
+
+_MT_ATP6_INTERPRO_RESULT = {
+    "skipped": False,
+    "found": True,
+    "accession": "P00846",
+    "source": "interpro_rest_api",
+    "domains": _MT_ATP6_INTERPRO_DOMAINS,
+    "error": None,
+    "api_version": "109.0",
+    "protein_position": 156,
+    # Mirrors `InterProLookup.query_variant`'s own filter: non-family
+    # entries whose [start, end] span contains residue 156.
+    "affected_domains": [
+        d for d in _MT_ATP6_INTERPRO_DOMAINS if d["type"] != "family" and d["start"] <= 156 <= d["end"]
+    ],
+    "protein_position_basis": "transcript_cds",
 }
 
 # MT-TL1's real biotype, confirmed live against Ensembl this round --
@@ -180,8 +272,25 @@ class TestProteinCodingMtVariant(unittest.TestCase):
     protein-coding transcript."""
 
     def setUp(self):
-        self.acmg = _evaluate(_MT_ATP6_VARIANT, _MT_ATP6_TRANSCRIPT_RESULT)
+        self.acmg = _evaluate(
+            _MT_ATP6_VARIANT,
+            _MT_ATP6_TRANSCRIPT_RESULT,
+            uniprot_result=_MT_ATP6_UNIPROT_RESULT,
+            interpro_result=_MT_ATP6_INTERPRO_RESULT,
+        )
         self.by_code = self.acmg["all_criteria"]
+
+    def test_pm1_triggers_on_real_interpro_active_site_overlap(self):
+        # Resolves round 14 B3's item 2: with real InterPro/UniProt
+        # evidence (not the empty dicts an earlier fixture used), PM1
+        # genuinely runs and triggers -- residue 156 falls inside
+        # MT-ATP6's real active-site region -- rather than landing on
+        # the generic "unavailable" message, which was a fixture
+        # artifact, not a real compartment gap.
+        pm1 = self.by_code["PM1"]
+        self.assertEqual(pm1["status"], "triggered")
+        self.assertIn("156", pm1["rationale"])
+        self.assertNotIn("unavailable", pm1["rationale"])
 
     def test_seven_structural_criteria_not_evaluated_with_distinct_reasons(self):
         reasons = set()
@@ -418,11 +527,16 @@ class TestNuclearVariantsUnaffected(unittest.TestCase):
 
 class TestPerFindingDisclaimer(unittest.TestCase):
     """(e) the disclaimer appears on chrM findings and NOT on nuclear
-    ones, in all three renderers."""
+    ones, in all three renderers -- and (B3) asserts its actual factual
+    claims per gene class, not just its presence. A test that only
+    checked the text existed would have passed with the old, wrong
+    wording just as easily as with the corrected one."""
 
-    def _mt_variant_result(self):
+    def _variant_result(self, variant_dict, transcript_result, uniprot_result=None, interpro_result=None):
+        uniprot_result = uniprot_result or {}
+        interpro_result = interpro_result or {}
         interpretation = InterpretationEngine().interpret(
-            variant_dict=_MT_ATP6_VARIANT,
+            variant_dict=variant_dict,
             dna_models_used=[],
             clinvar_result={"records": []},
             dbsnp_result={"found": False},
@@ -433,12 +547,12 @@ class TestPerFindingDisclaimer(unittest.TestCase):
             gnomad_result=mtdna_gnomad_skip_result(),
             conservation_result={},
             clingen_result={},
-            uniprot_result={},
-            interpro_result={},
+            uniprot_result=uniprot_result,
+            interpro_result=interpro_result,
             alphafold_result={},
             rna_result={},
             ensemble_result=mtdna_ensemble_skip_result(),
-            transcript_result=_MT_ATP6_TRANSCRIPT_RESULT,
+            transcript_result=transcript_result,
             clinvar_codon_result={},
             spliceformer_result=mtdna_splice_plugin_skip_result(),
             splicebert_result=mtdna_splice_plugin_skip_result(),
@@ -447,7 +561,7 @@ class TestPerFindingDisclaimer(unittest.TestCase):
             functional_evidence_result={},
         )
         return build_variant_result(
-            variant_dict=_MT_ATP6_VARIANT,
+            variant_dict=variant_dict,
             sequence_context={"error": "not applicable to this test"},
             dna_model_results={},
             rna_result={},
@@ -460,30 +574,69 @@ class TestPerFindingDisclaimer(unittest.TestCase):
             alphamissense_result=mtdna_alphamissense_skip_result(),
             mmsplice_result=mtdna_mmsplice_skip_result(),
             gnomad_result=mtdna_gnomad_skip_result(),
-            transcript_result=_MT_ATP6_TRANSCRIPT_RESULT,
+            transcript_result=transcript_result,
             ai_splicing_ensemble_result=mtdna_ensemble_skip_result(),
         )
+
+    def _protein_coding_variant_result(self):
+        return self._variant_result(
+            _MT_ATP6_VARIANT, _MT_ATP6_TRANSCRIPT_RESULT, _MT_ATP6_UNIPROT_RESULT, _MT_ATP6_INTERPRO_RESULT
+        )
+
+    def _rna_gene_variant_result(self):
+        return self._variant_result(_MT_TL1_VARIANT, _MT_TL1_TRANSCRIPT_RESULT)
 
     def _nuclear_variant_result(self):
         return {"variant": {"chrom": "17", "pos": 43106534, "ref": "C", "alt": "A"}, "clinical_report": {}}
 
     def test_markdown_shows_disclaimer_only_on_mt_finding(self):
         gen = report_generator_module.ReportGenerator()
-        mt_lines = gen._render_variant_section(1, self._mt_variant_result())
+        mt_lines = gen._render_variant_section(1, self._protein_coding_variant_result())
         nuclear_lines = gen._render_variant_section(1, self._nuclear_variant_result())
         self.assertTrue(any("Mitochondrial (mtDNA) compartment notice" in line for line in mt_lines))
         self.assertFalse(any("Mitochondrial (mtDNA) compartment notice" in line for line in nuclear_lines))
 
     def test_markdown_disclaimer_names_heteroplasmy_and_mitomap(self):
         gen = report_generator_module.ReportGenerator()
-        text = "\n".join(gen._render_variant_section(1, self._mt_variant_result()))
+        text = "\n".join(gen._render_variant_section(1, self._protein_coding_variant_result()))
         self.assertIn("heteroplasmy", text)
         self.assertIn("MITOMAP", text)
         self.assertIn("McCormick", text)
 
+    def test_protein_coding_disclaimer_says_all_twelve_ran_never_the_old_wrong_claim(self):
+        # The B3 fix: must state that PS3/BS3/PP1/PP4/BS4/BP6 (the
+        # gene-class-independent 6) ran alongside the protein-dependent
+        # 6 -- and must NOT contain the original, factually wrong "only
+        # those with a protein-coding transcript ... actually ran"
+        # framing that implied the other 6 didn't run.
+        text = mtdna_interpretation_disclaimer(_MT_ATP6_TRANSCRIPT_RESULT)
+        self.assertIn("PS1, PM1, PM4, PM5, BP1, BP3, PS3, BS3, PP1, PP4, BS4, BP6", text)
+        self.assertIn("evaluated for real against this gene's protein-coding transcript", text)
+        self.assertNotIn("only those with a protein-coding transcript for this gene actually ran", text)
+        self.assertNotIn("biotype", text)
+
+    def test_rna_gene_disclaimer_states_which_six_ran_and_which_six_gated(self):
+        # Must explicitly say the gene-class-independent 6 STILL ran
+        # (this is exactly what the original wording understated), and
+        # separately name the 6 gated for lack of a protein-coding
+        # transcript, with the real biotype.
+        text = mtdna_interpretation_disclaimer(_MT_TL1_TRANSCRIPT_RESULT)
+        self.assertIn("PS3, BS3, PP1, PP4, BS4, BP6", text)
+        self.assertIn("were still evaluated for real", text)
+        self.assertIn("PS1, PM1, PM4, PM5, BP1, BP3", text)
+        self.assertIn("Mt_tRNA", text)
+        self.assertNotIn("only those with a protein-coding transcript for this gene actually ran", text)
+
+    def test_disclaimer_with_no_transcript_result_does_not_overclaim(self):
+        # Gene class genuinely undetermined (no transcript_result at
+        # all) -- must not claim either subset definitively ran/didn't.
+        text = mtdna_interpretation_disclaimer(None)
+        self.assertIn("could not be confirmed for this variant", text)
+        self.assertNotIn("only those with a protein-coding transcript for this gene actually ran", text)
+
     def test_full_pdf_shows_disclaimer_only_on_mt_finding(self):
         styles = summary_module._build_stylesheet()
-        mt_flow = summary_module._build_variant_section(1, self._mt_variant_result(), styles)
+        mt_flow = summary_module._build_variant_section(1, self._protein_coding_variant_result(), styles)
         nuclear_flow = summary_module._build_variant_section(1, self._nuclear_variant_result(), styles)
         mt_text = "\n".join(getattr(f, "text", "") for f in mt_flow if hasattr(f, "text"))
         nuclear_text = "\n".join(getattr(f, "text", "") for f in nuclear_flow if hasattr(f, "text"))
@@ -492,18 +645,29 @@ class TestPerFindingDisclaimer(unittest.TestCase):
 
     def test_short_pdf_shows_disclaimer_only_on_mt_finding(self):
         styles = summary_short_module._build_short_stylesheet()
-        mt_flow = summary_short_module._build_variant_block(1, self._mt_variant_result(), styles)
+        mt_flow = summary_short_module._build_variant_block(1, self._protein_coding_variant_result(), styles)
         nuclear_flow = summary_short_module._build_variant_block(1, self._nuclear_variant_result(), styles)
         mt_text = "\n".join(getattr(f, "text", "") for f in mt_flow if hasattr(f, "text"))
         nuclear_text = "\n".join(getattr(f, "text", "") for f in nuclear_flow if hasattr(f, "text"))
         self.assertIn("Mitochondrial (mtDNA) finding", mt_text)
         self.assertNotIn("Mitochondrial (mtDNA) finding", nuclear_text)
 
-    def test_disclaimer_constants_are_not_accidentally_identical(self):
+    def test_short_disclaimer_also_distinguishes_gene_class(self):
+        protein_coding_text = mtdna_interpretation_disclaimer_short(_MT_ATP6_TRANSCRIPT_RESULT)
+        rna_gene_text = mtdna_interpretation_disclaimer_short(_MT_TL1_TRANSCRIPT_RESULT)
+        self.assertNotEqual(protein_coding_text, rna_gene_text)
+        self.assertIn("Mt_tRNA", rna_gene_text)
+        self.assertNotIn("Mt_tRNA", protein_coding_text)
+
+    def test_short_disclaimer_is_shorter_than_full_for_both_gene_classes(self):
         # The short form must actually be shorter -- a copy-paste bug
         # that made them identical would defeat the short PDF's whole
         # space-budget rationale.
-        self.assertLess(len(MTDNA_INTERPRETATION_DISCLAIMER_SHORT), len(MTDNA_INTERPRETATION_DISCLAIMER))
+        for transcript_result in (_MT_ATP6_TRANSCRIPT_RESULT, _MT_TL1_TRANSCRIPT_RESULT):
+            with self.subTest(gene=transcript_result.get("gene_symbol")):
+                short_text = mtdna_interpretation_disclaimer_short(transcript_result)
+                full_text = mtdna_interpretation_disclaimer(transcript_result)
+                self.assertLess(len(short_text), len(full_text))
 
 
 if __name__ == "__main__":

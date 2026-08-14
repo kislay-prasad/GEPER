@@ -59,7 +59,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER_SHORT
+from pipeline.acmg_rules import mtdna_interpretation_disclaimer_short
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from report.summary import (
@@ -500,7 +500,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     # tight per-variant space budget.
     if is_mitochondrial_chrom(variant.get("chrom")):
         flow.append(Spacer(1, 1 * mm))
-        flow.append(Paragraph(MTDNA_INTERPRETATION_DISCLAIMER_SHORT, styles["Flag"]))
+        flow.append(Paragraph(mtdna_interpretation_disclaimer_short(variant_result.get("transcript")), styles["Flag"]))
 
     flow.append(Spacer(1, 1.5 * mm))
     flow.append(Paragraph(_short_interpretation(clinical), styles["BodyText"]))

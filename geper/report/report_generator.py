@@ -12,7 +12,7 @@ from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DIS
 from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
-from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER
+from pipeline.acmg_rules import mtdna_interpretation_disclaimer
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED, FAILED, SKIPPED, USED, render_status_table_lines
 
@@ -304,7 +304,7 @@ class ReportGenerator:
         # classification looks complete to anyone who skipped the header.
         # Placed first, before any criteria/classification content.
         if is_mitochondrial_chrom(variant.get("chrom")):
-            lines.append(f"> **{MTDNA_INTERPRETATION_DISCLAIMER}**")
+            lines.append(f"> **{mtdna_interpretation_disclaimer(result.get('transcript'))}**")
             lines.append("")
 
         out_of_scope = result.get("out_of_scope")

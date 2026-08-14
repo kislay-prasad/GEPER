@@ -50,7 +50,7 @@ from reportlab.platypus.flowables import Flowable
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from config import CONFIG
-from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER
+from pipeline.acmg_rules import mtdna_interpretation_disclaimer
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED as _STATUS_DISABLED
 from pipeline.models.status import FAILED as _STATUS_FAILED
@@ -1877,7 +1877,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     # Round 14, B2: per-finding, not report-level -- see
     # report/report_generator.py's identical placement/reasoning.
     if is_mitochondrial_chrom(variant.get("chrom")):
-        flow.append(Paragraph(MTDNA_INTERPRETATION_DISCLAIMER, styles["StatusWarn"]))
+        flow.append(Paragraph(mtdna_interpretation_disclaimer(variant_result.get("transcript")), styles["StatusWarn"]))
         flow.append(Spacer(1, 2 * mm))
 
     out_of_scope = variant_result.get("out_of_scope")

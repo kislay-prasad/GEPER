@@ -195,8 +195,16 @@ def _resolve_rsid(chrom: str, pos: int, ref: str, alt: str) -> Optional[str]:
     indels whose anchor-base offset this simple check does not attempt
     to reconcile -- scoped to the common SNV case a fallback needs, not
     a full re-implementation of dbSNP's own allele normalization.
+
+    The mitochondrial contig needs its own case: Ensembl's REST API
+    wants 'MT', never bare 'M' (same convention already fixed for
+    `pipeline/ensembl/provider.py::_normalize_chrom` and
+    `pipeline/clingen/utils.py::_fetch_overlapping_genes` in round 14,
+    which this mirrors -- round 15 finding for this call site).
     """
     bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    if bare_chrom.upper() in ("M", "MT"):
+        bare_chrom = "MT"
     url = f"{_rest_base()}/overlap/region/human/{bare_chrom}:{pos}-{pos}"
     try:
         candidates = _get(url, {"feature": "variation", "content-type": "application/json"})

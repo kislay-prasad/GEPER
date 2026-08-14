@@ -322,8 +322,11 @@ class SequenceContextGenerator:
 
     @staticmethod
     def _normalize_chrom(chrom: str) -> str:
-        """Ensembl expects '1', 'X', 'MT' (no 'chr' prefix)."""
-        normalized = chrom.replace("chr", "").replace("Chr", "").replace("CHR", "")
-        if normalized in ("M", "mt", "Mt"):
+        """Ensembl expects '1', 'X', 'MT' (no 'chr' prefix). Prefix
+        stripping and the M-family special case are both
+        case-insensitive (round 15: the previous exact-case checks
+        missed spellings like all-lowercase 'chrm')."""
+        normalized = chrom[3:] if chrom.lower().startswith("chr") else chrom
+        if normalized.upper() in ("M", "MT"):
             normalized = "MT"
         return normalized

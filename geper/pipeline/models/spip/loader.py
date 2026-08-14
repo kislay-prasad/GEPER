@@ -81,9 +81,7 @@ def find_rscript() -> Optional[str]:
 
 
 def _run_r_expr(rscript_path: str, expr: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [rscript_path, "-e", expr], capture_output=True, text=True, timeout=timeout
-    )
+    return subprocess.run([rscript_path, "-e", expr], capture_output=True, text=True, timeout=timeout)
 
 
 def is_r_package_installed(rscript_path: str, package: str) -> bool:
@@ -189,10 +187,7 @@ def prepare_runtime_dir(cache_dir: Path, genome: str = DEFAULT_GENOME) -> Path:
     transcriptome_filename = f"transcriptome_{genome}.RData"
     transcriptome_dest = ref_dir / transcriptome_filename
     if not transcriptome_dest.is_file():
-        logger.info(
-            f"Downloading SPiP transcriptome reference '{transcriptome_filename}' "
-            "(~370-400MB, one-time) ..."
-        )
+        logger.info(f"Downloading SPiP transcriptome reference '{transcriptome_filename}' (~370-400MB, one-time) ...")
         _download_file(_SOURCEFORGE_TRANSCRIPTOME_TEMPLATE.format(genome=genome), transcriptome_dest)
 
     return runtime_dir
@@ -225,8 +220,21 @@ def build_minimal_vcf(chrom: str, pos: int, ref: str, alt: str, variant_id: str 
     `#CHROM`), then the standard 8 mandatory VCF columns. Verified
     against the upstream repo's own `testVar.vcf` example, including
     its "chr17"-style (not bare "17") contig naming convention.
+
+    The mitochondrial contig needs its own case: SPiP's underlying
+    BSgenome.Hsapiens.UCSC.hg38 reference has no 'chrMT' contig, only
+    'chrM' -- a bare re-prefix maps an Ensembl-style 'MT' input to the
+    non-existent 'chrMT' (round 15 finding). Fixed here as defence in
+    depth, but note this is currently unreachable in practice: SPiP's
+    own vendored `RefFiles/getGenomeSequenceFromBSgenome.r` (line ~110)
+    filters `chr=="chrM"` OUT of its transcriptome before SPiP ever
+    runs, so no MT variant reaches a transcript match regardless of how
+    this function spells the contig. Do not read a passing test on this
+    function as proof that SPiP works end-to-end for MT -- it doesn't;
+    SPiP never gets that far.
     """
-    chrom = chrom if chrom.startswith("chr") else f"chr{chrom}"
+    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    chrom = "chrM" if bare.upper() in ("M", "MT") else (chrom if chrom.startswith("chr") else f"chr{chrom}")
     return (
         "##fileformat=VCFv4.0\n"
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
@@ -271,10 +279,14 @@ def run_spip(
         cmd = [
             rscript_path,
             str(runtime_dir / _DRIVER_SCRIPT_NAME),
-            "--input", str(input_vcf),
-            "--output", str(output_txt),
-            "--GenomeAssenbly", genome,
-            "--runtimeDir", str(runtime_dir),
+            "--input",
+            str(input_vcf),
+            "--output",
+            str(output_txt),
+            "--GenomeAssenbly",
+            genome,
+            "--runtimeDir",
+            str(runtime_dir),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0 or not output_txt.is_file():

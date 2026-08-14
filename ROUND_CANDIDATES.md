@@ -624,3 +624,73 @@ so likely highest priority; `conservation/utils.py`'s two copies and
 them for real); then decide whether to fix each in place or replace all
 seven with calls to `hgvs_utils.py::_strip_chr`, consolidating to the one
 correct implementation this project already has.
+
+## Round 15 (chrom-normalization audit + fixes)
+
+Task A audited every chrom-normalization site the round-14 B1 sweep found
+(and re-derived the list independently, turning up four more than the six
+round 14 logged: `annotation/thousand_genomes_sas.py::_resolve_rsid`,
+`annotation/indigenomes.py`, `pipeline/gnomad/utils.py::variant_key`, and
+`review/signoff.py::_bare_chrom` -- the latter two correctly bespoke,
+not bugs). Task B fixed the five sites confirmed reachable-and-wrong for MT,
+using the already-validated "enumerate the M-family spellings, map to this
+site's own real MT token" pattern (`hgvs_utils.py::_strip_chr`,
+`alphamissense.py::_normalize_chrom_for_catalogue`) rather than a shared
+`normalize_chrom(chrom, target=...)` -- the targets genuinely disagree
+(UCSC wants `chrM`, NCBI Entrez wants `MT`, Ensembl wants `MT`), so a mode
+flag would just be an eighth way to pick the wrong target instead of an
+eighth way to forget the M-special-case:
+
+- `pipeline/conservation/utils.py::normalize_chrom` -- `"MT"` was producing
+  `"chrMT"` (not a UCSC contig); fixed to `"chrM"`. Feeds three sub-providers
+  (local bigWig, UCSC REST, MyVariant GERP).
+- `database/clinvar_client.py` -- extracted a module-local `_entrez_chrom`
+  helper (previously an untested inline `.replace("chr", "")`); confirmed
+  live that NCBI Entrez's `MT[chr]` returns hits, `M[chr]` returns zero
+  with a "phrase not found" warning.
+- `database/dbsnp_client.py` -- same fix, same live confirmation
+  (`MT[CHR]` vs `M[CHR]`), own module-local `_entrez_chrom` copy (not
+  shared with clinvar_client's, matching this codebase's per-module-utils
+  convention).
+- `pipeline/models/spip/loader.py::build_minimal_vcf` -- fixed as defence
+  in depth (`"MT"` was producing the non-existent `chrMT` BSgenome contig),
+  but documented in-line as currently unreachable: SPiP's own vendored
+  `getGenomeSequenceFromBSgenome.r` filters `chr=="chrM"` out of its
+  transcriptome before SPiP ever runs, so no MT variant reaches a
+  transcript match regardless of this function's output. No test claims
+  SPiP-for-MT works end-to-end.
+- `annotation/thousand_genomes_sas.py::_resolve_rsid` -- same Ensembl-
+  overlap bug pattern round 14 B1 fixed twice already (`M`/`chrM` input
+  stripped to `"M"`, Ensembl wants `"MT"`); fixed the same way.
+
+Two sites were investigated and left alone, on evidence:
+
+- `pipeline/gnomad/utils.py::normalize_chrom` and `::gnomad_variant_id` --
+  confirmed wrong for MT (same bare-strip bug) but unreachable: gnomAD's
+  main GraphQL/tabix API indexes no mitochondrial variants under any
+  spelling, and round 14's compartment gate stops chrM from being scored
+  off gnomAD anyway. Deliberately NOT fixed -- fixing an unreachable path
+  just invites a test that passes for the wrong reason.
+- `annotation/indigenomes.py` -- checked live this round (2026-08-14):
+  `POST data.php` with `chrM-8993-T-G`, `chrMT-8993-T-G`,
+  `chrM-3243-A-G` (m.3243A>G, the MELAS variant), and gene searches for
+  `MT-ATP6`/`MT-CO1` all returned `{"mydata":[]}`, while the module's own
+  documented nuclear sanity case (`chr1-10190-C-A`) returns real data on
+  the same endpoint. IndiGenomes indexes no mitochondrial variants at all.
+  Also separately moot: `annotation/thousand_genomes_sas.py`'s own
+  docstring records that IndiGenomes was retired from GEPER's active query
+  path entirely on 2026-08-08 (licensing), so `pipeline/orchestrator.py`
+  never calls this module for any variant, MT or nuclear, today.
+
+`pipeline/sequence_context.py::_normalize_chrom` was already correct for
+the four documented real-world spellings but used an exact-case
+`("M","mt","Mt")` tuple that missed casings like `"chrm"`/`"CHRM"`; made
+case-insensitive while the file was open for this round's other fix,
+per instruction not to "while I'm here" refactor sites that were already
+correct in substance.
+
+New coverage: `tests/test_round15_mt_chrom_fixes.py` -- module-local,
+offline, one test class per fixed site, each asserting its own site's
+real expected target token for all four MT spellings (not one shared
+parametrized expectation, since the targets differ) plus a nuclear-
+chrom-unaffected case per site.

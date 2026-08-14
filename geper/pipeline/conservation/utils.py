@@ -31,7 +31,7 @@ def normalize_build(assembly: Optional[str]) -> str:
 
 
 def ucsc_genome_id(build: str) -> str:
-    """"GRCh38"/"GRCh37" -> "hg38"/"hg19" -- the identifier both the
+    """ "GRCh38"/"GRCh37" -> "hg38"/"hg19" -- the identifier both the
     local bigWig filename convention and UCSC's REST API expect."""
     return _UCSC_GENOME_ID.get(build, "hg38")
 
@@ -40,8 +40,17 @@ def normalize_chrom(chrom: str) -> str:
     """UCSC (both its bigWig files and its REST API) always uses
     'chr'-prefixed contig names, for both hg19 and hg38 -- unlike
     gnomAD, which varies by build (see
-    pipeline.gnomad.utils.normalize_chrom)."""
+    pipeline.gnomad.utils.normalize_chrom).
+
+    The mitochondrial contig needs its own case: UCSC's own name for it
+    is 'chrM', never 'chrMT' -- a bare strip-and-reprefix maps an
+    Ensembl-style 'MT' input to the non-existent 'chrMT' contig (round
+    15 finding; same M-family special case already handled correctly in
+    pipeline.hgvs_utils._strip_chr and models.alphamissense.
+    _normalize_chrom_for_catalogue)."""
     bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    if bare.upper() in ("M", "MT"):
+        return "chrM"
     return f"chr{bare}"
 
 

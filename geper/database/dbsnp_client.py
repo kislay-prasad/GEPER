@@ -56,6 +56,20 @@ from utils.service_health import HEALTH, is_transient_http_error
 logger = get_logger(__name__)
 
 
+def _entrez_chrom(chrom: str) -> str:
+    """
+    Strip an optional 'chr' prefix for NCBI Entrez's dbSNP `[CHR]`
+    field -- which, for the mitochondrial contig specifically, wants
+    'MT', never 'M'. Confirmed live (round 15): `MT[CHR]` returns
+    hits, `M[CHR]` returns zero with an NCBI "phrase not found"
+    warning. Mirrors `database/clinvar_client.py::_entrez_chrom`
+    (kept as its own module-local copy, not shared, matching this
+    codebase's existing per-module-utils convention).
+    """
+    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    return "MT" if bare.upper() in ("M", "MT") else bare
+
+
 class DbSNPMatchStatus(str, enum.Enum):
     """Mirrors `database/clinvar_client.py::ClinVarMatchStatus` -- see this module's docstring for why it's a separate type."""
 
@@ -122,7 +136,7 @@ class DbSNPClient:
                 "primary_record": record,
             }
 
-        chrom = variant.chrom.replace("chr", "")
+        chrom = _entrez_chrom(variant.chrom)
         position_field = self._position_field(assembly)
         # Indels get a 3-position range (pos-1:pos+1), not a
         # single-point query -- same reasoning and same fix shape as

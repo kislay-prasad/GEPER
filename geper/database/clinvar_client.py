@@ -88,6 +88,21 @@ from utils.service_health import HEALTH, is_transient_http_error
 logger = get_logger(__name__)
 
 
+def _entrez_chrom(chrom: str) -> str:
+    """
+    Strip an optional 'chr' prefix for NCBI Entrez's ClinVar `[chr]`
+    field -- which, for the mitochondrial contig specifically, wants
+    'MT', never 'M'. Confirmed live (round 15): `MT[chr]` returns
+    hits, `M[chr]` returns zero with an NCBI "phrase not found"
+    warning. A bare strip-and-pass-through silently drops every MT
+    variant whose VCF spelled the contig 'M'/'chrM' (same M-family
+    special case already handled in pipeline.hgvs_utils._strip_chr and
+    models.alphamissense._normalize_chrom_for_catalogue).
+    """
+    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    return "MT" if bare.upper() in ("M", "MT") else bare
+
+
 class ClinVarMatchStatus(str, enum.Enum):
     """
     Three distinct outcomes of a ClinVar lookup -- deliberately not
@@ -228,7 +243,7 @@ class ClinVarClient:
         return max(matched_records, key=sort_key)
 
     def _positional_search_term(self, variant: Variant, assembly: Optional[str]) -> str:
-        chrom = variant.chrom.replace("chr", "")
+        chrom = _entrez_chrom(variant.chrom)
         position_field = self._position_field(assembly)
         # NOTE: earlier versions appended a bare `AND {ref}>{alt}` clause
         # here with no Entrez field tag. An untagged term is matched as

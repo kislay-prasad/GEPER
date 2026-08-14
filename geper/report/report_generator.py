@@ -304,7 +304,14 @@ class ReportGenerator:
         # classification looks complete to anyone who skipped the header.
         # Placed first, before any criteria/classification content.
         if is_mitochondrial_chrom(variant.get("chrom")):
-            lines.append(f"> **{mtdna_interpretation_disclaimer(result.get('transcript'))}**")
+            # Round 16: `not_evaluated_rules` (this finding's real
+            # per-criterion breakdown) is passed so the disclaimer's
+            # counts derive from the same data as the executive-summary
+            # accounting / Limitations text below -- see
+            # `mtdna_interpretation_disclaimer`'s own docstring for why
+            # the two surfaces used to be able to contradict each other.
+            not_evaluated_rules = (result.get("interpretation_result") or {}).get("not_evaluated_rules", [])
+            lines.append(f"> **{mtdna_interpretation_disclaimer(result.get('transcript'), not_evaluated_rules)}**")
             lines.append("")
 
         out_of_scope = result.get("out_of_scope")
@@ -618,6 +625,8 @@ class ReportGenerator:
             lines.append(
                 f"- **UniProt:** _lookup failed (external service issue: {prot['uniprot_error']}) -- not evidence of a missing entry, see Annotation Detail below._"
             )
+        elif prot.get("uniprot_reason"):
+            lines.append(f"- **UniProt:** {prot['uniprot_reason']}")
         else:
             lines.append("- **UniProt:** no entry resolved.")
         if prot.get("interpro_available"):
@@ -641,6 +650,8 @@ class ReportGenerator:
             lines.append(
                 f"- **InterPro/Pfam:** _lookup failed (external service issue: {prot['interpro_error']}) -- not evidence of an absent domain, see Annotation Detail below._"
             )
+        elif prot.get("interpro_reason"):
+            lines.append(f"- **InterPro/Pfam:** {prot['interpro_reason']}")
         else:
             lines.append("- **InterPro/Pfam:** no annotation available.")
         lines.append("")
@@ -663,6 +674,8 @@ class ReportGenerator:
             lines.append(
                 f"*AlphaFold DB lookup failed (external service issue: {struct['error']}) -- not evidence of an unresolved structure, see Annotation Detail below.*"
             )
+        elif struct.get("reason"):
+            lines.append(f"*{struct['reason']}*")
         else:
             lines.append("*No AlphaFold DB structure resolved for this protein.*")
         lines.append("")
@@ -675,6 +688,8 @@ class ReportGenerator:
             lines.append(
                 f"- **gnomAD:** {'found, AF=' + str(g['global_af']) if g['found'] else 'variant not found (absent from gnomAD)'}"
             )
+        elif g.get("skip_reason"):
+            lines.append(f"- **gnomAD:** {g['skip_reason']}")
         else:
             lines.append("- **gnomAD:** lookup unavailable for this variant.")
         d = pop["dbsnp"]

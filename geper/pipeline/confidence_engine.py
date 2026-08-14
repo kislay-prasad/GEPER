@@ -47,7 +47,7 @@ and the final percentage is that sum divided by the maximum possible
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from config import CONFIG
 
@@ -189,7 +189,9 @@ class ConfidenceEngine:
                 notes.append("ClinVar record has assertion criteria provided (single or unreviewed submitter set).")
             elif review_status:
                 quality_parts.append(0.3)
-                notes.append(f"ClinVar record present but review status ('{top.get('review_status')}') indicates limited curation.")
+                notes.append(
+                    f"ClinVar record present but review status ('{top.get('review_status')}') indicates limited curation."
+                )
             else:
                 quality_parts.append(0.2)
                 notes.append("ClinVar record present with no reported review status.")
@@ -201,7 +203,12 @@ class ConfidenceEngine:
         else:
             notes.append("No ClinVar record found for this variant.")
 
-        if clingen_result and not clingen_result.get("skipped") and not clingen_result.get("error") and clingen_result.get("found"):
+        if (
+            clingen_result
+            and not clingen_result.get("skipped")
+            and not clingen_result.get("error")
+            and clingen_result.get("found")
+        ):
             sources.append("ClinGen")
             presence_parts.append(1.0)
             validity = clingen_result.get("clinical_validity_summary")
@@ -223,8 +230,13 @@ class ConfidenceEngine:
         presence = sum(presence_parts) / 2.0
         quality = (sum(quality_parts) / len(quality_parts)) if quality_parts else 0.0
         return CategoryScore(
-            "Clinical Evidence", weight, presence, quality, weight * presence * quality,
-            " ".join(notes), sources,
+            "Clinical Evidence",
+            weight,
+            presence,
+            quality,
+            weight * presence * quality,
+            " ".join(notes),
+            sources,
         )
 
     @staticmethod
@@ -241,7 +253,9 @@ class ConfidenceEngine:
                 af = gnomad_result.get("global_af")
                 if af is not None:
                     quality_parts.append(1.0)
-                    notes.append(f"gnomAD returned an allele frequency (AF={af:.2e}), a decisive population-rarity signal.")
+                    notes.append(
+                        f"gnomAD returned an allele frequency (AF={af:.2e}), a decisive population-rarity signal."
+                    )
                 else:
                     quality_parts.append(0.5)
                     notes.append("gnomAD record found but no allele frequency reported.")
@@ -250,6 +264,13 @@ class ConfidenceEngine:
                 # drives PM2 in Phase 1) -- not treated as "no evidence".
                 quality_parts.append(0.8)
                 notes.append("gnomAD queried successfully; variant is absent, itself an informative rarity signal.")
+        elif gnomad_result and gnomad_result.get("skipped") and gnomad_result.get("reason"):
+            # Round 16: a deliberate skip (e.g. mtDNA compartment gate --
+            # gnomAD's mitochondrial callset is a separate resource this
+            # pipeline never queries) carries its own honest reason; that
+            # is a different statement from "unavailable" (an outage/
+            # timeout), which the fallback below still covers.
+            notes.append(f"gnomAD was not queried: {gnomad_result['reason']}")
         else:
             notes.append("gnomAD lookup was skipped or unavailable for this variant.")
 
@@ -259,15 +280,22 @@ class ConfidenceEngine:
             quality_parts.append(0.6)
             notes.append("Variant is catalogued in dbSNP.")
         elif dbsnp_result and dbsnp_result.get("match_status") == "position_only":
-            notes.append("Variant not catalogued in dbSNP under this exact allele (other rsIDs exist at this position).")
+            notes.append(
+                "Variant not catalogued in dbSNP under this exact allele (other rsIDs exist at this position)."
+            )
         else:
             notes.append("Variant not found in dbSNP (may be novel/private, or lookup was unavailable).")
 
         presence = sum(presence_parts) / 2.0
         quality = (sum(quality_parts) / len(quality_parts)) if quality_parts else 0.0
         return CategoryScore(
-            "Population Evidence", weight, presence, quality, weight * presence * quality,
-            " ".join(notes), sources,
+            "Population Evidence",
+            weight,
+            presence,
+            quality,
+            weight * presence * quality,
+            " ".join(notes),
+            sources,
         )
 
     @staticmethod
@@ -284,7 +312,9 @@ class ConfidenceEngine:
             quality_parts.append(1.0 if am_class in ("likely_pathogenic", "likely_benign") else 0.4)
             notes.append(f"AlphaMissense produced a prediction ('{am_class or 'unclassified'}').")
         else:
-            notes.append("AlphaMissense produced no prediction (not applicable, skipped, or unavailable for this variant).")
+            notes.append(
+                "AlphaMissense produced no prediction (not applicable, skipped, or unavailable for this variant)."
+            )
 
         if mmsplice_result and mmsplice_result.get("predicted"):
             sources.append("MMSplice")
@@ -301,7 +331,14 @@ class ConfidenceEngine:
             directions = set()
             for v in ai_consensus:
                 pred = (v.get("prediction") or "").lower()
-                if "pathogenic" in pred or pred in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+                if "pathogenic" in pred or pred in (
+                    "strong_donor_loss",
+                    "strong_acceptor_loss",
+                    "exon_skipping",
+                    "intron_retention",
+                    "strong",
+                    "moderate",
+                ):
                     directions.add("damaging")
                 elif "benign" in pred:
                     directions.add("benign")
@@ -315,8 +352,13 @@ class ConfidenceEngine:
         presence = (sum(presence_parts) / 2.0) if presence_parts else 0.0
         quality = (sum(quality_parts) / len(quality_parts)) if quality_parts else 0.0
         return CategoryScore(
-            "AI Evidence", weight, presence, quality, weight * presence * quality,
-            " ".join(notes), sources,
+            "AI Evidence",
+            weight,
+            presence,
+            quality,
+            weight * presence * quality,
+            " ".join(notes),
+            sources,
         )
 
     @staticmethod
@@ -326,15 +368,31 @@ class ConfidenceEngine:
         quality_parts: List[float] = []
         notes: List[str] = []
 
-        if uniprot_result and not uniprot_result.get("skipped") and not uniprot_result.get("error") and uniprot_result.get("found"):
+        if (
+            uniprot_result
+            and not uniprot_result.get("skipped")
+            and not uniprot_result.get("error")
+            and uniprot_result.get("found")
+        ):
             sources.append("UniProt")
             presence_parts.append(1.0)
             quality_parts.append(1.0 if uniprot_result.get("reviewed") else 0.6)
             notes.append(f"UniProt entry found ({'reviewed' if uniprot_result.get('reviewed') else 'unreviewed'}).")
+        elif uniprot_result and uniprot_result.get("reason"):
+            # Round 16: an honest, stated cause (e.g. this gene's Ensembl
+            # biotype confirms no protein-coding transcript exists --
+            # `pipeline/acmg_rules.py::non_protein_coding_gene_reason`)
+            # is not the same claim as "we looked and couldn't find one".
+            notes.append(uniprot_result["reason"])
         else:
             notes.append("No UniProt entry resolved for this gene/protein.")
 
-        if interpro_result and not interpro_result.get("skipped") and not interpro_result.get("error") and interpro_result.get("found"):
+        if (
+            interpro_result
+            and not interpro_result.get("skipped")
+            and not interpro_result.get("error")
+            and interpro_result.get("found")
+        ):
             sources.append("InterPro")
             presence_parts.append(1.0)
             # `affected_domains` is three-valued (see
@@ -351,31 +409,51 @@ class ConfidenceEngine:
             position = interpro_result.get("protein_position")
             if affected:
                 quality_parts.append(0.9)
-                notes.append(f"InterPro/Pfam annotates {len(affected)} domain(s) overlapping residue {position} (transcript-verified).")
+                notes.append(
+                    f"InterPro/Pfam annotates {len(affected)} domain(s) overlapping residue {position} (transcript-verified)."
+                )
             elif affected is None:
                 quality_parts.append(0.3)
-                notes.append("InterPro/Pfam annotation available for this protein, but this variant's residue position could not be "
-                              "determined from the transcript structure, so domain overlap could not be checked.")
+                notes.append(
+                    "InterPro/Pfam annotation available for this protein, but this variant's residue position could not be "
+                    "determined from the transcript structure, so domain overlap could not be checked."
+                )
             else:
                 quality_parts.append(0.6)
-                notes.append(f"InterPro/Pfam annotation available; no domain overlaps residue {position} (transcript-verified).")
+                notes.append(
+                    f"InterPro/Pfam annotation available; no domain overlaps residue {position} (transcript-verified)."
+                )
+        elif interpro_result and interpro_result.get("reason"):
+            notes.append(interpro_result["reason"])
         else:
             notes.append("No InterPro/Pfam annotation available for this protein.")
 
         presence = (sum(presence_parts) / 2.0) if presence_parts else 0.0
         quality = (sum(quality_parts) / len(quality_parts)) if quality_parts else 0.0
         return CategoryScore(
-            "Protein Knowledge", weight, presence, quality, weight * presence * quality,
-            " ".join(notes), sources,
+            "Protein Knowledge",
+            weight,
+            presence,
+            quality,
+            weight * presence * quality,
+            " ".join(notes),
+            sources,
         )
 
     @staticmethod
     def _structural_quality(alphafold_result, weight: float) -> CategoryScore:
         sources = []
         notes: List[str] = []
-        if alphafold_result and not alphafold_result.get("skipped") and not alphafold_result.get("error") and alphafold_result.get("found"):
+        if (
+            alphafold_result
+            and not alphafold_result.get("skipped")
+            and not alphafold_result.get("error")
+            and alphafold_result.get("found")
+        ):
             sources.append("AlphaFold DB")
-            band = (alphafold_result.get("affected_residue_band") or alphafold_result.get("mean_plddt_band") or "").lower()
+            band = (
+                alphafold_result.get("affected_residue_band") or alphafold_result.get("mean_plddt_band") or ""
+            ).lower()
             # Bug fix (found during Phase 6 prep): AlphaFold DB's real
             # confidence_band() values are "very_high"/"confident"/"low"/
             # "very_low" (underscored -- see pipeline/alphafold/models.py),
@@ -386,8 +464,13 @@ class ConfidenceEngine:
             quality_map = {"very_high": 1.0, "confident": 0.75, "low": 0.4, "very_low": 0.2}
             quality = quality_map.get(band, 0.5)
             notes.append(f"AlphaFold DB structure available (confidence band: '{band or 'n/a'}').")
-            return CategoryScore("Structural Biology", weight, 1.0, quality, weight * 1.0 * quality, " ".join(notes), sources)
-        notes.append("No AlphaFold DB structure resolved for this protein.")
+            return CategoryScore(
+                "Structural Biology", weight, 1.0, quality, weight * 1.0 * quality, " ".join(notes), sources
+            )
+        if alphafold_result and alphafold_result.get("reason"):
+            notes.append(alphafold_result["reason"])
+        else:
+            notes.append("No AlphaFold DB structure resolved for this protein.")
         return CategoryScore("Structural Biology", weight, 0.0, 0.0, 0.0, " ".join(notes), sources)
 
     @staticmethod
@@ -440,8 +523,12 @@ class ConfidenceEngine:
         # input without fabricating a number for it. Its actual
         # contribution is already reflected upstream (sequence context
         # + protein translation succeeding at all).
-        notes.append("Ensembl contributes indirectly via sequence-context retrieval and is not independently scorable here (no per-variant Ensembl evidence dict is passed to this engine).")
-        return CategoryScore("Additional Evidence", weight, presence, quality, weight * presence * quality, " ".join(notes), sources)
+        notes.append(
+            "Ensembl contributes indirectly via sequence-context retrieval and is not independently scorable here (no per-variant Ensembl evidence dict is passed to this engine)."
+        )
+        return CategoryScore(
+            "Additional Evidence", weight, presence, quality, weight * presence * quality, " ".join(notes), sources
+        )
 
     # ------------------------------------------------------------------
     # Conflict penalty + labeling
@@ -461,7 +548,14 @@ class ConfidenceEngine:
             directions = set()
             for v in ai_consensus:
                 pred = (v.get("prediction") or "").lower()
-                if "pathogenic" in pred or pred in ("strong_donor_loss", "strong_acceptor_loss", "exon_skipping", "intron_retention", "strong", "moderate"):
+                if "pathogenic" in pred or pred in (
+                    "strong_donor_loss",
+                    "strong_acceptor_loss",
+                    "exon_skipping",
+                    "intron_retention",
+                    "strong",
+                    "moderate",
+                ):
                     directions.add("damaging")
                 elif "benign" in pred:
                     directions.add("benign")

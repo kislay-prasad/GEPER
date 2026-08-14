@@ -21,6 +21,7 @@ repeatedly."
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
+from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
 
 # Which evidence-combining system GEPER actually applies to turn
 # triggered ACMG/AMP criteria into a final classification -- stated
@@ -267,6 +268,45 @@ def build_clinical_report(
 # ----------------------------------------------------------------------
 
 
+_NOT_EVALUATED_REASON_LABELS = {
+    NotEvaluatedReason.NOT_INTEGRATED.value: "no data source GEPER integrates for any variant",
+    NotEvaluatedReason.COMPARTMENT_INAPPLICABLE.value: (
+        "structurally inapplicable to this variant's genomic compartment (see the compartment notice, on a "
+        "mitochondrial finding)"
+    ),
+    NotEvaluatedReason.GENE_CLASS_INAPPLICABLE.value: "inapplicable to this gene's biotype/class",
+    NotEvaluatedReason.DATA_UNAVAILABLE.value: "a missing/unavailable evidence source for this specific variant",
+}
+
+
+def _not_evaluated_reason_clause(not_evaluated_rules: List[Dict[str, Any]]) -> str:
+    """
+    Round 16: replaces the old single, blanket "due to missing data
+    sources" phrase -- true for `DATA_UNAVAILABLE` criteria, flatly
+    false for a criterion this pipeline structurally never applies to
+    this variant's compartment or this gene's biotype (neither of those
+    is "missing", they were never applicable). Reads
+    `pipeline.acmg_rules.not_evaluated_breakdown` -- the same function
+    `mtdna_interpretation_disclaimer` now reads for its own counts, so
+    this sentence and the disclaimer can never describe the same
+    `not_evaluated_rules` list two contradictory ways again.
+
+    Returns a clause starting with ": " (or ", " isn't used, to read as
+    a colon-led explanation), omitting any category with zero criteria
+    rather than printing "0 for X" noise. Returns "" when there's
+    nothing to explain (list empty).
+    """
+    if not not_evaluated_rules:
+        return ""
+    breakdown = not_evaluated_breakdown(not_evaluated_rules)
+    parts = [
+        f"{len(codes)} {_NOT_EVALUATED_REASON_LABELS[category]}"
+        for category, codes in breakdown.items()
+        if codes and category in _NOT_EVALUATED_REASON_LABELS
+    ]
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
 def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) -> str:
     variant_dict = variant_dict or ir.get("variant") or {}
     locus = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')} {variant_dict.get('ref')}>{variant_dict.get('alt')}"
@@ -299,11 +339,12 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
     # so the three numbers below always sum to the fourth.
     n_triggered = len(ir.get("triggered_rules", []))
     n_not_triggered = len(ir.get("not_triggered_rules", []))
-    n_not_evaluated = len(ir.get("not_evaluated_rules", []))
+    not_evaluated_rules = ir.get("not_evaluated_rules", [])
+    n_not_evaluated = len(not_evaluated_rules)
     n_total = n_triggered + n_not_triggered + n_not_evaluated
     evidence_clause = (
         f" Of {n_total} ACMG/AMP criteria evaluated: {n_triggered} triggered, {n_not_triggered} checked but "
-        f"not triggered, {n_not_evaluated} could not be evaluated due to missing data sources."
+        f"not triggered, {n_not_evaluated} could not be evaluated{_not_evaluated_reason_clause(not_evaluated_rules)}."
     )
 
     return (
@@ -445,8 +486,18 @@ def _protein_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "uniprot_available": False,
         "uniprot_error": uniprot.get("error"),
+        # Round 16: distinct from `uniprot_error` -- a `reason` here means
+        # this gene was never queried (or was queried and genuinely has
+        # nothing) for an honest, stated cause (e.g. Ensembl biotype
+        # confirms no protein-coding transcript exists), not a lookup
+        # failure. `None` when no such reason was computed, in which case
+        # the renderer's own generic "no entry resolved" fallback applies
+        # -- see `pipeline/acmg_rules.py::non_protein_coding_gene_reason`
+        # and `pipeline/orchestrator.py`'s use of it.
+        "uniprot_reason": uniprot.get("reason") if not uniprot.get("found") else None,
         "interpro_available": False,
         "interpro_error": interpro.get("error"),
+        "interpro_reason": interpro.get("reason") if not interpro.get("found") else None,
     }
     if uniprot.get("found"):
         out["uniprot_available"] = True
@@ -478,7 +529,12 @@ def _structural_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
     docstring for the same distinction and why it matters."""
     alphafold = raw.get("alphafold") or {}
     if not alphafold.get("found"):
-        return {"available": False, "error": alphafold.get("error")}
+        # `reason` (round 16): as `_protein_knowledge`'s `uniprot_reason`
+        # -- an honest, stated cause (e.g. no protein-coding transcript
+        # for this gene) distinct from `error` (a failed lookup) and from
+        # the generic "no structure resolved" default a renderer falls
+        # back to when neither is present.
+        return {"available": False, "error": alphafold.get("error"), "reason": alphafold.get("reason")}
     # `confidence_band`/`confidence_band_is_residue_specific` distinguish
     # "pLDDT at this variant's own residue" from a silent fallback to
     # the whole-protein mean when the residue position is unknown --
@@ -508,6 +564,15 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             "queried": not (gnomad.get("skipped") or gnomad.get("error")),
             "found": bool(gnomad.get("found")),
             "global_af": gnomad.get("global_af"),
+            # Round 16: when gnomAD was deliberately never queried (e.g.
+            # `pipeline/acmg_rules.py::mtdna_gnomad_skip_result` for a
+            # mitochondrial variant -- gnomAD's mitochondrial callset is a
+            # separate resource this pipeline doesn't query), `reason`
+            # carries the real, stated cause instead of the generic
+            # "lookup unavailable" a renderer previously always printed
+            # regardless of whether this was a deliberate skip or a
+            # genuine outage.
+            "skip_reason": gnomad.get("reason") if gnomad.get("skipped") else None,
         },
         "dbsnp": {
             "found": bool(dbsnp.get("found")),
@@ -702,11 +767,20 @@ def _limitations(ir: Dict[str, Any]) -> List[str]:
     if not_evaluated:
         codes = ", ".join(c.get("code", "?") for c in not_evaluated)
         n_total = len(ir.get("triggered_rules", [])) + len(ir.get("not_triggered_rules", [])) + len(not_evaluated)
+        # Round 16: was one blanket "due to missing evidence sources" for
+        # every not_evaluated criterion -- true for some, false for a
+        # criterion this pipeline structurally never applies to this
+        # variant's compartment or gene-class (that's not "missing", it
+        # was never applicable). `_not_evaluated_reason_clause` reads
+        # `pipeline.acmg_rules.not_evaluated_breakdown`, the same
+        # function `mtdna_interpretation_disclaimer` reads for its own
+        # counts -- one source, so this sentence and that disclaimer
+        # cannot describe the same list two contradictory ways again.
         limitations.append(
-            f"{len(not_evaluated)} of {n_total} ACMG criteria could not be evaluated for this variant due "
-            f"to missing evidence sources ({codes}); see the ACMG classification section (both the "
-            f"triggered and the checked-but-not-triggered tables) for the remaining criteria and the "
-            f"specific reason each not-evaluated one was skipped."
+            f"{len(not_evaluated)} of {n_total} ACMG criteria could not be evaluated for this variant"
+            f"{_not_evaluated_reason_clause(not_evaluated)} ({codes}); see the ACMG classification section "
+            f"(both the triggered and the checked-but-not-triggered tables) for the remaining criteria and "
+            f"the specific reason each not-evaluated one was skipped."
         )
     if ir.get("confidence_pending", True):
         limitations.append("Confidence scoring did not complete for this variant.")

@@ -499,8 +499,14 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     # the SHORT disclaimer text (no criterion counts) for this report's
     # tight per-variant space budget.
     if is_mitochondrial_chrom(variant.get("chrom")):
+        not_evaluated_rules = (variant_result.get("interpretation_result") or {}).get("not_evaluated_rules", [])
         flow.append(Spacer(1, 1 * mm))
-        flow.append(Paragraph(mtdna_interpretation_disclaimer_short(variant_result.get("transcript")), styles["Flag"]))
+        flow.append(
+            Paragraph(
+                mtdna_interpretation_disclaimer_short(variant_result.get("transcript"), not_evaluated_rules),
+                styles["Flag"],
+            )
+        )
 
     flow.append(Spacer(1, 1.5 * mm))
     flow.append(Paragraph(_short_interpretation(clinical), styles["BodyText"]))

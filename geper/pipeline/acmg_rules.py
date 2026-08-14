@@ -33,8 +33,9 @@ touching any pre-existing key). This preserves backward compatibility for
 any caller that already consumes the older shape.
 """
 
+import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from config import CONFIG
 from pipeline.gnomad.models import POPULATION_LABELS
@@ -217,12 +218,90 @@ def _mtdna_gene_class(transcript_result: Optional[Dict[str, Any]]) -> Optional[s
     return transcript_result.get("gene_biotype")
 
 
-def mtdna_interpretation_disclaimer(transcript_result: Optional[Dict[str, Any]] = None) -> str:
-    """The full-length per-finding mtDNA disclaimer (Markdown, full PDF).
-    Adapts its middle clause to this finding's actual gene class -- see
-    this module's own comment above for why a fixed string was wrong."""
-    gene_class = _mtdna_gene_class(transcript_result)
+_ALL_CRITERION_CODES = tuple(_STRENGTH.keys())  # the fixed 28, in this module's own declared order
+
+
+def _mtdna_disclaimer_middle_from_breakdown(gene_class: Optional[str], breakdown: Dict[str, List[str]]) -> str:
+    """
+    Builds the disclaimer's middle clause directly from
+    `not_evaluated_breakdown`'s actual per-finding category lists (round
+    16), not from a static assumption of which codes are gated. Codes
+    that are neither `NOT_INTEGRATED` nor gated for this finding's
+    compartment/gene-class are, by elimination against the fixed
+    28-criterion set, the ones that ran their real per-criterion logic
+    -- whether they ended up triggered, not_triggered, or genuinely
+    `DATA_UNAVAILABLE` for this specific variant's own evidence. This is
+    what keeps the "were evaluated for real" claim honest without
+    needing to also thread triggered/not_triggered counts through here:
+    "ran for real" and "produced a determinate triggered/not_triggered
+    result" are different claims, and this function only ever asserts
+    the former.
+    """
+
+    def _ordered(codes: List[str]) -> List[str]:
+        return sorted(set(codes), key=lambda c: _ALL_CRITERION_CODES.index(c) if c in _ALL_CRITERION_CODES else 999)
+
+    not_integrated = _ordered(breakdown[NotEvaluatedReason.NOT_INTEGRATED.value])
+    compartment = _ordered(breakdown[NotEvaluatedReason.COMPARTMENT_INAPPLICABLE.value])
+    gene_class_codes = _ordered(breakdown[NotEvaluatedReason.GENE_CLASS_INAPPLICABLE.value])
+    gated = set(not_integrated) | set(compartment) | set(gene_class_codes)
+    ran_for_real = _ordered([c for c in _ALL_CRITERION_CODES if c not in gated])
+
+    compartment_clause = (
+        f"a further {len(compartment)} are inapplicable specifically to the mitochondrial compartment "
+        f"({', '.join(compartment)} -- each marked not_evaluated below with its own stated reason)"
+    )
+    if gene_class_codes:
+        return (
+            f"{compartment_clause}, and {len(gene_class_codes)} more ({', '.join(gene_class_codes)}) are "
+            f"inapplicable for this specific gene because it has no protein-coding transcript (Ensembl biotype "
+            f"'{gene_class}' -- 22 of the 37 mitochondrial genes encode tRNAs, 2 encode rRNAs; this is "
+            f"mitochondrial gene biology, not a missing lookup). The remaining {len(ran_for_real)} "
+            f"({', '.join(ran_for_real)}) were still evaluated for real, since they apply to any mitochondrial "
+            "gene class."
+        )
     if gene_class == "protein_coding":
+        return (
+            f"{compartment_clause}. The remaining {len(ran_for_real)} ({', '.join(ran_for_real)}) were "
+            "evaluated for real against this gene's protein-coding transcript."
+        )
+    return (
+        f"{compartment_clause}. Of the remaining {len(ran_for_real)}, these ({', '.join(ran_for_real)}) apply to "
+        "any mitochondrial gene class and were evaluated for real; whether a protein-coding transcript exists "
+        "for this specific gene could not be confirmed for this variant."
+    )
+
+
+def mtdna_interpretation_disclaimer(
+    transcript_result: Optional[Dict[str, Any]] = None,
+    not_evaluated_rules: Optional[List[Dict[str, Any]]] = None,
+) -> str:
+    """
+    The full-length per-finding mtDNA disclaimer (Markdown, full PDF).
+    Adapts its middle clause to this finding's actual gene class -- see
+    this module's own comment above for why a fixed string was wrong.
+
+    Round 16: when `not_evaluated_rules` (this finding's actual
+    `CriterionResult.to_dict()` list, e.g. `ir["not_evaluated_rules"]`)
+    is supplied, the middle clause's counts and code lists are computed
+    from `not_evaluated_breakdown` of that real data -- the same
+    function `report/clinical_report_builder.py`'s accounting/
+    Limitations text now also reads, so the two surfaces cannot
+    re-diverge the way they did before this round (the disclaimer
+    correctly partitioned the 28 criteria; the accounting text described
+    all of `not_evaluated_rules` with one blanket "missing data
+    sources" phrase, false for the compartment/gene-class-inapplicable
+    ones). When `not_evaluated_rules` is omitted (older callers, or a
+    caller that only has `transcript_result`), this falls back to the
+    same gene-class-only inference round 14 B3 established -- produces
+    identical text to the data-driven path for the expected case, but
+    degrades honestly rather than crashing when the real per-criterion
+    breakdown isn't available.
+    """
+    gene_class = _mtdna_gene_class(transcript_result)
+    if not_evaluated_rules is not None:
+        middle = _mtdna_disclaimer_middle_from_breakdown(gene_class, not_evaluated_breakdown(not_evaluated_rules))
+    elif gene_class == "protein_coding":
         middle = (
             "a further 7 are inapplicable specifically to the mitochondrial compartment (PVS1, PM2, "
             "BA1, BS1, PP3, BP4, BP7 -- each marked not_evaluated below with its own stated reason). "
@@ -259,12 +338,19 @@ def mtdna_interpretation_disclaimer(transcript_result: Optional[Dict[str, Any]] 
     )
 
 
-def mtdna_interpretation_disclaimer_short(transcript_result: Optional[Dict[str, Any]] = None) -> str:
+def mtdna_interpretation_disclaimer_short(
+    transcript_result: Optional[Dict[str, Any]] = None,
+    not_evaluated_rules: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """Compact one-line form for the short PDF's tight per-variant space
     budget -- same substance (heteroplasmy/inheritance/tissue/MITOMAP not
     incorporated, separate mtDNA spec not fully implemented) plus a short,
     still gene-class-accurate clause on what actually ran; no criterion
-    counts (the full PDF/Markdown carry those)."""
+    counts (the full PDF/Markdown carry those). `not_evaluated_rules` is
+    accepted for signature symmetry with `mtdna_interpretation_disclaimer`
+    and to keep both disclaimers reading from the same data when a caller
+    has it, even though this compact form doesn't print per-category
+    counts."""
     gene_class = _mtdna_gene_class(transcript_result)
     if gene_class == "protein_coding":
         scope = "criteria needing a protein-coding transcript ran for this gene"
@@ -339,6 +425,50 @@ def mtdna_splice_plugin_skip_result() -> Dict[str, Any]:
     return {"available": False, "classification": None, "skip_reason": _MTDNA_EVIDENCE_SKIP_REASON}
 
 
+def non_protein_coding_gene_biotype(transcript_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Returns Ensembl's own confirmed non-`protein_coding` biotype string
+    for this variant's gene (e.g. `"Mt_tRNA"`, `"lncRNA"`), or `None`
+    when a real protein-coding transcript resolved, or when gene class
+    genuinely could not be determined (unknown is not the same claim as
+    "confirmed non-coding" -- a caller must not treat this `None` as
+    "assume protein-coding").
+
+    Round 16: pulled out of `_mtdna_rna_gene_reason` (which used to
+    inline this exact check) so `pipeline/orchestrator.py` can gate
+    UniProt/InterPro/AlphaFold queries the same honest way for ANY
+    gene with no protein product -- not just mitochondrial tRNA/rRNA
+    genes. A nuclear ncRNA gene has exactly the same "no protein
+    exists, this is not a failed lookup" property McCormick-style mtDNA
+    reasoning already established for the ACMG engine.
+    """
+    transcript_result = transcript_result or {}
+    if transcript_result.get("found") and transcript_result.get("transcript"):
+        return None  # a real protein-coding transcript resolved -- let it run
+    biotype = transcript_result.get("gene_biotype")
+    if not biotype or biotype == "protein_coding":
+        return None  # unknown, or (contradictorily) protein_coding with no transcript -- don't overclaim
+    return cast(str, biotype)
+
+
+def non_protein_coding_gene_reason(transcript_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Honest, biotype-backed reason that a gene has no protein product for
+    UniProt/InterPro/AlphaFold to resolve, or `None` when this cannot be
+    confirmed (see `non_protein_coding_gene_biotype`). Not mtDNA-specific
+    -- see that function's docstring.
+    """
+    biotype = non_protein_coding_gene_biotype(transcript_result)
+    if biotype is None:
+        return None
+    gene_symbol = (transcript_result or {}).get("gene_symbol") or "this gene"
+    return (
+        f"{gene_symbol} is annotated by Ensembl as biotype '{biotype}', not protein_coding -- this gene has "
+        "no protein product, so there is no UniProt entry, InterPro/Pfam domain annotation, or AlphaFold DB "
+        "structure to resolve. This is gene biology, not a failed lookup."
+    )
+
+
 def _mtdna_rna_gene_reason(code: str, transcript_result: Optional[Dict[str, Any]]) -> Optional[str]:
     """
     Returns an honest, biotype-backed reason to gate `code` (one of
@@ -350,19 +480,96 @@ def _mtdna_rna_gene_reason(code: str, transcript_result: Optional[Dict[str, Any]
     -- honest on its own, and not overclaiming a biology fact this function
     cannot confirm).
     """
-    transcript_result = transcript_result or {}
-    if transcript_result.get("found") and transcript_result.get("transcript"):
-        return None  # a real protein-coding transcript resolved -- let it run
-    biotype = transcript_result.get("gene_biotype")
-    if not biotype or biotype == "protein_coding":
-        return None  # unknown, or (contradictorily) protein_coding with no transcript -- don't overclaim
-    gene_symbol = transcript_result.get("gene_symbol") or "this gene"
+    biotype = non_protein_coding_gene_biotype(transcript_result)
+    if biotype is None:
+        return None
+    gene_symbol = (transcript_result or {}).get("gene_symbol") or "this gene"
     return (
         f"{gene_symbol} is annotated by Ensembl as biotype '{biotype}', not protein_coding -- {code} "
         "requires a codon / amino-acid-change or protein-length concept that does not exist for this "
         "gene. This is mitochondrial gene biology (22 of the 37 mitochondrial genes encode tRNAs and "
         "2 encode rRNAs, with no coding sequence at all), not a missing lookup."
     )
+
+
+class NotEvaluatedReason(str, enum.Enum):
+    """
+    Round 16: why a criterion's `status` is `"not_evaluated"` is not one
+    fact -- it was already a distinct free-text `rationale` per call site
+    (round 14 B2's mtDNA gate reasons vs. the 9 GEPER-wide "not
+    integrated" reasons vs. a genuine per-variant lookup gap), but that
+    distinction lived only in prose, discarded by every renderer that
+    grouped `not_evaluated_rules` into one bucket and described it with a
+    single fixed phrase ("could not be evaluated due to missing data
+    sources") -- which is true for some of these and flatly false for
+    others (a criterion this pipeline structurally never applies to a
+    compartment/gene-class was never "missing data", it was never
+    applicable). Same shape as `pipeline/stage_schemas.py::StageStatus`/
+    `pipeline/provenance.py::VersionStatus`: encode the distinction in
+    the type system so a renderer cannot re-collapse it by omission.
+
+    Four, not more -- each maps to a genuinely different sentence a
+    report can honestly print:
+      - NOT_INTEGRATED: GEPER has never integrated the data source this
+        criterion needs, for any variant (e.g. PS2's trio-sequencing
+        data, PS4's case-frequency cohort). Not variant-specific.
+      - COMPARTMENT_INAPPLICABLE: structurally inapplicable to this
+        variant's genomic compartment (currently: the 7 mtDNA-gated
+        criteria in `_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS`). GEPER
+        *could* integrate the right resource for another compartment;
+        it is simply the wrong resource for this one.
+      - GENE_CLASS_INAPPLICABLE: structurally inapplicable to this
+        gene's biotype/class (currently: the 6 protein-dependent mtDNA
+        criteria, gated on a confirmed non-protein-coding Ensembl
+        biotype). Not mtDNA-specific in principle -- any gene with no
+        protein-coding transcript has the same property -- but this is
+        the only gate that currently exists.
+      - DATA_UNAVAILABLE: GEPER has this evidence source integrated and
+        queried it for this specific variant, but the query returned
+        nothing usable (skipped/errored/no match). The one category
+        that is honestly described as "a data source gap for this
+        variant" -- the default, since most `_not_evaluated` call sites
+        are exactly this.
+    """
+
+    NOT_INTEGRATED = "not_integrated"
+    COMPARTMENT_INAPPLICABLE = "compartment_inapplicable"
+    GENE_CLASS_INAPPLICABLE = "gene_class_inapplicable"
+    DATA_UNAVAILABLE = "data_unavailable"
+
+
+def not_evaluated_breakdown(not_evaluated_rules: Optional[List[Dict[str, Any]]]) -> Dict[str, List[str]]:
+    """
+    Groups a criteria evaluation's `not_evaluated_rules`/
+    `not_evaluated_criteria` list (`CriterionResult.to_dict()` output --
+    see `pipeline/interpretation_result.py`) by `NotEvaluatedReason`
+    category, keyed by category value with every category present (even
+    if empty) so callers never need a `.get(..., [])` default.
+
+    This is the single source both the per-finding mtDNA disclaimer
+    (`mtdna_interpretation_disclaimer`) and the report's own accounting
+    (`report/clinical_report_builder.py`'s executive-summary sentence and
+    Limitations paragraph) read from -- round 16's fix for the two
+    surfaces contradicting each other (the disclaimer honestly
+    partitioned the 28 criteria; the accounting/Limitations text
+    described all `not_evaluated` criteria with one blanket "missing
+    data sources" phrase, which is true for `DATA_UNAVAILABLE` and
+    flatly false for the other three categories). Both surfaces calling
+    this same function on the same list is what makes them structurally
+    unable to diverge again, rather than two independent descriptions of
+    the same underlying evaluation that happen to agree today.
+
+    A rule with no `category` key (a `CriterionResult` built without
+    going through `_not_evaluated`, or an older cached result predating
+    round 16) falls into `DATA_UNAVAILABLE` -- the same default
+    `_not_evaluated` itself applies, never a fabricated guess at which
+    of the other three it might have been.
+    """
+    breakdown: Dict[str, List[str]] = {reason.value: [] for reason in NotEvaluatedReason}
+    for rule in not_evaluated_rules or []:
+        category = rule.get("category") or NotEvaluatedReason.DATA_UNAVAILABLE.value
+        breakdown.setdefault(category, []).append(rule.get("code", "?"))
+    return breakdown
 
 
 @dataclass
@@ -376,6 +583,11 @@ class CriterionResult:
     conflicting_evidence: List[str] = field(default_factory=list)
     evidence_sources: List[str] = field(default_factory=list)
     confidence: Optional[str] = None  # "High" | "Moderate" | "Low"
+    # Only meaningful when status == "not_evaluated" -- see
+    # `NotEvaluatedReason`'s own docstring. `None` for triggered/
+    # not_triggered criteria (the distinction this field draws doesn't
+    # apply to them).
+    category: Optional[str] = None
     # Optional per-criterion detail block for rules whose reasoning is a
     # multi-step decision tree rather than a single threshold test (so
     # far: PVS1, which carries its full ClinGen SVI decision path and
@@ -403,6 +615,8 @@ class CriterionResult:
         }
         if self.details is not None:
             payload["details"] = self.details
+        if self.category is not None:
+            payload["category"] = self.category
         return payload
 
 
@@ -491,7 +705,15 @@ def _at_codon(codon_number: Optional[int]) -> str:
     return f" at codon {codon_number}" if codon_number is not None else ""
 
 
-def _not_evaluated(code: str, reason: str) -> CriterionResult:
+def _not_evaluated(
+    code: str, reason: str, category: NotEvaluatedReason = NotEvaluatedReason.DATA_UNAVAILABLE
+) -> CriterionResult:
+    """`category` defaults to `DATA_UNAVAILABLE` -- accurate for the
+    large majority of call sites (a real, integrated evidence source was
+    queried for this specific variant and came back empty/skipped/
+    errored). Call sites for GEPER-wide unintegrated criteria or the
+    mtDNA compartment/gene-class gates pass an explicit category instead
+    -- see `NotEvaluatedReason`'s own docstring."""
     direction, strength = _STRENGTH[code]
     return CriterionResult(
         code=code,
@@ -499,6 +721,7 @@ def _not_evaluated(code: str, reason: str) -> CriterionResult:
         strength=strength,
         status="not_evaluated",
         rationale=f"Not evaluated: {reason}",
+        category=category.value,
     )
 
 
@@ -559,7 +782,11 @@ class ACMGRuleEngine:
             inapplicable to this mtDNA variant, else `None` (run the real
             method)."""
             if is_mtdna and code in _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS:
-                return _not_evaluated(code, _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS[code])
+                return _not_evaluated(
+                    code,
+                    _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS[code],
+                    category=NotEvaluatedReason.COMPARTMENT_INAPPLICABLE,
+                )
             return None
 
         def _mtdna_protein_dependent_gate(code: str) -> Optional[CriterionResult]:
@@ -569,7 +796,7 @@ class ACMGRuleEngine:
             if not is_mtdna:
                 return None
             reason = _mtdna_rna_gene_reason(code, transcript_result)
-            return _not_evaluated(code, reason) if reason else None
+            return _not_evaluated(code, reason, category=NotEvaluatedReason.GENE_CLASS_INAPPLICABLE) if reason else None
 
         criteria["PVS1"] = _mtdna_gate("PVS1") or self._pvs1(
             variant_dict=variant_dict,
@@ -658,22 +885,42 @@ class ACMGRuleEngine:
         # "never fabricate evidence" requirement -- each of these would
         # require a data source this pipeline does not yet integrate.
         criteria["PS2"] = _not_evaluated(
-            "PS2", "requires confirmed de novo trio (parental) sequencing data; not integrated."
+            "PS2",
+            "requires confirmed de novo trio (parental) sequencing data; not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
         )
-        criteria["PM3"] = _not_evaluated("PM3", "requires trans-phase data for a recessive disorder; not integrated.")
+        criteria["PM3"] = _not_evaluated(
+            "PM3",
+            "requires trans-phase data for a recessive disorder; not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
+        )
         criteria["PM6"] = _not_evaluated(
-            "PM6", "requires confirmed (non-parentally-tested) de novo status; not integrated."
+            "PM6",
+            "requires confirmed (non-parentally-tested) de novo status; not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
         )
         criteria["PP2"] = _not_evaluated(
-            "PP2", "requires a gene-level missense-constraint metric (e.g. gnomAD missense Z-score); not integrated."
+            "PP2",
+            "requires a gene-level missense-constraint metric (e.g. gnomAD missense Z-score); not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
         )
-        criteria["PP5"] = _not_evaluated("PP5", "deprecated in the 2015 ACMG/AMP guideline update; not applied.")
+        criteria["PP5"] = _not_evaluated(
+            "PP5",
+            "deprecated in the 2015 ACMG/AMP guideline update; not applied.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
+        )
         criteria["BS2"] = _not_evaluated(
-            "BS2", "requires observation in unaffected individuals at the expected penetrance age; not integrated."
+            "BS2",
+            "requires observation in unaffected individuals at the expected penetrance age; not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
         )
-        criteria["BP2"] = _not_evaluated("BP2", "requires trans/cis phase data; not integrated.")
+        criteria["BP2"] = _not_evaluated(
+            "BP2", "requires trans/cis phase data; not integrated.", category=NotEvaluatedReason.NOT_INTEGRATED
+        )
         criteria["BP5"] = _not_evaluated(
-            "BP5", "requires case-level data on an alternate molecular cause; not integrated."
+            "BP5",
+            "requires case-level data on an alternate molecular cause; not integrated.",
+            category=NotEvaluatedReason.NOT_INTEGRATED,
         )
 
         # Attach ClinVar as descriptive cross-reference (never used to
@@ -1221,13 +1468,17 @@ class ACMGRuleEngine:
         )
         if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
             return _not_evaluated(
-                "PS4", base_reason + " gnomAD control-population data was also unavailable for this variant."
+                "PS4",
+                base_reason + " gnomAD control-population data was also unavailable for this variant.",
+                category=NotEvaluatedReason.NOT_INTEGRATED,
             )
 
         af, af_label = population_af_from_gnomad(gnomad_result)
         if af is None:
             return _not_evaluated(
-                "PS4", base_reason + " No usable gnomAD allele frequency was returned for this variant either."
+                "PS4",
+                base_reason + " No usable gnomAD allele frequency was returned for this variant either.",
+                category=NotEvaluatedReason.NOT_INTEGRATED,
             )
 
         cfg = CONFIG.gnomad
@@ -1261,6 +1512,7 @@ class ACMGRuleEngine:
                 "gnomad_allele_frequency_label": af_label,
                 "case_frequency_source": None,
             },
+            category=NotEvaluatedReason.NOT_INTEGRATED.value,
         )
 
     # UniProt's own controlled-vocabulary feature-type strings (verified

@@ -1877,7 +1877,15 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     # Round 14, B2: per-finding, not report-level -- see
     # report/report_generator.py's identical placement/reasoning.
     if is_mitochondrial_chrom(variant.get("chrom")):
-        flow.append(Paragraph(mtdna_interpretation_disclaimer(variant_result.get("transcript")), styles["StatusWarn"]))
+        # Round 16: see report/report_generator.py's identical change for why
+        # `not_evaluated_rules` is threaded through here.
+        not_evaluated_rules = (variant_result.get("interpretation_result") or {}).get("not_evaluated_rules", [])
+        flow.append(
+            Paragraph(
+                mtdna_interpretation_disclaimer(variant_result.get("transcript"), not_evaluated_rules),
+                styles["StatusWarn"],
+            )
+        )
         flow.append(Spacer(1, 2 * mm))
 
     out_of_scope = variant_result.get("out_of_scope")

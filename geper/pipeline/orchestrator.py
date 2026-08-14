@@ -46,6 +46,7 @@ from pipeline.acmg_rules import (
     mtdna_gnomad_skip_result,
     mtdna_mmsplice_skip_result,
     mtdna_splice_plugin_skip_result,
+    non_protein_coding_gene_reason,
 )
 from pipeline.alphafold.lookup import AlphaFoldLookup
 import pipeline.clingen.bootstrap as clingen_bootstrap
@@ -1458,9 +1459,29 @@ class GeperPipeline:
         # for exactly what it guarantees and when it is honestly `None`
         # instead of a guess).
         protein_position = canonical_protein_position(transcript_result, variant.pos)
-        uniprot_result = self._run_uniprot_stage(variant, clingen_result, errors)
-        interpro_result = self._run_interpro_stage(uniprot_result, protein_position, errors)
-        alphafold_result = self._run_alphafold_stage(uniprot_result, protein_position, errors)
+        # Round 16: a gene whose Ensembl biotype confirms it has no
+        # protein-coding transcript at all (tRNA/rRNA/lncRNA/...) has no
+        # protein product, full stop -- there is no UniProt entry,
+        # InterPro/Pfam domain, or AlphaFold DB structure to ever find
+        # for it. Querying anyway and reporting the inevitable "not
+        # found" indistinguishably from a real failed lookup misreports
+        # gene biology as a data gap (this was previously masked for
+        # mitochondrial tRNA/rRNA genes specifically -- see
+        # `pipeline/acmg_rules.py::non_protein_coding_gene_reason`'s own
+        # docstring for why this is deliberately NOT mtDNA-specific: a
+        # nuclear ncRNA gene has the exact same property). Skipped
+        # honestly, the same shape as `mtdna_gnomad_skip_result` etc.
+        # above, rather than spending a real query on a resource that is
+        # structurally never going to have an answer.
+        skip_reason = non_protein_coding_gene_reason(transcript_result)
+        if skip_reason:
+            uniprot_result = {"found": False, "skipped": True, "reason": skip_reason}
+            interpro_result = {"found": False, "skipped": True, "reason": skip_reason}
+            alphafold_result = {"found": False, "skipped": True, "reason": skip_reason}
+        else:
+            uniprot_result = self._run_uniprot_stage(variant, clingen_result, errors)
+            interpro_result = self._run_interpro_stage(uniprot_result, protein_position, errors)
+            alphafold_result = self._run_alphafold_stage(uniprot_result, protein_position, errors)
 
         interpretation = self.interpretation_engine.interpret(
             variant_dict=variant.to_dict(),

@@ -238,27 +238,32 @@ class SpliceBERTPlugin(PluginModel):
             # for the rest of the run instead of propagating a raw
             # timeout message.
             #
-            # Root cause of *why* it times out at all is unconfirmed as
-            # of this pass (F1b, report review round 4): the checkpoint
-            # is a standard, unmodified `BertForMaskedLM` (see
-            # `build_model_and_tokenizer`'s docstring), so this is not
-            # a config/architecture mismatch in the checkpoint itself.
-            # The two most recent verified runs preceded this failure
-            # with transformers' "You are using a model of type 'bert'
-            # to instantiate a model of type ''" warning under
-            # transformers 5.13.1 (this repo's fix for the ORIGINAL
-            # hang, `_force_transformers_to_prefer_torch_over_tf`, was
-            # verified only against the previously-pinned 4.56.2) --
-            # plausibly a second, distinct transformers-v5 auto-mapping
-            # resolution issue triggered by the same import-order
-            # precondition as the original bug (`pipeline/models/esm2.py`
-            # importing `transformers` first), but this was not
-            # reproduced or fixed in this pass since doing so needs a
-            # real load attempt, which this pass's environment cannot
-            # provide (no GPU, no fresh download). Message and
-            # exc_info promoted to `warning` so the next live run
-            # captures the detail needed to actually diagnose it,
-            # instead of only "SpliceBERT model unavailable".
+            # Root cause of *why* it times out at all is still unconfirmed
+            # (round 18 update): the checkpoint is a standard, unmodified
+            # `BertForMaskedLM` (see `build_model_and_tokenizer`'s
+            # docstring), so this is not a config/architecture mismatch in
+            # the checkpoint itself. The originally-suspected cause --
+            # `transformers` TensorFlow-backend auto-detection, which this
+            # repo previously "fixed" with `USE_TF=0` and then a direct
+            # override of an internal `transformers` flag
+            # (`_force_transformers_to_prefer_torch_over_tf`, since removed)
+            # -- was confirmed FALSE live under this repo's own
+            # `transformers` v5 pin: neither the internal flag that fix
+            # touched nor any TensorFlow-backend entry point exists under
+            # v5 at all, so that fix was a no-op the whole time. What's
+            # actually confirmed instead: the load succeeds quickly in
+            # isolation (13s cold, 0.2s warm), but has repeatedly stalled
+            # inside the full orchestrator process specifically, where
+            # MMSplice has already loaded real TensorFlow onto the GPU and
+            # ESM2 has already used `transformers`' `AutoModel` machinery --
+            # correlated with, but not yet isolated to, transformers'
+            # "You are using a model of type 'bert' to instantiate a model
+            # of type ''" warning immediately preceding the stall (see
+            # `build_model_and_tokenizer`'s docstring for the full,
+            # up-to-date account). Message and exc_info promoted to
+            # `warning` so the next live run captures the detail needed to
+            # actually diagnose it, instead of only "SpliceBERT model
+            # unavailable".
             message = (
                 f"SpliceBERT model unavailable: checkpoint load for '{checkpoint}' timed out "
                 f"after {CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS:.0f}s ({exc})"

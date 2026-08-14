@@ -29,9 +29,7 @@ logger = get_logger(__name__)
 # new version gets a new record id), so pinning the id is sufficient
 # -- no separate ref/tag concept applies here.
 DEFAULT_ZENODO_RECORD = "7995778"
-_ARCHIVE_URL_TEMPLATE = (
-    "https://zenodo.org/record/{record}/files/models.tar.gz?download=1"
-)
+_ARCHIVE_URL_TEMPLATE = "https://zenodo.org/record/{record}/files/models.tar.gz?download=1"
 
 # Three checkpoints ship inside the same archive (confirmed by listing
 # the archive's own contents): `SpliceBERT.510nt`,
@@ -157,91 +155,42 @@ def build_model_and_tokenizer(checkpoint_dir: Path):
     importable, mirroring `pipeline/models/spliceformer/loader.py
     ::build_model`'s deferred-import rationale.
 
-    BUG FIX #1, ROOT CAUSE (originally addressed with `USE_TF=0`,
-    reopened by a real 2+-hour hang reported against that fix -- see
-    `_force_transformers_to_prefer_torch_over_tf`'s docstring for the
-    full story of why setting the `USE_TF` environment variable here
-    was not sufficient on its own): `transformers` caches whether
-    TensorFlow is "available" exactly once, the first time
-    `transformers.utils.import_utils` itself is imported by ANYTHING
-    in the process -- not just by this function. `pipeline/models/esm2.py`
-    (`from transformers import AutoTokenizer, EsmModel`) always runs
-    first, during the orchestrator's startup model validation, well
-    before this function ever executes -- so by the time `USE_TF=0` is
-    set here, `transformers` is already imported and that decision is
-    already permanently cached (as "TensorFlow available", since
-    `pipeline/models/mmsplice/` requires `tensorflow` unconditionally).
-    The env var is kept below anyway (harmless, and correct for any
-    caller where this genuinely is the first `transformers` import),
-    but the real fix is forcing the already-cached flag directly --
-    see that helper.
+    HISTORY (round 18 correction -- the story below is what this
+    docstring used to assert, and is now known to be false; recorded
+    so a future reader doesn't reintroduce it): earlier rounds
+    attributed the SpliceBERT load timeout to `transformers`
+    internally detecting/caching a TensorFlow backend, and shipped two
+    fixes for it (`USE_TF=0`, then a direct override of
+    `transformers.utils.import_utils._tf_available`). Confirmed live
+    on Colab under this repo's own committed pin
+    (`transformers>=5.12.1,<6.0.0`, installed `5.13.1`): neither
+    `transformers.utils.import_utils._tf_available` nor
+    `transformers.TFAutoModel` exist under this version at all --
+    `transformers` v5 dropped TensorFlow support entirely, so there
+    was no TensorFlow-backend code path left for either fix to steer
+    away from. Both fixes were confirmed no-ops and have been removed.
 
-    BUG FIX #2 (this function): the load is now wrapped in a bounded
-    timeout (`CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS`, default
-    180s). Fix #1 is confirmed (by direct reproduction) to turn the
-    reported multi-hour hang into a sub-second load in this repo's own
-    dev sandbox, but a silent, indefinite hang is exactly the kind of
-    failure mode that should never be trusted to be fully eliminated
-    by a single upstream-library-internals fix across every
-    `transformers`/`tensorflow` version combination a deployment might
-    have -- if this ever regresses again (a future `transformers`
-    release renaming/removing the internal flag Fix #1 patches, for
-    example), the pipeline must fail loudly with a clear, actionable
-    error and let `SpliceBERTPlugin` demote to unavailable (the
-    existing graceful-degradation path every other model already
-    uses), never hang the whole run silently again.
+    WHAT IS ACTUALLY KNOWN about the timeout this function still
+    guards against (see `_load_with_timeout` below, kept -- it is
+    doing real work: SpliceBERT genuinely still stalls at exactly the
+    configured timeout inside the full orchestrator process): loading
+    this checkpoint in isolation succeeds quickly (13s cold, 0.2s
+    warm, all 108/108 weights present) -- the stall is specific to
+    running inside the full pipeline process, where `pipeline/models/
+    mmsplice/` has already loaded real TensorFlow onto the GPU (MMSplice
+    genuinely requires it -- this project keeps TensorFlow installed,
+    the fixes removed above only ever touched an env var and an
+    internal flag, never the TensorFlow install itself) and
+    `pipeline/models/esm2.py` has already used `transformers`'
+    `AutoModel` machinery. The stall correlates with `transformers`
+    emitting `You are using a model of type 'bert' to instantiate a
+    model of type ''` immediately before it. The specific import or
+    call that actually triggers the stall has not been isolated --
+    nothing beyond the above is established.
     """
-    import os
-
-    os.environ.setdefault("USE_TF", "0")
-
     from transformers import AutoModelForMaskedLM, AutoTokenizer
 
-    _force_transformers_to_prefer_torch_over_tf()
-
     return _load_with_timeout(checkpoint_dir, AutoModelForMaskedLM, AutoTokenizer)
-
-
-def _force_transformers_to_prefer_torch_over_tf() -> None:
-    """
-    Directly overrides `transformers.utils.import_utils._tf_available`
-    -- the already-imported, already-cached module attribute
-    `is_tf_available()` (and every downstream `AutoModelForMaskedLM`
-    code path that branches on it) actually reads -- rather than
-    relying on the `USE_TF` environment variable, which only has any
-    effect the very first time `transformers.utils.import_utils` is
-    imported in this process. Confirmed by direct reproduction: with
-    `transformers` already imported (simulating `models/esm2.py`
-    loading first, as it always does in a real GEPER run), setting
-    `USE_TF=0` immediately before `from transformers import ...` had
-    no effect (this checkpoint's load still triggered the slow/
-    pathological TensorFlow-backend-detection path); overriding this
-    attribute directly, immediately before loading, did.
-
-    This reaches into a "private" (leading-underscore) attribute of a
-    third-party library, which is unusual and normally worth avoiding
-    -- justified here because (a) the public, supported mechanism
-    (the `USE_TF` env var) is provably too late by the time this
-    function can run in a real pipeline, and (b) the override is
-    wrapped in `try/except` below, so if a future `transformers`
-    release renames or removes this attribute, the worst outcome is
-    silently falling back to Fix #1's env-var-only behavior (which
-    still works whenever this does happen to be the first
-    `transformers` import) plus Fix #2's timeout below -- never a hard
-    crash from this defensive patch itself.
-    """
-    try:
-        from transformers.utils import import_utils as _transformers_import_utils
-
-        _transformers_import_utils._tf_available = False
-    except Exception as exc:  # noqa: BLE001 - best-effort defensive patch, see docstring
-        logger.debug(
-            f"Could not force transformers to prefer the PyTorch backend "
-            f"(internal attribute may have changed in this transformers "
-            f"version): {exc}. Falling back to the USE_TF env var and the "
-            f"load timeout alone.",
-            exc_info=True,
-        )
 
 
 def _load_with_timeout(checkpoint_dir: Path, model_cls, tokenizer_cls):
@@ -281,9 +230,13 @@ def _load_with_timeout(checkpoint_dir: Path, model_cls, tokenizer_cls):
         raise TimeoutError(
             f"Loading SpliceBERT checkpoint from '{checkpoint_dir}' did not complete within "
             f"{timeout:.0f}s (GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS) -- treating this as a load "
-            f"failure rather than waiting indefinitely. This previously manifested as a "
-            f"multi-hour silent hang caused by transformers' TensorFlow-backend detection; "
-            f"see build_model_and_tokenizer's docstring."
+            f"failure rather than waiting indefinitely. This load succeeds quickly in isolation "
+            f"(confirmed: 13s cold, 0.2s warm) but has repeatedly stalled at exactly this timeout "
+            f"inside the full orchestrator process, where MMSplice has already loaded real "
+            f"TensorFlow onto the GPU and ESM2 has already used transformers' AutoModel machinery; "
+            f'the stall correlates with transformers emitting "You are using a model of type '
+            f"'bert' to instantiate a model of type ''\" immediately beforehand. The triggering "
+            f"import/call has not been isolated -- see build_model_and_tokenizer's docstring."
         ) from exc
     finally:
         # Don't block process shutdown on a worker that may never

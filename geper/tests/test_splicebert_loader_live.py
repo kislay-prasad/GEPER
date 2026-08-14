@@ -3,16 +3,23 @@ Real-checkpoint regression test for a genuine bug found via a live
 Colab run of this project: `pipeline/models/splicebert/loader.py
 ::build_model_and_tokenizer` never returned (observed as an
 indefinite hang, not a crash) when loading the real SpliceBERT.1024nt
-checkpoint, because `transformers`' `AutoModelForMaskedLM.from_pretrained`
-pathologically hangs when TensorFlow is also importable in the same
-process -- which it always is here, since `pipeline/models/mmsplice/`
-requires `tensorflow` unconditionally (requirements.txt). Reproduced
-on plain CPU in this dev sandbox (no GPU/Colab-specific behavior
-involved) by isolating the hang to that exact call via unbuffered,
-step-by-step logging, and confirmed fixed by setting `USE_TF=0` before
-the `transformers` import -- even when `transformers` was already
-imported earlier in the process (simulating ESM2/RNA-FM loading first,
-the real pipeline's actual order).
+checkpoint under `transformers` 4.x. Originally attributed to
+`transformers`' TensorFlow-backend auto-detection, and "fixed" first
+with `USE_TF=0`, then with a direct override of an internal
+`transformers` flag -- ROUND 18 CORRECTION: both attributions are now
+known false. Confirmed live under this repo's current pin
+(`transformers>=5.12.1,<6.0.0`, installed `5.13.1`): the internal flag
+those fixes touched (`transformers.utils.import_utils._tf_available`)
+and TensorFlow's own Auto* entry point (`transformers.TFAutoModel`)
+both no longer exist under `transformers` v5 at all -- v5 dropped
+TensorFlow support entirely, so neither fix could have been doing
+anything under the environment this project actually runs. Both were
+removed from `loader.py` this round. See
+`pipeline/models/splicebert/loader.py::build_model_and_tokenizer`'s
+own docstring for what is actually known about the still-real timeout
+this test guards against: the load succeeds quickly in isolation, but
+has repeatedly stalled inside the full orchestrator process
+specifically; the triggering import/call has not been isolated.
 
 This test is intentionally NOT mocked (unlike test_splicebert_plugin.py's
 existing suite) -- it exercises the real checkpoint (already downloaded
@@ -22,19 +29,21 @@ exact bug fails fast and loud instead of hanging the test run silently.
 Skips (rather than fails) if the checkpoint isn't present on disk in
 this environment -- unlike the "_live" network tests elsewhere in this
 project, this doesn't re-download it (a ~208MB Zenodo archive), it only
-exercises the loading step against whatever is already cached.
+exercises the loading step against whatever is already cached. NOTE:
+when the checkpoint IS present (as it was found to be in this round's
+own dev sandbox), running this test loads real model weights -- do not
+run it as part of a routine/scoped offline pass on a memory-constrained
+machine; it was run exactly once this round, confirmed the load still
+completes correctly with both stale fixes removed, and was not re-run.
 """
 
 import multiprocessing
-import os
 import unittest
 from pathlib import Path
 
 from config import CONFIG
 
-_CHECKPOINT_DIR = (
-    Path(CONFIG.splicing.PLUGIN_CACHE_DIR) / "splicebert" / CONFIG.splicing.SPLICEBERT_CHECKPOINT
-)
+_CHECKPOINT_DIR = Path(CONFIG.splicing.PLUGIN_CACHE_DIR) / "splicebert" / CONFIG.splicing.SPLICEBERT_CHECKPOINT
 _TIMEOUT_SECS = 60
 
 
@@ -66,10 +75,12 @@ class TestSpliceBertLoaderDoesNotHang(unittest.TestCase):
             proc.join(5)
             self.fail(
                 f"build_model_and_tokenizer() did not return within {_TIMEOUT_SECS}s -- this is exactly "
-                f"the real bug this test guards against (TensorFlow-backend auto-detection hang in "
-                f"transformers.AutoModelForMaskedLM.from_pretrained when tensorflow is also installed). "
-                f"If this fails, check that pipeline/models/splicebert/loader.py still sets USE_TF=0 "
-                f"before importing transformers."
+                f"the real load stall this test guards against. As of round 18, the cause is NOT "
+                f"TensorFlow-backend auto-detection (that attribution was confirmed false under this "
+                f"repo's transformers v5 pin -- see this module's own docstring and "
+                f"pipeline/models/splicebert/loader.py::build_model_and_tokenizer's docstring for what "
+                f"is actually known). Do not reintroduce USE_TF=0 as a fix on the strength of this "
+                f"failure alone."
             )
 
         self.assertFalse(result_queue.empty(), "subprocess exited without reporting a result")

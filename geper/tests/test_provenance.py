@@ -10,7 +10,6 @@ loads real model registries -- out of scope for a unit test on an 8GB
 machine).
 """
 
-import json
 import os
 import tempfile
 import unittest
@@ -119,7 +118,8 @@ class TestFileHashingAndSidecar(unittest.TestCase):
             with open(path, "w") as fh:
                 fh.write("some content")
             record = write_dataset_provenance_sidecar(
-                path, "https://example.com/f.txt",
+                path,
+                "https://example.com/f.txt",
                 response_headers={"Last-Modified": "Mon, 01 Jan 2026 00:00:00 GMT", "ETag": '"abc"'},
             )
             self.assertIsNotNone(record["content_hash"])
@@ -138,8 +138,11 @@ class TestFileHashingAndSidecar(unittest.TestCase):
             with open(path, "w") as fh:
                 fh.write("stand-in content")
             record = write_dataset_provenance_sidecar(
-                path, "https://storage.googleapis.com/x", content_hash="deadbeef",
-                hash_algorithm="gcs-etag-md5", compute_hash_from_file=False,
+                path,
+                "https://storage.googleapis.com/x",
+                content_hash="deadbeef",
+                hash_algorithm="gcs-etag-md5",
+                compute_hash_from_file=False,
             )
             self.assertEqual(record["content_hash"], "deadbeef")
             self.assertEqual(record["hash_algorithm"], "gcs-etag-md5")
@@ -202,7 +205,10 @@ class TestEnsembleAndBlastCaptureHelpers(unittest.TestCase):
         self.assertEqual(result["version"], "blastn 2.16.0+")
 
     def test_capture_blast_local_tool_versions_no_tools_is_not_an_error(self):
-        with mock.patch("database.blast_client.get_blast_tool_versions", return_value={"blastn": None, "blastp": "not found on PATH"}):
+        with mock.patch(
+            "database.blast_client.get_blast_tool_versions",
+            return_value={"blastn": None, "blastp": "not found on PATH"},
+        ):
             result = capture_blast_local_tool_versions()
         self.assertIsNone(result["version"])
         self.assertIsNone(result["error"])
@@ -218,6 +224,7 @@ class TestOrchestratorStageProvenanceCapture(unittest.TestCase):
 
     def _fake_self(self):
         from pipeline.provenance import RunProvenanceCollector
+
         return SimpleNamespace(
             provenance=RunProvenanceCollector(),
             sequence_context_gen=SimpleNamespace(assembly="GRCh38"),
@@ -226,9 +233,14 @@ class TestOrchestratorStageProvenanceCapture(unittest.TestCase):
 
     def _capture(self, fake_self, **kwargs):
         from pipeline.orchestrator import GeperPipeline
+
         defaults = dict(
-            clinvar_result=None, dbsnp_result=None, gnomad_result=None,
-            uniprot_result=None, interpro_result=None, alphafold_result=None,
+            clinvar_result=None,
+            dbsnp_result=None,
+            gnomad_result=None,
+            uniprot_result=None,
+            interpro_result=None,
+            alphafold_result=None,
             functional_evidence_result=None,
         )
         defaults.update(kwargs)
@@ -262,7 +274,10 @@ class TestOrchestratorStageProvenanceCapture(unittest.TestCase):
 
     def test_uniprot_release_header_is_the_version(self):
         fake_self = self._fake_self()
-        self._capture(fake_self, uniprot_result={"found": True, "skipped": False, "release": "2026_02", "release_date": "10-June-2026"})
+        self._capture(
+            fake_self,
+            uniprot_result={"found": True, "skipped": False, "release": "2026_02", "release_date": "10-June-2026"},
+        )
         record = fake_self.provenance.get("UniProt")
         self.assertEqual(record.status, VersionStatus.VERSION_KNOWN)
         self.assertIn("2026_02", record.version)
@@ -282,10 +297,33 @@ class TestOrchestratorStageProvenanceCapture(unittest.TestCase):
         self.assertEqual(record.status, VersionStatus.VERSION_KNOWN)
 
     def test_functional_evidence_source_routes_to_the_right_record(self):
+        # Round 18: `source` (singular) was the pre-`e54e3f6` field this
+        # test used to branch on; that commit removed it in favour of
+        # `consulted_sources` (a list of every source whose gene index
+        # was actually fetched, independent of match -- see
+        # `pipeline/functional_evidence/models.py::FunctionalEvidenceResult`
+        # and `tests/test_functional_evidence_provenance_capture.py`,
+        # which already uses this shape). ERepo is always tried before
+        # MaveDB (`pipeline/functional_evidence/lookup.py`'s short
+        # circuit) -- a real MaveDB match means ERepo was genuinely
+        # queried and came back empty on the way there, so both must
+        # read TIMESTAMP_ONLY, not just MaveDB. Mirrors
+        # `test_functional_evidence_provenance_capture.py::
+        # test_mavedb_match_also_credits_erepo_as_consulted` exactly.
         fake_self = self._fake_self()
-        self._capture(fake_self, functional_evidence_result={"found": True, "source": "mavedb"})
+        self._capture(
+            fake_self,
+            functional_evidence_result={
+                "found": True,
+                "source": "mavedb",
+                "records": [{"call": "BS3"}],
+                "consulted_sources": ["ClinGen ERepo", "MaveDB"],
+            },
+        )
         self.assertEqual(fake_self.provenance.get("Functional evidence (MaveDB)").status, VersionStatus.TIMESTAMP_ONLY)
-        self.assertEqual(fake_self.provenance.get("Functional evidence (ClinGen ERepo)").status, VersionStatus.NOT_CONSULTED)
+        self.assertEqual(
+            fake_self.provenance.get("Functional evidence (ClinGen ERepo)").status, VersionStatus.TIMESTAMP_ONLY
+        )
 
     def test_a_stage_result_left_untouched_stays_not_consulted(self):
         fake_self = self._fake_self()

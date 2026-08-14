@@ -748,3 +748,76 @@ specific test since) or the test itself is stale against a since-changed
 `VersionStatus` default. Needs someone to trace `_capture_functional_evidence_provenance`
 (or wherever MaveDB routing actually lives) against what this test assumes,
 which round 17 didn't have scope to do.
+
+**RESOLVED, round 18:** stale test, not a regression. `git log --follow --
+geper/tests/test_provenance.py` shows exactly one commit ever touched the
+file (its creation, `2a9dd41`) -- `e54e3f6` (which replaced provenance
+routing's `source`-branching with `consulted_sources`-based routing,
+specifically to stop a genuinely-queried-but-empty MaveDB/ClinGen ERepo
+from reading as never-consulted) never touched it, despite its own commit
+message scoping the fix to two *other* test files
+(`test_ps3_bs3.py`, `test_functional_evidence_provenance_capture.py`).
+`git show e54e3f6 -- geper/pipeline/orchestrator.py` confirms the
+`source`-branching this test relied on was deleted outright, not kept
+alongside the new logic. Fixed by updating the one stale test to the
+`consulted_sources` shape `test_functional_evidence_provenance_capture.py`
+already uses (and correcting its ERepo assertion to match: ERepo is always
+tried before MaveDB, so a real MaveDB match means ERepo was also genuinely
+consulted, not left `NOT_CONSULTED`). Grepped for every other harness
+exercising `_capture_stage_provenance` -- only these two files do, and the
+other one was already on the current contract. This was the only stale
+instance.
+
+---
+
+## Round 18 (stale-test cleanup + SpliceBERT TensorFlow-detection myth removal)
+
+Part A fixed the round-17-logged stale provenance test (see that entry
+above, now RESOLVED). Part B removed `pipeline/models/splicebert/loader.py
+::_force_transformers_to_prefer_torch_over_tf` and the `USE_TF=0` line: both
+confirmed live, under this repo's own `transformers>=5.12.1,<6.0.0` pin
+(installed `5.13.1`), to be no-ops -- `transformers.utils.import_utils.
+_tf_available` and `transformers.TFAutoModel` do not exist under v5 at all,
+since v5 dropped TensorFlow support entirely. Rewrote
+`build_model_and_tokenizer`'s docstring, the `_load_with_timeout` timeout
+error message, `splicebert_plugin.py`'s catch-site comment, and
+`tests/test_splicebert_loader_live.py`'s docstring/failure message (all of
+which asserted the now-disproven "TensorFlow-backend detection" causal
+story) to instead state only what's actually confirmed: the load succeeds
+quickly in isolation (13s cold, 0.2s warm, 108/108 weights) but has
+repeatedly stalled inside the full orchestrator process specifically,
+correlated with (not yet isolated to) transformers' "You are using a model
+of type 'bert' to instantiate a model of type ''" warning. TensorFlow
+itself remains installed (MMSplice genuinely requires it) -- only the env
+var and the internal-flag override were removed, never conflated with
+removing TensorFlow from the project.
+
+One more pre-existing, unrelated failure found while regression-testing
+this change:
+
+### 1. `test_splicebert_plugin.py::TestSpliceBERTLoadImpl::test_network_failure_is_sanitized` fails on a clean checkout, before any round-18 change
+
+**What:** `python -m pytest tests/test_splicebert_plugin.py -q` fails this
+one test on a clean tree (confirmed via `git stash push -u`, no round-18
+changes present). The test asserts `str(ctx.exception) ==
+"SpliceBERT model unavailable"` for a mocked archive-download
+`ConnectionError`, but the actual raised message is
+`"SpliceBERT model unavailable: archive fetch for checkpoint
+'SpliceBERT.1024nt' failed (ConnectionError): could not reach zenodo.org"`
+-- the code now appends the real failure detail (arguably an improvement
+for diagnosability -- "sanitized" no longer means "detail-free"), and the
+test's exact-match assertion was never updated to match. Not caused or
+touched by round 18 -- this is `pipeline/models/splicebert_plugin.py`'s
+download-failure path, a different branch than the timeout path this
+round's fix touched.
+
+**Why this is a candidate, not a round-18 fix:** out of scope for a
+TensorFlow-detection-myth cleanup round; needs its own decision about
+whether the current (detailed) message or the test's expectation (bare
+"SpliceBERT model unavailable") is the one that should change.
+
+**Decision needed:** update the test's assertion to match the current,
+more diagnostic message (likely correct -- a bare "unavailable" with no
+detail is a worse error for exactly the kind of live-Colab debugging this
+project has repeatedly needed), or confirm the message was deliberately
+meant to stay generic and fix the code instead.

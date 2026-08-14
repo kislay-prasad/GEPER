@@ -209,6 +209,15 @@ class TranscriptLookup:
             "assembly": build,
             "source": "ensembl_gtf_cache",
             "transcript": transcript_dict,
+            # Round 14, B2: `pipeline/ensembl/bootstrap.py::_parse_gtf_lines`
+            # only ever creates a gene accumulator when the GTF's own
+            # `gene_biotype` attribute equals `protein_coding` (see that
+            # function's `biotype != _CODING_BIOTYPE` gate) -- a
+            # non-protein-coding gene (e.g. any mitochondrial tRNA/rRNA
+            # gene) never becomes a row in this cache at all, so reaching
+            # this branch guarantees the biotype, rather than requiring a
+            # second lookup to confirm it.
+            "gene_biotype": "protein_coding",
         }
 
     def _fetch_live(self, gene_symbol: str, build: str) -> Dict[str, Any]:
@@ -267,6 +276,15 @@ class TranscriptLookup:
                 "gene_symbol": gene_symbol,
                 "transcript": None,
                 "reason": f"no protein-coding transcript with a translation was returned for {gene_symbol}.",
+                # Round 14, B2: `payload` is Ensembl's own `lookup/symbol`
+                # response, which already carries the gene's `biotype`
+                # (e.g. "protein_coding", "Mt_tRNA", "Mt_rRNA") -- surfaced
+                # here rather than fetched a second time, so a caller that
+                # needs to tell "this gene genuinely has no CDS" (biology)
+                # apart from "the lookup failed" (a data gap) can, without
+                # hardcoding a gene list. `None` when Ensembl's own
+                # response didn't include it -- never guessed.
+                "gene_biotype": payload.get("biotype"),
             }
 
         cds_sequence = self._fetch_cds_sequence(chosen.get("id"), build)
@@ -291,6 +309,7 @@ class TranscriptLookup:
             "assembly": build,
             "source": "ensembl_api",
             "transcript": transcript_dict,
+            "gene_biotype": payload.get("biotype"),
         }
 
     def _fetch_cds_sequence(self, transcript_id: Optional[str], build: str) -> Optional[str]:

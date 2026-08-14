@@ -533,3 +533,94 @@ round on an 8GB machine with no GPU/network.
    consistent with a second, distinct, transformers-v5-specific issue Fix #1
    was never verified against, independent of whether (1) above also turns
    out to be true.
+
+---
+
+## Round 14 (mtDNA compartment gate)
+
+Replaced round 8's whole-variant rejection with per-criterion, per-evidence-
+source compartment gating (B1: fixed the `chrom` normalization blocking MT
+transcript resolution and proved real MT-ND1/MT-ATP6 transcript structure
+resolves; B2: 7 criteria pre-marked `not_evaluated`-with-reason for any chrM
+variant, 6 more for confirmed non-protein-coding mitochondrial genes,
+AlphaMissense/gnomAD/MMSplice/Enformer/Borzoi/SpliceFormer/SpliceBERT never
+queried for chrM at all, a per-finding disclaimer on every chrM finding in
+all three renderers). Two things deliberately left out of this round's scope:
+
+### 1. The deferred second pass: gnomAD-mtDNA, MITOMAP, a real mtDNA-specific PVS1/PM2, heteroplasmy
+
+**What:** round 14's own Task A investigation (see that report) scoped this
+round to evaluation + honest gating, explicitly deferring: gnomAD's separate
+mitochondrial callset (a genuinely different query shape, not just a new
+`dataset_id`), MITOMAP integration (bulk-file bootstrap, same shape as
+ClinGen/HPO/Orphanet, not a per-variant API), a real mtDNA-specific PVS1
+implementation (McCormick et al. 2020 defines it per gene class, not as a
+parameter tweak on the nuclear framework), and any heteroplasmy-level,
+maternal-inheritance, or tissue-distribution handling at all -- GEPER
+collects none of that data today. The per-finding disclaimer this round adds
+states all four gaps explicitly on every chrM finding so a reviewer is never
+left to infer the scope boundary themselves.
+
+**Why this is a candidate, not a round-14 fix:** each of these is a real,
+separately-scoped data-source integration or algorithm reimplementation, not
+a smaller version of this round's gating work -- round 14's own report
+argued for shipping a narrow, honest gate over a broad half-right one, and
+that argument applies here too.
+
+**Decision needed:** prioritization and scope for a genuine second pass --
+likely gnomAD-mtDNA first (same provider module already being touched,
+narrowest new-integration footprint), MITOMAP and the mtDNA-specific PVS1
+rebuild as larger, separately-scoped efforts, heteroplasmy last (it isn't
+just a new source -- it changes what a "variant" even means for scoring,
+since GEPER's whole model today is one classification per genomic
+position/allele, not per allele-fraction).
+
+### 2. Six more chrom-normalization copies found during B1 -- two were provably wrong, so the rest are suspect, not just untidy
+
+**What:** while fixing `pipeline/ensembl/provider.py::_normalize_chrom`
+(round 14, B1), a search for the same `chrom[3:] if chrom.lower().startswith("chr")
+else chrom` pattern (or the equivalent `.replace("chr", "")` chain) found it
+independently duplicated in at least seven places across the codebase. Two
+were confirmed live, provably wrong for at least one real spelling before B1
+fixed them: `pipeline/ensembl/provider.py::_normalize_chrom` itself (`chrM`/
+bare `M` never matched Ensembl's `MT` seqname) and
+`pipeline/clingen/utils.py::_fetch_overlapping_genes`'s `bare_chrom` (same
+bug, live Ensembl REST gene-overlap fallback). The other six were left
+unfixed, deliberately out of B1's scope (chrM transcript resolution only):
+`pipeline/conservation/utils.py` (two occurrences), `pipeline/gnomad/utils.py`
+(three occurrences), `pipeline/sequence_context.py`, `database/clinvar_client.py`,
+`database/dbsnp_client.py`, and `pipeline/models/spip/loader.py` (this last
+one adds a `chr` prefix rather than stripping one, so it's the same class of
+duplicated-not-shared logic, not necessarily the same specific bug).
+`models/alphamissense.py::_normalize_chrom_for_catalogue` was checked and
+confirmed already MT-aware (correctly canonicalizes `M`/`mt`/`Mt`/`MT`) --
+the one of eight that isn't suspect.
+
+**Why this matters, stated plainly:** seven independent copies of what
+should be one rule existed in this codebase, and two of them were
+confirmed wrong. That is not "some copies happen to be untidy" -- with a
+50%+ live-defect rate on the copies actually audited, the remaining six are
+suspect until individually checked, not merely a duplication-cleanup
+nicety. `pipeline/hgvs_utils.py::_strip_chr` is the one version of this
+logic that is already correct (handles `MT`/`M`/`mt`/`Mt`, bare or
+`chr`-prefixed) and is what B1 pointed `ensembl/provider.py` at instead of
+writing an eighth copy.
+
+**Why this is a candidate, not a round-14 fix:** round 14 was scoped to the
+mtDNA compartment gate specifically; `pipeline/gnomad/utils.py`'s three
+copies are moot for MT until the gnomAD-mtDNA integration above exists
+(gnomAD is never queried for chrM at all as of this round), and auditing
+the other four needs the same "does this actually get called with an MT
+chrom value in a real code path today" tracing B1 did for
+`ensembl/provider.py` and `clingen/utils.py` -- not assumed, not batched
+into this round's already-large diff.
+
+**Decision needed:** audit each of the six remaining copies for the same
+`chrM`/bare-`M` mismatch, prioritized by whether the call site can actually
+be reached with an MT-spelled chrom today (`sequence_context.py` and the
+two database clients are read on every variant regardless of compartment,
+so likely highest priority; `conservation/utils.py`'s two copies and
+`gnomad/utils.py`'s three are lower priority until/unless MT variants reach
+them for real); then decide whether to fix each in place or replace all
+seven with calls to `hgvs_utils.py::_strip_chr`, consolidating to the one
+correct implementation this project already has.

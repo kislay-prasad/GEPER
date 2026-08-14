@@ -12,6 +12,8 @@ from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DIS
 from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
+from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER
+from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED, FAILED, SKIPPED, USED, render_status_table_lines
 
 logger = get_logger(__name__)
@@ -297,18 +299,28 @@ class ReportGenerator:
         lines.append(f"- **Filter status:** {variant.get('filter') or 'n/a'}")
         lines.append("")
 
+        # Round 14, B2: per-finding, not report-level -- a reviewer reads
+        # findings, not preambles, and a chrM finding with a
+        # classification looks complete to anyone who skipped the header.
+        # Placed first, before any criteria/classification content.
+        if is_mitochondrial_chrom(variant.get("chrom")):
+            lines.append(f"> **{MTDNA_INTERPRETATION_DISCLAIMER}**")
+            lines.append("")
+
         out_of_scope = result.get("out_of_scope")
         if out_of_scope:
-            # Report review round 8: a chrM variant never entered any
-            # evidence-source stage or the ACMG engine at all (see
-            # `pipeline/orchestrator.py::GeperPipeline
-            # ._mitochondrial_out_of_scope_result`) -- rendering the
-            # normal Annotation Detail / audit-trail sections below
-            # would show a wall of "not found"/"skipped" boilerplate
-            # that reads as "checked, nothing there" when the honest
-            # statement is "never checked, by design". This is a
-            # distinct status, not a Variant of Uncertain Significance
-            # and not a stage failure.
+            # Generic "never assessed at all" rendering: rendering the
+            # normal Annotation Detail / audit-trail sections below for a
+            # variant this run genuinely never attempted would show a wall
+            # of "not found"/"skipped" boilerplate that reads as "checked,
+            # nothing there" when the honest statement is "never checked,
+            # by design". This is a distinct status, not a Variant of
+            # Uncertain Significance and not a stage failure. No current
+            # producer as of round 14, B2 (which replaced the
+            # mitochondrial compartment's whole-variant rejection with
+            # per-criterion gating -- see `pipeline/acmg_rules.py`) --
+            # kept as reusable infrastructure for a future genuinely-
+            # unassessable variant class.
             lines.append(f"**Status:** Out of scope ({out_of_scope.get('scope', 'unspecified')})")
             lines.append("")
             lines.append(out_of_scope.get("reason") or "This variant is out of scope for this GEPER build.")

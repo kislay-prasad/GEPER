@@ -50,6 +50,8 @@ from reportlab.platypus.flowables import Flowable
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from config import CONFIG
+from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER
+from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED as _STATUS_DISABLED
 from pipeline.models.status import FAILED as _STATUS_FAILED
 from pipeline.models.status import SKIPPED as _STATUS_SKIPPED
@@ -1872,15 +1874,23 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         Paragraph(f"Finding {idx}: {locus}", styles["SectionHeading"]),
     ]
 
+    # Round 14, B2: per-finding, not report-level -- see
+    # report/report_generator.py's identical placement/reasoning.
+    if is_mitochondrial_chrom(variant.get("chrom")):
+        flow.append(Paragraph(MTDNA_INTERPRETATION_DISCLAIMER, styles["StatusWarn"]))
+        flow.append(Spacer(1, 2 * mm))
+
     out_of_scope = variant_result.get("out_of_scope")
     if out_of_scope:
-        # Report review round 8: distinct from the "no clinical
-        # interpretation available" fallback just below -- that one
-        # means GEPER tried and the interpretation engine produced
-        # nothing; this means GEPER never attempted anything for this
-        # variant at all, by design (see
-        # `pipeline/orchestrator.py::GeperPipeline
-        # ._mitochondrial_out_of_scope_result`).
+        # Distinct from the "no clinical interpretation available"
+        # fallback just below -- that one means GEPER tried and the
+        # interpretation engine produced nothing; this means GEPER never
+        # attempted anything for this variant at all, by design. No
+        # current producer as of round 14, B2 (which replaced the
+        # mitochondrial compartment's whole-variant rejection with
+        # per-criterion gating -- see `pipeline/acmg_rules.py`) -- kept
+        # as reusable infrastructure for a future genuinely-unassessable
+        # variant class.
         flow.append(
             Paragraph(f"<b>Status:</b> Out of scope ({out_of_scope.get('scope', 'unspecified')})", styles["StatusWarn"])
         )

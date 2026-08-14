@@ -59,6 +59,8 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from pipeline.acmg_rules import MTDNA_INTERPRETATION_DISCLAIMER_SHORT
+from pipeline.hgvs_utils import is_mitochondrial_chrom
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
 from report.summary import (
     _DEIDENTIFIED_LABEL,
@@ -417,11 +419,11 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     """
     out_of_scope = variant_result.get("out_of_scope")
     if out_of_scope:
-        # Report review round 8: bypasses the classification/confidence
-        # strip and reviewer-flag machinery entirely, same reasoning as
-        # `report/summary.py::_build_variant_section`'s identical
-        # branch -- this variant was never evaluated, not merely
-        # unclassified.
+        # Bypasses the classification/confidence strip and reviewer-flag
+        # machinery entirely, same reasoning as `report/summary.py::
+        # _build_variant_section`'s identical branch -- this variant was
+        # never evaluated, not merely unclassified. No current producer
+        # as of round 14, B2 -- see that branch's own comment.
         variant = variant_result.get("variant", {})
         locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
         heading = f"Finding {idx}: {locus}"
@@ -440,6 +442,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
             Spacer(1, 3 * mm),
         ]
 
+    variant = variant_result.get("variant", {})
     clinical = variant_result.get("clinical_report")
     gene = _variant_gene(variant_result)
     hgvs = _variant_hgvs(variant_result)
@@ -489,9 +492,18 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     flow: List[Any] = [
         Paragraph(heading, styles["VariantHeading"]),
         strip,
-        Spacer(1, 1.5 * mm),
-        Paragraph(_short_interpretation(clinical), styles["BodyText"]),
     ]
+
+    # Round 14, B2: per-finding, not report-level -- see
+    # report/report_generator.py's identical placement/reasoning. Uses
+    # the SHORT disclaimer text (no criterion counts) for this report's
+    # tight per-variant space budget.
+    if is_mitochondrial_chrom(variant.get("chrom")):
+        flow.append(Spacer(1, 1 * mm))
+        flow.append(Paragraph(MTDNA_INTERPRETATION_DISCLAIMER_SHORT, styles["Flag"]))
+
+    flow.append(Spacer(1, 1.5 * mm))
+    flow.append(Paragraph(_short_interpretation(clinical), styles["BodyText"]))
 
     # Clinician override (geper/review/signoff.py's "override" command) --
     # layered on top of, never substituting for, GEPER's own

@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.gnomad.models import POPULATION_LABELS
+from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
 from pipeline.ps1_pm5.utils import matches_from_clinvar_codon_result
 from pipeline.pvs1.decision_tree import PVS1DecisionTree
@@ -98,6 +99,206 @@ _STRENGTH = {
 }
 
 _POINTS = {"stand_alone": 8, "very_strong": 8, "strong": 4, "moderate": 2, "supporting": 1}
+
+
+# ---------------------------------------------------------------------------
+# mtDNA compartment gate (round 14, B2)
+#
+# Round 8 rejected every chrM variant outright, before any evidence stage or
+# this engine ever ran, because the alternative was failing OPEN: a nuclear-
+# genome-calibrated criterion firing on evidence that is wrong for mtDNA (the
+# MT_TEST01 report's PM2 "absent from gnomAD" -- gnomAD's mitochondrial
+# callset was never queried at all -- and BP4 firing off MMSplice/Enformer/
+# Borzoi, all nuclear-splicing models scoring a genome with no spliceosome).
+# Round 14 replaces that whole-variant rejection with a compartment-aware
+# gate: a chrM variant now runs through `evaluate()` for real, but the 7
+# criteria below are pre-marked `not_evaluated`, with their own honest
+# reason, BEFORE their real methods ever run -- so none of them can fire on
+# a wrong-resource query. This extends the same "compute an applicability
+# reason before running a criterion's real logic" shape
+# `_pp3_bp4_inapplicability_reason` already established for a different
+# precondition (LOF/canonical-splice variants), rather than inventing a
+# second mechanism.
+#
+# Six more criteria (PS1, PM1, PM4, PM5, BP1, BP3) need a codon or protein-
+# length concept and are additionally gated -- but only for the 24
+# mitochondrial genes with no protein-coding transcript at all (22 tRNA + 2
+# rRNA genes), never for the 13 protein-coding ones. Gene class is derived
+# from the real Ensembl `biotype` `pipeline/pvs1/lookup.py::TranscriptLookup`
+# now surfaces on `transcript_result["gene_biotype"]` (round 14, B2) --
+# never a hardcoded gene-name list, so a future Ensembl annotation change or
+# gene-symbol alias can't silently go stale here.
+_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS: Dict[str, str] = {
+    "PVS1": (
+        "PVS1's null-variant/loss-of-function framework assumes nuclear diploidy "
+        "(haploinsufficiency, nonsense-mediated decay) -- mtDNA is polyplasmic (hundreds to "
+        "thousands of copies per cell) and pathogenicity is heteroplasmy-threshold-driven, not "
+        "haploinsufficiency-driven. The ACMG/AMP mitochondrial DNA specification (McCormick et al. "
+        "2020) defines PVS1 differently per mitochondrial gene class (protein-coding/tRNA/rRNA); "
+        "GEPER does not implement that mtDNA-specific version, so PVS1 is not evaluated for this "
+        "compartment rather than applying the nuclear framework where it does not hold."
+    ),
+    "PM2": (
+        "pipeline/gnomad/provider.py's _DATASET_BY_BUILD only holds gnomAD's nuclear SNV/indel "
+        "datasets (gnomad_r4 / gnomad_r2_1) -- gnomAD's separate mitochondrial callset is never "
+        "queried. An 'absent from gnomAD' result for a mitochondrial variant is a query-target gap "
+        "(the wrong resource was asked), not a rarity signal, and must not be read as PM2 evidence."
+    ),
+    "BA1": (
+        "pipeline/gnomad/provider.py's _DATASET_BY_BUILD only holds gnomAD's nuclear SNV/indel "
+        "datasets (gnomad_r4 / gnomad_r2_1) -- gnomAD's separate mitochondrial callset is never "
+        "queried, so no real population-frequency evidence exists here for BA1's stand-alone-benign "
+        "threshold to compare against."
+    ),
+    "BS1": (
+        "pipeline/gnomad/provider.py's _DATASET_BY_BUILD only holds gnomAD's nuclear SNV/indel "
+        "datasets (gnomad_r4 / gnomad_r2_1) -- gnomAD's separate mitochondrial callset is never "
+        "queried, so no real population-frequency evidence exists here for BS1's threshold to "
+        "compare against."
+    ),
+    "PP3": (
+        "AlphaMissense's catalogue has no rows for mitochondrially-encoded genes, and MMSplice / "
+        "the Enformer-Borzoi ensemble are trained exclusively on nuclear pre-mRNA splicing -- mtDNA "
+        "transcripts are not spliced (no spliceosome, no introns), so neither predictor has any "
+        "meaning here."
+    ),
+    "BP4": (
+        "AlphaMissense's catalogue has no rows for mitochondrially-encoded genes, and MMSplice / "
+        "the Enformer-Borzoi ensemble are trained exclusively on nuclear pre-mRNA splicing -- mtDNA "
+        "transcripts are not spliced (no spliceosome, no introns), so neither predictor has any "
+        "meaning here, in the benign direction any more than the pathogenic one."
+    ),
+    "BP7": (
+        "BP7's synonymous-variant-has-no-splice-impact evidence is scored by the same MMSplice / "
+        "SpliceFormer / SpliceBERT models used for PP3/BP4 -- all nuclear-trained splice predictors "
+        "with no meaning for a genome that has no spliceosome."
+    ),
+}
+
+# The 6 criteria that need a codon/protein-length concept -- gated further,
+# but only for confirmed non-protein-coding mitochondrial genes (see the
+# section docstring above).
+_MTDNA_PROTEIN_DEPENDENT_CODES = ("PS1", "PM1", "PM4", "PM5", "BP1", "BP3")
+
+# Round 14, B2: rendered on every mitochondrial finding (Markdown, full PDF,
+# short PDF), not report-level -- a clinical reviewer reads findings, not
+# preambles, and a chrM finding showing some evaluated criteria and a
+# classification looks like a complete interpretation to anyone who skipped
+# the header. Counts are round 14 B1's own corrected numbers, restated
+# verbatim rather than re-derived: 28 total ACMG/AMP criteria, 9 GEPER never
+# evaluates for any variant (no data source integrated), 19 remain "live",
+# of which 7 are inapplicable to the mitochondrial compartment specifically
+# (see `_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS`) and 12 can run once
+# transcript resolution works (fewer for a gene with no protein-coding
+# transcript -- see `_MTDNA_PROTEIN_DEPENDENT_CODES`).
+MTDNA_INTERPRETATION_DISCLAIMER = (
+    "Mitochondrial (mtDNA) compartment notice: this variant is on the mitochondrial genome. "
+    "Of the 28 standard ACMG/AMP criteria, GEPER never evaluates 9 for any variant (no data source "
+    "integrated), and a further 7 are inapplicable specifically to the mitochondrial compartment "
+    "(PVS1, PM2, BA1, BS1, PP3, BP4, BP7 -- each marked not_evaluated below with its own stated "
+    "reason, never silently skipped). Of the remaining 12, only those with a protein-coding "
+    "transcript for this gene actually ran. This evaluation does NOT incorporate heteroplasmy "
+    "level, maternal inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has a separate "
+    "mitochondrial DNA variant interpretation specification (McCormick et al. 2020) that this "
+    "evaluation does not fully implement. The classification below reflects only the criteria "
+    "GEPER actually evaluated for this compartment -- it is not a complete, "
+    "mtDNA-specification-compliant interpretation."
+)
+
+# Compact one-line form for the short PDF's tight per-variant space budget
+# -- same substance (heteroplasmy/inheritance/tissue/MITOMAP not
+# incorporated, separate mtDNA spec not fully implemented), no criterion
+# counts (the full PDF/Markdown carry those).
+MTDNA_INTERPRETATION_DISCLAIMER_SHORT = (
+    "Mitochondrial (mtDNA) finding: does not incorporate heteroplasmy level, maternal inheritance, "
+    "tissue distribution, or MITOMAP; ACMG/AMP's separate mtDNA specification (McCormick et al. "
+    "2020) is not fully implemented. Not a complete mtDNA-specification-compliant interpretation."
+)
+
+
+_MTDNA_EVIDENCE_SKIP_REASON = (
+    "this variant is on the mitochondrial genome; this evidence source has no validity for mtDNA "
+    "(see pipeline/acmg_rules.py's mtDNA compartment gate) and was never queried."
+)
+
+_MTDNA_GNOMAD_SKIP_REASON = (
+    "this variant is on the mitochondrial genome; gnomAD's mitochondrial callset is a separate "
+    "resource from the nuclear dataset this pipeline queries "
+    "(pipeline/gnomad/provider.py::_DATASET_BY_BUILD), and was never queried."
+)
+
+
+def mtdna_gnomad_skip_result() -> Dict[str, Any]:
+    """`pipeline/orchestrator.py::_process_variant`'s replacement for a
+    real `_run_gnomad_stage` call on a mitochondrial variant -- gnomAD's
+    nuclear-only dataset is never queried at all, not merely ignored once
+    a (wrong-resource) result comes back. A small, standalone,
+    lightweight function (rather than inline in `_process_variant`) so it
+    can be unit-tested without importing `pipeline.orchestrator`, whose
+    module-level imports pull in a multi-minute TensorFlow/absl chain."""
+    return {"found": False, "skipped": True, "reason": _MTDNA_GNOMAD_SKIP_REASON}
+
+
+def mtdna_alphamissense_skip_result() -> Dict[str, Any]:
+    """As `mtdna_gnomad_skip_result`, for `_run_alphamissense_stage`."""
+    return {"skipped": True, "reason": _MTDNA_EVIDENCE_SKIP_REASON}
+
+
+def mtdna_mmsplice_skip_result() -> Dict[str, Any]:
+    """As `mtdna_gnomad_skip_result`, for `_run_mmsplice_stage`."""
+    return {
+        "supported": False,
+        "predicted": False,
+        "skip_reason": _MTDNA_EVIDENCE_SKIP_REASON,
+        "interpretation": _MTDNA_EVIDENCE_SKIP_REASON,
+    }
+
+
+def mtdna_ensemble_skip_result() -> Dict[str, Any]:
+    """As `mtdna_gnomad_skip_result`, for `_run_ensemble_stage`
+    (Enformer/Borzoi)."""
+    return {
+        "models_used": [],
+        "individual_scores": {},
+        "consensus_score": None,
+        "confidence": None,
+        "agreement_percentage": None,
+        "classification": None,
+        "basis": "mitochondrial_compartment",
+        "reasoning": _MTDNA_EVIDENCE_SKIP_REASON,
+    }
+
+
+def mtdna_splice_plugin_skip_result() -> Dict[str, Any]:
+    """As `mtdna_gnomad_skip_result`, for
+    `_run_standalone_splice_plugin_stage` (SpliceFormer/SpliceBERT)."""
+    return {"available": False, "classification": None, "skip_reason": _MTDNA_EVIDENCE_SKIP_REASON}
+
+
+def _mtdna_rna_gene_reason(code: str, transcript_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Returns an honest, biotype-backed reason to gate `code` (one of
+    `_MTDNA_PROTEIN_DEPENDENT_CODES`) for this mitochondrial variant's gene,
+    or `None` when the criterion should run its real logic (a real
+    protein-coding transcript was resolved) or when gene class genuinely
+    could not be determined (in which case each criterion's own existing
+    "protein consequence could not be determined" fallback already applies
+    -- honest on its own, and not overclaiming a biology fact this function
+    cannot confirm).
+    """
+    transcript_result = transcript_result or {}
+    if transcript_result.get("found") and transcript_result.get("transcript"):
+        return None  # a real protein-coding transcript resolved -- let it run
+    biotype = transcript_result.get("gene_biotype")
+    if not biotype or biotype == "protein_coding":
+        return None  # unknown, or (contradictorily) protein_coding with no transcript -- don't overclaim
+    gene_symbol = transcript_result.get("gene_symbol") or "this gene"
+    return (
+        f"{gene_symbol} is annotated by Ensembl as biotype '{biotype}', not protein_coding -- {code} "
+        "requires a codon / amino-acid-change or protein-length concept that does not exist for this "
+        "gene. This is mitochondrial gene biology (22 of the 37 mitochondrial genes encode tRNAs and "
+        "2 encode rRNAs, with no coding sequence at all), not a missing lookup."
+    )
 
 
 @dataclass
@@ -283,7 +484,30 @@ class ACMGRuleEngine:
             None if protein_flags.determined else protein_effect_undetermined_reason(variant_dict, transcript_result)
         )
 
-        criteria["PVS1"] = self._pvs1(
+        # mtDNA compartment gate (round 14, B2) -- see this module's
+        # `_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS`/`_mtdna_rna_gene_reason`
+        # docstrings above for the full rationale. Computed once, from the
+        # same `variant_dict` every other criterion below already receives.
+        is_mtdna = is_mitochondrial_chrom((variant_dict or {}).get("chrom"))
+
+        def _mtdna_gate(code: str) -> Optional[CriterionResult]:
+            """`_not_evaluated(code, ...)` when `code` is structurally
+            inapplicable to this mtDNA variant, else `None` (run the real
+            method)."""
+            if is_mtdna and code in _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS:
+                return _not_evaluated(code, _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS[code])
+            return None
+
+        def _mtdna_protein_dependent_gate(code: str) -> Optional[CriterionResult]:
+            """As `_mtdna_gate`, for the 6 criteria that additionally need
+            gating on non-protein-coding mitochondrial genes specifically
+            (see `_mtdna_rna_gene_reason`)."""
+            if not is_mtdna:
+                return None
+            reason = _mtdna_rna_gene_reason(code, transcript_result)
+            return _not_evaluated(code, reason) if reason else None
+
+        criteria["PVS1"] = _mtdna_gate("PVS1") or self._pvs1(
             variant_dict=variant_dict,
             protein_result=protein_result,
             clingen_result=clingen_result,
@@ -292,36 +516,46 @@ class ACMGRuleEngine:
             transcript_result=transcript_result,
             mmsplice_result=mmsplice_result,
         )
-        criteria["PS1"] = self._ps1(
+        criteria["PS1"] = _mtdna_protein_dependent_gate("PS1") or self._ps1(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
         )
-        criteria["PM5"] = self._pm5(
+        criteria["PM5"] = _mtdna_protein_dependent_gate("PM5") or self._pm5(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
         )
-        criteria["PM1"] = self._pm1(interpro_result, is_synonymous=is_synonymous)
-        criteria["PM2"] = self._pm2(gnomad_result)
-        criteria["PM4"] = self._pm4(
+        criteria["PM1"] = _mtdna_protein_dependent_gate("PM1") or self._pm1(
+            interpro_result, is_synonymous=is_synonymous
+        )
+        criteria["PM2"] = _mtdna_gate("PM2") or self._pm2(gnomad_result)
+        criteria["PM4"] = _mtdna_protein_dependent_gate("PM4") or self._pm4(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             uniprot_result=uniprot_result,
         )
         criteria["PS4"] = self._ps4(gnomad_result)
         pvs1_null_variant_type = (criteria["PVS1"].details or {}).get("null_variant_type")
-        criteria["PP3"], criteria["BP4"] = self._pp3_bp4(
-            alphamissense_result,
-            mmsplice_result,
-            ensemble_result,
-            conservation_result,
-            protein_flags=protein_flags,
-            null_variant_type=pvs1_null_variant_type,
-            variant_dict=variant_dict,
-        )
-        criteria["BA1"], criteria["BS1"] = self._ba1_bs1(gnomad_result)
-        criteria["BP7"] = self._bp7(
+        pp3, bp4 = _mtdna_gate("PP3"), _mtdna_gate("BP4")
+        if pp3 is not None and bp4 is not None:
+            criteria["PP3"], criteria["BP4"] = pp3, bp4
+        else:
+            criteria["PP3"], criteria["BP4"] = self._pp3_bp4(
+                alphamissense_result,
+                mmsplice_result,
+                ensemble_result,
+                conservation_result,
+                protein_flags=protein_flags,
+                null_variant_type=pvs1_null_variant_type,
+                variant_dict=variant_dict,
+            )
+        ba1, bs1 = _mtdna_gate("BA1"), _mtdna_gate("BS1")
+        if ba1 is not None and bs1 is not None:
+            criteria["BA1"], criteria["BS1"] = ba1, bs1
+        else:
+            criteria["BA1"], criteria["BS1"] = self._ba1_bs1(gnomad_result)
+        criteria["BP7"] = _mtdna_gate("BP7") or self._bp7(
             is_synonymous,
             mmsplice_result,
             spliceformer_result,
@@ -332,15 +566,21 @@ class ACMGRuleEngine:
         criteria["BS4"] = self._bs4(clingen_result)
         criteria["PS3"] = self._ps3(functional_evidence_result)
         criteria["BS3"] = self._bs3(functional_evidence_result)
-        criteria["BP1"] = self._bp1(
+        criteria["BP1"] = _mtdna_protein_dependent_gate("BP1") or self._bp1(
             is_missense,
             clingen_result,
             undetermined_reason=protein_undetermined_reason,
-            alphamissense_result=alphamissense_result,
+            # AlphaMissense is gated at this same compartment check (not
+            # inside models/alphamissense.py, which has no ACMG-criterion
+            # awareness) -- its catalogue has no mitochondrial rows at all
+            # (see _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS["PP3"]), so a
+            # real but empty `not_found` result must not silently become
+            # BP1 evidence here either.
+            alphamissense_result=None if is_mtdna else alphamissense_result,
             pm1_result=criteria["PM1"],
             bs3_result=criteria["BS3"],
         )
-        criteria["BP3"] = self._bp3(
+        criteria["BP3"] = _mtdna_protein_dependent_gate("BP3") or self._bp3(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             uniprot_result=uniprot_result,

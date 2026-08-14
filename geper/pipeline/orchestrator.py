@@ -40,6 +40,13 @@ from database.dbsnp_client import DbSNPClient
 from models import MODEL_REGISTRY as _BASE_MODEL_REGISTRY
 from models.alphamissense import catalogue_cache_path as alphamissense_catalogue_cache_path
 from pipeline.assembly_validator import validate_assembly
+from pipeline.acmg_rules import (
+    mtdna_alphamissense_skip_result,
+    mtdna_ensemble_skip_result,
+    mtdna_gnomad_skip_result,
+    mtdna_mmsplice_skip_result,
+    mtdna_splice_plugin_skip_result,
+)
 from pipeline.alphafold.lookup import AlphaFoldLookup
 import pipeline.clingen.bootstrap as clingen_bootstrap
 from pipeline.clingen.lookup import ClinGenLookup
@@ -169,32 +176,24 @@ _MODEL_DISPLAY_NAMES = {
     "splicebert": "SpliceBERT",
 }
 
-# Report review round 8: a chrM variant used to reach the full ACMG
-# engine and pick up PM2 (gnomAD queried its nuclear-only callset,
-# found nothing, and that "not found" was read as a rarity signal
-# rather than "queried the wrong resource") and BP4 (MMSplice/Enformer/
-# Borzoi -- nuclear-trained sequence models, out of distribution on
-# mitochondrial DNA, which has no spliceosome at all) -- both firing
-# specifically BECAUSE nothing else could (no transcript resolves for
-# chrM against GEPER's nuclear GTF/Ensembl data, so the 23 criteria
-# that correctly gate on transcript resolution stayed silent while the
-# two that don't gate on it fired on out-of-distribution inputs, on a
-# real MELAS-causing variant). Option (a) of two considered: reject at
-# this single compartment gate, entirely bypassing the 28-criterion
-# engine, rather than (b) a NOT_APPLICABLE status threaded through
-# every affected evidence source individually -- see ROUND_CANDIDATES.md
-# for why (b) is deferred, not abandoned, and for the audit of exactly
-# which call sites it would need to touch.
-_MITOCHONDRIAL_OUT_OF_SCOPE_REASON = (
-    "Mitochondrial variants are out of scope for this GEPER build. GEPER's evidence sources have "
-    "no validity on chrM: gnomAD's queryable callset here is the nuclear one, a separate resource "
-    "from gnomAD's mitochondrial callset (never queried by this pipeline); the nuclear-trained "
-    "sequence/splicing models (MMSplice, Enformer, Borzoi, SpliceFormer, SpliceBERT) are out of "
-    "distribution on mtDNA, which has no spliceosome; and transcript resolution depends on nuclear "
-    "GTF/Ensembl data that does not cover chrM. This variant was not evaluated against any ACMG/AMP "
-    "criterion -- it is reported here as an explicit out-of-scope entry, never as a Variant of "
-    "Uncertain Significance assembled from criteria that should not have been able to fire."
-)
+# Report review round 8 rejected every chrM variant here outright (see
+# git history for `_MITOCHONDRIAL_OUT_OF_SCOPE_REASON`/
+# `_mitochondrial_out_of_scope_result`, removed in round 14, B2): gnomAD's
+# nuclear-only callset and the nuclear-trained splice models (MMSplice/
+# Enformer/Borzoi/SpliceFormer/SpliceBERT) were firing on mtDNA they have
+# no validity for, specifically because nothing else could (no transcript
+# resolved for chrM at the time, so the criteria that correctly gate on
+# transcript resolution stayed silent while the two that didn't gate on it
+# fired on out-of-distribution inputs). Round 14 fixed transcript
+# resolution (B1) and replaced the whole-variant rejection with
+# per-criterion, per-evidence-source compartment gating instead -- see
+# `_process_variant`'s `is_mtdna_variant` gate and
+# `pipeline/acmg_rules.py::ACMGRuleEngine.evaluate`'s own compartment gate.
+# The generic `out_of_scope` result shape / `_classify_variant_result`
+# bucket / report-renderer branches below are NOT removed -- they were
+# never mtDNA-specific in the code, only in their one prior caller, and
+# remain legitimate infrastructure for a future genuinely-unassessable
+# variant class (e.g. an unsupported contig or structural-variant type).
 
 # Maps a `FunctionalEvidenceResult.consulted_sources` entry (see
 # `pipeline/functional_evidence/models.py`) onto the `KNOWN_SOURCES`
@@ -1253,10 +1252,12 @@ class GeperPipeline:
         """
         Buckets one variant's result into success/skipped/out_of_scope/
         failed for the run summary. A variant this run deliberately
-        never evaluated at all (`out_of_scope` -- currently only the
-        mitochondrial compartment gate, see
-        `_mitochondrial_out_of_scope_result`) is checked FIRST and
-        returned as its own bucket, distinct from "skipped": "skipped"
+        never evaluated at all (`out_of_scope` -- no current producer as
+        of round 14, B2, which replaced the mitochondrial compartment's
+        whole-variant rejection with per-criterion gating instead; this
+        bucket remains legitimate infrastructure for a future genuinely-
+        unassessable variant class) is checked FIRST and returned as its
+        own bucket, distinct from "skipped": "skipped"
         means GEPER tried to build sequence context and couldn't
         (a real gap), while "out_of_scope" means GEPER never attempted
         anything for this variant by design -- collapsing the two would
@@ -1305,59 +1306,38 @@ class GeperPipeline:
         lines.append(f"Processed variants: {stats['processed']}")
         lines.append(f"Successful predictions: {stats['success']}")
         lines.append(f"Skipped: {stats['skipped']}")
-        lines.append(f"Out of scope (mitochondrial): {stats['out_of_scope']}")
+        # Round 14, B2: no code path currently produces an `out_of_scope`
+        # result (see `_classify_variant_result`'s docstring) -- printing
+        # this line unconditionally, forever, at 0 would be exactly the
+        # permanent-looks-like-a-real-metric line round 7's coverage-
+        # breadth finding already flagged as bad practice (a reader learns
+        # to skim past a line that never changes). Shown only when the
+        # bucket is actually non-empty; the label is generic, not
+        # "(mitochondrial)", since the bucket itself never was chrM-
+        # specific in code, only in its one prior caller.
+        if stats["out_of_scope"]:
+            lines.append(f"Out of scope: {stats['out_of_scope']}")
         lines.append(f"Failed: {stats['failed']}")
         lines.append("==============================")
         logger.info("\n".join(lines))
-
-    @staticmethod
-    def _mitochondrial_out_of_scope_result(variant: Variant) -> Dict[str, Any]:
-        """
-        The entire result for a chrM variant, deliberately minimal: no
-        sequence context, no evidence-source stage, no ACMG evaluation
-        was ever attempted, so none of `build_variant_result`'s ~25
-        stage-result kwargs apply here -- constructing a fake "everything
-        skipped" version of that full shape would run
-        `build_clinical_report`/`build_raw_evidence_bundle` against
-        entirely fabricated inputs, producing a misleading "checked,
-        nothing there" clinical_report instead of an honest "never
-        checked at all". `report/report_generator.py` (Markdown) and
-        `report/summary.py`/`summary_short.py` (PDF) each check for the
-        `out_of_scope` key explicitly, before touching `clinical_report`/
-        `interpretation_result`, and render a short, distinct notice
-        instead of the normal multi-section finding -- see each
-        renderer's own `out_of_scope` branch.
-        """
-        return {
-            "variant": variant.to_dict(),
-            "out_of_scope": {
-                "scope": "mitochondrial_genome",
-                "reason": _MITOCHONDRIAL_OUT_OF_SCOPE_REASON,
-            },
-            "errors": [],
-        }
 
     # ------------------------------------------------------------------
     # Per-variant pipeline
     # ------------------------------------------------------------------
     def _process_variant(self, variant: Variant) -> Dict[str, Any]:
-        # Compartment gate (report review round 8, option (a)): checked
-        # before anything else in this method -- before normalization,
-        # before sequence-context fetching, before any evidence-source
-        # stage -- so a chrM variant never reaches gnomAD's nuclear
-        # callset, the nuclear-trained splice-model ensemble, or the
-        # 28-criterion ACMG engine at all. See
-        # `_mitochondrial_out_of_scope_result`'s docstring and
-        # `_MITOCHONDRIAL_OUT_OF_SCOPE_REASON` above for why, and
-        # ROUND_CANDIDATES.md for the larger per-criterion compartment
-        # gate (option (b)) this single early exit defers.
-        if is_mitochondrial_chrom(variant.chrom):
-            logger.info(
-                f"Variant {variant.chrom}:{variant.pos} is mitochondrial -- out of scope for this "
-                "GEPER build, skipping ACMG evaluation entirely (see ROUND_CANDIDATES.md)."
-            )
-            return self._mitochondrial_out_of_scope_result(variant)
-
+        # Round 8 (option (a)) rejected every chrM variant here outright,
+        # before any evidence stage or the ACMG engine ever ran. Round 14
+        # (B2) replaces that whole-variant rejection with per-criterion,
+        # per-evidence-source compartment gating instead: a chrM variant
+        # now runs the real pipeline below, but the evidence sources with
+        # no mtDNA validity are never queried (see the `is_mtdna_variant`
+        # gate further down, where gnomAD/AlphaMissense/MMSplice/Enformer/
+        # Borzoi/SpliceFormer/SpliceBERT are skipped with an honest
+        # reason instead of called), and `pipeline/acmg_rules.py::
+        # ACMGRuleEngine.evaluate`'s own compartment gate pre-marks the 7
+        # criteria those sources fed (plus, for non-protein-coding
+        # mitochondrial genes, 6 more) `not_evaluated` with their own
+        # reason before their real logic would otherwise run.
         errors: List[str] = []
 
         # --- Variant normalization: early gate (see pipeline/variant_normalization.py) ---
@@ -1420,20 +1400,46 @@ class GeperPipeline:
 
         rna_result = self._run_rna_stage(variant, sequence_context, errors)
         protein_result = self._run_protein_stage(variant, sequence_context, errors)
-        alphamissense_result = self._run_alphamissense_stage(variant, transcript_result, errors)
-        mmsplice_result = self._run_mmsplice_stage(variant, errors)
-        ensemble_result = self._run_ensemble_stage(variant, sequence_context, errors)
-        # Standalone splice-prediction plugins for BP7 (see
-        # pipeline/acmg_rules.py::ACMGRuleEngine._bp7) -- distinct from
-        # the Enformer/Borzoi ensemble above (see
-        # _run_standalone_splice_plugin_stage's own docstring for why).
-        spliceformer_result = self._run_standalone_splice_plugin_stage("spliceformer", sequence_context, errors)
-        splicebert_result = self._run_standalone_splice_plugin_stage("splicebert", sequence_context, errors)
+        # mtDNA compartment gate (round 14, B2): AlphaMissense (no
+        # mitochondrial catalogue rows), MMSplice/Enformer/Borzoi/
+        # SpliceFormer/SpliceBERT (all nuclear-trained splice/regulatory
+        # models, meaningless for a genome with no spliceosome), and
+        # gnomAD's nuclear-only dataset (see `_run_gnomad_stage` below)
+        # are never even QUERIED for a chrM variant -- not merely ignored
+        # by the ACMG engine (`pipeline/acmg_rules.py`'s own compartment
+        # gate) once results come back. This is what `test_mtdna_*`
+        # asserts at the provenance/call level, not just the output: no
+        # real cost is spent on a resource that is structurally wrong for
+        # this compartment, and every skip is honestly recorded, never
+        # silently absent. See `pipeline/acmg_rules.py`'s
+        # `_MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS` for the full
+        # per-criterion rationale this mirrors.
+        is_mtdna_variant = is_mitochondrial_chrom(variant.chrom)
+        if is_mtdna_variant:
+            # `pipeline/acmg_rules.py`'s `mtdna_*_skip_result` functions
+            # are small and standalone specifically so they (and their
+            # exact reason text) can be unit-tested without importing
+            # this module -- see their own docstrings.
+            alphamissense_result = mtdna_alphamissense_skip_result()
+            mmsplice_result = mtdna_mmsplice_skip_result()
+            ensemble_result = mtdna_ensemble_skip_result()
+            spliceformer_result = mtdna_splice_plugin_skip_result()
+            splicebert_result = mtdna_splice_plugin_skip_result()
+        else:
+            alphamissense_result = self._run_alphamissense_stage(variant, transcript_result, errors)
+            mmsplice_result = self._run_mmsplice_stage(variant, errors)
+            ensemble_result = self._run_ensemble_stage(variant, sequence_context, errors)
+            # Standalone splice-prediction plugins for BP7 (see
+            # pipeline/acmg_rules.py::ACMGRuleEngine._bp7) -- distinct from
+            # the Enformer/Borzoi ensemble above (see
+            # _run_standalone_splice_plugin_stage's own docstring for why).
+            spliceformer_result = self._run_standalone_splice_plugin_stage("spliceformer", sequence_context, errors)
+            splicebert_result = self._run_standalone_splice_plugin_stage("splicebert", sequence_context, errors)
 
         blast_result = self._run_blast_stage(sequence_context, errors)
         dbsnp_result = self._run_dbsnp_stage(variant, errors)
         clinvar_result = self._run_clinvar_stage(variant, dbsnp_result, errors)
-        gnomad_result = self._run_gnomad_stage(variant, errors)
+        gnomad_result = mtdna_gnomad_skip_result() if is_mtdna_variant else self._run_gnomad_stage(variant, errors)
         indigenomes_result = self._indigenomes_retired_result()
         thousand_genomes_sas_result = self._run_thousand_genomes_sas_stage(variant, dbsnp_result, errors)
         conservation_result = self._run_conservation_stage(variant, errors)

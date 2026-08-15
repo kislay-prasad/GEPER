@@ -62,6 +62,7 @@ from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer_short
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
+from report.pdf_escape import esc
 from report.summary import (
     _DEIDENTIFIED_LABEL,
     _DISCLAIMER_TEXT,
@@ -379,9 +380,14 @@ def _build_identity_block(
     rows: List[List[Any]] = []
     for i in range(0, len(pairs), 2):
         chunk = pairs[i : i + 2]
-        row = [Paragraph(chunk[0][0], lbl), Paragraph(chunk[0][1], val)]
+        # `chunk[*][0]` (the label) is always one of this function's own
+        # literal strings above; `chunk[*][1]` (the value) can be
+        # patient-metadata/CLI-supplied free text (patient name, DOB,
+        # physician, sample/run ID, consent timestamp) -- escaped here,
+        # once, for every pair this loop renders.
+        row = [Paragraph(chunk[0][0], lbl), Paragraph(esc(chunk[0][1]), val)]
         if len(chunk) == 2:
-            row += [Paragraph(chunk[1][0], lbl), Paragraph(chunk[1][1], val)]
+            row += [Paragraph(chunk[1][0], lbl), Paragraph(esc(chunk[1][1]), val)]
         else:
             row += [Paragraph("", lbl), Paragraph("", val)]
         rows.append(row)
@@ -426,12 +432,12 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         # as of round 14, B2 -- see that branch's own comment.
         variant = variant_result.get("variant", {})
         locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
-        heading = f"Finding {idx}: {locus}"
+        heading = f"Finding {idx}: {esc(locus)}"
         return [
             Paragraph(heading, styles["VariantHeading"]),
             Paragraph(
-                f"Out of scope ({out_of_scope.get('scope', 'unspecified')}): "
-                f"{out_of_scope.get('reason') or 'This variant is out of scope for this GEPER build.'}",
+                f"Out of scope ({esc(out_of_scope.get('scope', 'unspecified'))}): "
+                f"{esc(out_of_scope.get('reason')) or 'This variant is out of scope for this GEPER build.'}",
                 styles["BodyText"],
             ),
             Paragraph(
@@ -446,14 +452,14 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     clinical = variant_result.get("clinical_report")
     gene = _variant_gene(variant_result)
     hgvs = _variant_hgvs(variant_result)
-    heading = f"Finding {idx}: {gene + ' ' if gene else ''}{hgvs}"
+    heading = f"Finding {idx}: {esc(gene) + ' ' if gene else ''}{esc(hgvs)}"
 
     lbl, val = styles["TableLabel"], styles["TableValue"]
     strip = Table(
         [
             [
                 Paragraph("Gene", lbl),
-                Paragraph(gene or "Not resolved", val),
+                Paragraph(esc(gene) or "Not resolved", val),
                 Paragraph("Classification", lbl),
                 Paragraph(_classification_text(clinical), val),
                 Paragraph("Completeness", lbl),
@@ -503,13 +509,13 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         flow.append(Spacer(1, 1 * mm))
         flow.append(
             Paragraph(
-                mtdna_interpretation_disclaimer_short(variant_result.get("transcript"), not_evaluated_rules),
+                esc(mtdna_interpretation_disclaimer_short(variant_result.get("transcript"), not_evaluated_rules)),
                 styles["Flag"],
             )
         )
 
     flow.append(Spacer(1, 1.5 * mm))
-    flow.append(Paragraph(_short_interpretation(clinical), styles["BodyText"]))
+    flow.append(Paragraph(esc(_short_interpretation(clinical)), styles["BodyText"]))
 
     # Clinician override (geper/review/signoff.py's "override" command) --
     # layered on top of, never substituting for, GEPER's own
@@ -520,8 +526,8 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         flow.append(Spacer(1, 1 * mm))
         flow.append(
             Paragraph(
-                f"Clinician override -- GEPER: {override.get('original_classification') or 'Not classified'}; "
-                f"Override: {override.get('new_classification')} -- {override.get('reason')}",
+                f"Clinician override -- GEPER: {esc(override.get('original_classification')) or 'Not classified'}; "
+                f"Override: {esc(override.get('new_classification'))} -- {esc(override.get('reason'))}",
                 styles["Flag"],
             )
         )
@@ -711,7 +717,7 @@ def generate_short_pdf(
     if offline_caveat:
         story.append(Paragraph("! " + offline_caveat, styles["Flag"]))
         story.append(Spacer(1, 1.5 * mm))
-    story.append(Paragraph(_COMPANION_NOTE.format(companion=companion_filename), styles["Footnote"]))
+    story.append(Paragraph(_COMPANION_NOTE.format(companion=esc(companion_filename)), styles["Footnote"]))
     story.extend(_build_signoff_block(styles))
 
     decoration = _make_page_decoration(header_label)

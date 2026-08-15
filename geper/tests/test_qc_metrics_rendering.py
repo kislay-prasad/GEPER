@@ -30,6 +30,7 @@ from reportlab.lib import colors
 
 from pipeline.stage_schemas import StageStatus
 from report import summary as summary_module
+from report.pdf_escape import esc
 from report.summary import _build_qc_flowables, _parse_qc_metrics, _qc_status, _qc_threshold_pass_min
 
 
@@ -386,7 +387,17 @@ class TestQCFootnoteGroupedByReason(unittest.TestCase):
         }
         footnote = self._footnote_text(qc_metrics)
 
-        self.assertIn(_REAL_BASES_AT_20X_REASON, footnote)
+        # Round 25: `_build_qc_flowables` now escapes this reason string
+        # (a NOT_RUN `reason` can arrive verbatim from a third-party
+        # `--qc-metrics-json` producer -- see report/pdf_escape.py's
+        # module docstring) before interpolating it into the Paragraph
+        # text `_cell_text` reads here, so the raw literal `>` in
+        # "bases-at->=20x" is now `&gt;` in that pre-render string.
+        # ReportLab's own Paragraph parser decodes `&gt;` back to `>`
+        # when it actually renders the page (confirmed separately in
+        # ROUND_CANDIDATES.md's round 25 entry), so the real PDF output
+        # is unchanged -- only this raw, pre-parse string differs.
+        self.assertIn(esc(_REAL_BASES_AT_20X_REASON), footnote)
         self.assertNotIn(summary_module._QC_METRICS_NOT_APPLICABLE_REASON, footnote)
         self.assertIn("Bases at >20x Coverage", footnote)
         # The two FOUND metrics must not be pulled into the NOT_RUN clause.

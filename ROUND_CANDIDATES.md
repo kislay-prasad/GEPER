@@ -1367,3 +1367,160 @@ render no ClinVar condition/disease/review-status text and no
 UniProt/InterPro protein/domain text at all, only the QC-metrics/
 Indian-population-frequency/AI-model-status error strings already
 covered by rounds 20-24's fixes, plus this clinician-override field).
+
+**RESOLVED, round 25.** Chose the shared helper, not the narrow patch
+-- round 25's own reasoning: "the absence of any escaping helper is
+itself the defect... this project has now spent five rounds on one
+leak class precisely because each instance got fixed where it was
+found." `report/pdf_escape.py::esc()` (a thin wrapper over
+`xml.sax.saxutils.escape`) is now applied at every site round 25's own
+full audit of `report/summary.py`/`report/summary_short.py` found --
+see that round's own entry below for the complete list, including two
+findings this round 24 entry did NOT have: `report/summary.py` DOES
+render ClinVar/ClinGen-derived free text after all (ACMG rule
+`rationale`/`supporting_evidence`, confirmed embedding raw ClinVar
+`review_status`/`condition` text in `pipeline/acmg_rules.py`), and
+patient-metadata fields (`patient_name`/`dob`/`gender`/`physician`,
+the last one composed from `approve()`'s own CLI free text) were an
+equally live, equally unescaped gap this entry never named.
+
+---
+
+## Round 25 (shared ReportLab-escaping helper + full audit)
+
+Full audit of every `Paragraph(...)` call site in `report/summary.py`
+(130 call sites) and `report/summary_short.py` (32 call sites) for
+user- or externally-sourced text, done before writing any fix code, per
+this round's own instruction ("I want to know the blast radius before
+choosing where the helper gets applied").
+
+### What's genuinely external/user-controlled and now escaped
+
+- **Patient metadata**: `patient_name`, `dob`, `gender`, `physician`
+  (the last composed by `review/signoff.py::approve()` from
+  `--clinician-name`/`--reg-number`/`--hospital`, none `choices=`-
+  constrained) -- `_build_patient_header_table` (full),
+  `_build_identity_block` (short).
+- **Consent timestamp** -- from `patient_meta` JSON, unvalidated.
+- **Sample ID / Run ID** -- derived from the VCF's genotype sample
+  column names or filename (`_derive_sample_id`), or a caller-supplied
+  `run_id` -- both external. Rendered in the patient header table, the
+  identity block, and the Clinician Summary identity line (the last
+  mixed with literal `<b>`/`&nbsp;` markup -- see below).
+- **Clinician override fields**: `reason`, `new_classification`,
+  `clinician_id` (`--reason`/`--new-classification`/`--clinician-id`,
+  confirmed via `review/cli.py`: none `choices=`-constrained, `--reason`
+  documented as "Free-text clinical justification") -- the exact field
+  round 24 confirmed live, now fixed via the shared helper instead of a
+  narrow patch.
+- **QC metric `reason` strings** for NOT_RUN/ERROR entries --
+  `_build_qc_flowables`'s own comment already documented that
+  `_parse_one_qc_metric` "passes any caller-supplied `reason` through
+  verbatim," reachable via `--qc-metrics-json` from a third-party
+  kim_pipeline-combined run.
+- **ACMG rule `rationale`/`details` and `supporting_evidence`** --
+  traced into `pipeline/acmg_rules.py` and confirmed (not assumed) that
+  several rules (BP6 around line 2990, PP1/BS4's ClinGen classification
+  clauses, a PS1/PM5-family rule at line 3295) interpolate raw ClinVar
+  `review_status`/`significance`/`condition` text directly into
+  `rationale`/`conflicting_evidence`/`supporting_evidence` -- this is
+  the "does the PDF render ClinVar-derived free text" question round
+  24's own entry answered "no" to, incorrectly; it does, through this
+  path, which round 24 didn't trace this deep into `acmg_rules.py`.
+- **Confidence category `rationale`** (`cat.get("rationale")`) --
+  `pipeline/confidence_engine.py`'s per-category notes, which (per
+  round 23) can embed the gene-specific `non_protein_coding_gene_reason`
+  sentence.
+- **HPO phenotype term names** (`matched_gene_term_name`) -- external
+  ontology vocabulary, embedded in the case-prioritization `pm_text`
+  cell alongside literal `<br/>` markup.
+- **Gene symbols, HGVS notation, locus strings** -- externally-sourced
+  (Ensembl/transcript annotation, VCF ref/alt), constrained charset in
+  practice but escaped anyway -- cheap, and the point of a shared
+  helper is not re-litigating "is this charset safe" per call site.
+- **Provenance `version`/`release_date`/`content_hash`/`source`** and
+  model-checkpoint `identifier`/`reason` -- external data-source
+  version strings; the `reason` values were already sanitized at the
+  source by rounds 20-24, escaped here too as defense in depth (a
+  future model/provider that reintroduces this leak class at the
+  source is still caught at the render layer).
+- **mtDNA `gene_class`** (Ensembl biotype string, e.g. `'Mt_tRNA'`)
+  inside `mtdna_interpretation_disclaimer`/`_short`.
+- **`companion_filename`** -- a `generate_short_pdf()` parameter.
+
+### What was deliberately left un-escaped, and why
+
+- **ReportLab's own literal markup this codebase intentionally emits**
+  -- `<b>`/`<i>`/`<br/>`/`&nbsp;` template fragments in `gene_line`,
+  the Clinician Summary identity line, `classification` (`<br/>net
+  {points}`), `pm_text`, `evidence_text`/`flags_text` (`<br/>`-joined),
+  section headings. Confirmed genuinely intentional (not oversight) by
+  finding them used consistently for bold labels and cell line-breaks
+  throughout both files. `esc()` is applied to the interpolated VALUE
+  at its own point of interpolation (e.g. `f"<b>{esc(gene)}</b>"`),
+  never to the composed f-string as a whole -- escaping the whole
+  string would turn GEPER's own `<b>`/`<br/>` into visible `&lt;b&gt;`
+  text, which would have been a worse regression than the leak being
+  fixed. Verified this pattern actually works both ways at once (value
+  neutralized, real markup still renders) with a dedicated test,
+  `TestIntentionalMarkupSurvivesEscapedValues`.
+- **`_Bookmark` titles** (`report/summary.py`'s PDF outline entries) --
+  a raw PDF string via `Canvas.addOutlineEntry`, never parsed as XML
+  the way `Paragraph` text is. Confirmed by reading `_Bookmark`'s own
+  docstring and the ReportLab call it wraps; escaping a bookmark title
+  would show a literal `"&gt;"` in the PDF's sidebar outline instead of
+  decoding it, so the bookmark keeps the unescaped `locus`, and only
+  the `Paragraph` heading right next to it (same `locus` value) is
+  escaped separately.
+- **The page footer/header** (`_icmr_ai_disclosure_footer_text`,
+  `canvas.drawString`/`drawCentredString` in `_NumberedCanvas`/
+  `_make_page_decoration`) -- confirmed by direct reproduction that
+  `Canvas.drawString` does not parse its argument as XML at all (a
+  literal `Test & <this> <br> value` draws with no exception and no
+  entity interpretation), so `physician` reaching the footer through
+  `_icmr_ai_disclosure_footer_text` is not part of this vulnerability
+  class -- left alone, correctly, not by oversight.
+- **`clinical["references"]`** -- confirmed static: every entry in
+  `_REFERENCES`/`_ORPHANET_REFERENCE` (`report/clinical_report_builder.py`)
+  is a hardcoded GEPER string, no query-string URLs, no interpolation.
+- **QC table cells, sign-off block, disclaimer/methodology-statement
+  text, classification enum values (Pathogenic/Likely Pathogenic/...),
+  status labels (PASS/WARNING/ERROR/N/A), numeric formatting** (`{x:g}`,
+  `{x:.0%}`, `{x:.2e}`) -- closed vocabularies or non-string types,
+  cannot carry `&`/`<`/`>`.
+
+### ClinVar's identical URL-leak shape (round 24's own item 1) not re-opened
+
+Not re-investigated this round -- round 24 already logged
+`database/clinvar_client.py`'s matching raw-URL-into-`clinvar_error`
+shape as its own open candidate; this round's scope was the escaping
+gap, not that leak class.
+
+### Verified
+
+`py_compile` clean on all three changed/added Python files. Per-file
+mypy (isolated stash/pop, no chaining): `report/pdf_escape.py` clean;
+`report/summary.py` and `report/summary_short.py` both match their
+pre-existing baselines exactly (5 and 0 errors respectively, before and
+after). `ruff check` clean on every changed/added file. New
+`tests/test_pdf_escape.py` reproduces all three of round 24's failure
+modes directly against the installed `reportlab` package (not just the
+ampersand case), proves `esc()` fixes all three, and proves the
+clinician-override render sites in both `_build_variant_section` and
+`_build_variant_block` survive all three adversarial inputs without
+crashing, mangling, or silently dropping the clinician's text; a
+separate test class proves intentional `<b>`/`&nbsp;` markup still
+renders as real formatting alongside an escaped adjacent value, not as
+literal text. One existing test
+(`test_qc_metrics_rendering.py::test_run2_shape_states_tool_absence_reason_without_vcf_only_text`)
+asserted the pre-fix raw (unescaped) reason string appeared verbatim in
+the Paragraph's raw pre-parse text; updated to assert the escaped form,
+with a comment tracing why (ReportLab decodes `&gt;` back to `>` at
+render time, confirmed separately, so the real PDF output is
+unchanged). Checked every touched test file's own docstring/header for
+real-weight-loading risk before running (`test_summary_pdf_logo.py`/
+`test_summary_short.py`: "real, small PDFs... lightweight, not a model
+load"; all others confirmed similarly lightweight or pure-dict
+fixtures) -- no pipeline import, no orchestrator import. 302/302 pass
+across `test_pdf_escape.py` (14 new) and every other report-rendering
+test file touched or plausibly affected by this round's changes.

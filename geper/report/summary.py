@@ -59,6 +59,7 @@ from pipeline.models.status import USED as _STATUS_USED
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from pipeline.stage_schemas import StageStatus as _StageStatus
 from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
+from report.pdf_escape import esc
 from utils.logger import get_logger
 from utils.service_health import HEALTH
 from utils.timezone_utils import format_ist
@@ -926,7 +927,7 @@ def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphSt
         [Paragraph("Consent -- Research Use", lbl), Paragraph(_consent_value_label(consent["research"]), val)],
     ]
     if consent.get("timestamp"):
-        rows.append([Paragraph("Consent Recorded", lbl), Paragraph(consent["timestamp"], val)])
+        rows.append([Paragraph("Consent Recorded", lbl), Paragraph(esc(consent["timestamp"]), val)])
     return rows
 
 
@@ -941,15 +942,17 @@ def _build_patient_header_table(
         # plus Sample ID / Run ID, no DOB/Gender/Physician rows at all.
         rows.append([Paragraph("Patient", lbl), Paragraph(_DEIDENTIFIED_LABEL, val)])
     else:
-        rows.append([Paragraph("Patient Name", lbl), Paragraph(patient["patient_name"], val)])
-        rows.append([Paragraph("Date of Birth", lbl), Paragraph(patient["dob"] or "Not provided", val)])
-        rows.append([Paragraph("Gender", lbl), Paragraph(patient["gender"] or "Not provided", val)])
-        rows.append([Paragraph("Referring Physician", lbl), Paragraph(patient["physician"] or "Not provided", val)])
+        rows.append([Paragraph("Patient Name", lbl), Paragraph(esc(patient["patient_name"]), val)])
+        rows.append([Paragraph("Date of Birth", lbl), Paragraph(esc(patient["dob"]) or "Not provided", val)])
+        rows.append([Paragraph("Gender", lbl), Paragraph(esc(patient["gender"]) or "Not provided", val)])
+        rows.append(
+            [Paragraph("Referring Physician", lbl), Paragraph(esc(patient["physician"]) or "Not provided", val)]
+        )
 
     rows.extend(_consent_rows(patient, lbl, val))
 
-    rows.append([Paragraph("Sample ID", lbl), Paragraph(sample_id, val)])
-    rows.append([Paragraph("Run ID", lbl), Paragraph(run_id, val)])
+    rows.append([Paragraph("Sample ID", lbl), Paragraph(esc(sample_id), val)])
+    rows.append([Paragraph("Run ID", lbl), Paragraph(esc(run_id), val)])
     rows.append([Paragraph("Genome Reference Build", lbl), Paragraph(assembly or "Not specified", val)])
     # Displayed in IST (report is for Indian hospitals) -- the
     # underlying timestamp is still generated in UTC
@@ -1043,11 +1046,11 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
             # why both shapes are handled (F1a, report review round 4).
             if isinstance(value, dict):
                 status_label = _MODEL_STATUS_LABELS.get(value.get("status"), value.get("status") or "unknown")
-                text = f"• {name}: {value.get('identifier')} -- {status_label}"
+                text = f"• {esc(name)}: {esc(value.get('identifier'))} -- {esc(status_label)}"
                 if value.get("reason"):
-                    text += f" ({value['reason']})"
+                    text += f" ({esc(value['reason'])})"
             else:
-                text = f"• {name}: {value}"
+                text = f"• {esc(name)}: {esc(value)}"
             flow.append(Paragraph(text, styles["BulletText"]))
     else:
         flow.append(Paragraph("No AI model checkpoint identifiers recorded for this run.", styles["Footnote"]))
@@ -1062,14 +1065,14 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
     for record in provenance:
         status = record.get("status", "unknown")
         label = _PROVENANCE_STATUS_LABELS.get(status, status)
-        detail_bits = [f"{record.get('source')}: {label}"]
+        detail_bits = [f"{esc(record.get('source'))}: {esc(label)}"]
         if record.get("version"):
-            detail_bits.append(f"version {record['version']}")
+            detail_bits.append(f"version {esc(record['version'])}")
         if record.get("release_date"):
-            detail_bits.append(f"released {record['release_date']}")
+            detail_bits.append(f"released {esc(record['release_date'])}")
         if record.get("content_hash"):
             detail_bits.append(
-                f"hash ({record.get('hash_algorithm') or 'unknown algorithm'}): {record['content_hash']}"
+                f"hash ({esc(record.get('hash_algorithm') or 'unknown algorithm')}): {esc(record['content_hash'])}"
             )
         flow.append(Paragraph("• " + "; ".join(detail_bits), styles["BulletText"]))
     return flow
@@ -1213,7 +1216,7 @@ def _build_qc_flowables(qc_metrics: Dict[str, Dict[str, Any]], styles: Dict[str,
         for label, entry in not_run_entries:
             reason = entry.get("reason") or "not applicable this run."
             reason_groups.setdefault(reason, []).append(label)
-        clauses = "; ".join(f"{', '.join(labels)} -- {reason}" for reason, labels in reason_groups.items())
+        clauses = "; ".join(f"{', '.join(labels)} -- {esc(reason)}" for reason, labels in reason_groups.items())
         flowables.append(
             Paragraph(
                 f"Not applicable this run: {clauses} To supply real values from a kim_pipeline-combined "
@@ -1226,7 +1229,7 @@ def _build_qc_flowables(qc_metrics: Dict[str, Dict[str, Any]], styles: Dict[str,
     if error_entries:
         flowables.append(Spacer(1, 2 * mm))
         reasons = "; ".join(
-            f"{label} -- {entry.get('reason') or 'measurement failed.'}" for label, entry in error_entries
+            f"{label} -- {esc(entry.get('reason') or 'measurement failed.')}" for label, entry in error_entries
         )
         flowables.append(
             Paragraph(
@@ -1428,7 +1431,7 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
 
     for row_num, (idx, variant_result) in enumerate(indexed, start=1):
         variant = variant_result.get("variant", {})
-        locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+        locus = esc(f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}")
 
         if variant_result.get("out_of_scope"):
             # Report review round 8: must never render as "Not
@@ -1452,7 +1455,7 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
 
         clinical = variant_result.get("clinical_report")
         gene = (variant_result.get("interpretation_result") or {}).get("gene_symbol")
-        gene_line = f"{locus}<br/><b>{gene}</b>" if gene else locus
+        gene_line = f"{locus}<br/><b>{esc(gene)}</b>" if gene else locus
 
         acmg = (clinical or {}).get("acmg_classification") or {}
         classification = acmg.get("classification") or "Not classified"
@@ -1487,7 +1490,7 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
             _normalize_evidence_text(item) for item in ((clinical or {}).get("supporting_evidence") or [])[:3]
         ]
         top_evidence = [t for t in top_evidence if t]
-        evidence_text = "<br/>".join(f"• {t}" for t in top_evidence) if top_evidence else "—"
+        evidence_text = "<br/>".join(f"• {esc(t)}" for t in top_evidence) if top_evidence else "—"
 
         flags = _variant_reviewer_flags(variant_result, clinical)
         # "!" not the Unicode warning-sign glyph (U+26A0): Helvetica's
@@ -1521,7 +1524,8 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
                 )[:2]
                 term_text = (
                     "; ".join(
-                        f"{m.get('matched_gene_term_name') or m.get('matched_gene_term_id')} ({m['match_type']})"
+                        f"{esc(m.get('matched_gene_term_name') or m.get('matched_gene_term_id'))} "
+                        f"({esc(m['match_type'])})"
                         for m in top_terms
                     )
                     or "no term overlap"
@@ -1691,8 +1695,8 @@ def _build_clinician_summary_flowables(
     ]
 
     identity = (
-        f"<b>Sample:</b> {sample_id} &nbsp;&nbsp; <b>Run:</b> {run_id} &nbsp;&nbsp; "
-        f"<b>Reference build:</b> {assembly or 'not specified'} &nbsp;&nbsp; "
+        f"<b>Sample:</b> {esc(sample_id)} &nbsp;&nbsp; <b>Run:</b> {esc(run_id)} &nbsp;&nbsp; "
+        f"<b>Reference build:</b> {esc(assembly) or 'not specified'} &nbsp;&nbsp; "
         f"<b>Variants analyzed:</b> {len(variants)}"
     )
     flow.append(Paragraph(identity, styles["BodyText"]))
@@ -1719,7 +1723,7 @@ def _build_clinician_summary_flowables(
     multi_finding_lines = _multi_finding_observation_lines(document, variants)
     if multi_finding_lines:
         flow.append(Paragraph("Multi-Finding Observations", styles["SectionHeading"]))
-        flow.extend(Paragraph(f"• {line}", styles["BulletText"]) for line in multi_finding_lines)
+        flow.extend(Paragraph(f"• {esc(line)}", styles["BulletText"]) for line in multi_finding_lines)
         flow.append(Spacer(1, 3 * mm))
 
     attention_lines: List[str] = []
@@ -1728,7 +1732,7 @@ def _build_clinician_summary_flowables(
         flags = _variant_reviewer_flags(variant_result, clinical)
         if flags:
             variant = variant_result.get("variant", {})
-            locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+            locus = esc(f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}")
             attention_lines.append(f"Finding {idx} ({locus}): {'; '.join(flags)}")
     gap_sources = _provenance_gap_sources(document, variants)
     if gap_sources:
@@ -1818,7 +1822,7 @@ def _build_1000_genomes_sas_flowables(ipf: Dict[str, Any], styles: Dict[str, Par
     elif ipf.get("sas_error"):
         flow.append(
             Paragraph(
-                f"&nbsp;&nbsp;&nbsp;&nbsp;- Lookup failed (external service issue: {ipf['sas_error']}).",
+                f"&nbsp;&nbsp;&nbsp;&nbsp;- Lookup failed (external service issue: {esc(ipf['sas_error'])}).",
                 styles["BulletText"],
             )
         )
@@ -1884,9 +1888,15 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     clinical = variant_result.get("clinical_report")
 
     flow: List[Any] = [
+        # `_Bookmark`'s title is a raw PDF outline string (`Canvas.
+        # addOutlineEntry`), never parsed as XML the way `Paragraph`
+        # text is -- deliberately built from the unescaped `locus` here
+        # (escaping it would show a literal "&gt;" in the PDF's
+        # sidebar/outline panel instead of decoding it). Only the
+        # `Paragraph` heading right below needs `esc()`.
         _Bookmark(f"bm_finding_{idx}", f"Finding {idx}: {locus}"),
         Spacer(1, 4 * mm),
-        Paragraph(f"Finding {idx}: {locus}", styles["SectionHeading"]),
+        Paragraph(f"Finding {idx}: {esc(locus)}", styles["SectionHeading"]),
     ]
 
     # Round 14, B2: per-finding, not report-level -- see
@@ -1897,7 +1907,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         not_evaluated_rules = (variant_result.get("interpretation_result") or {}).get("not_evaluated_rules", [])
         flow.append(
             Paragraph(
-                mtdna_interpretation_disclaimer(variant_result.get("transcript"), not_evaluated_rules),
+                esc(mtdna_interpretation_disclaimer(variant_result.get("transcript"), not_evaluated_rules)),
                 styles["StatusWarn"],
             )
         )
@@ -1915,11 +1925,13 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         # as reusable infrastructure for a future genuinely-unassessable
         # variant class.
         flow.append(
-            Paragraph(f"<b>Status:</b> Out of scope ({out_of_scope.get('scope', 'unspecified')})", styles["StatusWarn"])
+            Paragraph(
+                f"<b>Status:</b> Out of scope ({esc(out_of_scope.get('scope', 'unspecified'))})", styles["StatusWarn"]
+            )
         )
         flow.append(
             Paragraph(
-                out_of_scope.get("reason") or "This variant is out of scope for this GEPER build.",
+                esc(out_of_scope.get("reason")) or "This variant is out of scope for this GEPER build.",
                 styles["BodyText"],
             )
         )
@@ -1942,7 +1954,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         )
         return flow
 
-    flow.append(Paragraph(clinical["executive_summary"], styles["BodyText"]))
+    flow.append(Paragraph(esc(clinical["executive_summary"]), styles["BodyText"]))
 
     acmg = clinical.get("acmg_classification") or {}
     if acmg.get("classification"):
@@ -1978,9 +1990,10 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     if override:
         flow.append(
             Paragraph(
-                f"<b>Clinician Override:</b> GEPER classification: {override.get('original_classification') or 'Not classified'}; "
-                f"Clinician override: <b>{override.get('new_classification')}</b> -- {override.get('reason')} "
-                f"(by {override.get('clinician_id')}, {override.get('timestamp')})",
+                f"<b>Clinician Override:</b> GEPER classification: "
+                f"{esc(override.get('original_classification')) or 'Not classified'}; "
+                f"Clinician override: <b>{esc(override.get('new_classification'))}</b> -- {esc(override.get('reason'))} "
+                f"(by {esc(override.get('clinician_id'))}, {esc(override.get('timestamp'))})",
                 styles["StatusWarn"],
             )
         )
@@ -2013,10 +2026,10 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
             for cat in category_breakdown:
                 cb_rows.append(
                     [
-                        Paragraph(str(cat.get("category") or ""), styles["TableValue"]),
+                        Paragraph(esc(cat.get("category")), styles["TableValue"]),
                         Paragraph(f"{cat.get('presence', 0):.0%}", styles["TableValue"]),
                         Paragraph(f"{cat.get('quality', 0):.0%}", styles["TableValue"]),
-                        Paragraph(str(cat.get("rationale") or ""), styles["TableValueSmall"]),
+                        Paragraph(esc(cat.get("rationale")), styles["TableValueSmall"]),
                     ]
                 )
             cb_table = Table(cb_rows, colWidths=[28 * mm, 18 * mm, 18 * mm, 96 * mm], hAlign="LEFT", repeatRows=1)
@@ -2045,9 +2058,9 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         for crit in triggered:
             rows.append(
                 [
-                    Paragraph(str(crit.get("code") or ""), styles["TableValue"]),
-                    Paragraph(str(crit.get("strength") or ""), styles["TableValue"]),
-                    Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
+                    Paragraph(esc(crit.get("code")), styles["TableValue"]),
+                    Paragraph(esc(crit.get("strength")), styles["TableValue"]),
+                    Paragraph(esc(crit.get("rationale")), styles["TableValueSmall"]),
                 ]
             )
         # `repeatRows=1` -- same as `_build_clinician_summary_table`'s table
@@ -2093,8 +2106,8 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         for crit in not_triggered:
             nt_rows.append(
                 [
-                    Paragraph(str(crit.get("code") or ""), styles["TableValue"]),
-                    Paragraph(str(crit.get("rationale") or ""), styles["TableValueSmall"]),
+                    Paragraph(esc(crit.get("code")), styles["TableValue"]),
+                    Paragraph(esc(crit.get("rationale")), styles["TableValueSmall"]),
                 ]
             )
         nt_table = Table(nt_rows, colWidths=[22 * mm, 138 * mm], hAlign="LEFT", repeatRows=1)
@@ -2129,12 +2142,12 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         if decision_path:
             flow.append(Spacer(1, 2 * mm))
             flow.append(Paragraph("<b>PVS1 Decision-Tree Path:</b>", styles["BodyText"]))
-            flow.extend(Paragraph(f"{i}. {step}", styles["BulletText"]) for i, step in enumerate(decision_path, 1))
+            flow.extend(Paragraph(f"{i}. {esc(step)}", styles["BulletText"]) for i, step in enumerate(decision_path, 1))
         unchecked_caveats = pvs1_entry["details"].get("unchecked_caveats") or []
         if unchecked_caveats:
             flow.append(Spacer(1, 1 * mm))
             flow.append(Paragraph("<i>PVS1 caveats not checked this run:</i>", styles["Footnote"]))
-            flow.extend(Paragraph(f"• {c}", styles["Footnote"]) for c in unchecked_caveats)
+            flow.extend(Paragraph(f"• {esc(c)}", styles["Footnote"]) for c in unchecked_caveats)
 
     # Combining-rule trace (C3, report review round 2): already
     # computed by `ACMGRuleEngine._combine` and already rendered in the
@@ -2148,13 +2161,13 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     if combining_trace:
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Classification Combining-Rule Trace:</b>", styles["BodyText"]))
-        flow.extend(Paragraph(f"• {line}", styles["BulletText"]) for line in combining_trace)
+        flow.extend(Paragraph(f"• {esc(line)}", styles["BulletText"]) for line in combining_trace)
 
     supporting = clinical.get("supporting_evidence") or []
     if supporting:
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Supporting Evidence:</b>", styles["BodyText"]))
-        flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in supporting)
+        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in supporting)
 
     flow.extend(_build_indian_population_frequency_flowables(clinical, styles))
 
@@ -2162,7 +2175,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     if limitations:
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Limitations:</b>", styles["BodyText"]))
-        flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in limitations)
+        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in limitations)
 
     # `clinical["references"]` (see `report/clinical_report_builder.py
     # ::_references`) was already computed for the Markdown report's own

@@ -41,7 +41,6 @@ every subsequent variant.
 
 import importlib.util
 import os
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import CONFIG
@@ -86,15 +85,10 @@ def _ensure_mmsplice_package_files_available() -> bool:
     base_cmd = [sys.executable, "-m", "pip", "install", "--quiet", "--no-deps", _MMSPLICE_PIP_NAME]
     result = subprocess.run(base_cmd, capture_output=True, text=True)
     if result.returncode != 0 and "externally-managed-environment" in (result.stderr or ""):
-        result = subprocess.run(
-            base_cmd + ["--break-system-packages"], capture_output=True, text=True
-        )
+        result = subprocess.run(base_cmd + ["--break-system-packages"], capture_output=True, text=True)
     ok = result.returncode == 0 and is_pip_package_installed(_MMSPLICE_PIP_NAME)
     if not ok:
-        logger.error(
-            f"Automatic 'mmsplice --no-deps' installation failed: "
-            f"{(result.stderr or '').strip()[-500:]}"
-        )
+        logger.error(f"Automatic 'mmsplice --no-deps' installation failed: {(result.stderr or '').strip()[-500:]}")
     _NO_DEPS_INSTALL_RESULT[_MMSPLICE_PIP_NAME] = ok
     return ok
 
@@ -191,9 +185,7 @@ class MMSpliceModel(BaseGenomicModel):
 
     def _load_impl(self):
         if not CONFIG.mmsplice.ENABLED:
-            raise ModelLoadError(
-                "MMSplice is disabled via configuration (GEPER_ENABLE_MMSPLICE=false)."
-            )
+            raise ModelLoadError("MMSplice is disabled via configuration (GEPER_ENABLE_MMSPLICE=false).")
         if not ensure_pip_package_available("tensorflow"):
             raise ModelLoadError("MMSplice requires 'tensorflow', which could not be installed automatically.")
         if not _ensure_mmsplice_package_files_available():
@@ -202,18 +194,42 @@ class MMSpliceModel(BaseGenomicModel):
                 "could not be installed automatically (pip install mmsplice --no-deps)."
             )
 
+        # Round 22: every raise below this point used to embed a local
+        # filesystem path directly into the exception it raises. This
+        # method is called (via `instance.predict(dummy_sequence)`) from
+        # `pipeline/orchestrator.py`'s startup validation loop, whose
+        # `except (ModelLoadError, ModelInferenceError)` branch stores
+        # `str(exc)[:600]` verbatim in `self._model_stage_errors["mmsplice"]`
+        # -- which `pipeline/models/status.py::_mmsplice_status` then
+        # returns as-is as the "reason" for a FAILED MMSplice entry in
+        # `build_ai_model_status()`'s output, which
+        # `report/report_generator.py::_render_ai_model_status` renders
+        # into the "### AI Models" table on EVERY report unconditionally
+        # (that method's own docstring: never allowed to return empty).
+        # Same leak class round 20/21 fixed for SpliceBERT, traced end to
+        # end here rather than assumed. Full detail (including every
+        # path) now goes to `self.logger.warning(..., exc_info=True)`
+        # only; what's raised keeps enough to be actionable (env var
+        # names, bare filenames) without naming this machine's own
+        # directory layout.
         package_dir = _resolve_mmsplice_package_dir()
         if not package_dir or not os.path.isdir(package_dir):
+            self.logger.warning(
+                f"Could not resolve the installed 'mmsplice' package directory (resolved: {package_dir!r})."
+            )
             raise ModelLoadError(
-                f"Could not resolve the installed 'mmsplice' package directory "
-                f"(resolved: {package_dir!r}). Set GEPER_MMSPLICE_MODEL_DIR to a "
-                "directory containing layers.py and a models/ subdirectory with "
-                "Acceptor.h5, Donor.h5, Exon.h5, Intron3.h5, Intron5.h5."
+                "Could not resolve the installed 'mmsplice' package directory. Set "
+                "GEPER_MMSPLICE_MODEL_DIR to a directory containing layers.py and a "
+                "models/ subdirectory with Acceptor.h5, Donor.h5, Exon.h5, Intron3.h5, "
+                "Intron5.h5."
             )
 
         layers_path = os.path.join(package_dir, "layers.py")
         if not os.path.isfile(layers_path):
-            raise ModelLoadError(f"'{layers_path}' not found -- cannot load MMSplice's custom Keras layers.")
+            self.logger.warning(f"'{layers_path}' not found -- cannot load MMSplice's custom Keras layers.")
+            raise ModelLoadError(
+                "MMSplice's custom Keras layers file ('layers.py') was not found in the resolved package directory."
+            )
         layers_module = _load_module_from_path("_geper_mmsplice_layers", layers_path)
 
         from tensorflow.keras.models import load_model  # local import: only needed once loaded
@@ -231,17 +247,19 @@ class MMSpliceModel(BaseGenomicModel):
                 for module_name, filename in MODEL_FILENAMES.items():
                     h5_path = os.path.join(package_dir, "models", filename)
                     if not os.path.isfile(h5_path):
-                        raise ModelLoadError(
+                        self.logger.warning(
                             f"MMSplice weight file '{h5_path}' not found under the "
                             f"resolved package directory '{package_dir}'."
                         )
-                    self._keras_models[module_name] = load_model(
-                        h5_path, compile=False, custom_objects=custom_objects
-                    )
+                        raise ModelLoadError(f"MMSplice weight file '{filename}' not found in the installed package.")
+                    self._keras_models[module_name] = load_model(h5_path, compile=False, custom_objects=custom_objects)
         except ModelLoadError:
             raise
         except Exception as exc:  # noqa: BLE001
-            raise ModelLoadError(f"Failed to load one or more MMSplice Keras submodels: {exc}") from exc
+            self.logger.warning(f"Failed to load one or more MMSplice Keras submodels: {exc}", exc_info=True)
+            raise ModelLoadError(
+                "Failed to load one or more MMSplice Keras submodels; see server logs for detail."
+            ) from exc
 
         self.model = self._keras_models  # satisfies BaseGenomicModel._verify_materialized's `is None` check
         self.tokenizer = None
@@ -318,9 +336,7 @@ class MMSpliceModel(BaseGenomicModel):
 
         return ModularScores.from_list([raw_scores[name] for name in MODULE_NAMES])
 
-    def score_modular_batch(
-        self, window_sequences: List[str], overhang: Tuple[int, int]
-    ) -> List[ModularScores]:
+    def score_modular_batch(self, window_sequences: List[str], overhang: Tuple[int, int]) -> List[ModularScores]:
         """
         Batch variant of `score_modular` -- splits every window first,
         then runs each of the five submodels once per batch (one Keras
@@ -339,7 +355,6 @@ class MMSpliceModel(BaseGenomicModel):
             for module_name in MODULE_NAMES:
                 splits_per_module[module_name].append(splits[module_name])
 
-        import numpy as np
         import tensorflow as tf
 
         from pipeline.models.mmsplice.utils import logit as _logit
@@ -358,9 +373,7 @@ class MMSpliceModel(BaseGenomicModel):
 
         results = []
         for i in range(len(window_sequences)):
-            results.append(
-                ModularScores.from_list([per_module_values[name][i] for name in MODULE_NAMES])
-            )
+            results.append(ModularScores.from_list([per_module_values[name][i] for name in MODULE_NAMES]))
         return results
 
     def score_single_module(self, module_name: str, seq: str) -> float:
@@ -383,16 +396,17 @@ class MMSpliceModel(BaseGenomicModel):
         if module_name not in self._keras_models:
             raise ModelInferenceError(f"Unknown MMSplice module '{module_name}'.")
 
-        import numpy as np
         import tensorflow as tf
 
         from pipeline.models.mmsplice.utils import logit as _logit
 
         with tf.device(getattr(self, "_tf_device_str", "/CPU:0")):
             encoded = encode_batch(seqs)
-            values = self._keras_models[module_name].predict(
-                encoded, verbose=0, batch_size=CONFIG.mmsplice.BATCH_SIZE
-            )[:, 0].astype(float)
+            values = (
+                self._keras_models[module_name]
+                .predict(encoded, verbose=0, batch_size=CONFIG.mmsplice.BATCH_SIZE)[:, 0]
+                .astype(float)
+            )
         if module_name in ("acceptor", "donor"):
             values = _logit(values)
         return values.tolist()

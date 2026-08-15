@@ -1064,3 +1064,85 @@ confirm/deny it reaches a report, the same way round 20 traced
 SpliceBERT's; and separately, whether the broader `models/` foundation-
 model package deserves the same audit this round gave the splicing-plugin
 family.
+
+**RESOLVED, round 22.** Confirmed reachable -- traced the full chain
+rather than assumed. `mmsplice/loader.py:234-237`'s `ModelLoadError` (and
+three sibling raise sites in the same method, lines 207-212/216/244, all
+embedding a local path or raw exception text) is raised from
+`MMSpliceModel._load_impl()`, which `pipeline/orchestrator.py`'s startup
+validation loop calls via `instance.predict(dummy_sequence)` for every
+model in the (separate, older) `MODEL_REGISTRY`. That loop's `except
+(ModelLoadError, ModelInferenceError)` branch stores `str(exc)[:600]`
+verbatim in `self._model_stage_errors["mmsplice"]`, which
+`pipeline/models/status.py::_mmsplice_status` returns as-is as the
+`FAILED` reason in `build_ai_model_status()`'s output --
+`report/report_generator.py::_render_ai_model_status` renders that into
+the "### AI Models" table on **every single report, unconditionally**
+(that method's own docstring: never allowed to return empty). A second,
+narrower route also exists: `mmsplice/service.py::predict()`'s own except
+block folds `str(exc)` into `skip_reason`/`interpretation`, rendered by
+`_render_mmsplice` for a variant whose per-call prediction fails. Fixed
+at the source (all four raise sites in `_load_impl`) rather than at each
+downstream consumer, closing both routes at once -- full detail now goes
+to `self.logger.warning(..., exc_info=True)` only; what's raised keeps
+actionable, non-sensitive content (env var names, bare filenames) with no
+path. New `tests/test_mmsplice_loader.py` covers the two sites reachable
+without a TensorFlow import; the other two (a missing `.h5` file, a
+generic Keras-load exception) apply the identical fix but weren't
+separately exercised, to avoid forcing a TensorFlow import for marginal
+coverage on this machine.
+
+The broader `models/` foundation-model package (AlphaMissense, HyenaDNA,
+Evo2, RNA-FM, ESM2) still was not audited this round -- genuinely out of
+scope, not re-checked.
+
+---
+
+## Round 22 (MMSplice leak trace + pending_plugins registry audit)
+
+Both parts answered the question asked before changing anything, per
+that round's own instruction. Part A traced and fixed a real, confirmed
+leak (see the "RESOLVED, round 22" note on round 20's entry 1, directly
+above this heading). Part B is below -- an investigation that concluded
+"no correctness issue, don't build a fix," which is exactly as valid an
+answer as finding one.
+
+### 1. `pending_plugins.py`: naming artifact, not a correctness bug
+
+**What:** traced whether the module's name describes a real "pending"
+status anything downstream branches on. It doesn't. The module's own
+docstring already says so: "this module predates Enformer/Borzoi/
+SpliceFormer having their own real integration modules... Enformer,
+Borzoi, and SpliceFormer are no longer placeholders here." Grepped every
+other use of "pending" in the codebase -- all of it is `confidence_pending`/
+`priority_pending` (Phase 3/4 engine-completion flags, an entirely
+unrelated concept) or bare references to this module's import path.
+There is no `PENDING` value anywhere in the actual status vocabulary
+(`pipeline/models/status.py` uses USED/SKIPPED/DISABLED/FAILED, per round
+16-18's own work); `CONFIG.splicing.ENABLE_ENFORMER`/`ENABLE_BORZOI`
+default to `true`; `EnsembleManager` (`pipeline/models/ensemble.py`)
+explicitly combines "every currently *available*" plugin via a live
+`is_available()` check with no hardcoded exclusion, and its 0/1/2-models
+routing rules already feed `pipeline/acmg_rules.py`'s PP3/BP4 directly --
+Enformer/Borzoi becoming genuinely loadable in this environment is
+exactly the case this machinery was built to handle, not an edge case it
+mishandles. The one place "pending" caused an actual bug was
+`test_model_manager.py`'s own stale assumption, already fixed in round 21
+-- not this registry or anything downstream of it.
+
+**Why this is a candidate, not a round-22 fix:** the finding itself
+*is* the answer requested -- "establish what it affects before proposing
+a change." Nothing downstream (routing, provenance, the model-status
+rollup) makes a decision based on a plugin being registered in this
+particular file; only the file's own name is stale relative to its
+current contents, and its own docstring already discloses that. Renaming
+it touches every file that imports `pending_plugins` (`ensemble.py`,
+`manager.py`, `spip_plugin.py`, `splicebert_plugin.py`,
+`spliceformer_plugin.py`, `orchestrator.py`, plus every test that imports
+`build_default_registry`) for a purely cosmetic gain -- not something to
+do inside a round scoped to answering a question.
+
+**Decision needed:** whether a filename this stale (its own docstring
+apologizing for its own name) is worth the multi-file rename anyway, or
+whether the existing docstring disclaimer is sufficient and this should
+just stay closed.

@@ -240,18 +240,20 @@ class TestSpliceBERTLoadImpl(unittest.TestCase):
     def test_successful_load_downloads_and_builds_model(self):
         fake_model = _FakeSpliceBERTModel(row_logits=[])
         fake_tokenizer = _FakeTokenizer()
-        with mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint"
-        ) as mock_download, mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.checkpoint_dir_for", return_value="ckpt_dir"
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.build_model_and_tokenizer",
-            return_value=(fake_model, fake_tokenizer),
-        ) as mock_build:
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
+            mock.patch("pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint"
+            ) as mock_download,
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.checkpoint_dir_for", return_value="ckpt_dir"
+            ),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.build_model_and_tokenizer",
+                return_value=(fake_model, fake_tokenizer),
+            ) as mock_build,
+        ):
             self.instance._load_impl()
 
         mock_download.assert_called_once()
@@ -264,30 +266,32 @@ class TestSpliceBERTLoadImpl(unittest.TestCase):
     def test_skips_download_when_checkpoint_already_cached(self):
         fake_model = _FakeSpliceBERTModel(row_logits=[])
         fake_tokenizer = _FakeTokenizer()
-        with mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=True
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint"
-        ) as mock_download, mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.checkpoint_dir_for", return_value="ckpt_dir"
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.build_model_and_tokenizer",
-            return_value=(fake_model, fake_tokenizer),
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
+            mock.patch("pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=True),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint"
+            ) as mock_download,
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.checkpoint_dir_for", return_value="ckpt_dir"
+            ),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.build_model_and_tokenizer",
+                return_value=(fake_model, fake_tokenizer),
+            ),
         ):
             self.instance._load_impl()
 
         mock_download.assert_not_called()
 
     def test_network_failure_is_sanitized(self):
-        with mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint",
-            side_effect=ConnectionError("could not reach zenodo.org"),
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
+            mock.patch("pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint",
+                side_effect=ConnectionError("could not reach zenodo.org"),
+            ),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -295,22 +299,54 @@ class TestSpliceBERTLoadImpl(unittest.TestCase):
         self.assertEqual(str(ctx.exception), "SpliceBERT model unavailable")
         self.assertNotIn("zenodo.org", str(ctx.exception))
 
-    def test_missing_transformers_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=False
+    def test_load_timeout_message_is_sanitized_but_keeps_the_isolation_correction(self):
+        # Round 21: the raised message must not repeat the checkpoint
+        # directory path a real TimeoutError's own str() carries (round
+        # 20's leak class, on the timeout branch this time -- confirmed
+        # live: a real 2026-08-14 run's clinical PDF printed a full
+        # '/content/geper_cache/...' path in its Data Source Provenance
+        # section). It must still say the load succeeds in isolation and
+        # stalls only inside the full pipeline process -- that's round
+        # 18's correction of a disproven "TensorFlow-backend detection"
+        # story, and silently dropping it back to a bare "unavailable"
+        # would undo that correction for a real report reader.
+        fake_path = "/content/geper_cache/plugin_model_cache/splicebert/SpliceBERT.1024nt"
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
+            mock.patch("pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=True),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.checkpoint_dir_for", return_value=fake_path
+            ),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.build_model_and_tokenizer",
+                side_effect=TimeoutError(
+                    f"Loading SpliceBERT checkpoint from '{fake_path}' did not complete within 180s"
+                ),
+            ),
         ):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.instance._load_impl()
+
+        message = str(ctx.exception)
+        self.assertNotIn(fake_path, message)
+        self.assertNotIn("/content/", message)
+        self.assertIn("succeeds quickly in isolation", message)
+        self.assertIn("full pipeline process", message)
+
+    def test_missing_transformers_raises_clear_error(self):
+        with mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=False):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("transformers", str(ctx.exception))
 
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):
-        with mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False
-        ), mock.patch(
-            "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint",
-            side_effect=OSError("network unreachable"),
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
+            mock.patch("pipeline.models.splicebert_plugin.splicebert_loader.is_checkpoint_cached", return_value=False),
+            mock.patch(
+                "pipeline.models.splicebert_plugin.splicebert_loader.download_and_extract_checkpoint",
+                side_effect=OSError("network unreachable"),
+            ),
         ):
             with self.assertRaises(ModelLoadError):
                 self.instance.load()
@@ -330,15 +366,17 @@ class TestSpliceBERTMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_SPLICEBERT", SpliceBERTPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_transformers_installed(self):
-        with mock.patch("pipeline.models.splicebert_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
         ):
             mock_config.splicing.ENABLE_SPLICEBERT = True
             self.assertTrue(SpliceBERTPlugin.is_available())
 
     def test_unavailable_when_flag_on_but_transformers_missing(self):
-        with mock.patch("pipeline.models.splicebert_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=False
+        with (
+            mock.patch("pipeline.models.splicebert_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=False),
         ):
             mock_config.splicing.ENABLE_SPLICEBERT = True
             self.assertFalse(SpliceBERTPlugin.is_available())

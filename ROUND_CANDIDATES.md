@@ -953,6 +953,25 @@ a local filesystem path. No failing test anchors a fix here the way
 `test_network_failure_is_sanitized` did for the download branch -- left
 alone rather than fixed speculatively.
 
+**RESOLVED, round 21.** Confirmed live, not speculative: a real
+2026-08-14 clinical PDF printed the full `checkpoint_dir` path
+(`/content/geper_cache/plugin_model_cache/splicebert/SpliceBERT.1024nt`)
+inside its Data Source Provenance section, via the exact same
+`ModelManager._failed` -> `model_checkpoints[...]["reason"]` -> report
+route round 20 traced for the network branch. Fixed the same way --
+full detail (including the path) stays in `self.logger.warning(...,
+exc_info=True)` only -- but, unlike round 20's network-branch fix
+(which dropped to a bare "SpliceBERT model unavailable"), the raised
+message deliberately keeps the "this load succeeds quickly in
+isolation but has repeatedly stalled specifically inside the full
+pipeline process" sentence: that's round 18's own correction of a
+disproven "TensorFlow-backend detection" story that misled this
+project for months, and it names no path/URL/identifier, so dropping
+it too would have silently undone a correction this project already
+paid to make. New test:
+`test_load_timeout_message_is_sanitized_but_keeps_the_isolation_correction`
+in `tests/test_splicebert_plugin.py`.
+
 ### 2. A constraint violation: running `test_model_manager.py` loaded real Enformer weights and ran real inference (~400s)
 
 **What:** while regression-testing the round-20 fix, `python -m pytest
@@ -988,3 +1007,60 @@ can't trigger a real multi-hundred-second model load by surprise; (b)
 separately, whether Enformer now genuinely working in this environment is
 itself news worth acting on (`pending_plugins.py`'s registry may be
 stale about which plugins are actually available here).
+
+**RESOLVED (a), round 21** -- fixed with a mock, not a skip: the test's
+own class docstring already says these plugins "become available
+automatically whenever their optional pip package/dependency is
+installed", so a `skipUnless`-style guard would just reintroduce the
+same environment-dependence (pass/fail/skip depending on what happens
+to be pip-installed) that caused this in the first place. Re-read what
+`test_manager_predict_never_crashes_for_any_pending_plugin`'s own NAME
+actually promises -- "never crashes", not "returns None" -- and
+`ModelManager.predict()`'s own docstring confirms that contract is
+enforced entirely by `model_cls.is_available()` gating `.get()` to
+`PluginUnavailableError` before any real load is attempted. Mocking
+`EnformerPlugin.is_available`/`BorzoiPlugin.is_available`/
+`SpliceFormerPlugin.is_available` to `False` tests that exact contract
+deterministically, regardless of what's actually installed in the
+environment running the suite -- confirmed fast (34/34 tests in
+`tests/test_model_manager.py`, ~1s total, no pip installs or weight
+loads triggered) after the fix, versus ~400s before it. (b) not
+investigated this round -- Enformer being genuinely loadable here now is
+still worth someone's separate attention, but is a `pending_plugins.py`
+registry question, not a test-correctness one.
+
+---
+
+## Round 21 (SpliceBERT timeout-branch leak + stale Enformer-availability test)
+
+Full account of both fixes is in the round-20 entry above (timeout-branch
+leak) and directly above this line (the Enformer test). One thing checked
+and NOT extended, to keep this round's fix matched to what was actually
+verified:
+
+### 1. Audited every sibling plugin loader for the same leak class -- SpliceBERT was the only one broken
+
+Checked `spliceformer_plugin.py`, `enformer_plugin.py`, `borzoi_plugin.py`,
+`spip_plugin.py` (the full `pending_plugins.py` registry SpliceBERT
+belongs to) for the same "raw `{exc}` folded into a raised, report-facing
+message" shape round 20/21 fixed. All four already raise a bare
+`RuntimeError("<Model> model unavailable")` on their own network-error
+branches, with full diagnostic detail kept in a `logger.debug(...,
+exc_info=True)` call only -- SpliceBERT (both branches) was the one
+outlier in its own plugin family, not a project-wide pattern. Also spot-
+checked one raise site outside this family while auditing:
+`pipeline/models/mmsplice/loader.py:234-237` embeds `h5_path`/
+`package_dir` (local filesystem paths) directly into a raised
+`ModelLoadError` the same way SpliceBERT's branches used to -- NOT
+confirmed to reach the clinical report the way SpliceBERT's does (MMSplice
+isn't routed through `ModelManager`/`pending_plugins`; would need tracing
+`_run_mmsplice_stage` in `orchestrator.py` to confirm), and NOT fixed
+speculatively without that confirmation. The broader `models/` package
+(AlphaMissense, HyenaDNA, Evo2, RNA-FM, ESM2 -- a different registry/
+family entirely) was not audited this round.
+
+**Decision needed:** whether to trace the MMSplice path-leak claim to
+confirm/deny it reaches a report, the same way round 20 traced
+SpliceBERT's; and separately, whether the broader `models/` foundation-
+model package deserves the same audit this round gave the splicing-plugin
+family.

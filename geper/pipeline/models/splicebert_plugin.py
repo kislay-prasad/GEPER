@@ -272,16 +272,42 @@ class SpliceBERTPlugin(PluginModel):
             # "You are using a model of type 'bert' to instantiate a model
             # of type ''" warning immediately preceding the stall (see
             # `build_model_and_tokenizer`'s docstring for the full,
-            # up-to-date account). Message and exc_info promoted to
-            # `warning` so the next live run captures the detail needed to
-            # actually diagnose it, instead of only "SpliceBERT model
-            # unavailable".
-            message = (
-                f"SpliceBERT model unavailable: checkpoint load for '{checkpoint}' timed out "
-                f"after {CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS:.0f}s ({exc})"
+            # up-to-date account).
+            #
+            # Round 21: `str(exc)` (the TimeoutError `_load_with_timeout`
+            # raises) includes `checkpoint_dir` -- a full local filesystem
+            # path -- interpolated directly into its own message. That
+            # raw text used to be folded into the *raised* RuntimeError
+            # too, and a real 2026-08-14 run's clinical PDF printed the
+            # resulting path in its Data Source Provenance section (same
+            # leak class round 20 fixed on the network-error branch just
+            # above, via the identical `ModelManager._failed` ->
+            # `model_checkpoints[...]["reason"]` -> report route). Full
+            # detail (including the path) stays in this log line only,
+            # at `warning` so a real run still captures it without
+            # needing debug logging. What survives into the raised,
+            # report-facing message is deliberately NOT nothing, unlike
+            # the network branch: the "succeeds in isolation / stalls
+            # only inside the full orchestrator" correction is round 18's
+            # actual fix for a story (TensorFlow-backend detection) that
+            # misled this project for months, and dropping it back to a
+            # bare "SpliceBERT model unavailable" would silently undo
+            # that correction for every future reader of a real report.
+            # That sentence names no path, URL, or internal identifier --
+            # it's a behavioral fact about GEPER's own process, safe to
+            # show a report reader the same way any other "this model
+            # could not be run" caveat already is.
+            log_message = (
+                f"SpliceBERT checkpoint load for '{checkpoint}' timed out after "
+                f"{CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS:.0f}s ({exc})"
             )
-            self.logger.warning(message, exc_info=True)
-            raise RuntimeError(message) from exc
+            self.logger.warning(log_message, exc_info=True)
+            raise RuntimeError(
+                f"SpliceBERT model unavailable: checkpoint load timed out after "
+                f"{CONFIG.splicing.SPLICEBERT_LOAD_TIMEOUT_SECS:.0f}s. This load succeeds quickly in "
+                "isolation but has repeatedly stalled specifically inside the full pipeline process; "
+                "see server logs for the full diagnostic detail."
+            ) from exc
 
         model.to(self.device)
         model.eval()

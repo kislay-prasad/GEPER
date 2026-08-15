@@ -821,3 +821,75 @@ more diagnostic message (likely correct -- a bare "unavailable" with no
 detail is a worse error for exactly the kind of live-Colab debugging this
 project has repeatedly needed), or confirm the message was deliberately
 meant to stay generic and fix the code instead.
+
+---
+
+## Round 19 (--output-dir startup writability validation)
+
+A real 51-minute Colab run finished all 6 variants and every stage, then
+crashed on the very last line (`JSONResultBuilder.write()`) with
+`FileNotFoundError` on `--output-dir`. Investigated before changing
+anything, per the round's own instruction to verify the reported premise
+against source first -- and the premise was half right, half wrong:
+
+**Wrong:** "nothing on the startup path creates --output-dir." `git log -p
+-S"os.makedirs(self.output_dir"` shows `GeperPipeline.__init__` has called
+`os.makedirs(self.output_dir, exist_ok=True)` since the very first commit
+(`cb79edc`) -- the directory genuinely was created (or already existed) at
+process start.
+
+**Right:** nothing checked it was *writable*. `exist_ok=True` only
+confirms the path exists; it never attempts a real write. Given the
+directory demonstrably existed at minute 0 (the writability check this
+round adds would have passed then too) and the crash only surfaced at
+minute 51, the most likely real cause is not "never created" but a Google
+Drive mount going stale mid-run -- a well-documented Colab failure mode
+that no startup-only check can detect or prevent (that would need a
+re-check immediately before every write, explicitly out of this round's
+scope: fail-fast at startup was what was asked for, not write-time
+resilience). Recorded here plainly, per the round's own request, rather
+than overclaiming the fix "would have saved this exact run" -- what it
+does prevent is the more common case (a genuinely unwritable or mistyped
+path, wrong from the start), turning that from an hour of wasted
+processing into a few-second startup rejection.
+
+Fixed: `utils/output_paths.py::ensure_writable_output_dir` (new,
+dependency-light module -- stdlib + `utils.exceptions` only, importable
+without `pipeline.orchestrator`'s TensorFlow/absl chain) creates AND
+verifies `--output-dir` via a real write-and-delete probe, called from
+`GeperPipeline.__init__` (before any model load or network call) in place
+of the old bare `os.makedirs`. `main.py` now wraps `GeperPipeline(...)`
+construction itself inside the existing `try/except PipelineError` block
+(previously only `pipeline.run()` was wrapped), so this new startup
+failure gets the same clean one-line message as every other
+`PipelineError` instead of a raw traceback.
+
+Checked whether the checkpoint write path has the same problem: yes,
+identically -- `pipeline/orchestrator.py`'s in-loop periodic checkpoint
+write and the final write both call `result_builder.write(json_path)`
+against the exact same `json_path`/`self.output_dir`, so one startup
+check protects both.
+
+Checked whether `--output-dir` is the only such path argument: no, but it
+was uniquely dangerous. `--blast-db`'s auto-build (`ensure_local_blast_db`)
+and the BLAST disk cache directory (`_BlastDiskCache.__init__`) are both
+already defensive -- both wrap their filesystem operations in try/except
+and degrade gracefully (skip caching / fall back to remote-or-skip) rather
+than raising. `--patient-meta`/`--qc-metrics-json`/`--phenotype-file` are
+read-only inputs, already documented as never-fatal on a bad path.
+`--output-dir` was the one write target whose failure is both uncaught
+(raises straight out of `JSONResultBuilder.write()`) and late (only
+surfaces whenever `write()` is actually called -- for a small run, only at
+the very end).
+
+New coverage: `tests/test_round19_output_dir_validation.py` -- offline,
+no `pipeline.orchestrator`/`main` import (both cost ~218s/275MB via
+TensorFlow/absl on this machine); direct behavioral tests of
+`ensure_writable_output_dir` (creation, writability probe, cleanup,
+file-where-directory-expected, mocked-unwritable-directory) plus
+source-text ordering checks (the same technique
+`test_round17_run_complete_marker.py` established) confirming
+`orchestrator.py` calls the new check in `__init__` before `run()`, the
+old bare `makedirs` line is gone, both write call sites share one
+`json_path`, and `main.py` now wraps pipeline construction inside its
+`try/except PipelineError`.

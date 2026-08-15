@@ -113,6 +113,7 @@ from utils.exceptions import (
 from utils.device_utils import log_environment_versions
 from utils.logger import get_logger
 from utils.model_cache import ModelCache
+from utils.output_paths import ensure_writable_output_dir
 
 logger = get_logger(__name__)
 
@@ -348,7 +349,17 @@ class GeperPipeline:
         self.profiler = StageProfiler()
 
         self.output_dir = output_dir or CONFIG.OUTPUT_DIR
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Round 19: creates AND verifies --output-dir is genuinely
+        # writable (a bare `os.makedirs(exist_ok=True)` only ever
+        # confirms the path exists, never that it's currently
+        # writable) -- raises PipelineError immediately if not, before
+        # any model load or network call below. See
+        # `utils/output_paths.py::ensure_writable_output_dir`'s own
+        # docstring for the real run this is fixing: 51 minutes of
+        # processing, all 6 variants successfully completed, discarded
+        # at the very last line because the output path had become
+        # unwritable.
+        ensure_writable_output_dir(self.output_dir)
         # Optional path to a patient-metadata JSON file for the clinical
         # PDF report's header (report/summary.py::generate_pdf). None by
         # default -- the report then renders the safe "De-identified /

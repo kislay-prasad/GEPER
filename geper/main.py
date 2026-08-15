@@ -199,24 +199,31 @@ def main() -> int:
 
     phenotype_result = build_phenotype_result(args.hpo_terms, args.phenotype_file, logger=logger)
 
-    pipeline = GeperPipeline(
-        blast_mode=args.blast_mode,
-        blast_local_db=args.blast_db,
-        blast_reference_fasta=args.blast_reference_fasta,
-        species=args.species,
-        assembly=args.assembly,
-        output_dir=args.output_dir,
-        ai_only=args.ai_only or None,
-        enable_profiling=(False if args.no_profiling else None),
-        blast_disk_cache=(False if args.no_blast_cache else None),
-        patient_meta_path=args.patient_meta,
-        qc_metrics_path=args.qc_metrics_json,
-        phenotype_result=phenotype_result,
-    )
-
-    HEALTH.run_startup_checks(default_service_checks())
-
     try:
+        # Round 19: GeperPipeline's own __init__ now validates
+        # --output-dir is genuinely writable (see
+        # utils/output_paths.py::ensure_writable_output_dir) and raises
+        # PipelineError immediately if not -- construction is inside
+        # this try block, not just pipeline.run() below, so that
+        # startup-time failure gets the same clean one-line message as
+        # every other PipelineError instead of a raw traceback.
+        pipeline = GeperPipeline(
+            blast_mode=args.blast_mode,
+            blast_local_db=args.blast_db,
+            blast_reference_fasta=args.blast_reference_fasta,
+            species=args.species,
+            assembly=args.assembly,
+            output_dir=args.output_dir,
+            ai_only=args.ai_only or None,
+            enable_profiling=(False if args.no_profiling else None),
+            blast_disk_cache=(False if args.no_blast_cache else None),
+            patient_meta_path=args.patient_meta,
+            qc_metrics_path=args.qc_metrics_json,
+            phenotype_result=phenotype_result,
+        )
+
+        HEALTH.run_startup_checks(default_service_checks())
+
         pipeline.run(args.vcf, max_variants=args.max_variants, resume=not args.no_resume)
     except PipelineError as exc:
         logger.error(f"GEPER pipeline aborted: {exc}")

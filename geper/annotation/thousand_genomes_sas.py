@@ -151,9 +151,13 @@ def _get(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     if HEALTH.is_offline("Ensembl"):
         HEALTH.note_skip("Ensembl")
-        raise ExternalAPIError(
-            f"1000 Genomes SAS lookup via '{url}' skipped: Ensembl was confirmed offline at startup."
-        )
+        logger.warning(f"1000 Genomes SAS lookup via '{url}' skipped: Ensembl was confirmed offline at startup.")
+        # Round 23: the message actually raised (and, downstream, folded
+        # verbatim into `sas_error` and rendered into the clinical
+        # report -- see `report/clinical_report_builder.py::
+        # _indian_population_frequency`) must not embed `url`; full
+        # detail including the URL goes to the log line above only.
+        raise ExternalAPIError("Ensembl was confirmed offline at startup; 1000 Genomes SAS lookup skipped.")
 
     last_error: Optional[Exception] = None
     for attempt in range(1, CONFIG.thousand_genomes_sas.MAX_RETRIES + 1):
@@ -176,9 +180,12 @@ def _get(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
             if attempt < CONFIG.thousand_genomes_sas.MAX_RETRIES:
                 time.sleep(CONFIG.thousand_genomes_sas.RETRY_BACKOFF_SECS * attempt)
     HEALTH.note_failure("Ensembl")
-    raise ExternalAPIError(
+    logger.warning(
         f"1000 Genomes SAS lookup via '{url}' failed after {CONFIG.thousand_genomes_sas.MAX_RETRIES} attempts: {last_error}"
     )
+    # Round 23: same rationale as the offline-skip branch above -- no
+    # url/last_error in what's raised, only in the log line above.
+    raise ExternalAPIError(f"Ensembl request failed after {CONFIG.thousand_genomes_sas.MAX_RETRIES} attempts")
 
 
 def _resolve_rsid(chrom: str, pos: int, ref: str, alt: str) -> Optional[str]:

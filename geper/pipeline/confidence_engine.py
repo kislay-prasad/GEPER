@@ -430,13 +430,24 @@ class ConfidenceEngine:
 
         presence = (sum(presence_parts) / 2.0) if presence_parts else 0.0
         quality = (sum(quality_parts) / len(quality_parts)) if quality_parts else 0.0
+        # Round 23: UniProt's and InterPro's `reason` both come from the
+        # same orchestrator-computed `skip_reason` (see
+        # `pipeline/orchestrator.py`'s `non_protein_coding_gene_reason`
+        # call, shared verbatim across uniprot_result/interpro_result/
+        # alphafold_result) whenever a gene has no protein-coding
+        # transcript at all -- so `notes` can carry the identical
+        # sentence twice. `dict.fromkeys` dedupes while preserving
+        # order, without touching the distinct-reason case (e.g. a real
+        # UniProt hit alongside an InterPro lookup failure), where every
+        # note differs and nothing is dropped.
+        deduped_notes = list(dict.fromkeys(notes))
         return CategoryScore(
             "Protein Knowledge",
             weight,
             presence,
             quality,
             weight * presence * quality,
-            " ".join(notes),
+            " ".join(deduped_notes),
             sources,
         )
 

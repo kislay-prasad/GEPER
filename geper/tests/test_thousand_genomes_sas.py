@@ -212,6 +212,33 @@ class TestQueryVariantEndToEnd(unittest.TestCase):
         self.assertIn("error", result)
         self.assertIsNotNone(result["error"])
 
+    def test_query_failure_error_does_not_leak_the_request_url(self):
+        """Round 23: `query_variant`'s `error` used to embed the full
+        request URL and raw exception text (`str(exc)` on an
+        `ExternalAPIError` built from `_get`'s own f-string) verbatim --
+        `report/clinical_report_builder.py::_indian_population_frequency`
+        folds this `error` straight into `sas_error`, which
+        `report/summary.py`/`report/report_generator.py` render into
+        the clinical report unconditionally. Full detail (URL included)
+        still reaches the log; what's returned to callers/reports must
+        not."""
+        import requests as real_requests
+
+        _patch_config(MAX_RETRIES=1)
+        with mock.patch("requests.get", side_effect=real_requests.exceptions.Timeout("boom")):
+            result = m.ThousandGenomesSASLookup().query_variant(_variant(), assembly="GRCh38", rsid_hint="rs699")
+        self.assertNotIn("rest.ensembl.org", result["error"])
+        self.assertNotIn("boom", result["error"])
+        self.assertEqual(result["error"], "Ensembl request failed after 1 attempts")
+
+    def test_offline_skip_error_does_not_leak_the_request_url(self):
+        _patch_config()
+        with mock.patch.object(m.HEALTH, "is_offline", return_value=True):
+            result = m.ThousandGenomesSASLookup().query_variant(_variant(), assembly="GRCh38", rsid_hint="rs699")
+        self.assertFalse(result["found"])
+        self.assertNotIn("rest.ensembl.org", result["error"])
+        self.assertEqual(result["error"], "Ensembl was confirmed offline at startup; 1000 Genomes SAS lookup skipped.")
+
     def test_disabled_short_circuits_without_network_call(self):
         _patch_config(ENABLED=False)
         with mock.patch("requests.get") as fake_get:

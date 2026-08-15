@@ -1146,3 +1146,103 @@ do inside a round scoped to answering a question.
 apologizing for its own name) is worth the multi-file rename anyway, or
 whether the existing docstring disclaimer is sufficient and this should
 just stay closed.
+
+---
+
+## Round 23 (Protein Knowledge duplicate sentence; 1000 Genomes SAS URL leak)
+
+Both parts of this round were fixed, not left open -- this entry exists
+for the one thing verified but deliberately not fixed: the same
+raw-exception-into-report leak class round 20-22 fixed for SpliceBERT/
+MMSplice turns out to also affect UniProt, InterPro, ClinGen, and
+AlphaFold DB, on top of the 1000 Genomes SAS instance this round fixed.
+
+### 1. UniProt/InterPro/ClinGen/AlphaFold all embed the raw request URL (and, for InterPro/ClinGen/AlphaFold, the wrapping provider's raised text) in the `error` string a report renders
+
+**What:** `report/report_generator.py` renders `prot['uniprot_error']`,
+`prot['interpro_error']`, `struct['error']` (AlphaFold), and
+`clin['clinvar_error']`/`clin['clingen_error']` the same way this round's
+Part B fixed for `sas_error` -- `f"... (external service issue: {X})."`
+with no sanitization at the render site (`report/summary.py` renders the
+PDF equivalents the same way). Traced each `X` back to its source, the
+same way this round traced `sas_error`:
+
+- `pipeline/uniprot/provider.py:217` raises
+  `ExternalAPIError(f"UniProt REST API request to '{url}' failed after
+  {N} attempts: {last_error}")`; `provider.py:191` and `:280` both fold
+  that straight into `UniProtAnnotation.from_error(gene_symbol,
+  str(exc))` / `f"{provider.name} raised: {exc}"` -- URL and raw
+  exception both reach `uniprot_error`.
+- `pipeline/interpro/provider.py:171` raises the identical shape
+  (`"InterPro REST API request to '{url}' failed after {N} attempts:
+  {last_error}"`); `:210` folds it into `interpro_error` via
+  `f"{provider.name} raised: {exc}"`.
+- `pipeline/clingen/provider.py:343` and `:482` -- same shape, feeding
+  `clingen_error`.
+- `pipeline/alphafold/provider.py:217` and `:291` -- same shape, feeding
+  AlphaFold's `struct['error']`.
+
+Not traced end-to-end to a live-run PDF this round (unlike `sas_error`,
+which a real report -- GEPER-RUN-20260815T11442 -- was confirmed to
+print) -- traced from source to the renderer's known unconditional
+render calls only, the same standard round 22 applied to MMSplice's
+sibling raise sites before fixing all four at once.
+
+**Why this is a candidate, not a round-23 fix:** the round was scoped to
+the one instance a real report actually showed (1000 Genomes SAS) plus
+the Protein Knowledge duplicate-sentence bug, both fixed. This is four
+separate provider modules, each with 2+ raise sites, each needing the
+same source-level sanitization (short message raised, full detail with
+the URL to `logger.warning(..., exc_info=True)`) plus a regression test
+per module -- a materially larger change than fixing the one instance
+actually observed, and better done as its own scoped round the same way
+round 22 gave MMSplice its own round rather than folding it into round
+21's SpliceBERT fix.
+
+**Decision needed:** whether to schedule a dedicated round applying the
+identical fix-pattern to all four provider modules at once (they share
+the exact same shape, so one round could plausibly close all four), or
+fix them one at a time as each surfaces in a real report the way SAS did
+this round.
+
+### 2. ReportLab's `Paragraph` silently mangles any unescaped `&` in report text -- not a bug in this codebase's own rendering logic, but a real hazard for any future f-string containing one
+
+**What:** the "mangled `content-type;=`" artifact the round's own
+instructions flagged was reproduced directly, not assumed: feeding
+ReportLab's `Paragraph` the literal leaked URL text
+(`...?pops=1&content-type=application%2Fjson`) and reading back
+`Paragraph.getPlainText()` returns
+`...?pops=1&content-type;=application%2Fjson` -- confirmed via a
+standalone repro against the installed `reportlab` package, not
+inferred. ReportLab's paragraph parser treats any unescaped `&word` as
+an attempted (unterminated) XML entity reference and silently appends
+the missing `;` rather than raising, which is exactly the `content-
+type` -> `content-type;` transformation observed in the real PDF.
+Grepped `report/` for an XML-escaping helper (`saxutils.escape`,
+`html.escape`, a local `_escape`/`xml_escape` function) applied before
+any `Paragraph(...)` call anywhere in `report/summary.py` or
+`report/summary_short.py`: there is none. Every interpolated value
+reaches `Paragraph` unescaped.
+
+**Why this is a candidate, not a round-23 fix:** this round's actual
+manifestation of the artifact (the leaked SAS URL) is already gone once
+`sas_error` no longer contains a URL -- fixing the leak at the source
+(this round's Part B fix) removes the only unescaped `&` currently
+reachable through that render path, so there is nothing left to
+mangle for this specific string. But the underlying gap -- no XML-
+escaping discipline anywhere before a `Paragraph(...)` call -- is
+structural, not specific to 1000 Genomes SAS, and would resurface the
+instant any other rendered field (a gene symbol, an HGVS string, free-
+text from an external source) happens to contain a bare `&`. Adding a
+blanket escaping helper touches every `Paragraph(...)` call site in
+`report/summary.py` (dozens) and is a correctness-hardening change
+independent of anything this round's PDF actually showed -- out of
+scope for a round whose two parts were both about specific, observed
+rendering defects.
+
+**Decision needed:** whether to add a shared `_escape_for_paragraph`
+helper (wrapping `xml.sax.saxutils.escape`, called at every
+`Paragraph(...)` site in `report/summary.py`/`report/summary_short.py`)
+as its own round, given it's pure hardening with no currently-observed
+failure now that item 1's four providers are the only other known
+source of unescaped `&`-bearing text reaching those call sites.

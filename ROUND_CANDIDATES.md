@@ -143,6 +143,23 @@ audit. (a) does not foreclose (b): the compartment gate is a pure
 early-return with no evidence-source-internal changes, so nothing about
 it needs to be undone to build (b) later.
 
+**RESOLVED, round 14.** Option (b) shipped -- see that round's own summary
+entry below ("Round 14 (mtDNA compartment gate)") for the full account: B1
+fixed chrom-normalization blocking MT transcript resolution and proved real
+MT-ND1/MT-ATP6 transcript structure resolves; B2 pre-marked 7 criteria
+`not_evaluated`-with-reason for any chrM variant (13 total for confirmed
+non-protein-coding mitochondrial genes), touching every call site this
+entry's own investigation listed (gnomAD, MMSplice/Enformer/Borzoi/
+SpliceFormer/SpliceBERT, PVS1, Ensembl, AlphaMissense) plus a per-finding
+disclaimer in all three renderers. The 9/7/6/5-criterion partition (per
+gene class: protein-coding vs. tRNA vs. rRNA vs. non-mtDNA) was verified
+rendering correctly in a real PDF on 2026-08-15 -- nothing observed
+contradicts it. Round 14 itself left its own, DIFFERENT, still-open item:
+a "second pass" (gnomAD-mtDNA's separate callset, MITOMAP, a real
+mtDNA-specific PVS1, heteroplasmy) -- see that round's item 1, not this
+one. Do not confuse the two: this entry (option (b), the NOT_APPLICABLE
+threading) is closed; round 14's second pass is not.
+
 ---
 
 ### 2. AlphaMissense has no chrM coverage either -- the ninth missing-vs-empty instance
@@ -180,6 +197,13 @@ whoever picks up item 1 (option (b)), not a standalone decision. Include
 rather than assuming its existing chrom-normalization code means it's
 already handled.
 
+**RESOLVED, round 14.** `models/alphamissense.py` was included in round
+14's B2 audit as this entry asked -- AlphaMissense is now one of the
+providers a chrM variant is never queried against at all (see round 14's
+own summary entry: "AlphaMissense/gnomAD/MMSplice/Enformer/Borzoi/
+SpliceFormer/SpliceBERT never queried for chrM at all"), closing the
+"silent wrong not_found" gap this entry described.
+
 ---
 
 ### 3. kim_pipeline already has MT-aware annotation machinery -- read it first
@@ -211,6 +235,17 @@ a standard nuclear one doesn't have it" from scratch. Building parallel
 machinery in GEPER when kim_pipeline already has a working answer to
 the same underlying question would be redundant effort, not a genuine
 architectural difference between the two projects.
+
+**Status, round 14/26.** Round 14's B1 took a different path than this
+pointer suggested: rather than porting kim_pipeline's GFF3 bootstrap, it
+fixed a real bug in GEPER's own existing Ensembl chrom-normalization
+(`chrM`/bare `M` never matched Ensembl's `MT` seqname) and confirmed real
+MT-ND1/MT-ATP6 transcript structure now resolves through the standard
+Ensembl path GEPER already had -- no new GFF3 machinery needed for that
+part. This pointer's advice was not consumed, but is not stale either: it
+remains live guidance for round 14's still-open "second pass" item (a
+real mtDNA-specific PVS1, MITOMAP integration) if that work ever needs
+annotation machinery beyond what Ensembl's now-fixed resolution covers.
 
 ---
 
@@ -554,6 +589,38 @@ round on an 8GB machine with no GPU/network.
    consistent with a second, distinct, transformers-v5-specific issue Fix #1
    was never verified against, independent of whether (1) above also turns
    out to be true.
+
+**UPDATED, round 26 -- partially superseded; no longer "never verified."**
+Two full orchestrator runs (2026-08-14 and 2026-08-15) ran under the actually-
+committed pin (`transformers>=5.12.1,<6.0.0`), closing the reproducibility
+hole this entry originally flagged. Findings from those runs, narrowing but
+not yet resolving items (1)/(2) above:
+  - The checkpoint load itself succeeds and is fast in isolation: 13s cold,
+    0.2s warm, 108/108 weights loaded cleanly.
+  - It times out at exactly the configured
+    `GEPER_SPLICEBERT_LOAD_TIMEOUT_SECS` (180s) only inside the full
+    orchestrator process -- never in isolation -- correlating with (not yet
+    proven caused by) transformers' "You are using a model of type 'bert' to
+    instantiate a model of type ''" warning, the same warning item (2) above
+    already flagged as unreproduced at the time this entry was written.
+  - ESM2 and MMSplice were each individually cleared as the interfering
+    import on a CPU-only session (loading either alone, then SpliceBERT,
+    does not reproduce the hang) -- ruling out two of the more obvious
+    "something imported transformers/TensorFlow first and left it in a bad
+    state" suspects, not confirming a specific cause.
+
+**Not yet resolved:** both CPU runs. What remains is a bisect on a GPU
+runtime specifically -- TensorFlow initializes differently there (XLA +
+cuDNN device setup) than on bare CPU, and that difference hasn't been ruled
+in or out as the actual cause of the in-orchestrator-only hang. Diagnostic
+items (1) and (2) above still stand as the two candidate mechanisms; neither
+is confirmed. Whoever runs that GPU bisect should re-check both against
+whatever `transformers` version is actually installed there -- this
+project's own pin (`>=5.12.1,<6.0.0`) is a range, and round 25's environment
+(`5.13.1`) is not guaranteed to match a later GPU session's install (e.g.
+`5.15.0`, confirmed installed on the machine this round 26 note was written
+on -- untested against this specific hang, satisfies the pin, but is not the
+same verified point release).
 
 ---
 
@@ -1524,3 +1591,137 @@ load"; all others confirmed similarly lightweight or pure-dict
 fixtures) -- no pipeline import, no orchestrator import. 302/302 pass
 across `test_pdf_escape.py` (14 new) and every other report-rendering
 test file touched or plausibly affected by this round's changes.
+
+---
+
+## Round 26 (ClinVar client URL leak; stale-entry corrections)
+
+### 1. `RESOLVED, round 26.` `database/clinvar_client.py`'s raw-URL leak,
+traced end to end and fixed
+
+Round 24's own item 1 flagged `database/clinvar_client.py` (lines ~486,
+~515 at the time) as having the identical raw-URL-into-error shape as the
+four providers that round fixed, explicitly left unfixed and out of
+scope. Traced this round, not assumed, the same way rounds 22-24 traced
+each instance before fixing it:
+
+`ClinVarClient._request_json`'s two raise sites (the offline-skip guard
+and the retry-exhausted path) both folded the request `url` -- and, on
+the retry-exhausted path, the raw underlying exception (`last_error`) --
+into the raised `ExternalAPIError`'s message via an f-string. That
+message reaches two independent, both-unconditional sinks:
+  - `pipeline/orchestrator.py::_run_clinvar_stage`'s `except
+    ExternalAPIError` folds `str(exc)` into `{"error": str(exc)}` ->
+    `report/clinical_report_builder.py::_clinical_evidence`'s
+    `clinvar_error` key -> `report/report_generator.py` renders it
+    unconditionally into every Markdown report's "### 12. Clinical
+    Evidence" section (`elif clin.get("clinvar_error")` -- no gate).
+  - `report/json_builder.py` embeds the raw `clinvar_result` dict
+    (including its `error` field) verbatim under `geper_results.json`'s
+    top-level `clinvar` key, in both the primary shape and the
+    `raw_evidence`-fallback shape -- the same double-reach pattern round
+    24 found for UniProt/InterPro/ClinGen/AlphaFold DB.
+
+`pipeline/orchestrator.py`'s provenance rollup (`ClinVar`,
+`VersionStatus.UNKNOWN, notes=f"Most recent query failed:
+{clinvar_result['error']}"`, line ~1628) is a third consumer of the same
+field, also unconditional.
+
+Not confirmed printed in an actual live-run PDF this round -- same
+standard round 24 applied to its own four: Markdown/JSON reach is
+unconditional and mechanically identical to the already-confirmed SAS
+case, so "reaches a rendered report or geper_results.json" is satisfied
+without needing a real PDF example.
+
+No existing test fixture pinned the raw URL/exception text (checked
+`tests/test_clinvar_client.py` before fixing -- no test in that file
+exercised the `_request_json` network-failure path at all;
+`test_report_consistency.py`'s `clinvar_error` fixture uses a synthetic
+string, "ClinVar E-utilities request failed", never the real raised
+message shape, so it wasn't pinning anything either).
+
+Fixed the same way as rounds 20-24: full detail (URL, and for the
+retry-exhausted path, the underlying exception via `exc_info=last_error`)
+stays in a `logger.warning(...)` call; the raised `ExternalAPIError`
+keeps only what a report reader needs -- that the lookup failed and
+absence isn't evidence of absence -- with no URL, no HTTP status, no raw
+exception text. New tests in `tests/test_clinvar_client.py`
+(`TestNetworkFailureIsSanitized`, 2 new tests) cover both raise sites.
+
+### 2. Found but explicitly out of scope, not fixed: `pipeline/ps1_pm5/lookup.py` has the identical shape, feeding `geper_results.json` directly
+
+**What:** while tracing item 1, `pipeline/ps1_pm5/lookup.py`'s own
+ClinVar-codon lookup (`_esearch`/`_esummary`'s shared retry loop, line
+~203) raises the identical `ExternalAPIError(f"PS1/PM5 ClinVar request to
+'{url}' failed after {N} attempts: {last_error}")` shape -- a comment two
+lines above it even says so directly: "mirrors `database/
+clinvar_client.py`'s shape". Unlike `database/clinvar_client.py`'s
+version, this one is caught per-position inside `lookup()`'s own loop
+(`except ExternalAPIError as exc: errors.append(str(exc))`) and joined
+into the returned dict's `"error"` field only when every queried
+position failed and nothing was found. That `clinvar_codon_result` dict
+is embedded verbatim (URL and all, when the failure branch fires) under
+`geper_results.json`'s `clinvar_codon_matches` key by
+`report/json_builder.py` -- confirmed by reading that call site, not
+assumed. Not traced further to see whether any Markdown/PDF renderer
+also surfaces this specific `error` string directly (a quick grep of
+`pipeline/acmg_rules.py`'s PS1/PM5 rules shows they consume `matches`,
+not `error`, so no rendered rationale text was confirmed to carry it) --
+but per round 24's own standard, unconditional `geper_results.json`
+embedding alone already qualifies as "reaches a report."
+
+**Why this is a candidate, not a round-26 fix:** this round was scoped to
+`database/clinvar_client.py` specifically, the one entry round 24 named.
+`pipeline/ps1_pm5/lookup.py` is a different module with its own retry
+loop and its own caller-side error-joining logic (not a drop-in copy of
+`_request_json`), so applying the identical fix pattern here is a
+separate, small change deserving its own trace-then-fix treatment rather
+than a speculative bundle-in -- the same discipline round 24 itself
+applied when it declined to also fix `database/clinvar_client.py` in the
+same round it fixed UniProt/InterPro/ClinGen/AlphaFold.
+
+**Decision needed:** whether to apply the same sanitization pattern
+(full detail to a log line, a short honest message raised/stored) to
+`pipeline/ps1_pm5/lookup.py`'s raise site and its `errors.append(str(exc))`
+join, as its own next round.
+
+### 3. Two stale entries in this document corrected
+
+Both flagged directly by the user rather than found independently this
+round -- corrected against current source, not just re-asserted:
+
+- **Round 12, item 2** (SpliceBERT-under-the-committed-`transformers`-pin
+  verification gap) -- updated in place (see that entry above) to record
+  two real orchestrator runs (2026-08-14, 2026-08-15) that finally
+  exercised the committed pin: the checkpoint load itself is fast and
+  clean in isolation, the 180s timeout only reproduces inside the full
+  orchestrator process, ESM2 and MMSplice were each cleared individually
+  as the interfering import on CPU, and what remains is a GPU-runtime
+  bisect (TensorFlow's XLA/cuDNN init path, untested) -- not a return to
+  "never verified." Not fully resolved; the entry now says so precisely
+  instead of leaving the older, now-inaccurate framing standing.
+- **Round 8, items 1/2/3** (mtDNA per-criterion NOT_APPLICABLE threading,
+  "option (b)") -- marked RESOLVED in place, pointing to round 14's B1/B2
+  as the actual shipped implementation, verified in a real PDF on
+  2026-08-15. Items 2 (AlphaMissense) and 3 (kim_pipeline's GFF3
+  machinery) updated too: item 2's audit was confirmed done by round 14's
+  own summary; item 3's pointer was not consumed the way it anticipated
+  (round 14 fixed GEPER's existing Ensembl chrom-normalization instead of
+  porting kim_pipeline's bootstrap) but remains valid, unconsumed guidance
+  for round 14's own still-open "second pass" item, which this round did
+  not touch and is not what was stale.
+
+### Verified
+
+`py_compile` clean on `database/clinvar_client.py` and
+`tests/test_clinvar_client.py`. `tests/test_clinvar_client.py`: 24/24
+pass (2 new). `tests/test_report_consistency.py`: 16/16 pass (unaffected
+-- its `clinvar_error` fixture is synthetic, not the real raised
+message). Neither test file imports `pipeline.orchestrator` or anything
+model-loading; confirmed by reading each file's import block before
+running. mypy not re-run: neither changed file is in `mypy.ini`'s scoped
+file list (ACMG interpretation path only). `ruff`/`mypy` are pre-commit-
+managed in this repo (isolated hook environments, not a global install --
+see `CONTRIBUTING.md`), and running `pre-commit run --all-files` was
+explicitly avoided this round per instruction (it would reformat ~201
+unrelated files in `kim_pipeline/`/`test_data/`).

@@ -483,7 +483,17 @@ class ClinVarClient:
         """
         if HEALTH.is_offline("ClinVar"):
             HEALTH.note_skip("ClinVar")
-            raise ExternalAPIError(f"ClinVar request to '{url}' skipped: ClinVar was confirmed offline at startup.")
+            logger.warning(f"ClinVar request to '{url}' skipped: ClinVar was confirmed offline at startup.")
+            # Round 26: the message actually raised (folded verbatim into
+            # `clinvar_error` -- see `report/clinical_report_builder.py::
+            # _clinical_evidence` -- and rendered into every report
+            # unconditionally by `report/report_generator.py`, plus
+            # embedded verbatim in geper_results.json's `clinvar` key by
+            # `report/json_builder.py`) must not embed `url`; full detail
+            # goes to the log line above only. Same pattern rounds 20-24
+            # applied to SpliceBERT/MMSplice/UniProt/InterPro/ClinGen/
+            # AlphaFold DB.
+            raise ExternalAPIError("ClinVar request skipped: ClinVar was confirmed offline at startup.")
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
@@ -512,6 +522,10 @@ class ClinVarClient:
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
         HEALTH.note_failure("ClinVar")
-        raise ExternalAPIError(
-            f"ClinVar request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
+        logger.warning(
+            f"ClinVar request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
         )
+        # Round 26: see the sanitization note on the offline-skip raise
+        # above -- the raised message must not embed `url`/`last_error`.
+        raise ExternalAPIError(f"ClinVar request failed after {CONFIG.api.MAX_RETRIES} attempts")

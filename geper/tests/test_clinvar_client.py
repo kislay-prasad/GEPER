@@ -25,6 +25,7 @@ from unittest import mock
 
 from database.clinvar_client import ClinVarClient, ClinVarMatchStatus
 from pipeline.vcf_parser import Variant
+from utils.exceptions import ExternalAPIError
 
 
 def _variant(chrom="17", pos=43094298, ref="A", alt="C") -> Variant:
@@ -396,6 +397,52 @@ class TestQueryVariantIntegration(unittest.TestCase):
 
         self.assertEqual(result["primary_record"]["accession"], "VCV000012347")
         self.assertEqual(result["primary_record"]["review_status"], "reviewed by expert panel")
+
+
+class TestNetworkFailureIsSanitized(unittest.TestCase):
+    """
+    Round 26: `_request_json` used to raise `ExternalAPIError` with the
+    full request URL (and, on the retry-exhausted path, the raw
+    underlying exception text) folded into its message via an f-string.
+    That message reaches `pipeline/orchestrator.py::_run_clinvar_stage`'s
+    `{"error": str(exc)}`, then `report/clinical_report_builder.py::
+    _clinical_evidence`'s `clinvar_error`, rendered unconditionally by
+    `report/report_generator.py` into every Markdown report's Clinical
+    Evidence section, and embedded verbatim in geper_results.json's
+    `clinvar` key by `report/json_builder.py` -- the same leak class
+    rounds 20-24 fixed for SpliceBERT/MMSplice/UniProt/InterPro/ClinGen/
+    AlphaFold DB. Full detail still reaches the log; what's raised must
+    not.
+    """
+
+    def test_retry_exhausted_raises_sanitized_message(self):
+        import requests as real_requests
+
+        with (
+            mock.patch(
+                "requests.get", side_effect=real_requests.ConnectionError("Failed to establish a new connection")
+            ),
+            mock.patch("database.clinvar_client.time.sleep"),
+        ):
+            with self.assertRaises(ExternalAPIError) as ctx:
+                ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        message = str(ctx.exception)
+        self.assertNotIn("http", message)
+        self.assertNotIn("eutils.ncbi.nlm.nih.gov", message)
+        self.assertNotIn("Failed to establish a new connection", message)
+        self.assertEqual(message, "ClinVar request failed after 3 attempts")
+
+    def test_offline_skip_raises_sanitized_message(self):
+        with mock.patch("database.clinvar_client.HEALTH") as fake_health:
+            fake_health.is_offline.return_value = True
+            with self.assertRaises(ExternalAPIError) as ctx:
+                ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        message = str(ctx.exception)
+        self.assertNotIn("http", message)
+        self.assertNotIn("eutils.ncbi.nlm.nih.gov", message)
+        self.assertEqual(message, "ClinVar request skipped: ClinVar was confirmed offline at startup.")
 
 
 class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):

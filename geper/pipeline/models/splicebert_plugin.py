@@ -211,21 +211,33 @@ class SpliceBERTPlugin(PluginModel):
             try:
                 splicebert_loader.download_and_extract_checkpoint(cache_dir, checkpoint=checkpoint, record=record)
             except _NETWORK_ERROR_TYPES as exc:
-                message = (
-                    f"SpliceBERT model unavailable: archive fetch for checkpoint '{checkpoint}' "
-                    f"failed ({exc.__class__.__name__}): {exc}"
+                # Round 20 correction: the diagnostic detail below
+                # (exception class + str(exc)) stays in the LOG line
+                # only. It used to also be folded into the *raised*
+                # RuntimeError -- which reaches `ModelManager._failed`
+                # and, from there, `model_checkpoints[...]["reason"]`
+                # in geper_results.json and the clinical report's own
+                # "Data Source Provenance" section (round 17's
+                # renderer work). A network exception's `str(exc)`
+                # routinely embeds the full request URL (confirmed:
+                # `test_network_failure_is_sanitized` caught exactly
+                # this -- a mocked `ConnectionError("could not reach
+                # zenodo.org")` produced a raised message containing
+                # "zenodo.org", which a real `requests`-level
+                # ConnectionError would render as the complete Zenodo
+                # archive URL) -- not appropriate for a clinical
+                # document a reader outside this codebase may see.
+                # `d48a829` (an early round) promoted this detail from
+                # `logger.debug` to the raised message specifically
+                # because real runs never captured it at debug level;
+                # promoting the LOG level to `warning` (kept below)
+                # already solves that -- it does not also require
+                # leaking the detail into the report-facing message.
+                log_message = (
+                    f"SpliceBERT archive fetch for checkpoint '{checkpoint}' failed ({exc.__class__.__name__}): {exc}"
                 )
-                # Promoted from `logger.debug` to `logger.warning` (F1b,
-                # report review round 4): the underlying reason was
-                # previously only visible with debug logging enabled,
-                # so every real run only ever recorded the generic
-                # wrapper text below -- never the actual detail needed
-                # to diagnose it later. Also folded into the raised
-                # message itself so it reaches `ModelManager._failed`
-                # (and therefore the provenance/status reporting F1a
-                # wires up) without needing the log line at all.
-                self.logger.warning(message, exc_info=True)
-                raise RuntimeError(message) from exc
+                self.logger.warning(log_message, exc_info=True)
+                raise RuntimeError("SpliceBERT model unavailable") from exc
 
         checkpoint_dir = splicebert_loader.checkpoint_dir_for(cache_dir, checkpoint)
         try:

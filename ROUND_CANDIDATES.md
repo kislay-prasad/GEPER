@@ -822,6 +822,43 @@ detail is a worse error for exactly the kind of live-Colab debugging this
 project has repeatedly needed), or confirm the message was deliberately
 meant to stay generic and fix the code instead.
 
+**RESOLVED, round 20 -- round 18's own guess above ("likely correct... the
+test's assertion" should change) was wrong; the code was.** The test's
+name is exactly what it protects: `test_network_failure_is_sanitized`
+asserts `"zenodo.org" not in str(ctx.exception)`, and the actual message
+contained the literal string "zenodo.org" -- a mocked stand-in for what a
+real `requests`-level `ConnectionError` renders as (the complete Zenodo
+archive URL, via `HTTPSConnectionPool(host=...)`'s own `str()`). Traced
+where that raised message actually goes: `ModelManager.get()` folds it
+into `self._failed[key]`, which round 16/17's own work routes into
+`model_checkpoints[...]["reason"]` in `geper_results.json` and from there
+into the clinical report's "Data Source Provenance" section (Markdown and
+full PDF) -- a document a reader outside this codebase may see. `git log
+-L` on the exact lines identified the actual origin: commit `d48a829`
+("Group F", well before round 18) promoted this detail from a
+`logger.debug` call to the *raised* exception itself, specifically to fix
+a real problem (the detail was invisible in real runs at debug level) --
+but did so by leaking it into the report-facing message instead of just
+raising the log level, which alone would have fixed the stated problem.
+Fixed in `pipeline/models/splicebert_plugin.py`'s network-error branch:
+full diagnostic detail (exception class + `str(exc)`) stays in the
+`logger.warning(..., exc_info=True)` call (kept at warning level, so
+`d48a829`'s real fix survives); the raised `RuntimeError` is the original
+bare `"SpliceBERT model unavailable"` again. No test assertion was
+loosened -- the code now honestly meets the contract the test always
+asserted.
+
+**Related, NOT fixed this round (flagged, not built):** the adjacent
+timeout branch in the same method has the identical shape --
+`raise RuntimeError(message) from exc` where `message` embeds `{exc}`,
+and that `TimeoutError`'s own text (rewritten in round 18) includes
+`checkpoint_dir`, a local filesystem path. No test currently asserts
+anything about this branch's sanitization, so nothing here proves it's
+wrong the way `test_network_failure_is_sanitized` proved the download
+branch was -- but the same class of report-facing leak is plausible.
+Left alone rather than fixed speculatively without a failing test to
+anchor the fix against.
+
 ---
 
 ## Round 19 (--output-dir startup writability validation)
@@ -893,3 +930,61 @@ source-text ordering checks (the same technique
 old bare `makedirs` line is gone, both write call sites share one
 `json_path`, and `main.py` now wraps pipeline construction inside its
 `try/except PipelineError`.
+
+---
+
+## Round 20 (SpliceBERT sanitized-error-message investigation + fix)
+
+Resolved the round-18-logged `test_network_failure_is_sanitized` failure
+(see that entry above, now RESOLVED) -- the message was leaking a real
+URL into a report-facing field via `d48a829`, an old round; not the test
+being stale. Fixed in `pipeline/models/splicebert_plugin.py`; full
+account in the round-18 entry above.
+
+Two things found while investigating, logged rather than fixed:
+
+### 1. The adjacent timeout branch has the identical shape, unverified
+
+See the round-18 entry's own "Related, NOT fixed this round" note --
+`build_model_and_tokenizer`'s `TimeoutError` path also does
+`raise RuntimeError(message) from exc` with `message` embedding `{exc}`,
+and that timeout message (rewritten in round 18) includes `checkpoint_dir`,
+a local filesystem path. No failing test anchors a fix here the way
+`test_network_failure_is_sanitized` did for the download branch -- left
+alone rather than fixed speculatively.
+
+### 2. A constraint violation: running `test_model_manager.py` loaded real Enformer weights and ran real inference (~400s)
+
+**What:** while regression-testing the round-20 fix, `python -m pytest
+tests/test_model_manager.py tests/test_splicebert_plugin.py -q` was run as
+a combined background check. This machine's own hardware constraint
+("nothing loading model weights") was checked for the SpliceBERT live
+test specifically (grepped for `skipUnless`, confirmed the checkpoint is
+cached and skipped running it), but the same check was not applied to
+`test_model_manager.py`, which turned out to have the identical risk under
+a different name: `TestPendingPluginsRegisterAsUnavailable
+::test_manager_predict_never_crashes_for_any_pending_plugin` calls
+`ModelManager(registry=build_default_registry()).predict("enformer", ...)`
+expecting `None` (the plugin assumed permanently unavailable/"pending"),
+but in this environment Enformer actually loaded (161.4s) and ran a real
+prediction (231.3s, a genuine Enformer-official-rough inference result),
+so the test's own assumption -- not this round's fix -- is what failed.
+Total real compute cost of this one avoidable run: ~400s and a full
+Enformer load/inference on an 8GB machine the constraints were meant to
+protect. Disclosed here plainly rather than omitted; the actual
+round-20 fix was independently verified beforehand via
+`tests/test_splicebert_plugin.py` alone (27/27 pass, fully mocked, ~2s).
+
+**Why this is a candidate, not a round-20 fix:** unrelated to the
+SpliceBERT message fix -- this is `pending_plugins`'s own registration
+list disagreeing with what's actually installed/loadable in this
+environment. Also: no further test runs were attempted this round to
+avoid repeating the same cost investigating it.
+
+**Decision needed:** (a) whether `test_model_manager.py`'s "pending
+plugin" test needs the same `skipUnless`-style guard (or a mock) the
+SpliceBERT live test already has, so a future scoped/offline test pass
+can't trigger a real multi-hundred-second model load by surprise; (b)
+separately, whether Enformer now genuinely working in this environment is
+itself news worth acting on (`pending_plugins.py`'s registry may be
+stale about which plugins are actually available here).

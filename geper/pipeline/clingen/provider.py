@@ -121,9 +121,7 @@ class LocalDatasetClinGenProvider(ClinGenProviderBase):
         # tests/test_clingen_gene_validity.py) without needing to
         # override CONFIG.clingen.AUTO_FETCH_ENABLED globally.
         self.gene_validity_path = gene_validity_path or CONFIG.clingen.GENE_VALIDITY_LOCAL_FILE or None
-        self.dosage_sensitivity_path = (
-            dosage_sensitivity_path or CONFIG.clingen.DOSAGE_SENSITIVITY_LOCAL_FILE or None
-        )
+        self.dosage_sensitivity_path = dosage_sensitivity_path or CONFIG.clingen.DOSAGE_SENSITIVITY_LOCAL_FILE or None
         self._auto_fetch = auto_fetch and gene_validity_path is None and dosage_sensitivity_path is None
         self._lock = Lock()
         self._loaded = False
@@ -156,7 +154,9 @@ class LocalDatasetClinGenProvider(ClinGenProviderBase):
 
     def _load_gene_validity(self, path: str) -> None:
         if not os.path.exists(path):
-            logger.warning(f"ClinGen gene-validity local file not found at '{path}'; local dataset lookups for gene-disease validity will be empty.")
+            logger.warning(
+                f"ClinGen gene-validity local file not found at '{path}'; local dataset lookups for gene-disease validity will be empty."
+            )
             return
         count = 0
         try:
@@ -173,7 +173,9 @@ class LocalDatasetClinGenProvider(ClinGenProviderBase):
 
     def _load_dosage_sensitivity(self, path: str) -> None:
         if not os.path.exists(path):
-            logger.warning(f"ClinGen dosage-sensitivity local file not found at '{path}'; local dataset lookups for dosage sensitivity will be empty.")
+            logger.warning(
+                f"ClinGen dosage-sensitivity local file not found at '{path}'; local dataset lookups for dosage sensitivity will be empty."
+            )
             return
         count = 0
         try:
@@ -273,7 +275,7 @@ def _clingen_export_rows(path: str) -> "List[Dict[str, str]]":
         return []  # no recognizable header at all -- not a ClinGen export this parser understands
 
     rows: List[Dict[str, str]] = []
-    for line in lines[header_idx + 1:]:
+    for line in lines[header_idx + 1 :]:
         cells = next(csv.reader([line], delimiter=delimiter), [])
         if not cells or not cells[0].strip():
             continue
@@ -340,9 +342,14 @@ class LiveAPIClinGenProvider(ClinGenProviderBase):
                 logger.warning(f"ClinGen API request attempt {attempt} failed for '{gene_symbol}': {exc}")
                 if attempt < CONFIG.clingen.MAX_RETRIES:
                     time.sleep(CONFIG.clingen.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(
+        logger.warning(
             f"ClinGen API request to '{url}' failed after {CONFIG.clingen.MAX_RETRIES} attempts: {last_error}"
         )
+        # Round 24: same rationale as `pipeline/uniprot/provider.py`'s
+        # sibling fix -- no url/last_error in what's raised (folded
+        # verbatim into `clingen_error`, rendered unconditionally and
+        # embedded in geper_results.json), only in the log line above.
+        raise ExternalAPIError(f"ClinGen API request failed after {CONFIG.clingen.MAX_RETRIES} attempts")
 
 
 def _evidence_from_api_payload(gene_symbol: str, payload: Dict[str, Any], source: str) -> ClinGenGeneEvidence:

@@ -1246,3 +1246,124 @@ helper (wrapping `xml.sax.saxutils.escape`, called at every
 as its own round, given it's pure hardening with no currently-observed
 failure now that item 1's four providers are the only other known
 source of unescaped `&`-bearing text reaching those call sites.
+
+---
+
+## Round 24 (UniProt/InterPro/ClinGen/AlphaFold URL leaks; XML-escaping gap re-assessed)
+
+### 1. `RESOLVED, round 24.` UniProt/InterPro/ClinGen/AlphaFold DB's raw-URL leak, traced end to end and fixed
+
+Round 23's item 1 above was traced, not assumed, exactly the way round
+22 traced MMSplice before fixing it. For each of the four:
+
+- `pipeline/uniprot/provider.py::LiveAPIUniProtProvider._get` (raise
+  site) -> `query()`'s `except ExternalAPIError` folds `str(exc)`
+  straight into `UniProtAnnotation.from_error` -> `.to_dict()`'s
+  `"error"` key -> `report/clinical_report_builder.py::
+  _protein_knowledge`'s `uniprot_error` -> rendered unconditionally by
+  `report/report_generator.py` ("### 8. Protein Knowledge" runs for
+  every finding, no gate) -> ALSO embedded verbatim in
+  `geper_results.json`'s top-level `uniprot` key by
+  `report/json_builder.py` (both the primary shape and the
+  `raw_evidence`-fallback shape). Two independent reach paths, both
+  unconditional.
+- `pipeline/interpro/provider.py::LiveAPIInterProProvider._get` -- same
+  shape, feeding `interpro_error` / `geper_results.json`'s `interpro`
+  key.
+- `pipeline/clingen/provider.py::LiveAPIClinGenProvider._get` -- same
+  shape, feeding `clingen_error` / `geper_results.json`'s `clingen`
+  key.
+- `pipeline/alphafold/provider.py::LiveAPIAlphaFoldProvider._get_json`
+  -- same shape, feeding `struct['error']` (AlphaFold DB) /
+  `geper_results.json`'s `alphafold` key.
+
+Unlike SAS (round 23) and MMSplice (round 22), none of these four were
+confirmed printed in an actual live-run PDF this round -- but the
+Markdown/JSON reach is unconditional and mechanically identical to
+SAS's, so "reaches a rendered report or geper_results.json" is
+satisfied for all four, not just the subset that happened to have a
+real PDF example. All four had no dedicated raise-site logging of the
+full URL before the sanitized message, unlike SAS's two-site case --
+added one `logger.warning(...)` immediately before each sanitized
+raise, so full detail (URL + `last_error`) is not lost, only no longer
+raised/returned. No existing test fixture in any of the four providers'
+own test files pinned the raw URL/exception text (checked before
+fixing, same as round 23's instruction) -- new regression tests added
+to `tests/test_uniprot_provider.py`, `test_interpro_provider.py`,
+`test_clingen_provider.py`, `test_alphafold_provider.py` (one new test
+for AlphaFold, which had no existing network-failure test at all).
+
+**Found but explicitly out of scope, not fixed:** `database/
+clinvar_client.py` (lines ~486, ~515) has the exact same shape --
+`raise ExternalAPIError(f"ClinVar request to '{url}' ...")`, reaching
+`clinvar_error` the same way `clingen_error` does. Not one of the four
+this round was scoped to ("UniProt, InterPro, ClinGen and AlphaFold
+DB"); left alone rather than fixed speculatively, matching this round's
+own instruction to "fix three honestly rather than four speculatively"
+applied one module further out. Flagged here as the next honest
+candidate, same fix pattern as the four just closed.
+
+### 2. XML-escaping gap (round 23, item 2): re-assessed and CONFIRMED LIVE -- higher severity than originally scoped
+
+Round 23 logged this as a dormant, purely structural gap ("no
+currently-observed failure"), reasoning that the SAS leak was the only
+known unescaped-`&` source and it was about to be fixed. This round
+re-checked whether anything else still reaching `Paragraph(...)` after
+both leak-fixing rounds (23 and 24, item 1 above) carries external,
+unescaped free text. It does, and it's worse than the SAS artifact:
+
+**`review/signoff.py::override()`'s `reason` parameter** -- a
+clinician's own free-text justification for overriding GEPER's
+classification (its own docstring: `override(output_dir, variant_key,
+new_classification, reason, clinician_id)`), stored verbatim in
+`geper_results.json` with zero sanitization, then interpolated
+unescaped into a `Paragraph(...)` call in BOTH PDF renderers:
+`report/summary.py:1982` (full PDF) and `report/summary_short.py:524`
+(short PDF) -- `f"... Override: {override.get('new_classification')} --
+{override.get('reason')} ..."`. `override()`'s own docstring confirms
+both PDFs (plus the Markdown report) are regenerated from this call
+every time a clinician runs the override command, so this isn't a rare
+path -- it fires on every override, by design.
+
+Reproduced directly against the installed `reportlab` package what an
+unescaped clinician-typed `&`/`<`/`>` actually does here (not
+inferred):
+
+- `"Per company R&D findings"` -> renders as `"Per company R&D;
+  findings"` -- the same silent-mangling artifact round 23 found in the
+  SAS URL, now reachable via a human-typed sentence rather than a
+  machine-generated one.
+- `"See <this> for detail"` -> renders as `"See  for detail"` --
+  `<this>` is silently DELETED WHOLESALE, not mangled. A clinician's
+  own words can vanish from their own override justification with no
+  error, no warning, nothing in the log -- worse than mangling, because
+  mangling is at least visible as garbled text; deletion looks like
+  nothing was ever there.
+- `"Confirmed pathogenic <br> per review"` -> raises `ValueError:
+  paragraph text '<para>Confirmed pathogenic <br> per review</para>'
+  caused exception paraparser: syntax error: No content allowed in br
+  tag` -- a clinician's override text containing something that happens
+  to match one of ReportLab's own recognized tag names (`<br>`, `<b>`,
+  `<i>`, `<font>`, ...) with syntax ReportLab doesn't accept CRASHES
+  report regeneration for that variant, for every one of the three
+  report formats `override()` regenerates in the same call.
+
+**Why this is reported, not fixed, this round:** the round's own
+instruction was explicit -- "don't build it speculatively; tell me if
+it's live." It's live, confirmed by direct reproduction rather than
+inferred from the presence of a gap; whether to fix it now (and how
+broad a fix -- just this one call site's two `Paragraph(...)` calls, or
+the shared `_escape_for_paragraph` helper round 23 already scoped for
+every call site in both files) is a decision being handed back rather
+than made unilaterally, per that instruction.
+
+**Decision needed:** whether to fix `override()`'s two render call
+sites specifically (narrowest fix, addresses the one confirmed-live
+path), or build the shared escaping helper round 23 scoped (broader,
+also closes off gene/condition/protein free-text fields should any of
+those ever get added to either PDF's rendered fields in the future,
+which they currently don't -- both PDFs were checked this round and
+render no ClinVar condition/disease/review-status text and no
+UniProt/InterPro protein/domain text at all, only the QC-metrics/
+Indian-population-frequency/AI-model-status error strings already
+covered by rounds 20-24's fixes, plus this clinician-override field).

@@ -38,7 +38,7 @@ import os
 import time
 from collections import OrderedDict
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import requests
 
@@ -214,7 +214,14 @@ class LiveAPIAlphaFoldProvider(AlphaFoldProviderBase):
                 logger.warning(f"AlphaFold DB API request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.alphafold.MAX_RETRIES:
                     time.sleep(CONFIG.alphafold.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"AlphaFold DB API request to '{url}' failed after {CONFIG.alphafold.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"AlphaFold DB API request to '{url}' failed after {CONFIG.alphafold.MAX_RETRIES} attempts: {last_error}"
+        )
+        # Round 24: same rationale as `pipeline/uniprot/provider.py`'s
+        # sibling fix -- no url/last_error in what's raised (folded
+        # verbatim into `struct['error']`, rendered unconditionally and
+        # embedded in geper_results.json), only in the log line above.
+        raise ExternalAPIError(f"AlphaFold DB API request failed after {CONFIG.alphafold.MAX_RETRIES} attempts")
 
 
 def _build_annotation(
@@ -262,7 +269,9 @@ class CompositeAlphaFoldProvider:
         local_provider: Optional[LocalDatasetAlphaFoldProvider] = None,
         api_provider: Optional[LiveAPIAlphaFoldProvider] = None,
     ):
-        self.local_provider = local_provider or LocalDatasetAlphaFoldProvider(dataset_path=CONFIG.alphafold.LOCAL_DATASET_FILE or None)
+        self.local_provider = local_provider or LocalDatasetAlphaFoldProvider(
+            dataset_path=CONFIG.alphafold.LOCAL_DATASET_FILE or None
+        )
         self.api_provider = api_provider or LiveAPIAlphaFoldProvider()
 
     def query(self, accession: str, protein_position: Optional[int] = None) -> AlphaFoldAnnotation:
@@ -283,7 +292,9 @@ class CompositeAlphaFoldProvider:
         return AlphaFoldAnnotation.not_found(accession, "none")
 
     @staticmethod
-    def _try(provider: AlphaFoldProviderBase, accession: str, protein_position: Optional[int]) -> Optional[AlphaFoldAnnotation]:
+    def _try(
+        provider: AlphaFoldProviderBase, accession: str, protein_position: Optional[int]
+    ) -> Optional[AlphaFoldAnnotation]:
         try:
             return provider.query(accession, protein_position)
         except Exception as exc:  # noqa: BLE001

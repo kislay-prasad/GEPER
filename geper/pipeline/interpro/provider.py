@@ -168,7 +168,14 @@ class LiveAPIInterProProvider(InterProProviderBase):
                 logger.warning(f"InterPro REST API request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.interpro.MAX_RETRIES:
                     time.sleep(CONFIG.interpro.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"InterPro REST API request to '{url}' failed after {CONFIG.interpro.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"InterPro REST API request to '{url}' failed after {CONFIG.interpro.MAX_RETRIES} attempts: {last_error}"
+        )
+        # Round 24: same rationale as `pipeline/uniprot/provider.py`'s
+        # sibling fix -- no url/last_error in what's raised (folded
+        # verbatim into `interpro_error`, rendered unconditionally and
+        # embedded in geper_results.json), only in the log line above.
+        raise ExternalAPIError(f"InterPro REST API request failed after {CONFIG.interpro.MAX_RETRIES} attempts")
 
 
 class CompositeInterProProvider:
@@ -180,7 +187,9 @@ class CompositeInterProProvider:
         api_provider: Optional[LiveAPIInterProProvider] = None,
         max_concurrent: Optional[int] = None,
     ):
-        self.local_provider = local_provider or LocalDatasetInterProProvider(dataset_path=CONFIG.interpro.LOCAL_DATASET_FILE or None)
+        self.local_provider = local_provider or LocalDatasetInterProProvider(
+            dataset_path=CONFIG.interpro.LOCAL_DATASET_FILE or None
+        )
         self.api_provider = api_provider or LiveAPIInterProProvider()
         self.max_concurrent = max_concurrent or 8
 

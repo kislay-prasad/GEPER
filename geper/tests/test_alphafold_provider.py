@@ -3,7 +3,7 @@
 import unittest
 from unittest import mock
 
-from pipeline.alphafold.provider import CompositeAlphaFoldProvider, LiveAPIAlphaFoldProvider, LocalDatasetAlphaFoldProvider
+from pipeline.alphafold.provider import CompositeAlphaFoldProvider, LiveAPIAlphaFoldProvider
 
 _SAMPLE_PDB = (
     "ATOM      2  CA  MET A   1      12.560  13.207   2.100  1.00 95.63           C\n"
@@ -29,16 +29,23 @@ class TestLiveAPIAlphaFoldProvider(unittest.TestCase):
         provider = LiveAPIAlphaFoldProvider()
         summary_response = mock.Mock(status_code=200)
         summary_response.json.return_value = [
-            {"latestVersion": 4, "pdbUrl": "https://example.org/model.pdb", "cifUrl": "https://example.org/model.cif",
-             "uniprotStart": 1, "uniprotEnd": 2}
+            {
+                "latestVersion": 4,
+                "pdbUrl": "https://example.org/model.pdb",
+                "cifUrl": "https://example.org/model.cif",
+                "uniprotStart": 1,
+                "uniprotEnd": 2,
+            }
         ]
         summary_response.raise_for_status.return_value = None
 
         structure_response = mock.Mock(headers={}, text=_SAMPLE_PDB)
         structure_response.raise_for_status.return_value = None
 
-        with mock.patch("pipeline.alphafold.provider.requests.get", side_effect=[summary_response, structure_response]), \
-             mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.alphafold.provider.requests.get", side_effect=[summary_response, structure_response]),
+            mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             result = provider.query("P04637", protein_position=1)
 
@@ -55,8 +62,10 @@ class TestLiveAPIAlphaFoldProvider(unittest.TestCase):
         summary_response.json.return_value = [{"latestVersion": 4, "pdbUrl": "https://example.org/model.pdb"}]
         summary_response.raise_for_status.return_value = None
 
-        with mock.patch("pipeline.alphafold.provider.requests.get", return_value=summary_response) as fake_get, \
-             mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.alphafold.provider.requests.get", return_value=summary_response) as fake_get,
+            mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config, fetch_structure=False)
             result = provider.query("P04637")
 
@@ -73,10 +82,13 @@ class TestLiveAPIAlphaFoldProvider(unittest.TestCase):
         structure_response = mock.Mock(headers={}, text=_SAMPLE_PDB)
         structure_response.raise_for_status.return_value = None
 
-        with mock.patch(
-            "pipeline.alphafold.provider.requests.get",
-            side_effect=[summary_response, structure_response, summary_response],
-        ) as fake_get, mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config:
+        with (
+            mock.patch(
+                "pipeline.alphafold.provider.requests.get",
+                side_effect=[summary_response, structure_response, summary_response],
+            ) as fake_get,
+            mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             provider.query("P04637", protein_position=1)
             provider.query("P04637", protein_position=2)  # same accession -> structure re-used from in-memory cache
@@ -87,13 +99,42 @@ class TestLiveAPIAlphaFoldProvider(unittest.TestCase):
         provider = LiveAPIAlphaFoldProvider()
         fake_response = mock.Mock(status_code=404)
 
-        with mock.patch("pipeline.alphafold.provider.requests.get", return_value=fake_response), \
-             mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.alphafold.provider.requests.get", return_value=fake_response),
+            mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             result = provider.query("Q99999")
 
         self.assertFalse(result.found)
         self.assertIsNone(result.error)
+
+    def test_network_failure_returns_error_annotation_not_raise(self):
+        """Round 24: `error` used to embed the full request URL and raw
+        exception text (`_get_json`'s own f-string) -- rendered
+        unconditionally into `struct['error']` (AlphaFold DB) by
+        `report/report_generator.py` and embedded verbatim in
+        geper_results.json. Full detail still reaches the log; what's
+        returned to callers/reports must not."""
+        import requests as real_requests
+
+        provider = LiveAPIAlphaFoldProvider()
+        with (
+            mock.patch(
+                "pipeline.alphafold.provider.requests.get", side_effect=real_requests.ConnectionError("no route")
+            ),
+            mock.patch("pipeline.alphafold.provider.CONFIG") as fake_config,
+            mock.patch("pipeline.alphafold.provider.time.sleep"),
+        ):
+            _cfg(fake_config)
+            fake_config.alphafold.MAX_RETRIES = 2
+            result = provider.query("P04637")
+
+        self.assertFalse(result.found)
+        self.assertIsNotNone(result.error)
+        self.assertNotIn("http", result.error)
+        self.assertNotIn("no route", result.error)
+        self.assertEqual(result.error, "AlphaFold DB API request failed after 2 attempts")
 
     def test_disabled_or_offline_returns_none(self):
         provider = LiveAPIAlphaFoldProvider()

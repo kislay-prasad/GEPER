@@ -214,9 +214,18 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
                 logger.warning(f"UniProt REST API request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.uniprot.MAX_RETRIES:
                     time.sleep(CONFIG.uniprot.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(
+        logger.warning(
             f"UniProt REST API request to '{url}' failed after {CONFIG.uniprot.MAX_RETRIES} attempts: {last_error}"
         )
+        # Round 24: the message actually raised (folded verbatim into
+        # `uniprot_error` -- see `report/clinical_report_builder.py::
+        # _protein_knowledge` -- and rendered into every report
+        # unconditionally by `report/report_generator.py`, plus
+        # embedded verbatim in geper_results.json's `uniprot` key by
+        # `report/json_builder.py`) must not embed `url`/`last_error`;
+        # full detail goes to the log line above only. Same pattern
+        # round 23 applied to `annotation/thousand_genomes_sas.py`.
+        raise ExternalAPIError(f"UniProt REST API request failed after {CONFIG.uniprot.MAX_RETRIES} attempts")
 
 
 class CompositeUniProtProvider:

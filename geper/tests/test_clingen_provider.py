@@ -199,6 +199,15 @@ class TestLiveAPIClinGenProvider(unittest.TestCase):
                 result = provider.query("BRCA1")
         self.assertFalse(result.found)
         self.assertIsNotNone(result.error)
+        # Round 24: `error` used to embed the full request URL and raw
+        # `ConnectionError` text (`_get`'s own f-string) -- rendered
+        # unconditionally into `clingen_error` by
+        # `report/report_generator.py` and embedded verbatim in
+        # geper_results.json. Full detail still reaches the log; what's
+        # returned to callers/reports must not.
+        self.assertNotIn("example.invalid", result.error)
+        self.assertNotIn("boom", result.error)
+        self.assertEqual(result.error, "ClinGen API request failed after 2 attempts")
 
 
 class TestCompositeClinGenProvider(unittest.TestCase):

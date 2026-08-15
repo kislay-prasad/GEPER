@@ -21,14 +21,23 @@ class TestLiveAPIInterProProvider(unittest.TestCase):
         fake_response = mock.Mock(status_code=200)
         fake_response.json.return_value = {
             "results": [
-                {"metadata": {"accession": "IPR000001", "name": "Kringle", "type": "domain", "source_database": "interpro"},
-                 "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 1, "end": 50}]}]}]}
+                {
+                    "metadata": {
+                        "accession": "IPR000001",
+                        "name": "Kringle",
+                        "type": "domain",
+                        "source_database": "interpro",
+                    },
+                    "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 1, "end": 50}]}]}],
+                }
             ]
         }
         fake_response.raise_for_status.return_value = None
 
-        with mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response) as fake_get, \
-             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response) as fake_get,
+            mock.patch("pipeline.interpro.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             result = provider.query("P04637")
 
@@ -40,8 +49,10 @@ class TestLiveAPIInterProProvider(unittest.TestCase):
         provider = LiveAPIInterProProvider()
         fake_response = mock.Mock(status_code=404)
 
-        with mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response), \
-             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response),
+            mock.patch("pipeline.interpro.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             result = provider.query("P99999")
 
@@ -66,8 +77,10 @@ class TestLiveAPIInterProProvider(unittest.TestCase):
         fake_response.raise_for_status.return_value = None
         fake_response.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
 
-        with mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response) as fake_get, \
-             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config:
+        with (
+            mock.patch("pipeline.interpro.provider.requests.get", return_value=fake_response) as fake_get,
+            mock.patch("pipeline.interpro.provider.CONFIG") as fake_config,
+        ):
             _cfg(fake_config)
             result = provider.query("A0A3G1DJQ2")
 
@@ -86,32 +99,50 @@ class TestLiveAPIInterProProvider(unittest.TestCase):
 
         import requests as real_requests
 
-        with mock.patch(
-            "pipeline.interpro.provider.requests.get",
-            side_effect=real_requests.exceptions.ConnectionError("connection reset"),
-        ) as fake_get, \
-             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config, \
-             mock.patch("pipeline.interpro.provider.time.sleep"):
+        with (
+            mock.patch(
+                "pipeline.interpro.provider.requests.get",
+                side_effect=real_requests.exceptions.ConnectionError("connection reset"),
+            ) as fake_get,
+            mock.patch("pipeline.interpro.provider.CONFIG") as fake_config,
+            mock.patch("pipeline.interpro.provider.time.sleep"),
+        ):
             _cfg(fake_config)
             result = provider.query("P04637")
 
         self.assertEqual(fake_get.call_count, 3)  # MAX_RETRIES
         self.assertFalse(result.found)
         self.assertIsNotNone(result.error)
+        # Round 24: `error` used to embed the full request URL and raw
+        # `ConnectionError` text (`_get`'s own f-string) -- rendered
+        # unconditionally into `interpro_error` by
+        # `report/report_generator.py` and embedded verbatim in
+        # geper_results.json. Full detail still reaches the log; what's
+        # returned to callers/reports must not.
+        self.assertNotIn("http", result.error)
+        self.assertNotIn("connection reset", result.error)
+        self.assertEqual(result.error, "InterPro REST API request failed after 3 attempts")
 
     def test_network_failure_returns_error_annotation_not_raise(self):
         import requests as real_requests
 
         provider = LiveAPIInterProProvider()
-        with mock.patch("pipeline.interpro.provider.requests.get", side_effect=real_requests.ConnectionError("no route")), \
-             mock.patch("pipeline.interpro.provider.CONFIG") as fake_config, \
-             mock.patch("pipeline.interpro.provider.time.sleep"):
+        with (
+            mock.patch(
+                "pipeline.interpro.provider.requests.get", side_effect=real_requests.ConnectionError("no route")
+            ),
+            mock.patch("pipeline.interpro.provider.CONFIG") as fake_config,
+            mock.patch("pipeline.interpro.provider.time.sleep"),
+        ):
             _cfg(fake_config)
             fake_config.interpro.MAX_RETRIES = 2
             result = provider.query("P04637")
 
         self.assertFalse(result.found)
         self.assertIsNotNone(result.error)
+        self.assertNotIn("http", result.error)
+        self.assertNotIn("no route", result.error)
+        self.assertEqual(result.error, "InterPro REST API request failed after 2 attempts")
 
     def test_disabled_or_offline_returns_none(self):
         provider = LiveAPIInterProProvider()
@@ -129,9 +160,27 @@ class TestLocalDatasetInterProProvider(unittest.TestCase):
         import tempfile
 
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
-            fh.write(json.dumps({"accession": "P04637", "payload": {
-                "results": [{"metadata": {"accession": "IPR1", "name": "x", "type": "domain", "source_database": "interpro"}, "proteins": []}]
-            }}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "accession": "P04637",
+                        "payload": {
+                            "results": [
+                                {
+                                    "metadata": {
+                                        "accession": "IPR1",
+                                        "name": "x",
+                                        "type": "domain",
+                                        "source_database": "interpro",
+                                    },
+                                    "proteins": [],
+                                }
+                            ]
+                        },
+                    }
+                )
+                + "\n"
+            )
             path = fh.name
 
         try:

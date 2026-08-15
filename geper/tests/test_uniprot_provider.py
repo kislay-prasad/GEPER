@@ -91,6 +91,15 @@ class TestLiveAPIUniProtProvider(unittest.TestCase):
 
         self.assertFalse(result.found)
         self.assertIsNotNone(result.error)
+        # Round 24: `error` used to embed the full request URL and raw
+        # `ConnectionError` text (`_get`'s own f-string) -- rendered
+        # unconditionally into `uniprot_error` by
+        # `report/report_generator.py` and embedded verbatim in
+        # geper_results.json. Full detail still reaches the log; what's
+        # returned to callers/reports must not.
+        self.assertNotIn("http", result.error)
+        self.assertNotIn("no route", result.error)
+        self.assertEqual(result.error, "UniProt REST API request failed after 2 attempts")
 
     def test_disabled_or_offline_returns_none(self):
         provider = LiveAPIUniProtProvider()

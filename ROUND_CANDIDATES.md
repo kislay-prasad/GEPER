@@ -1725,3 +1725,151 @@ managed in this repo (isolated hook environments, not a global install --
 see `CONTRIBUTING.md`), and running `pre-commit run --all-files` was
 explicitly avoided this round per instruction (it would reformat ~201
 unrelated files in `kim_pipeline/`/`test_data/`).
+
+---
+
+## Round 27 (ps1_pm5 ClinVar-codon URL leak; audit for the rest of the class)
+
+### 1. `RESOLVED, round 27.` `pipeline/ps1_pm5/lookup.py`'s raw-URL leak,
+traced end to end and fixed
+
+Round 26's own item 2 flagged this module (its own comment: "mirrors
+`database/clinvar_client.py`'s shape") as feeding `geper_results.json`'s
+`clinvar_codon_matches` key, without tracing further. Traced this round:
+
+`ClinVarCodonLookup._request_json`'s retry-exhausted raise folded the
+request `url` and the raw `last_error` into the raised
+`ExternalAPIError`'s message. `query_codon` catches that per-position
+(`errors.append(str(exc))`) and joins it into the returned dict's
+`error` field. From there it reaches **two independent, unconditional
+sinks** -- a stronger, more directly confirmed reach than round 26's own
+finding for `database/clinvar_client.py` (which relied on JSON-only
+reach without a live PDF example):
+
+  - `pipeline/orchestrator.py::_run_clinvar_codon_stage` folds it into
+    the shared `errors` list (`errors.append(f"PS1/PM5 ClinVar codon
+    stage: {result['error']}")`), which `report/json_builder.py` embeds
+    verbatim in `geper_results.json`'s top-level `errors` key, AND which
+    `report/report_generator.py` renders **unconditionally into every
+    Markdown report's "### ⚠ Stage Warnings / Errors" section**
+    whenever that list is non-empty (`report_generator.py:387-393`,
+    confirmed by reading the render site directly -- no gate at all).
+  - `report/json_builder.py` also embeds the raw `clinvar_codon_result`
+    dict (its `error` field and all) verbatim under `geper_results.json`'s
+    `clinvar_codon_matches` key, matching round 26's own finding.
+
+No existing test exercised `ClinVarCodonLookup`'s network layer at all
+(`tests/test_ps1_pm5.py` tests the decision engine against static
+fixtures only; grepped the whole `tests/` tree for `ClinVarCodonLookup`
+-- zero hits) -- nothing was pinning the raw wording. Fixed the same way
+as rounds 20-24/26: full detail (URL, and `last_error` via
+`exc_info=last_error`) stays in a `logger.warning(...)` call; the raised
+`ExternalAPIError` keeps only "the lookup failed after N attempts," no
+URL, no exception text. New `tests/test_ps1_pm5_lookup.py` (2 tests)
+covers both the raw `_request_json` raise and the end-to-end
+`query_codon` path.
+
+### 2. **NOT closed.** A full-codebase audit found the leak class alive
+in (at least) six more modules -- eleven-plus more raise sites -- all
+reaching a rendered report, not just `geper_results.json`
+
+Audited every `raise ExternalAPIError(...)` site in the repo (both the
+`f"..."`-inline form and the multi-line form) for an embedded `url`/
+`endpoint`/`last_error`, then traced each hit's actual consumer in
+`pipeline/orchestrator.py` rather than assuming reach. The mechanism
+round 27's own fix (item 1) exposed -- the shared `errors: List[str]`
+parameter every `_run_*_stage` helper appends to, which
+`report/report_generator.py` renders **unconditionally** into every
+Markdown report's "Stage Warnings / Errors" section the instant it's
+non-empty -- turns out to be the dominant, most directly confirmed reach
+path for nearly all of them, more direct than the per-provider `_error`
+JSON keys rounds 20-26 were tracing one at a time. Confirmed reachable
+via that exact mechanism (each stage helper's own `errors.append(f"...
+{result['error']}")` / `errors.append(f"... failed: {exc}")` line
+grepped and read directly in `pipeline/orchestrator.py`):
+
+  - **`database/dbsnp_client.py`** -- 2 sites (`_request_json`'s
+    offline-skip and retry-exhausted raises, lines ~411/~440, both embed
+    `url`) -> `_run_dbsnp_stage`'s `errors.append(f"dbSNP stage failed:
+    {exc}")` (orchestrator.py:2374).
+  - **`pipeline/conservation/provider.py`** -- 2 sites (UCSC endpoint,
+    line ~265; MyVariant.info GERP url, line ~392, both also embed
+    `last_error`) -> `_run_conservation_stage`'s `errors.append(f"...
+    {result['error']}")` (orchestrator.py:2513).
+  - **`pipeline/gnomad/provider.py`** -- 1 site (`self.endpoint` +
+    `last_error`, line ~270) -> `_run_gnomad_stage`'s `errors.append(f"...
+    {result['error']}")` (orchestrator.py:2405).
+  - **`pipeline/hpo/provider.py`** -- 1 site (`url` + `last_error`,
+    line ~229) -> `_run_hpo_stage`'s `errors.append(f"... {result['error']}")`
+    (orchestrator.py:2560).
+  - **`pipeline/functional_evidence/mavedb_provider.py`** -- 4 sites
+    (two independent query methods, each with its own offline-skip +
+    retry-exhausted pair, lines ~139-140/~163-164/~263/~280-282) and
+    **`pipeline/functional_evidence/erepo_provider.py`** -- 2 sites
+    (lines ~118-120/~145-146) -> both flow through
+    `FunctionalEvidenceLookup.query_variant`'s `_match_erepo`/
+    `_match_mavedb` into the same `error` field, which
+    `_run_functional_evidence_stage`'s `errors.append(f"...
+    {result['error']}")` (orchestrator.py:2809) picks up.
+  - **`pipeline/sequence_context.py`** -- 2 sites (lines ~292/~318): the
+    interpolated `region` itself is inert (bare genomic coordinates,
+    e.g. `"17:43094298-43094300"`), but the retry-exhausted site also
+    embeds raw `last_error`, which for a real `requests.ConnectionError`
+    typically stringifies to include the full request URL/host -> caught
+    directly in `process_variant`'s `errors.append(f"Sequence context
+    generation failed: {exc}")` (orchestrator.py:1382).
+  - **`database/blast_client.py`** -- 3 sites, a related but distinct
+    sub-class (local subprocess `stderr`/timeout text and a remote-BLAST
+    `last_error`, not a bare request URL each time, but the identical
+    "raw external detail flows into a raised, report-facing message"
+    shape): remote-BLAST retry-exhausted (line ~667-669, embeds
+    `last_error`), local-BLAST search failure (line ~714, embeds
+    `exc.stderr` -- could carry a local db/binary path), local-BLAST
+    timeout (line ~716, embeds `exc`). `_run_blast_stage`'s own comment
+    (orchestrator.py:2346-2358) explicitly documents `error`/`reason`
+    as feeding `report/clinical_report_builder.py` and
+    `report/report_generator.py` -- this is the most directly
+    self-documented reach of any site in this list.
+
+**Checked, confirmed unreachable, not part of the live count above:**
+`annotation/indigenomes.py` -- 2 sites (lines ~160-161/~186-188, both
+embed `endpoint`). `_run_indigenomes_stage` (the method that would call
+this) is defined but never invoked from `process_variant`;
+`_indigenomes_retired_result()` is called in its place (confirmed by
+grep, matching what round 15 already established -- IndiGenomes was
+retired from the active query path on 2026-08-08, licensing). Same
+"unreachable, don't fix" call round 15 made for `pipeline/gnomad/
+utils.py`'s MT chrom bug -- fixing an unreachable path just invites a
+test that passes for the wrong reason.
+
+**Why this is a candidate, not a round-27 fix:** this round was scoped
+to `pipeline/ps1_pm5/lookup.py` specifically, the one module round 26
+named. Six more modules (eleven-plus raise sites) is a materially larger
+change than the single module just fixed -- each needs its own
+`logger.warning`/short-message treatment plus a regression test, the
+same "one round per confirmed batch" discipline round 22 (MMSplice) and
+round 24 (UniProt/InterPro/ClinGen/AlphaFold DB, four at once since they
+share one shape) already established, rather than a thirteen-site
+grab-bag in one commit.
+
+**Decision needed:** whether to schedule one round applying the
+identical sanitization pattern to all six modules at once (they mostly
+share the exact same `_request_json`-with-embedded-`url`/`last_error`
+shape, so one round could plausibly close dbSNP/conservation/gnomAD/
+HPO/MaveDB/ERepo/sequence_context together the way round 24 closed four
+at once), with `database/blast_client.py`'s slightly different
+subprocess-detail shape possibly deserving its own pass given it's not
+a bare URL leak. Until one of these rounds happens, this document's own
+claim from round 26 ("this should be the last module in this class") is
+retracted -- it wasn't.
+
+### Verified
+
+`py_compile` clean on `pipeline/ps1_pm5/lookup.py` and
+`tests/test_ps1_pm5_lookup.py`. `tests/test_ps1_pm5_lookup.py`: 2/2 pass
+(new). `tests/test_ps1_pm5.py`: 26/26 pass, 11 subtests (unaffected --
+exercises the decision engine against static fixtures, never
+`ClinVarCodonLookup`'s network layer). Neither touched/added test file
+imports `pipeline.orchestrator` or anything model-loading; confirmed by
+reading each file's import block before running. `pre-commit run
+--all-files` was not run this round per instruction.

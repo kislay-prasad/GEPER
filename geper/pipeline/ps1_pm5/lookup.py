@@ -58,9 +58,7 @@ class ClinVarCodonLookup:
         )
         warn_if_placeholder_contact(CONFIG.api.NCBI_EMAIL, caller="ClinVarCodonLookup")
 
-    def query_codon(
-        self, transcript: TranscriptContext, codon_number: int, assembly: str = "GRCh38"
-    ) -> Dict[str, Any]:
+    def query_codon(self, transcript: TranscriptContext, codon_number: int, assembly: str = "GRCh38") -> Dict[str, Any]:
         """
         Every ClinVar record with a parseable missense protein change
         found at any genomic position of `codon_number` in `transcript`.
@@ -74,7 +72,9 @@ class ClinVarCodonLookup:
         positions = transcript.genomic_positions_for_codon(codon_number)
         if not positions:
             return {
-                "skipped": False, "found": False, "matches": [],
+                "skipped": False,
+                "found": False,
+                "matches": [],
                 "reason": f"codon {codon_number} is out of range for transcript {transcript.transcript_id}.",
             }
 
@@ -98,7 +98,9 @@ class ClinVarCodonLookup:
                     all_matches.extend(self._esummary(uids))
             except ExternalAPIError as exc:
                 errors.append(str(exc))
-                logger.warning(f"ClinVar codon lookup failed for {transcript.transcript_id} codon {codon_number} @ {chrom}:{pos}: {exc}")
+                logger.warning(
+                    f"ClinVar codon lookup failed for {transcript.transcript_id} codon {codon_number} @ {chrom}:{pos}: {exc}"
+                )
 
         matches = dedupe_by_uid(all_matches)
         # `matches` is the plain-dict form throughout -- the same
@@ -200,4 +202,19 @@ class ClinVarCodonLookup:
                 logger.warning(f"PS1/PM5 ClinVar request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.ps1_pm5.MAX_RETRIES:
                     time.sleep(CONFIG.ps1_pm5.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"PS1/PM5 ClinVar request to '{url}' failed after {CONFIG.ps1_pm5.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"PS1/PM5 ClinVar request to '{url}' failed after {CONFIG.ps1_pm5.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        # Round 27: the message actually raised reaches `errors.append(...)`
+        # in `pipeline/orchestrator.py::_run_clinvar_codon_stage`, which is
+        # (a) embedded verbatim in geper_results.json's top-level `errors`
+        # key by `report/json_builder.py`, AND (b) rendered unconditionally
+        # into every Markdown report's "### ⚠ Stage Warnings / Errors"
+        # section by `report/report_generator.py` -- confirmed live, not
+        # merely reachable, unlike round 26's clinvar_client.py finding
+        # (JSON-only). The raised message must not embed `url`/`last_error`;
+        # full detail goes to the log line above only. Same pattern rounds
+        # 20-24, 26 applied to SpliceBERT/MMSplice/UniProt/InterPro/
+        # ClinGen/AlphaFold DB/ClinVar client.
+        raise ExternalAPIError(f"PS1/PM5 ClinVar request failed after {CONFIG.ps1_pm5.MAX_RETRIES} attempts")

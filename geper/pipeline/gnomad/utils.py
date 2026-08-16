@@ -50,26 +50,91 @@ def classify_variant_type(ref: str, alt: str) -> str:
     return "MNV"
 
 
+def _mt_aware_bare_chrom(chrom: str) -> str:
+    """
+    Strip an optional 'chr' prefix, then canonicalize any M-family
+    spelling ('MT', 'M', 'chrM', 'chrMT', any case) to gnomAD's own
+    real token: 'M' -- never 'MT'. Round 29: gnomAD is the one resource
+    GEPER integrates that consistently uses 'M', not 'MT', across every
+    convention it actually has (its GRCh38 site VCFs/browser use
+    'chrM' -- confirmed via gnomAD's own mtDNA-release documentation,
+    which describes variants as being called "in GRCh38 chrM"; its
+    GraphQL/browser dash-joined variant IDs for the mtDNA-specific
+    dataset are of the form 'M-3243-A-G', bare 'M', never 'MT'). This
+    is the opposite convention from Ensembl/NCBI Entrez (both want
+    'MT' -- see `pipeline/hgvs_utils.py::_strip_chr`), which is exactly
+    why this module keeps its own local M-family handling instead of
+    reusing that helper or a shared `normalize_chrom(chrom, target=...)`
+    -- round 15's own conclusion, not reopened here: the real targets
+    genuinely disagree per resource, so one shared function is just
+    another way to apply the wrong one.
+    """
+    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    return "M" if bare.lower() in ("m", "mt") else bare
+
+
 def normalize_chrom(chrom: str, *, with_chr_prefix: bool) -> str:
     """
     gnomAD's browser/GraphQL API and its GRCh38 site VCFs use a
     'chr'-prefixed contig name (chr1, chrX...); its legacy GRCh37 site
     VCFs do not. Callers pass which convention the specific data
     source in use expects; this never guesses silently.
+
+    Round 29: the mitochondrial contig is gnomAD's own special case --
+    see `_mt_aware_bare_chrom`'s docstring. Before this fix, a bare
+    strip-and-pass-through mapped 'MT'/'chrMT' to 'chrMT' (never a real
+    gnomAD contig) and 'M'/'chrM' to 'M' (missing the 'chr' prefix
+    GRCh38 needs) -- wrong for 2 of the 4 real-world spellings in each
+    mode. Currently unreachable in production (gnomAD's main GraphQL/
+    tabix integration has no mtDNA dataset wired in at all -- see
+    ROUND_CANDIDATES.md's round 14/29 entries), fixed anyway as
+    correctness-for-its-own-sake, the same standard applied to every
+    other confirmed-wrong chrom-normalization site in this codebase.
     """
-    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    bare = _mt_aware_bare_chrom(chrom)
     return f"chr{bare}" if with_chr_prefix else bare
 
 
 def variant_key(chrom: str, pos: int, ref: str, alt: str, build: str) -> str:
-    """Stable cache/dedup key. Build-qualified since the same chrom/pos means different loci across builds."""
+    """
+    Stable cache/dedup key. Build-qualified since the same chrom/pos
+    means different loci across builds.
+
+    Round 29: confirmed still correctly bespoke, not a bug, despite
+    using the same unqualified bare-strip `normalize_chrom`/
+    `gnomad_variant_id` needed fixing for. This function is purely
+    internal (an in-process cache/dedup key -- see this module's own
+    docstring -- never sent to gnomAD or compared against any external
+    resource's naming convention), so it has no "correct" external
+    target to match; it only needs to be a stable, deterministic
+    function of its own input, which a bare-strip already is. The one
+    theoretical gap -- two different VCFs spelling the same MT locus
+    differently ('MT' vs 'chrM') could produce different keys in
+    `pipeline/gnomad/cache.py`'s cross-run disk-persisted cache -- is a
+    cache-efficiency question, not a correctness one (no wrong data is
+    ever returned), and is moot today regardless: gnomAD's compartment
+    is never queried for chrM at all (round 14's compartment gate), so
+    this function is never called with an MT-spelled chrom in the first
+    place. Left as-is, per round 15's own verdict.
+    """
     bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
     return f"{build}:{bare_chrom}:{pos}:{ref.upper()}:{alt.upper()}"
 
 
 def gnomad_variant_id(chrom: str, pos: int, ref: str, alt: str) -> str:
-    """gnomAD's own '1-55516888-G-GA' dash-joined variant ID format, used by its GraphQL API."""
-    bare_chrom = chrom[3:] if chrom.lower().startswith("chr") else chrom
+    """
+    gnomAD's own '1-55516888-G-GA' dash-joined variant ID format, used
+    by its GraphQL API.
+
+    Round 29: for the mitochondrial contig, gnomAD's own real dash-ID
+    format is 'M-<pos>-<ref>-<alt>' (bare 'M', never 'MT' -- see
+    `_mt_aware_bare_chrom`'s docstring). Before this fix, a bare strip
+    mapped 'MT'/'chrMT' input to the wrong 'MT-...' form. Currently
+    unreachable in production for the same reason `normalize_chrom` is
+    (no gnomAD-mtDNA dataset wired in); fixed anyway as correctness-
+    for-its-own-sake.
+    """
+    bare_chrom = _mt_aware_bare_chrom(chrom)
     return f"{bare_chrom}-{pos}-{ref.upper()}-{alt.upper()}"
 
 
@@ -109,7 +174,9 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
-def extract_population_counts_from_info(info: Dict[str, str]) -> Dict[str, Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]]:
+def extract_population_counts_from_info(
+    info: Dict[str, str],
+) -> Dict[str, Tuple[Optional[int], Optional[int], Optional[int], Optional[int]]]:
     """
     Given a parsed VCF INFO dict from a gnomAD site VCF, return
     ``{population: (ac, an, hom, hemi)}`` for every population in

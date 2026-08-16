@@ -2064,3 +2064,180 @@ No touched or added test file imports `pipeline.orchestrator` or
 anything model-loading (biopython's `Bio.Blast.NCBIWWW.qblast` is
 mocked, never actually called -- no real BLAST network request made).
 `pre-commit run --all-files` was not run this round per instruction.
+
+---
+
+## Round 29 (gnomAD MT normalization re-audit; PP3/BP4 category)
+
+### Part A: `pipeline/gnomad/utils.py`'s three MT sites -- both round 15 claims re-verified, one fix applied
+
+Re-read the current source before changing anything, per instruction,
+rather than trusting round 15's conclusions at face value:
+
+**`normalize_chrom`/`gnomad_variant_id` -- still genuinely wrong for
+MT, confirmed unchanged since round 15.** Both still use the bare
+`chrom[3:] if chrom.lower().startswith("chr") else chrom` strip round
+14/15 already found and fixed at seven other sites. Traced gnomAD's
+own real MT convention (partially live -- see "Verified" below for
+exactly what could and couldn't be confirmed over the network this
+round): GRCh38 site VCFs/browser use `"chrM"` (gnomAD's own mtDNA-
+release documentation describes variants as being "called in GRCh38
+chrM"), and its GraphQL/dash-joined variant IDs use bare `"M"` -- e.g.
+the real, well-documented format `"M-3243-A-G"` for the MELAS variant
+-- never `"MT"` in any of gnomAD's own conventions, unlike Ensembl/NCBI
+Entrez (both want `"MT"`, per `hgvs_utils.py::_strip_chr`). Before this
+fix: `normalize_chrom("MT"/"chrMT", with_chr_prefix=True)` produced the
+non-existent contig `"chrMT"`; `normalize_chrom("M"/"chrM",
+with_chr_prefix=False)` produced bare `"M"` when the (still wrong)
+implicit target was `"MT"` -- wrong for 2 of 4 real-world spellings in
+each mode, the same class of bug already fixed at seven other sites.
+`gnomad_variant_id` had the identical shape. Fixed both, in place, as a
+new module-local `_mt_aware_bare_chrom` helper shared only within this
+file (not exported, not reused by any other module) -- explicitly NOT
+reopening round 15's rejection of a shared `normalize_chrom(chrom,
+target=...)` across modules: gnomAD's own target ("M"/"chrM") still
+disagrees with Ensembl/NCBI's ("MT"), UCSC's ("chrM", coincidentally
+the same prefixed form but arrived at independently), so a cross-module
+mode-flag function would still be exactly the "eighth way to pick the
+wrong target" round 15 already argued against. Fixed anyway despite
+being currently unreachable (gnomAD's main GraphQL/tabix integration
+has no mtDNA dataset wired in at all -- round 14's own finding, still
+true, re-confirmed this round by grep: no `"chrM"`/`"MT"` handling
+exists anywhere else in `pipeline/gnomad/`) -- correctness-for-its-own-
+sake, the same standard every other confirmed-wrong chrom-normalization
+site in this codebase already got, and the same reasoning round 28
+applied to sanitizing MaveDB's currently-log-only-reachable raise sites.
+
+**`variant_key` -- re-confirmed correctly bespoke, round 15's verdict
+did NOT drift.** Traced further than round 15's own investigation:
+`variant_key`'s only four call sites (`pipeline/gnomad/lookup.py`,
+grepped) all construct the key from the same `variant.chrom` string for
+a single `Variant` instance within one evaluation -- since it's a pure,
+deterministic function of its own input and never sent to gnomAD or
+compared against any external naming convention, it needs no external
+target to match, only self-consistency, which a bare-strip already
+provides for any single spelling. The one theoretical gap found this
+round that round 15 didn't name explicitly -- two different VCFs
+spelling the same MT locus differently (`"MT"` vs `"chrM"`) would
+produce different keys in `pipeline/gnomad/cache.py`'s real, confirmed
+cross-run disk-persisted cache (`_disk_path`, JSON-lines, "so a Colab
+session can reuse cache") -- is a cache-efficiency question, not a
+correctness one (no wrong data is ever returned; at worst, a redundant
+re-query), and is doubly moot: gnomAD's own compartment gate (round 14)
+never queries it for a chrM variant in the first place, so this
+function is never called with an MT-spelled chrom in production today,
+consistent with `normalize_chrom`'s own unreachability above. Left
+untouched, per round 15's own conclusion.
+
+### Part B: `_pp3_bp4_inapplicability_reason`'s category -- genuinely needed a fifth, added `CONSEQUENCE_INAPPLICABLE`
+
+Argued before changing anything, per instruction. The gate (a
+frameshift, nonsense, or canonical +-1/+-2 splice-site variant whose
+loss-of-function consequence is already fixed by the transcript reading
+frame, making PP3/BP4's missense/conservation/splicing computational
+predictors moot) was defaulting to `NotEvaluatedReason.DATA_UNAVAILABLE`
+(`_not_evaluated`'s own default, no explicit `category=` was passed at
+this call site). Checked whether any of the existing four categories
+honestly fit, in order:
+
+  - **NOT_INTEGRATED**: no -- GEPER has AlphaMissense/MMSplice/
+    conservation fully integrated; this gate is variant-specific, not
+    "never integrated for any variant."
+  - **COMPARTMENT_INAPPLICABLE**: no -- nothing to do with genomic
+    compartment; confirmed this gate is structurally unreachable for
+    mtDNA variants at all (`_mtdna_gate("PP3")`/`_mtdna_gate("BP4")` in
+    `evaluate()` short-circuits before `self._pp3_bp4(...)` -- and
+    therefore before `_pp3_bp4_inapplicability_reason` -- is ever
+    called for a chrM variant), so the two categories are provably
+    orthogonal, not merely differently named.
+  - **GENE_CLASS_INAPPLICABLE**: no -- about gene biotype (protein-
+    coding vs. not), not this gate's actual axis (a protein-coding
+    gene's own variant-level consequence).
+  - **DATA_UNAVAILABLE**: the one that was actually used, and the one
+    that's wrong. Its own docstring: "GEPER has this evidence source
+    integrated and queried it for this specific variant, but the query
+    returned nothing usable." That is not what's happening here -- even
+    a fully successful, high-confidence AlphaMissense/conservation/
+    MMSplice query would not change the outcome; the criterion is
+    inapplicable by construction, not by a data gap. Confirmed this
+    is genuinely misleading, not just imprecise: `report/
+    clinical_report_builder.py`'s `_NOT_EVALUATED_REASON_LABELS` renders
+    `DATA_UNAVAILABLE` as "a missing/unavailable evidence source for
+    this specific variant" in the executive-summary sentence -- a
+    reader would reasonably conclude "if only GEPER had this data,
+    PP3/BP4 could be evaluated," which is false. This is exactly the
+    class of misleading collapse `NotEvaluatedReason` was built (round
+    16) to prevent -- the same failure mode as the original bug that
+    motivated the whole enum, just at a call site round 16 itself
+    didn't happen to touch.
+
+None of the four fit honestly, so a fifth category was warranted, not
+invented for its own sake. Added `CONSEQUENCE_INAPPLICABLE`: "structurally
+inapplicable given this variant's own already-determined protein
+consequence" -- distinct from `DATA_UNAVAILABLE` (no data gap could ever
+change the outcome here) and from `COMPARTMENT_INAPPLICABLE`/
+`GENE_CLASS_INAPPLICABLE` (turns on the variant's own coding
+consequence within an otherwise-eligible protein-coding, nuclear gene,
+not on compartment or gene biotype). Wired at both `_not_evaluated`
+call sites inside `_pp3_bp4_inapplicability_reason`'s branch (PP3 and
+BP4 both); the OTHER `_not_evaluated("PP3"/"BP4", ...)` call site
+further down in `_pp3_bp4` (the `if not sources` branch -- predictors
+were genuinely queried and produced nothing) is correctly
+`DATA_UNAVAILABLE` and was deliberately left untouched -- confirmed by
+a dedicated contrast test (`test_data_unavailable_when_no_sources_produced_a_result`)
+that the fix didn't accidentally recategorize it too. Updated
+`report/clinical_report_builder.py`'s `_NOT_EVALUATED_REASON_LABELS`
+with a new sentence for the fifth category, matching the existing four's
+style.
+
+New tests: `tests/test_pp3_bp4_conflict.py::TestInapplicabilityGateUsesConsequenceCategory`
+(3 tests -- frameshift, canonical-splice, and the DATA_UNAVAILABLE
+contrast case) and `tests/test_gnomad_models_utils.py::
+TestMitochondrialChromNormalization` (4 tests, all four MT spellings x
+both `normalize_chrom` modes x `gnomad_variant_id`, plus a case-
+insensitivity check and a nuclear-chromosome-unaffected check).
+
+### Verified
+
+Live network verification for Part A was partial, disclosed plainly
+rather than overclaimed: `WebFetch`/`WebSearch` confirmed gnomAD's own
+mtDNA-release documentation states variants are "called in GRCh38
+chrM," and gnomAD's own mtDNA paper (PMC8896463) uses "Chr M"
+consistently throughout -- but the gnomAD browser itself is a JS SPA
+that `WebFetch` cannot render, so the exact GraphQL `variant_id` string
+for a live example (e.g. confirming "M-3243-A-G" byte-for-byte against
+a real API response) was not directly observed this round, unlike round
+15's live NCBI Entrez queries for the Ensembl/ClinVar/dbSNP sites. The
+"M" bare-form target rests on well-established, stable, independently-
+corroborated public documentation of gnomAD's mtDNA dataset (consistent
+across the paper, gnomAD's own news post, and third-party tooling built
+against gnomAD's API), not a live query against this exact code path --
+flagged here so this isn't mistaken for the same standard of proof
+round 15 achieved.
+
+`py_compile` clean on all five changed/added files
+(`pipeline/acmg_rules.py`, `report/clinical_report_builder.py`,
+`pipeline/gnomad/utils.py`, `tests/test_gnomad_models_utils.py`,
+`tests/test_pp3_bp4_conflict.py`). Regression sweep: every one of the
+17 test files importing `pipeline.acmg_rules` (`test_acmg_ensemble_routing.py`,
+`test_acmg_net_points.py`, `test_bp1_bp3_bp6_bp7.py`,
+`test_clingen_gene_validity.py`, `test_clinvar_match_downstream_consumers.py`,
+`test_conservation.py`, `test_gnomad_population_priority.py`,
+`test_hpo.py`, `test_mtdna_compartment_gate.py`, `test_phenotype_input.py`,
+`test_pm1_interpro.py`, `test_pm4_ps4.py`, `test_pp3_bp4_conflict.py`,
+`test_ps1_pm5.py`, `test_ps3_bs3.py`, `test_pvs1.py`,
+`test_round16_not_evaluated_categories.py`) plus every gnomAD-adjacent
+test file (`test_gnomad_lookup.py`, `test_gnomad_provider.py`,
+`test_gnomad_acmg.py`, `test_gnomad_cache.py`,
+`test_gnomad_population_priority.py`, `test_gnomad_integration.py`,
+`test_gnomad_models_utils.py`) -- 454 + 84 passed, 6 pre-existing skips
+(local-fixture-dependent, unrelated), no failures. Confirmed by reading
+each file's own import block that none imports `pipeline.orchestrator`
+before running. Used `test_pp3_bp4_conflict.py`'s existing
+`ProteinEffectFlags`-based unit-test pattern for Part B (a nuclear
+frameshift/canonical-splice fixture, per instruction -- the mtDNA gate
+short-circuits before this code path is ever reached for a chrM
+variant, so `test_mtdna_compartment_gate.py`'s MT fixtures were
+correctly not the right tool for this specific fix, only for Part A's
+context-gathering). `pre-commit run --all-files` was not run this round
+per instruction.

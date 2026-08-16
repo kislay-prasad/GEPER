@@ -508,7 +508,7 @@ class NotEvaluatedReason(str, enum.Enum):
     `pipeline/provenance.py::VersionStatus`: encode the distinction in
     the type system so a renderer cannot re-collapse it by omission.
 
-    Four, not more -- each maps to a genuinely different sentence a
+    Five, not four -- each maps to a genuinely different sentence a
     report can honestly print:
       - NOT_INTEGRATED: GEPER has never integrated the data source this
         criterion needs, for any variant (e.g. PS2's trio-sequencing
@@ -524,6 +524,21 @@ class NotEvaluatedReason(str, enum.Enum):
         biotype). Not mtDNA-specific in principle -- any gene with no
         protein-coding transcript has the same property -- but this is
         the only gate that currently exists.
+      - CONSEQUENCE_INAPPLICABLE: structurally inapplicable given this
+        variant's own already-determined protein consequence (round 29;
+        currently: `_pp3_bp4_inapplicability_reason`'s gate -- a
+        frameshift, nonsense, or canonical +-1/+-2 splice-site variant's
+        loss-of-function consequence is fixed by the transcript reading
+        frame itself, so PP3/BP4's missense/conservation/splicing
+        computational predictors are moot regardless of what they'd
+        say). Distinct from `DATA_UNAVAILABLE`: even a fully successful,
+        high-confidence predictor query would not change the outcome
+        here -- the criterion is inapplicable by construction, not by a
+        data gap. Distinct from `COMPARTMENT_INAPPLICABLE`/
+        `GENE_CLASS_INAPPLICABLE`: those turn on the variant's
+        compartment or the gene's biotype; this turns on the variant's
+        own coding consequence within an otherwise-eligible
+        protein-coding, nuclear gene.
       - DATA_UNAVAILABLE: GEPER has this evidence source integrated and
         queried it for this specific variant, but the query returned
         nothing usable (skipped/errored/no match). The one category
@@ -535,6 +550,7 @@ class NotEvaluatedReason(str, enum.Enum):
     NOT_INTEGRATED = "not_integrated"
     COMPARTMENT_INAPPLICABLE = "compartment_inapplicable"
     GENE_CLASS_INAPPLICABLE = "gene_class_inapplicable"
+    CONSEQUENCE_INAPPLICABLE = "consequence_inapplicable"
     DATA_UNAVAILABLE = "data_unavailable"
 
 
@@ -554,7 +570,7 @@ def not_evaluated_breakdown(not_evaluated_rules: Optional[List[Dict[str, Any]]])
     partitioned the 28 criteria; the accounting/Limitations text
     described all `not_evaluated` criteria with one blanket "missing
     data sources" phrase, which is true for `DATA_UNAVAILABLE` and
-    flatly false for the other three categories). Both surfaces calling
+    flatly false for the other four categories). Both surfaces calling
     this same function on the same list is what makes them structurally
     unable to diverge again, rather than two independent descriptions of
     the same underlying evaluation that happen to agree today.
@@ -1889,8 +1905,16 @@ class ACMGRuleEngine:
             protein_flags, null_variant_type, variant_dict
         )
         if inapplicable_reason is not None:
-            na = _not_evaluated("PP3", f"PP3 does not apply -- {inapplicable_reason}.")
-            nb = _not_evaluated("BP4", f"BP4 does not apply -- {inapplicable_reason}.")
+            na = _not_evaluated(
+                "PP3",
+                f"PP3 does not apply -- {inapplicable_reason}.",
+                category=NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE,
+            )
+            nb = _not_evaluated(
+                "BP4",
+                f"BP4 does not apply -- {inapplicable_reason}.",
+                category=NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE,
+            )
             return na, nb
 
         sources: List[str] = []

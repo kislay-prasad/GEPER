@@ -25,7 +25,8 @@ a priority order or majority vote).
 import unittest
 from unittest import mock
 
-from pipeline.acmg_rules import ACMGRuleEngine
+from pipeline.acmg_rules import ACMGRuleEngine, NotEvaluatedReason
+from pipeline.pvs1.models import NULL_CANONICAL_SPLICE
 from pipeline.pvs1.utils import ProteinEffectFlags
 
 
@@ -281,6 +282,68 @@ class TestEvaluateNeverProducesBothTriggered(unittest.TestCase):
         self.assertFalse(pp3["status"] == "triggered" and bp4["status"] == "triggered")
         self.assertEqual(pp3["status"], "not_triggered")
         self.assertEqual(bp4["status"], "not_triggered")
+
+
+_FRAMESHIFT_LOF = ProteinEffectFlags(
+    is_lof=True, is_inframe_indel=False, is_synonymous=False, is_missense=False, determined=True
+)
+
+
+class TestInapplicabilityGateUsesConsequenceCategory(unittest.TestCase):
+    """
+    Round 29: `_pp3_bp4_inapplicability_reason`'s gate (a frameshift/
+    nonsense/canonical-splice variant whose LOF consequence is already
+    determined by the reading frame, making PP3/BP4's computational
+    predictors moot regardless of what they'd say) used to default to
+    `NotEvaluatedReason.DATA_UNAVAILABLE` -- rendered in every report as
+    "a missing/unavailable evidence source for this specific variant",
+    which is false here: even a fully successful, high-confidence
+    predictor query would not change the outcome. Distinct in kind from
+    the OTHER `_not_evaluated("PP3", ...)` call site further down in
+    `_pp3_bp4` (`if not sources`, when predictors were queried but
+    produced nothing) -- that one is correctly `DATA_UNAVAILABLE` and is
+    NOT touched by this fix; see `test_data_unavailable_when_no_sources_produced_a_result`
+    below for the contrast.
+    """
+
+    def test_frameshift_lof_is_consequence_inapplicable_not_data_unavailable(self):
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(
+                _am("likely_pathogenic"),
+                _mmsplice(damaging=True),
+                protein_flags=_FRAMESHIFT_LOF,
+                variant_dict={"ref": "A", "alt": "AT"},
+            )
+        self.assertEqual(pp3.status, "not_evaluated")
+        self.assertEqual(bp4.status, "not_evaluated")
+        self.assertEqual(pp3.category, NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE.value)
+        self.assertEqual(bp4.category, NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE.value)
+        self.assertIn("does not apply", pp3.rationale)
+        self.assertIn("does not apply", bp4.rationale)
+
+    def test_canonical_splice_is_consequence_inapplicable_not_data_unavailable(self):
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(
+                _am("likely_pathogenic"),
+                None,
+                null_variant_type=NULL_CANONICAL_SPLICE,
+            )
+        self.assertEqual(pp3.status, "not_evaluated")
+        self.assertEqual(bp4.status, "not_evaluated")
+        self.assertEqual(pp3.category, NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE.value)
+        self.assertEqual(bp4.category, NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE.value)
+
+    def test_data_unavailable_when_no_sources_produced_a_result(self):
+        """The contrasting, genuinely-DATA_UNAVAILABLE branch -- a
+        missense variant (LOF gate does not apply) for which no
+        computational predictor produced anything, confirming this fix
+        did not touch the correctly-categorized default case."""
+        with mock.patch("pipeline.acmg_rules.CONFIG", _cfg()):
+            pp3, bp4 = ACMGRuleEngine._pp3_bp4(None, None, None, None, protein_flags=_MISSENSE)
+        self.assertEqual(pp3.status, "not_evaluated")
+        self.assertEqual(bp4.status, "not_evaluated")
+        self.assertEqual(pp3.category, NotEvaluatedReason.DATA_UNAVAILABLE.value)
+        self.assertEqual(bp4.category, NotEvaluatedReason.DATA_UNAVAILABLE.value)
 
 
 if __name__ == "__main__":

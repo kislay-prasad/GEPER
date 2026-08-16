@@ -275,6 +275,10 @@ _NOT_EVALUATED_REASON_LABELS = {
         "mitochondrial finding)"
     ),
     NotEvaluatedReason.GENE_CLASS_INAPPLICABLE.value: "inapplicable to this gene's biotype/class",
+    NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE.value: (
+        "inapplicable given this variant's own already-determined protein consequence (e.g. a frameshift, "
+        "nonsense, or canonical splice-site change, for which computational predictors are moot)"
+    ),
     NotEvaluatedReason.DATA_UNAVAILABLE.value: "a missing/unavailable evidence source for this specific variant",
 }
 
@@ -284,7 +288,8 @@ def _not_evaluated_reason_clause(not_evaluated_rules: List[Dict[str, Any]]) -> s
     Round 16: replaces the old single, blanket "due to missing data
     sources" phrase -- true for `DATA_UNAVAILABLE` criteria, flatly
     false for a criterion this pipeline structurally never applies to
-    this variant's compartment or this gene's biotype (neither of those
+    this variant's compartment, this gene's biotype, or (round 29) this
+    variant's own already-determined protein consequence (none of those
     is "missing", they were never applicable). Reads
     `pipeline.acmg_rules.not_evaluated_breakdown` -- the same function
     `mtdna_interpretation_disclaimer` now reads for its own counts, so

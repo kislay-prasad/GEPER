@@ -67,6 +67,58 @@ class TestChromAndKeys(unittest.TestCase):
     def test_gnomad_variant_id_format(self):
         self.assertEqual(gnomad_variant_id("chr1", 55516888, "G", "GA"), "1-55516888-G-GA")
 
+    def test_nuclear_chromosomes_unaffected_by_mt_handling(self):
+        for raw, expected_prefixed, expected_bare in (
+            ("17", "chr17", "17"),
+            ("chr17", "chr17", "17"),
+            ("X", "chrX", "X"),
+            ("chrX", "chrX", "X"),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_chrom(raw, with_chr_prefix=True), expected_prefixed)
+                self.assertEqual(normalize_chrom(raw, with_chr_prefix=False), expected_bare)
+
+
+class TestMitochondrialChromNormalization(unittest.TestCase):
+    """
+    Round 29: `normalize_chrom`/`gnomad_variant_id`'s bare-strip used to
+    map 'MT'/'chrMT' to the non-existent gnomAD contig 'chrMT' and
+    'M'/'chrM' to bare 'M' (missing gnomAD's required 'chr' prefix on
+    GRCh38) -- wrong for 2 of the 4 real-world spellings in each mode.
+    gnomAD's own real convention is 'chrM' (GRCh38 site VCFs/browser)
+    and bare 'M' (its GraphQL/mtDNA-dataset dash-joined variant IDs,
+    e.g. 'M-3243-A-G') -- never 'MT', unlike Ensembl/NCBI Entrez.
+
+    Currently unreachable in production (round 14/29's own
+    ROUND_CANDIDATES.md entries: gnomAD's main integration has no mtDNA
+    dataset wired in at all), fixed anyway for correctness. `variant_key`
+    deliberately excluded -- confirmed round 15/29 to be a correctly
+    bespoke internal cache key with no external target to match.
+    """
+
+    _MT_SPELLINGS = ("MT", "M", "chrM", "chrMT")
+
+    def test_all_mt_spellings_produce_chrM_with_prefix(self):
+        for spelling in self._MT_SPELLINGS:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(normalize_chrom(spelling, with_chr_prefix=True), "chrM")
+
+    def test_all_mt_spellings_produce_bare_M_without_prefix(self):
+        for spelling in self._MT_SPELLINGS:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(normalize_chrom(spelling, with_chr_prefix=False), "M")
+
+    def test_all_mt_spellings_produce_bare_M_in_variant_id(self):
+        for spelling in self._MT_SPELLINGS:
+            with self.subTest(spelling=spelling):
+                self.assertEqual(gnomad_variant_id(spelling, 3243, "A", "G"), "M-3243-A-G")
+
+    def test_case_insensitive(self):
+        for spelling in ("mt", "m", "Chrm", "CHRMT", "ChrM"):
+            with self.subTest(spelling=spelling):
+                self.assertEqual(normalize_chrom(spelling, with_chr_prefix=True), "chrM")
+                self.assertEqual(normalize_chrom(spelling, with_chr_prefix=False), "M")
+
 
 class TestVcfInfoParsing(unittest.TestCase):
     def test_parse_vcf_info_field(self):
@@ -120,8 +172,14 @@ class TestPopulationFrequency(unittest.TestCase):
 class TestGnomadAnnotation(unittest.TestCase):
     def test_global_af_prefers_genome_over_exome(self):
         ann = GnomadAnnotation(
-            chrom="1", pos=1, ref="A", alt="T", build="GRCh38", source="test",
-            genome_af=0.01, exome_af=0.02,
+            chrom="1",
+            pos=1,
+            ref="A",
+            alt="T",
+            build="GRCh38",
+            source="test",
+            genome_af=0.01,
+            exome_af=0.02,
         )
         self.assertEqual(ann.global_af, 0.01)
 
@@ -135,7 +193,12 @@ class TestGnomadAnnotation(unittest.TestCase):
 
     def test_highest_population_resolution(self):
         ann = GnomadAnnotation(
-            chrom="1", pos=1, ref="A", alt="T", build="GRCh38", source="test",
+            chrom="1",
+            pos=1,
+            ref="A",
+            alt="T",
+            build="GRCh38",
+            source="test",
             population_breakdown={
                 "afr": PopulationFrequency(population="afr", af=0.1),
                 "nfe": PopulationFrequency(population="nfe", af=0.3),
@@ -158,8 +221,15 @@ class TestGnomadAnnotation(unittest.TestCase):
         import json
 
         ann = GnomadAnnotation(
-            chrom="1", pos=1, ref="A", alt="T", build="GRCh38", source="test", found=True,
-            genome_af=0.001, population_breakdown={"afr": PopulationFrequency(population="afr", af=0.002)},
+            chrom="1",
+            pos=1,
+            ref="A",
+            alt="T",
+            build="GRCh38",
+            source="test",
+            found=True,
+            genome_af=0.001,
+            population_breakdown={"afr": PopulationFrequency(population="afr", af=0.002)},
         )
         json.dumps(ann.to_dict())  # must not raise
 

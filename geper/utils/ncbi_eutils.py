@@ -13,9 +13,10 @@ applies identically everywhere instead of drifting between three copies.
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from utils.logger import get_logger
 
@@ -92,6 +93,59 @@ def lenient_json_loads(text: str, *, source: str = "") -> Any:
             "treating this as a network failure."
         )
         return recovered
+
+
+def parse_vcv_submitters(xml_text: str) -> Dict[str, List[Dict[str, Optional[str]]]]:
+    """
+    Parse a ClinVar VCV-XML `efetch` response (`rettype=vcv`) into
+    `{variation_id: [{"name", "org_id", "scv"}, ...]}` -- one entry per
+    submitting organisation.
+
+    Submitter identity lives ONLY here, not in the `esummary` JSON
+    response `database/clinvar_client.py::ClinVarClient._esummary` and
+    `pipeline/ps1_pm5/lookup.py::ClinVarCodonLookup._esummary` already
+    parse (confirmed live 2026-08-16): an esummary VCV record exposes
+    `supporting_submissions.scv` (bare SCV accessions, no org name),
+    while this same variation's `efetch&rettype=vcv` XML carries each
+    SCV's `SubmitterName`/`OrgID` on its `<ClinVarAccession>` element,
+    nested under `<ClinicalAssertionList>/<ClinicalAssertion>`. Getting
+    submitter identity therefore requires this second, separate
+    request -- it is not an unparsed field sitting in data GEPER
+    already has.
+
+    One `VariationArchive` can carry more than one `ClinicalAssertion`
+    (one per submitting lab); all are captured here rather than
+    collapsed to a single name, since the record's own review-status
+    star tier already communicates how ClinVar itself aggregated them
+    (round 30 -- retrospective-study submitter-identity capture).
+
+    Malformed/unparseable XML returns `{}` rather than raising -- this
+    is supplementary provenance, never required for a criterion's own
+    pathogenic/benign classification, and a parse failure here must
+    never break the caller's classification-relevant esearch/esummary
+    path.
+    """
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return {}
+
+    out: Dict[str, List[Dict[str, Optional[str]]]] = {}
+    for archive in root.iter("VariationArchive"):
+        variation_id = archive.get("VariationID")
+        if not variation_id:
+            continue
+        submitters: List[Dict[str, Optional[str]]] = []
+        for assertion in archive.iter("ClinicalAssertion"):
+            acc = assertion.find("ClinVarAccession")
+            if acc is None:
+                continue
+            name = acc.get("SubmitterName")
+            if not name:
+                continue
+            submitters.append({"name": name, "org_id": acc.get("OrgID"), "scv": acc.get("Accession")})
+        out[variation_id] = submitters
+    return out
 
 
 # IANA-reserved domains (RFC 2606), guaranteed to never resolve to a

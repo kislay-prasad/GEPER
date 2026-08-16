@@ -2946,6 +2946,32 @@ class ACMGRuleEngine:
     )
 
     @staticmethod
+    def _submitter_note(submitters: Optional[List[Dict[str, Any]]]) -> str:
+        """
+        Format ` (submitted by X, Y)` for evidence-trail strings that
+        cite a ClinVar accession, or `""` when submitter identity
+        wasn't captured (`submitters` is `None` -- the lookup failed or
+        hasn't run) or ClinVar genuinely has none on file (`[]`).
+        Round 30 (retrospective-study leakage control): naming the
+        submitter here, not filtering on it -- see
+        `database/clinvar_client.py::ClinVarClient._fetch_submitters`
+        and this repo's `ROUND_CANDIDATES.md` Round 30 entry for why a
+        partner lab's own submission being visible in the evidence
+        trail matters for a retrospective concordance study, and why
+        GEPER itself does not decide which submitters to exclude.
+        """
+        if not submitters:
+            return ""
+        names: List[str] = []
+        for s in submitters:
+            name = s.get("name") if isinstance(s, dict) else None
+            if isinstance(name, str) and name:
+                names.append(name)
+        if not names:
+            return ""
+        return f" (submitted by {', '.join(dict.fromkeys(names))})"
+
+    @staticmethod
     def _clinvar_not_found_reason(clinvar_result: Optional[Dict[str, Any]]) -> str:
         """
         Honest "why is there no ClinVar evidence for this variant" text,
@@ -3003,6 +3029,8 @@ class ACMGRuleEngine:
         review_status = (raw_review_status or "").strip().lower()
         accession = top.get("accession") or "this record"
         caveat = ACMGRuleEngine._BP6_DEPRECATION_CAVEAT
+        submitters = top.get("submitters")
+        submitter_note = ACMGRuleEngine._submitter_note(submitters)
 
         if review_status in ACMGRuleEngine._BP6_UNRELIABLE_REVIEW_STATUS:
             return CriterionResult(
@@ -3013,10 +3041,16 @@ class ACMGRuleEngine:
                 f"ClinVar record {accession} reports '{raw_significance}', but its review status "
                 f"('{raw_review_status}') carries no assertion criteria, too weak a source to treat as "
                 f"'reputable' even under BP6's own wording. {caveat}",
-                conflicting_evidence=[f"ClinVar {accession}: {raw_significance} ({raw_review_status})."],
+                conflicting_evidence=[
+                    f"ClinVar {accession}: {raw_significance} ({raw_review_status}){submitter_note}."
+                ],
                 evidence_sources=["ClinVar"],
                 confidence="Low",
-                details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
+                details={
+                    "clinvar_significance": raw_significance,
+                    "clinvar_review_status": raw_review_status,
+                    "clinvar_submitters": submitters,
+                },
             )
 
         if significance in ACMGRuleEngine._BP6_ACCEPTABLE_SIGNIFICANCE:
@@ -3027,10 +3061,14 @@ class ACMGRuleEngine:
                 "triggered",
                 f"ClinVar record {accession} reports '{raw_significance}' (review status: "
                 f"{raw_review_status}). {caveat}",
-                supporting_evidence=[f"ClinVar {accession}: {raw_significance} ({raw_review_status})."],
+                supporting_evidence=[f"ClinVar {accession}: {raw_significance} ({raw_review_status}){submitter_note}."],
                 evidence_sources=["ClinVar"],
                 confidence="Low",
-                details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
+                details={
+                    "clinvar_significance": raw_significance,
+                    "clinvar_review_status": raw_review_status,
+                    "clinvar_submitters": submitters,
+                },
             )
 
         return CriterionResult(
@@ -3041,7 +3079,11 @@ class ACMGRuleEngine:
             f"ClinVar record {accession} reports '{raw_significance}', not Benign/Likely benign. {caveat}",
             evidence_sources=["ClinVar"],
             confidence="Low",
-            details={"clinvar_significance": raw_significance, "clinvar_review_status": raw_review_status},
+            details={
+                "clinvar_significance": raw_significance,
+                "clinvar_review_status": raw_review_status,
+                "clinvar_submitters": submitters,
+            },
         )
 
     @staticmethod

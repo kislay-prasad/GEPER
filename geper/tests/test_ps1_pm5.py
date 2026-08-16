@@ -41,6 +41,7 @@ from pipeline.ps1_pm5.utils import (
     clinvar_codon_match_from_esummary,
     matches_from_clinvar_codon_result,
     parse_protein_change,
+    submitter_note,
 )
 from pipeline.pvs1.utils import coding_consequence_detail, transcript_context_from_dict
 
@@ -452,6 +453,42 @@ class TestEngineWiring(unittest.TestCase):
         self.assertEqual(matches_from_clinvar_codon_result(None), [])
         self.assertEqual(matches_from_clinvar_codon_result({"skipped": True}), [])
         self.assertEqual(matches_from_clinvar_codon_result({"error": "boom"}), [])
+
+
+class TestSubmitterNote(unittest.TestCase):
+    """
+    Round 30: submitter identity surfaced in PS1/PM5's own evidence
+    trail (retrospective-study leakage control -- see
+    `ROUND_CANDIDATES.md`'s Round 30 entry), not used to filter
+    anything.
+    """
+
+    def test_none_yields_empty_string(self):
+        self.assertEqual(submitter_note(None), "")
+
+    def test_empty_list_yields_empty_string(self):
+        self.assertEqual(submitter_note([]), "")
+
+    def test_single_submitter_formatted(self):
+        self.assertEqual(submitter_note([{"name": "ENIGMA", "org_id": "1", "scv": "SCV1"}]), " (submitted by ENIGMA)")
+
+    def test_multiple_submitters_all_named_not_collapsed(self):
+        note = submitter_note(
+            [{"name": "ENIGMA", "org_id": "1", "scv": "SCV1"}, {"name": "Ambry Genetics", "org_id": "2", "scv": "SCV2"}]
+        )
+        self.assertEqual(note, " (submitted by ENIGMA, Ambry Genetics)")
+
+    def test_ps1_supporting_evidence_cites_submitter_when_present(self):
+        """End-to-end: a qualifying anchor's `submitters` field reaches PS1's own supporting_evidence string."""
+        matches = matches_for("codon237")
+        for m in matches:
+            if m["uid"] == "142714":
+                m["submitters"] = [{"name": "ClinGen LDCV", "org_id": "9", "scv": "SCV000999"}]
+        evaluator = PS1PM5Evaluator()
+        detail = coding_consequence_detail(transcript(), 7674252, "C", "A")
+        result = evaluator.evaluate_ps1(detail, matches, transcript(), 7674252, "C", "A")
+        self.assertTrue(result.applies)
+        self.assertTrue(any("VCV000142714" in line and "ClinGen LDCV" in line for line in result.supporting_evidence))
 
 
 if __name__ == "__main__":

@@ -489,7 +489,13 @@ class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
         with mock.patch("requests.get", side_effect=responses) as mock_get:
             result = ClinVarClient().query_variant(_variant(), rsid="rs397508848", assembly="GRCh38")
 
-        self.assertEqual(mock_get.call_count, 3)  # positional esearch + rsid esearch + one merged esummary
+        # positional esearch + rsid esearch + one merged esummary; the
+        # 4th call is round 30's submitter efetch (see
+        # `ClinVarClient._fetch_submitters`) -- exhausts this test's
+        # `responses` list, so that lookup fails and is caught/logged,
+        # leaving `submitters` unset rather than affecting this
+        # assertion's own concern (candidate-set completeness).
+        self.assertEqual(mock_get.call_count, 4)
         self.assertEqual(result["match_status"], ClinVarMatchStatus.MATCHED.value)
         self.assertTrue(result["found"])
         self.assertEqual(result["primary_record"]["accession"], "VCV000041804")
@@ -539,8 +545,134 @@ class TestWrongRsidDoesNotNarrowCandidateSet(unittest.TestCase):
         with mock.patch("requests.get", side_effect=responses) as mock_get:
             result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
 
-        self.assertEqual(mock_get.call_count, 2)  # positional esearch + esummary only
+        # positional esearch + esummary only; the 3rd call is round 30's
+        # submitter efetch (see `ClinVarClient._fetch_submitters`) --
+        # exhausts this test's `responses` list, so that lookup fails
+        # and is caught/logged, leaving `submitters` unset rather than
+        # affecting this assertion's own concern (rsid=None doesn't run
+        # an rsid-based esearch).
+        self.assertEqual(mock_get.call_count, 3)
         self.assertEqual(result["primary_record"]["accession"], "VCV000041804")
+
+
+_VCV_XML_ONE_SUBMITTER = """<?xml version="1.0"?>
+<ClinVarResult-Set>
+  <VariationArchive VariationID="41804" Accession="VCV000041804">
+    <ClassifiedRecord>
+      <ClinicalAssertionList>
+        <ClinicalAssertion ID="1">
+          <ClinVarAccession Accession="SCV000123456" SubmitterName="ENIGMA" OrgID="500123"/>
+        </ClinicalAssertion>
+      </ClinicalAssertionList>
+    </ClassifiedRecord>
+  </VariationArchive>
+</ClinVarResult-Set>"""
+
+_VCV_XML_TWO_SUBMITTERS = """<?xml version="1.0"?>
+<ClinVarResult-Set>
+  <VariationArchive VariationID="41804" Accession="VCV000041804">
+    <ClassifiedRecord>
+      <ClinicalAssertionList>
+        <ClinicalAssertion ID="1">
+          <ClinVarAccession Accession="SCV000123456" SubmitterName="ENIGMA" OrgID="500123"/>
+        </ClinicalAssertion>
+        <ClinicalAssertion ID="2">
+          <ClinVarAccession Accession="SCV000654321" SubmitterName="Ambry Genetics" OrgID="500456"/>
+        </ClinicalAssertion>
+      </ClinicalAssertionList>
+    </ClassifiedRecord>
+  </VariationArchive>
+</ClinVarResult-Set>"""
+
+
+class TestSubmitterCapture(unittest.TestCase):
+    """
+    Round 30: submitting organisation(s) captured on every matched
+    ClinVar record (retrospective-study leakage control -- see
+    `ROUND_CANDIDATES.md`'s Round 30 entry). Covers the second, XML
+    `efetch` request `ClinVarClient._fetch_submitters` makes (submitter
+    identity is not present in the `esummary` JSON `_esummary` already
+    parses).
+    """
+
+    def _responses(self, esearch_payload, esummary_payload, vcv_xml):
+        return [
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(esearch_payload),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(esummary_payload),
+            ),
+            mock.Mock(status_code=200, raise_for_status=lambda: None, text=vcv_xml),
+        ]
+
+    def test_single_submitter_captured_on_matched_record(self):
+        entries = [_BRCA1_CORRECT_SNV]
+        responses = self._responses(_esearch_response(["41804"]), _esummary_response(entries), _VCV_XML_ONE_SUBMITTER)
+        with mock.patch("requests.get", side_effect=responses):
+            result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        self.assertEqual(
+            result["primary_record"]["submitters"],
+            [{"name": "ENIGMA", "org_id": "500123", "scv": "SCV000123456"}],
+        )
+
+    def test_multiple_submitters_all_captured_not_collapsed(self):
+        entries = [_BRCA1_CORRECT_SNV]
+        responses = self._responses(_esearch_response(["41804"]), _esummary_response(entries), _VCV_XML_TWO_SUBMITTERS)
+        with mock.patch("requests.get", side_effect=responses):
+            result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        names = {s["name"] for s in result["primary_record"]["submitters"]}
+        self.assertEqual(names, {"ENIGMA", "Ambry Genetics"})
+
+    def test_submitter_lookup_failure_leaves_submitters_unset_not_fatal(self):
+        """A broken/timed-out submitter efetch must not affect the
+        classification-relevant match result computed before it."""
+        entries = [_BRCA1_CORRECT_SNV]
+        responses = [
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esearch_response(["41804"])),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=__import__("json").dumps(_esummary_response(entries)),
+            ),
+            mock.Mock(status_code=500, raise_for_status=mock.Mock(side_effect=Exception("efetch down"))),
+        ]
+        with mock.patch("requests.get", side_effect=responses):
+            result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["primary_record"]["accession"], "VCV000041804")
+        self.assertIsNone(result["primary_record"]["submitters"])
+
+    def test_no_submitter_name_attribute_yields_empty_list_not_crash(self):
+        entries = [_BRCA1_CORRECT_SNV]
+        xml_no_name = """<?xml version="1.0"?>
+<ClinVarResult-Set>
+  <VariationArchive VariationID="41804">
+    <ClassifiedRecord>
+      <ClinicalAssertionList>
+        <ClinicalAssertion ID="1">
+          <ClinVarAccession Accession="SCV000999999"/>
+        </ClinicalAssertion>
+      </ClinicalAssertionList>
+    </ClassifiedRecord>
+  </VariationArchive>
+</ClinVarResult-Set>"""
+        responses = self._responses(_esearch_response(["41804"]), _esummary_response(entries), xml_no_name)
+        with mock.patch("requests.get", side_effect=responses):
+            result = ClinVarClient().query_variant(_variant(), rsid=None, assembly="GRCh38")
+
+        self.assertEqual(result["primary_record"]["submitters"], [])
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ Layering: ClinVarCodonLookup -> ClinVarCodonCache -> NCBI E-utilities.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from typing import Any, Dict, List, Optional
 
@@ -32,7 +33,7 @@ from pipeline.ps1_pm5.utils import clinvar_codon_match_from_esummary, dedupe_by_
 from pipeline.pvs1.models import TranscriptContext
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
-from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
+from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, parse_vcv_submitters, warn_if_placeholder_contact
 
 logger = get_logger(__name__)
 
@@ -103,6 +104,17 @@ class ClinVarCodonLookup:
                 )
 
         matches = dedupe_by_uid(all_matches)
+        if matches:
+            # Round 30: submitting organisation(s) for every codon-match
+            # record that can actually reach PS1/PM5's evidence trail --
+            # see `database/clinvar_client.py::ClinVarClient._fetch_submitters`
+            # for why this needs a second, separate request (submitter
+            # identity isn't in the `esummary` JSON this class's own
+            # `_esummary` already parses). Best-effort, same as that
+            # method: a lookup failure leaves `submitters` unset rather
+            # than blocking the PS1/PM5 evidence already gathered above.
+            submitters_by_uid = self._fetch_submitters([m.uid for m in matches])
+            matches = [dataclasses.replace(m, submitters=submitters_by_uid.get(m.uid)) for m in matches]
         # `matches` is the plain-dict form throughout -- the same
         # shape whether this result was just fetched or came back from
         # `self.cache` a moment ago, so `pipeline/ps1_pm5/decision.py`
@@ -166,6 +178,45 @@ class ClinVarCodonLookup:
             if match is not None:
                 matches.append(match)
         return matches
+
+    def _fetch_submitters(self, uids: List[str]) -> Dict[str, List[Dict[str, Optional[str]]]]:
+        """
+        Submitting organisation(s) for each ClinVar `uid` this codon
+        query found, via a single batched `efetch&rettype=vcv` request.
+        Mirrors `database/clinvar_client.py::ClinVarClient._fetch_submitters`
+        (same reasoning: `parse_vcv_submitters`'s docstring has the full
+        esummary-vs-efetch comparison) -- kept as its own copy rather
+        than a shared method, matching this module's own docstring on
+        why its NCBI request plumbing is intentionally mirrored, not
+        centralized, across GEPER's eutils clients.
+
+        Best-effort and never raises, for the same reason as that
+        method: a submitter lookup is supplementary provenance, not
+        something PS1/PM5's own comparison depends on.
+        """
+        if not uids:
+            return {}
+        params = {
+            "db": CONFIG.api.CLINVAR_DB,
+            "id": ",".join(uids),
+            "rettype": "vcv",
+            "is_variationid": "true",
+            "tool": CONFIG.api.NCBI_TOOL_NAME,
+            "email": CONFIG.api.NCBI_EMAIL,
+        }
+        if CONFIG.api.NCBI_API_KEY:
+            params["api_key"] = CONFIG.api.NCBI_API_KEY
+        try:
+            response = requests.get(
+                f"{CONFIG.api.NCBI_EUTILS_BASE}/efetch.fcgi", params=params, timeout=CONFIG.ps1_pm5.QUERY_TIMEOUT_SECS
+            )
+            response.raise_for_status()
+            return parse_vcv_submitters(response.text)
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad; see docstring above.
+            logger.warning(
+                f"PS1/PM5 ClinVar submitter lookup failed for {len(uids)} record(s); submitters left unset: {exc}"
+            )
+            return {}
 
     def _request_json(self, url: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """

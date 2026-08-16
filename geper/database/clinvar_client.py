@@ -82,7 +82,7 @@ from pipeline.variant_normalization import bare_spdi
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
-from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, warn_if_placeholder_contact
+from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, parse_vcv_submitters, warn_if_placeholder_contact
 from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
@@ -192,6 +192,17 @@ class ClinVarClient:
         if matched_records:
             match_status = ClinVarMatchStatus.MATCHED
             primary_record = self._select_primary(matched_records)
+            # Round 30: submitting organisation(s) for every record that
+            # can actually contribute to a criterion (PS1/PM5/BP6 all
+            # read `matched_records`/`primary_record`, never `records`'
+            # position-only noise) -- see `_fetch_submitters` for why
+            # this needs a second request. Best-effort: a failure here
+            # (logged inside `_fetch_submitters`) leaves `submitters`
+            # unset rather than blocking the classification-relevant
+            # result already computed above.
+            submitters_by_uid = self._fetch_submitters([r["uid"] for r in matched_records])
+            for r in matched_records:
+                r["submitters"] = submitters_by_uid.get(r["uid"])
         else:
             match_status = ClinVarMatchStatus.POSITION_ONLY
             primary_record = None
@@ -341,6 +352,48 @@ class ClinVarClient:
                 }
             )
         return records
+
+    def _fetch_submitters(self, uids: List[str]) -> Dict[str, List[Dict[str, Optional[str]]]]:
+        """
+        Submitting organisation(s) for each ClinVar `uid`, via a single
+        batched `efetch&rettype=vcv` request (VCV XML) -- NOT available
+        from the `esummary` JSON `_esummary` already parses (confirmed
+        live: `supporting_submissions.scv` there is bare SCV
+        accessions with no org name; `parse_vcv_submitters`'s docstring
+        has the full comparison). Batched the same way `_esummary`
+        batches its own `id` parameter, so this is one extra request
+        per `query_variant` call, not one per record.
+
+        Best-effort and never raises: a submitter lookup is
+        supplementary provenance, not something PS1/PM5/BP6's own
+        pathogenic/benign classification depends on, so a network or
+        parse failure here is logged and yields `{}` (leaving
+        `submitters` unset on every affected record) rather than
+        surfacing as an `ExternalAPIError` that would block the
+        classification-relevant result `query_variant` already
+        computed before calling this.
+        """
+        if not uids:
+            return {}
+        params = {
+            "db": self.db,
+            "id": ",".join(uids),
+            "rettype": "vcv",
+            "is_variationid": "true",
+            "tool": CONFIG.api.NCBI_TOOL_NAME,
+            "email": CONFIG.api.NCBI_EMAIL,
+        }
+        if CONFIG.api.NCBI_API_KEY:
+            params["api_key"] = CONFIG.api.NCBI_API_KEY
+        try:
+            response = requests.get(
+                f"{self.base_url}/efetch.fcgi", params=params, timeout=CONFIG.api.REQUEST_TIMEOUT_SECS
+            )
+            response.raise_for_status()
+            return parse_vcv_submitters(response.text)
+        except Exception as exc:  # noqa: BLE001 -- deliberately broad; see docstring above.
+            logger.warning(f"ClinVar submitter lookup failed for {len(uids)} record(s); submitters left unset: {exc}")
+            return {}
 
     @staticmethod
     def _variant_match(entry: Dict[str, Any], variant: Optional[Variant], assembly: Optional[str]) -> Optional[bool]:

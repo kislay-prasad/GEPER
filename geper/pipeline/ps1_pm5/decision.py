@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from pipeline.ps1_pm5.models import PS1PM5Evaluation
+from pipeline.ps1_pm5.utils import submitter_note
 from pipeline.pvs1.models import TranscriptContext
 from pipeline.pvs1.utils import CodingConsequenceDetail
 
@@ -397,7 +398,7 @@ class PS1PM5Evaluator:
         path.append(f"{code} applies -> Yes, citing {len(qualifying)} qualifying ClinVar record(s).")
         supporting = [
             f"ClinVar: {m['accession'] or m['uid']} -- {m['title']} -- {m['clinical_significance']} "
-            f"({m['review_status']}, {m['star_rating']}-star)"
+            f"({m['review_status']}, {m['star_rating']}-star){submitter_note(m.get('submitters'))}"
             + (f", condition(s): {', '.join(m['condition'])}" if m.get("condition") else "")
             for m in qualifying
         ]

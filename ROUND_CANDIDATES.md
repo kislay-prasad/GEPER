@@ -2241,3 +2241,178 @@ variant, so `test_mtdna_compartment_gate.py`'s MT fixtures were
 correctly not the right tool for this specific fix, only for Part A's
 context-gathering). `pre-commit run --all-files` was not run this round
 per instruction.
+
+---
+
+## Round 30 (ClinVar submitter-identity capture -- retrospective-study leakage control)
+
+### Origin: study design, not a code defect
+
+This round did not start from a bug. GEPER is being prepared for a
+retrospective hospital validation study that compares its
+classifications against a partner lab's own historical clinical
+reports. If that lab has ever submitted its own classification to
+ClinVar, GEPER's live ClinVar query can read that lab's own conclusion
+back as "independent" evidence, then appear to agree with the very
+report it's being validated against -- a circularity that would
+silently inflate the study's concordance figure. This is recorded here
+(not just in the commit message) because a future reader auditing this
+change against the usual "what bug did this fix" lens will not find
+one; the trigger was a study-protocol requirement, not a defect, and
+this file exists precisely for findings whose rationale isn't
+recoverable from the diff alone.
+
+`BP6` was already excluded from GEPER's own point scoring for exactly
+this reason (see `pipeline/acmg_rules.py::ACMGRuleEngine._bp6`'s
+`_BP6_DEPRECATION_CAVEAT`, citing the ClinGen SVI Working Group's 2018
+PP5/BP6 deprecation guidance). `PS1` and `PM5` also read ClinVar
+records -- at the same codon, for *other* variants -- and are NOT
+excluded from scoring, so the same leakage path was open through rules
+that do count toward the final classification.
+
+### Traced before any code changed
+
+1. **Which rules consume ClinVar, and which score.** Confirmed via
+   `pipeline/acmg_rules.py`: `PS1` (`_ps1`, line ~1116) and `PM5`
+   (`_pm5`, line ~1144) both read `clinvar_codon_result` through
+   `pipeline/ps1_pm5/lookup.py::ClinVarCodonLookup.query_codon` (a
+   codon-neighborhood search, distinct from `BP6`'s single-position
+   `ClinVarClient.query_variant`), and both contribute normally to
+   `_combine`'s point tally -- no exclusion exists for either. `BP6`
+   (`_bp6`, line ~2976) reads `clinvar_result` and IS excluded from the
+   tally at `_combine` (line ~3470: `if code == "BP6": ... continue`).
+   `PP5` (BP6's pathogenic mirror) is wired but deliberately reports
+   `not_evaluated` unconditionally (line ~923) -- never actually
+   queries ClinVar, so it was never part of the leakage surface. A
+   repo-wide case-insensitive grep for "clinvar" across every rule
+   module in `pipeline/acmg_rules.py` and `pipeline/ps1_pm5/` turned up
+   no fourth consumer. The user's PS1/PM5/BP6 list was correct.
+
+2. **Was submitter identity already in the fetched payload?** No. Live
+   `esummary` responses (`db=clinvar`, the endpoint
+   `database/clinvar_client.py::ClinVarClient._esummary` and
+   `pipeline/ps1_pm5/lookup.py::ClinVarCodonLookup._esummary` both already
+   call) expose `supporting_submissions.scv` -- bare SCV accessions,
+   e.g. `"SCV000033337"`, with no organisation name attached -- verified
+   live 2026-08-16 against a real UID. Submitter identity
+   (`SubmitterName`/`OrgID` on each `<ClinVarAccession>`) exists only in
+   the *different* `efetch&rettype=vcv` endpoint (VCV XML), confirmed
+   live against the same UID. So this was a genuine "second request"
+   case, not an unparsed field sitting in data already on hand --
+   `esummary` and `efetch&rettype=vcv` are two separate NCBI endpoints
+   with different payload shapes, and `efetch` supports the same
+   comma-separated UID batching `esummary` already uses, so it costs one
+   extra request per `query_variant`/`query_codon` call, not one per
+   record.
+
+3. **Is accession+query-time enough to reconstruct a historical
+   ClinVar state?** Not fully, and this was reported without being
+   fixed, per instruction. The live `esummary` response DOES carry a
+   real per-record version identifier already sitting in the payload
+   and currently discarded: `accession_version` (e.g.
+   `"VCV000012297.6"`) alongside the bare `accession`
+   (`database/clinvar_client.py::ClinVarClient._esummary` only keeps
+   `entry.get("accession")`, dropping the `.6` suffix). Capturing that
+   version would let a *future* re-run detect that ClinVar's record
+   changed since GEPER first consulted it -- but it does NOT let GEPER
+   reconstruct what a record said on an arbitrary *past* date, since the
+   live API only ever answers "what is true right now." Reconstructing
+   a specific historical date's state would need ClinVar's own dated
+   release archives (weekly/monthly XML dumps), a mechanism GEPER does
+   not currently touch at all. `pipeline/provenance.py` already reports
+   ClinVar honestly as source-level `UNKNOWN` for exactly this reason
+   (no database-wide release version exposed by this API) -- that
+   framing is still correct; it just doesn't yet mention the
+   `accession_version` per-record identifier that's sitting unused in
+   data already being fetched. Left for the study-protocol drift
+   decision, not fixed this round.
+
+### What was implemented: capture, not exclusion
+
+Every ClinVar record that can actually contribute to a criterion
+(`ClinVarClient.query_variant`'s `matched_records`/`primary_record` --
+which `BP6` reads -- and `ClinVarCodonLookup.query_codon`'s `matches` --
+which `PS1`/`PM5` read) now carries a `submitters` field: a list of
+`{"name", "org_id", "scv"}` dicts, one per submitting organisation,
+fetched via a new batched `efetch&rettype=vcv` request
+(`ClinVarClient._fetch_submitters` /
+`ClinVarCodonLookup._fetch_submitters`, both parsing the shared, pure
+`utils/ncbi_eutils.py::parse_vcv_submitters`). Records with more than
+one submitter keep all of them, not collapsed to one -- the existing
+review-status star tier already communicates how ClinVar itself
+aggregated multiple submissions, so collapsing submitter identity here
+would throw away information the study protocol might need. No
+filtering, exclusion, or "is this submitter the partner lab" logic was
+added anywhere -- deciding which submitters (if any) to exclude from a
+given retrospective comparison is a per-study decision that belongs in
+that study's protocol, since a different partner lab means a different
+answer; hardcoding an exclusion into the pipeline now would have to be
+undone the next time GEPER is used against a different lab's records.
+
+`submitters` reaches `geper_results.json` for free -- both
+`ClinVarClient.query_variant`'s and `ClinVarCodonLookup.query_codon`'s
+return dicts are embedded verbatim by `report/json_builder.py` (under
+the `clinvar` / `clinvar_codon_matches` keys respectively), and no
+pydantic schema in `pipeline/stage_schemas.py` constrains ClinVar
+record shape, so the new field is not stripped in transit. It also
+reaches the report's evidence trail: `BP6`'s triggered/conflicting
+evidence strings and `PS1`/`PM5`'s `supporting_evidence` strings (both
+already citing the ClinVar accession) now append
+` (submitted by X, Y)` via a small formatting helper
+(`ACMGRuleEngine._submitter_note` /
+`pipeline/ps1_pm5/utils.py::submitter_note` -- two independent copies,
+matching this codebase's established convention of mirroring small
+NCBI-adjacent helpers across `database/clinvar_client.py` and
+`pipeline/ps1_pm5/lookup.py` rather than centralizing them) when
+submitter identity was captured, and is silently omitted (not
+"(submitted by None)") when it wasn't. `BP6`'s `details` dict also
+gained a `clinvar_submitters` key carrying the raw list.
+
+The submitter fetch is deliberately best-effort: both `_fetch_submitters`
+methods catch any exception (network failure, malformed XML) and return
+`{}`, leaving `submitters` as `None` on the affected record(s) rather
+than raising -- a submitter-lookup outage must never block the
+classification-relevant `esearch`/`esummary` result already computed
+before it runs. `None` (not fetched / lookup failed) is kept distinct
+from `[]` (fetched successfully, ClinVar genuinely lists no submitter),
+the same "missing vs. empty" distinction this codebase applies
+everywhere else provenance can be absent for two different reasons.
+
+### Verified
+
+New tests: `tests/test_ncbi_eutils_submitters.py` (5 tests, the pure
+`parse_vcv_submitters` XML parser -- batched multi-variation response,
+multiple submitters on one record not collapsed, malformed/empty XML,
+a record with no assertions at all); `tests/test_clinvar_client.py`'s
+new `TestSubmitterCapture` (4 tests -- single submitter, multiple
+submitters, lookup-failure-is-non-fatal, missing `SubmitterName`
+attribute doesn't crash); `tests/test_ps1_pm5_lookup.py`'s new
+`TestQueryCodonCapturesSubmitters` (2 tests -- submitters reach
+`query_codon`'s returned matches, and a failed submitter efetch doesn't
+break the matches themselves); `tests/test_ps1_pm5.py`'s new
+`TestSubmitterNote` (5 tests -- the formatting helper itself, plus one
+end-to-end check that a qualifying PS1 anchor's `submitters` reaches
+`supporting_evidence`). Two existing `test_clinvar_client.py` assertions
+(`test_correct_record_found_even_with_wrong_rsid`,
+`test_no_rsid_runs_only_the_positional_search`) had hardcoded
+`mock_get.call_count` expectations that genuinely increased by one (the
+new submitter efetch) -- updated with a comment explaining why, not
+loosened or removed.
+
+Regression sweep: every test file importing `pipeline.acmg_rules`
+except two skipped for the orchestrator-import risk this project's own
+constraints flag (`test_conservation.py`, `test_phenotype_input.py` --
+both have a test-local `import pipeline.orchestrator`/`from
+pipeline.orchestrator import GeperPipeline`, confirmed via grep, not
+run this round), plus `test_clinvar_client.py`, `test_ps1_pm5_lookup.py`,
+`test_ncbi_eutils_submitters.py` (new), `test_provenance.py`,
+`test_report_consistency.py`, `test_report_references.py`,
+`test_stage_schemas.py` -- 496 passed, 3 pre-existing skips, 275
+subtests passed, no failures. `mypy` and `ruff` are not installed in
+this environment (`No module named mypy` / `No module named ruff`), so
+the per-file isolated mypy pass on `pipeline/acmg_rules.py` (the only
+touched file inside `mypy.ini`'s scope) could not actually be executed
+this round -- disclosed rather than silently skipped; the isolated
+`git stash push -- <other files>` / `mypy` / `git stash pop` sequence
+was still carried out up to the point mypy's absence was discovered.
+`pre-commit run --all-files` was not run this round per instruction.

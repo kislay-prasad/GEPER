@@ -23,6 +23,7 @@ Full detail still reaches the log; what's raised/returned to callers
 must not carry the URL.
 """
 
+import json
 import unittest
 from unittest import mock
 
@@ -83,6 +84,92 @@ class TestRequestJsonIsSanitized(unittest.TestCase):
         self.assertNotIn("http", result["error"])
         self.assertNotIn("eutils.ncbi.nlm.nih.gov", result["error"])
         self.assertNotIn("Failed to establish a new connection", result["error"])
+
+
+class _FakeCodon175Transcript:
+    transcript_id = "ENST00000269305"
+    chrom = "17"
+
+    @staticmethod
+    def genomic_positions_for_codon(codon_number):
+        return [7675089]
+
+
+class TestQueryCodonCapturesSubmitters(unittest.TestCase):
+    """Round 30: `query_codon`'s returned matches carry `submitters`,
+    fetched via a second, batched `efetch` request -- see
+    `ClinVarCodonLookup._fetch_submitters`."""
+
+    _ESUMMARY_ENTRY = {
+        "uid": "12374",
+        "accession": "VCV000012374",
+        "title": "NM_000546.6(TP53):c.524G>A (p.Arg175His)",
+        "variation_set": [{"canonical_spdi": "NC_000017.11:7675088:G:A"}],
+        "germline_classification": {
+            "description": "Pathogenic",
+            "review_status": "reviewed by expert panel",
+            "trait_set": [],
+        },
+    }
+
+    def test_matches_carry_submitters_from_second_request(self):
+        vcv_xml = """<?xml version="1.0"?>
+<ClinVarResult-Set>
+  <VariationArchive VariationID="12374">
+    <ClassifiedRecord>
+      <ClinicalAssertionList>
+        <ClinicalAssertion ID="1">
+          <ClinVarAccession Accession="SCV000042" SubmitterName="ClinGen LDCV" OrgID="7"/>
+        </ClinicalAssertion>
+      </ClinicalAssertionList>
+    </ClassifiedRecord>
+  </VariationArchive>
+</ClinVarResult-Set>"""
+        responses = [
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=json.dumps({"esearchresult": {"idlist": ["12374"]}}),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=json.dumps({"result": {"uids": ["12374"], "12374": self._ESUMMARY_ENTRY}}),
+            ),
+            mock.Mock(status_code=200, raise_for_status=lambda: None, text=vcv_xml),
+        ]
+        lookup = ClinVarCodonLookup(cache=None)
+        with mock.patch("pipeline.ps1_pm5.lookup.requests.get", side_effect=responses):
+            result = lookup.query_codon(_FakeCodon175Transcript(), codon_number=175, assembly="GRCh38")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(
+            result["matches"][0]["submitters"],
+            [{"name": "ClinGen LDCV", "org_id": "7", "scv": "SCV000042"}],
+        )
+
+    def test_submitter_fetch_failure_does_not_break_matches(self):
+        responses = [
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=json.dumps({"esearchresult": {"idlist": ["12374"]}}),
+            ),
+            mock.Mock(
+                status_code=200,
+                raise_for_status=lambda: None,
+                text=json.dumps({"result": {"uids": ["12374"], "12374": self._ESUMMARY_ENTRY}}),
+            ),
+            # 3rd call (submitter efetch) has no valid JSON/XML text mock configured beyond this --
+            # raise_for_status itself fails, exercising the best-effort catch.
+            mock.Mock(status_code=500, raise_for_status=mock.Mock(side_effect=Exception("efetch down"))),
+        ]
+        lookup = ClinVarCodonLookup(cache=None)
+        with mock.patch("pipeline.ps1_pm5.lookup.requests.get", side_effect=responses):
+            result = lookup.query_codon(_FakeCodon175Transcript(), codon_number=175, assembly="GRCh38")
+
+        self.assertTrue(result["found"])
+        self.assertIsNone(result["matches"][0]["submitters"])
 
 
 if __name__ == "__main__":

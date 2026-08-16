@@ -24,11 +24,29 @@ from pipeline.ps1_pm5.models import ClinVarCodonMatch, is_conflicting, star_rati
 # rejects it -- a nonsense match at the same codon is PVS1/PM5-null
 # territory, not PS1/PM5's missense-vs-missense comparison.
 _THREE_TO_ONE = {
-    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
-    "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
-    "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
-    "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
-    "Ter": "*", "Sec": "U", "Pyl": "O",
+    "Ala": "A",
+    "Arg": "R",
+    "Asn": "N",
+    "Asp": "D",
+    "Cys": "C",
+    "Gln": "Q",
+    "Glu": "E",
+    "Gly": "G",
+    "His": "H",
+    "Ile": "I",
+    "Leu": "L",
+    "Lys": "K",
+    "Met": "M",
+    "Phe": "F",
+    "Pro": "P",
+    "Ser": "S",
+    "Thr": "T",
+    "Trp": "W",
+    "Tyr": "Y",
+    "Val": "V",
+    "Ter": "*",
+    "Sec": "U",
+    "Pyl": "O",
 }
 
 # ClinVar HGVS.p titles look like "...(p.Arg175His)" for a substitution,
@@ -117,9 +135,7 @@ def clinvar_codon_match_from_esummary(uid: str, entry: Dict[str, Any]) -> Option
         review_status=review_status,
         star_rating=star_rating(review_status),
         is_conflicting=is_conflicting(review_status),
-        condition=[
-            trait.get("trait_name") for trait in germline.get("trait_set", []) if isinstance(trait, dict)
-        ],
+        condition=[trait.get("trait_name") for trait in germline.get("trait_set", []) if isinstance(trait, dict)],
     )
 
 
@@ -134,6 +150,25 @@ def matches_from_clinvar_codon_result(clinvar_codon_result: Optional[Dict[str, A
     if not clinvar_codon_result or clinvar_codon_result.get("skipped") or clinvar_codon_result.get("error"):
         return []
     return clinvar_codon_result.get("matches") or []
+
+
+def submitter_note(submitters: Optional[List[Dict[str, Any]]]) -> str:
+    """
+    Format ` (submitted by X, Y)` for an evidence-trail string citing a
+    ClinVar accession, or `""` when submitter identity wasn't captured
+    (`submitters` is `None` -- lookup failed or hasn't run) or ClinVar
+    genuinely lists none (`[]`). Mirrors
+    `pipeline/acmg_rules.py::ACMGRuleEngine._submitter_note` (BP6's own
+    copy) -- round 30 retrospective-study leakage control: naming the
+    submitter in PS1/PM5's own evidence trail, not filtering on it. See
+    this repo's `ROUND_CANDIDATES.md` Round 30 entry.
+    """
+    if not submitters:
+        return ""
+    names = [s.get("name") for s in submitters if isinstance(s, dict) and s.get("name")]
+    if not names:
+        return ""
+    return f" (submitted by {', '.join(dict.fromkeys(names))})"
 
 
 def dedupe_by_uid(matches: List[ClinVarCodonMatch]) -> List[ClinVarCodonMatch]:

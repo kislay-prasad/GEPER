@@ -102,13 +102,19 @@ class ClinVarCodonMatch:
     star_rating: int
     is_conflicting: bool
     condition: List[str] = field(default_factory=list)
+    # Round 30: submitting organisation(s) behind this record's
+    # classification -- retrospective-study leakage control (a partner
+    # lab's own ClinVar submission shouldn't silently "confirm" GEPER's
+    # independent PS1/PM5 evidence). Populated separately from the
+    # `esummary` fetch this dataclass is otherwise built from -- see
+    # `pipeline/ps1_pm5/lookup.py::ClinVarCodonLookup._fetch_submitters`
+    # -- so it defaults to `None` (not fetched yet / lookup failed),
+    # distinct from `[]` (fetched, ClinVar has no submitter on file).
+    submitters: Optional[List[Dict[str, Optional[str]]]] = None
 
     @property
     def meets_confidence(self) -> bool:
-        return (
-            not self.is_conflicting
-            and self.clinical_significance in PATHOGENIC_CLASSIFICATIONS
-        )
+        return not self.is_conflicting and self.clinical_significance in PATHOGENIC_CLASSIFICATIONS
 
     def is_same_variant_as(self, pos: int, ref: str, alt: str) -> bool:
         return self.pos == pos and self.ref.upper() == ref.upper() and self.alt.upper() == alt.upper()
@@ -128,6 +134,7 @@ class ClinVarCodonMatch:
             "star_rating": self.star_rating,
             "is_conflicting": self.is_conflicting,
             "condition": self.condition,
+            "submitters": self.submitters,
         }
 
 

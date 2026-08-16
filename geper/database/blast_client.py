@@ -175,9 +175,7 @@ def get_blast_tool_versions() -> Dict[str, Optional[str]]:
             versions[tool] = None
             continue
         try:
-            proc = subprocess.run(
-                [tool, "-version"], capture_output=True, text=True, timeout=10
-            )
+            proc = subprocess.run([tool, "-version"], capture_output=True, text=True, timeout=10)
             first_line = (proc.stdout or proc.stderr or "").strip().splitlines()
             versions[tool] = first_line[0] if first_line else "unknown version (empty -version output)"
         except Exception as exc:  # noqa: BLE001 - diagnostic only, must never raise
@@ -219,8 +217,7 @@ def ensure_local_blast_db(
 
     if _has_local_db_files(resolved_db_path):
         logger.info(
-            f"Local BLAST database already exists at '{resolved_db_path}' -- "
-            "skipping makeblastdb (not rebuilding)."
+            f"Local BLAST database already exists at '{resolved_db_path}' -- skipping makeblastdb (not rebuilding)."
         )
         return resolved_db_path
 
@@ -236,9 +233,12 @@ def ensure_local_blast_db(
 
     command = [
         "makeblastdb",
-        "-in", fasta_path,
-        "-dbtype", dbtype,
-        "-out", resolved_db_path,
+        "-in",
+        fasta_path,
+        "-dbtype",
+        dbtype,
+        "-out",
+        resolved_db_path,
         "-parse_seqids",
     ]
     logger.info(
@@ -269,7 +269,9 @@ def ensure_local_blast_db(
         )
         return None
     except Exception as exc:  # noqa: BLE001 - must never crash the pipeline
-        logger.warning(f"Unexpected error running makeblastdb ({exc}); falling back without an auto-built local database.")
+        logger.warning(
+            f"Unexpected error running makeblastdb ({exc}); falling back without an auto-built local database."
+        )
         return None
 
     logger.info(f"Local BLAST database built successfully at '{resolved_db_path}'.")
@@ -326,9 +328,7 @@ class _BlastDiskCache:
             return None
         try:
             with self._lock, self._connect() as conn:
-                row = conn.execute(
-                    "SELECT result_json FROM blast_cache WHERE cache_key = ?", (key,)
-                ).fetchone()
+                row = conn.execute("SELECT result_json FROM blast_cache WHERE cache_key = ?", (key,)).fetchone()
             if row is None:
                 return None
             return json.loads(row[0])
@@ -342,8 +342,7 @@ class _BlastDiskCache:
         try:
             with self._lock, self._connect() as conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO blast_cache (cache_key, result_json, created_at) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO blast_cache (cache_key, result_json, created_at) VALUES (?, ?, ?)",
                     (key, json.dumps(result), time.time()),
                 )
         except Exception as exc:  # noqa: BLE001
@@ -453,9 +452,7 @@ class BLASTClient:
             enable_disk_cache = CONFIG.api.BLAST_DISK_CACHE_ENABLED
         self._disk_cache: Optional[_BlastDiskCache] = None
         if enable_disk_cache and not disabled:
-            cache_path = os.path.join(
-                cache_dir or CONFIG.CACHE_DIR, "blast_cache.sqlite"
-            )
+            cache_path = os.path.join(cache_dir or CONFIG.CACHE_DIR, "blast_cache.sqlite")
             self._disk_cache = _BlastDiskCache(cache_path)
 
         # Bounds how many *distinct* sequences search_many() will
@@ -464,9 +461,7 @@ class BLASTClient:
         # "as many as we have sequences" -- local BLAST has no such
         # courtesy concern and defaults higher (bounded by CPU count).
         self.max_concurrent = (
-            CONFIG.api.BLAST_MAX_CONCURRENT_LOCAL
-            if self.mode == "local"
-            else CONFIG.api.BLAST_MAX_CONCURRENT_REMOTE
+            CONFIG.api.BLAST_MAX_CONCURRENT_LOCAL if self.mode == "local" else CONFIG.api.BLAST_MAX_CONCURRENT_REMOTE
         )
 
     @staticmethod
@@ -520,10 +515,7 @@ class BLASTClient:
 
         cached = self._result_cache.get(key)
         if cached is not None:
-            logger.info(
-                f"BLAST in-memory cache hit for a {len(sequence)}bp sequence -- "
-                "skipping a duplicate search."
-            )
+            logger.info(f"BLAST in-memory cache hit for a {len(sequence)}bp sequence -- skipping a duplicate search.")
             return cached
 
         if self._disk_cache is not None:
@@ -590,8 +582,7 @@ class BLASTClient:
 
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_seq = {
-                executor.submit(self.search, seq, program, database, max_hits): seq
-                for seq in unique_sequences
+                executor.submit(self.search, seq, program, database, max_hits): seq for seq in unique_sequences
             }
             for future in as_completed(future_to_seq):
                 seq = future_to_seq[future]
@@ -633,9 +624,7 @@ class BLASTClient:
     # ------------------------------------------------------------------
     # Remote (NCBI-hosted) BLAST via Biopython
     # ------------------------------------------------------------------
-    def _search_remote(
-        self, sequence: str, program: str, database: str, max_hits: int
-    ) -> Dict[str, Any]:
+    def _search_remote(self, sequence: str, program: str, database: str, max_hits: int) -> Dict[str, Any]:
         if not ensure_pip_package_available("biopython", import_name="Bio"):
             raise ExternalAPIError(
                 "Remote BLAST requires Biopython, and automatic "
@@ -653,9 +642,7 @@ class BLASTClient:
                     f"Submitting remote BLAST ({program} vs {database}) for a "
                     f"{len(sequence)}bp sequence (attempt {attempt})..."
                 )
-                result_handle = NCBIWWW.qblast(
-                    program, database, sequence, hitlist_size=max_hits
-                )
+                result_handle = NCBIWWW.qblast(program, database, sequence, hitlist_size=max_hits)
                 record = NCBIXML.read(result_handle)
                 return self._normalize_biopython_record(record, max_hits)
             except Exception as exc:  # noqa: BLE001 - network/service errors vary widely
@@ -664,9 +651,19 @@ class BLASTClient:
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
 
-        raise ExternalAPIError(
-            f"Remote BLAST failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
+        logger.warning(
+            f"Remote BLAST failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
         )
+        # Round 28: `last_error` here is whatever Biopython's `NCBIWWW.qblast`
+        # raised, which for a real network failure can stringify to
+        # include NCBI's request URL/host -- same leak class as every
+        # other provider in this document, reaching `report/
+        # clinical_report_builder.py`/`report/report_generator.py` via
+        # `_run_blast_stage`'s own `reason`/`error` fields (see that
+        # method's comment in `pipeline/orchestrator.py`). Full detail
+        # goes to the log line above only.
+        raise ExternalAPIError(f"Remote BLAST failed after {CONFIG.api.MAX_RETRIES} attempts")
 
     @staticmethod
     def _normalize_biopython_record(record, max_hits: int) -> Dict[str, Any]:
@@ -692,9 +689,12 @@ class BLASTClient:
         query_fasta = f">query\n{sequence}\n"
         command = [
             program,
-            "-db", self.local_db_path,
-            "-outfmt", "6 sseqid pident length evalue bitscore stitle",
-            "-max_target_seqs", str(max_hits),
+            "-db",
+            self.local_db_path,
+            "-outfmt",
+            "6 sseqid pident length evalue bitscore stitle",
+            "-max_target_seqs",
+            str(max_hits),
         ]
         try:
             proc = subprocess.run(
@@ -711,9 +711,26 @@ class BLASTClient:
                 f"NCBI BLAST+ command line tools to use mode='local'."
             ) from exc
         except subprocess.CalledProcessError as exc:
-            raise ExternalAPIError(f"Local BLAST search failed: {exc.stderr}") from exc
+            # Round 28: `exc.stderr` is the local `blastn` process's raw
+            # error output, which routinely embeds `self.local_db_path`
+            # (a local filesystem path) -- e.g. "BLAST Database error:
+            # No alias or index file found ... in search path
+            # [/local/path]". Same local-path-leak class rounds 18-22
+            # fixed for SpliceBERT's checkpoint_dir and MMSplice's
+            # h5_path/package_dir, reaching the report via
+            # `_run_blast_stage`'s `reason`/`error` fields. Full stderr
+            # goes to the log only; what's raised names the failure, not
+            # the path.
+            logger.warning(f"Local BLAST search failed (exit {exc.returncode}): {exc.stderr}", exc_info=True)
+            raise ExternalAPIError(f"Local BLAST search failed (exit code {exc.returncode}).") from exc
         except subprocess.TimeoutExpired as exc:
-            raise ExternalAPIError(f"Local BLAST search timed out: {exc}") from exc
+            # Round 28: `str(exc)` embeds the full command list, which
+            # includes `-db` and `self.local_db_path` -- same local-path
+            # leak as the `CalledProcessError` branch above.
+            logger.warning(f"Local BLAST search timed out: {exc}", exc_info=True)
+            raise ExternalAPIError(
+                f"Local BLAST search timed out after {CONFIG.api.REQUEST_TIMEOUT_SECS * 4}s."
+            ) from exc
 
         hits = []
         for line in proc.stdout.strip().splitlines():

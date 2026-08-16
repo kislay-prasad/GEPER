@@ -136,9 +136,19 @@ class MaveDBFunctionalEvidenceProvider:
 
         if HEALTH.is_offline("MaveDB"):
             HEALTH.note_skip("MaveDB")
-            raise ExternalAPIError(
-                f"MaveDB search request to '{url}' skipped: MaveDB was confirmed offline at startup."
-            )
+            logger.warning(f"MaveDB search request to '{url}' skipped: MaveDB was confirmed offline at startup.")
+            # Round 28: the message actually raised propagates out of
+            # `fetch_gene_index` (this method is NOT wrapped in the
+            # per-score-set swallowing try/except `_index_one_score_set`
+            # uses -- see this class's own docstring) to
+            # `pipeline/functional_evidence/lookup.py::_match_mavedb`,
+            # which folds it into `errors`/the returned `error` field,
+            # embedded verbatim in geper_results.json AND rendered
+            # unconditionally into every Markdown report's "Stage
+            # Warnings / Errors" section via `pipeline/orchestrator.py::
+            # _run_functional_evidence_stage`. Must not embed `url`; full
+            # detail goes to the log line above only.
+            raise ExternalAPIError("MaveDB search request skipped: MaveDB was confirmed offline at startup.")
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
@@ -160,9 +170,14 @@ class MaveDBFunctionalEvidenceProvider:
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
         HEALTH.note_failure("MaveDB")
-        raise ExternalAPIError(
-            f"MaveDB search request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
+        logger.warning(
+            f"MaveDB search request to '{url}' failed after "
+            f"{CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
         )
+        # Round 28: see the sanitization note on the offline-skip raise
+        # above -- same reach, same fix.
+        raise ExternalAPIError(f"MaveDB search request failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts")
 
     @staticmethod
     def _filter_and_rank(score_sets: List[Dict[str, Any]], gene_symbol: str) -> List[Dict[str, Any]]:
@@ -260,7 +275,17 @@ class MaveDBFunctionalEvidenceProvider:
     def _get(self, url: str) -> "requests.Response":
         if HEALTH.is_offline("MaveDB"):
             HEALTH.note_skip("MaveDB")
-            raise ExternalAPIError(f"MaveDB request to '{url}' skipped: MaveDB was confirmed offline at startup.")
+            logger.warning(f"MaveDB request to '{url}' skipped: MaveDB was confirmed offline at startup.")
+            # Round 28: currently, every caller of `_get`/`_get_json`/
+            # `_get_text` (`_index_one_score_set`, `_get_variant_rows`)
+            # is wrapped in `fetch_gene_index`'s own per-score-set
+            # `except Exception: logger.warning(...)` (see this class's
+            # docstring), so this specific raise is log-only today --
+            # but sanitized anyway, matching `_search_score_sets`'s
+            # fix and every other site in this leak class, so a future
+            # caller added outside that swallowing try/except doesn't
+            # silently reopen it.
+            raise ExternalAPIError("MaveDB request skipped: MaveDB was confirmed offline at startup.")
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
@@ -277,9 +302,13 @@ class MaveDBFunctionalEvidenceProvider:
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
         HEALTH.note_failure("MaveDB")
-        raise ExternalAPIError(
-            f"MaveDB request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
+        logger.warning(
+            f"MaveDB request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
         )
+        # Round 28: see the sanitization note on this method's
+        # offline-skip raise above.
+        raise ExternalAPIError(f"MaveDB request failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts")
 
 
 def _first_publication(metadata: Dict[str, Any]) -> Optional[str]:

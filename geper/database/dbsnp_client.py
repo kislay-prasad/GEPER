@@ -408,7 +408,17 @@ class DbSNPClient:
         """
         if HEALTH.is_offline("dbSNP"):
             HEALTH.note_skip("dbSNP")
-            raise ExternalAPIError(f"dbSNP request to '{url}' skipped: dbSNP was confirmed offline at startup.")
+            logger.warning(f"dbSNP request to '{url}' skipped: dbSNP was confirmed offline at startup.")
+            # Round 28: the message actually raised reaches
+            # `pipeline/orchestrator.py::_run_dbsnp_stage`'s
+            # `errors.append(...)` (rendered unconditionally into every
+            # Markdown report's "Stage Warnings / Errors" section) AND
+            # its `{"error": str(exc)}` result, embedded verbatim under
+            # geper_results.json's `dbsnp` key by `report/json_builder.py`.
+            # Must not embed `url`; full detail goes to the log line
+            # above only. Same pattern rounds 20-27 applied to the rest
+            # of this leak class.
+            raise ExternalAPIError("dbSNP request skipped: dbSNP was confirmed offline at startup.")
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
@@ -437,4 +447,8 @@ class DbSNPClient:
                 if attempt < CONFIG.api.MAX_RETRIES:
                     time.sleep(CONFIG.api.RETRY_BACKOFF_SECS * attempt)
         HEALTH.note_failure("dbSNP")
-        raise ExternalAPIError(f"dbSNP request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"dbSNP request to '{url}' failed after {CONFIG.api.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        raise ExternalAPIError(f"dbSNP request failed after {CONFIG.api.MAX_RETRIES} attempts")

@@ -48,7 +48,7 @@ import requests
 from config import CONFIG
 from pipeline.hpo import bootstrap as hpo_bootstrap
 from pipeline.hpo.models import HPODiseaseAssociation, HPOGeneEvidence, HPOPhenotypeAssociation
-from pipeline.hpo.utils import gene_cache_key, normalize_gene_symbol, parse_genes_to_phenotype_row
+from pipeline.hpo.utils import normalize_gene_symbol, parse_genes_to_phenotype_row
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 
@@ -115,7 +115,9 @@ class LocalDatasetHPOProvider(HPOProviderBase):
 
     def _load(self, path: str) -> None:
         if not os.path.exists(path):
-            logger.warning(f"HPO gene-to-phenotype local file not found at '{path}'; local dataset lookups will be empty.")
+            logger.warning(
+                f"HPO gene-to-phenotype local file not found at '{path}'; local dataset lookups will be empty."
+            )
             return
         count = 0
         try:
@@ -226,7 +228,17 @@ class LiveAPIHPOProvider(HPOProviderBase):
                 logger.warning(f"HPO API request attempt {attempt} failed for '{url}': {exc}")
                 if attempt < CONFIG.hpo.MAX_RETRIES:
                     time.sleep(CONFIG.hpo.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"HPO API request to '{url}' failed after {CONFIG.hpo.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"HPO API request to '{url}' failed after {CONFIG.hpo.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        # Round 28: the message actually raised reaches `hpo_result`'s
+        # `error` field, embedded verbatim in geper_results.json AND
+        # rendered unconditionally into every Markdown report's "Stage
+        # Warnings / Errors" section via `pipeline/orchestrator.py::
+        # _run_hpo_stage`'s `errors.append(...)`. Must not embed
+        # `url`/`last_error`; full detail goes to the log line above only.
+        raise ExternalAPIError(f"HPO API request failed after {CONFIG.hpo.MAX_RETRIES} attempts")
 
 
 def _evidence_from_annotation_payload(

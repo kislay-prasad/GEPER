@@ -239,7 +239,9 @@ class GraphQLGnomadProvider(GnomadProviderBase):
             return None
         dataset_id = _DATASET_BY_BUILD.get(build)
         if dataset_id is None:
-            return GnomadAnnotation.from_error(chrom, pos, ref, alt, build, f"no gnomAD dataset known for build '{build}'")
+            return GnomadAnnotation.from_error(
+                chrom, pos, ref, alt, build, f"no gnomAD dataset known for build '{build}'"
+            )
 
         variant_id = gnomad_variant_id(chrom, pos, ref, alt)
         try:
@@ -267,7 +269,19 @@ class GraphQLGnomadProvider(GnomadProviderBase):
                 logger.warning(f"gnomAD GraphQL request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.gnomad.MAX_RETRIES:
                     time.sleep(CONFIG.gnomad.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"gnomAD GraphQL request to '{self.endpoint}' failed after {CONFIG.gnomad.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"gnomAD GraphQL request to '{self.endpoint}' failed after "
+            f"{CONFIG.gnomad.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        # Round 28: the message actually raised reaches
+        # `GnomadAnnotation.from_error(...)` -> `gnomad_result`'s `error`
+        # field, embedded verbatim in geper_results.json AND rendered
+        # unconditionally into every Markdown report's "Stage Warnings /
+        # Errors" section via `pipeline/orchestrator.py::_run_gnomad_stage`'s
+        # `errors.append(...)`. Must not embed `self.endpoint`/`last_error`;
+        # full detail goes to the log line above only.
+        raise ExternalAPIError(f"gnomAD GraphQL request failed after {CONFIG.gnomad.MAX_RETRIES} attempts")
 
 
 def _annotation_from_graphql(
@@ -319,8 +333,12 @@ def _annotation_from_graphql(
         exome_af=exome.get("af"),
         ac=genome.get("ac") if genome.get("ac") is not None else exome.get("ac"),
         an=genome.get("an") if genome.get("an") is not None else exome.get("an"),
-        hom=genome.get("homozygote_count") if genome.get("homozygote_count") is not None else exome.get("homozygote_count"),
-        hemi=genome.get("hemizygote_count") if genome.get("hemizygote_count") is not None else exome.get("hemizygote_count"),
+        hom=genome.get("homozygote_count")
+        if genome.get("homozygote_count") is not None
+        else exome.get("homozygote_count"),
+        hemi=genome.get("hemizygote_count")
+        if genome.get("hemizygote_count") is not None
+        else exome.get("hemizygote_count"),
         population_breakdown=breakdown,
     )
     annotation.annotate_highest_population()
@@ -357,7 +375,9 @@ class CompositeGnomadProvider:
             result = self._try(self.local_provider, chrom, pos, ref, alt, build)
             if result is not None:
                 return result
-            return GnomadAnnotation.from_error(chrom, pos, ref, alt, build, "offline mode: no local gnomAD index configured for this build")
+            return GnomadAnnotation.from_error(
+                chrom, pos, ref, alt, build, "offline mode: no local gnomAD index configured for this build"
+            )
 
         result = self._try(self.local_provider, chrom, pos, ref, alt, build)
         if result is not None:
@@ -370,7 +390,9 @@ class CompositeGnomadProvider:
         return GnomadAnnotation.not_found(chrom, pos, ref, alt, build, "none")
 
     @staticmethod
-    def _try(provider: GnomadProviderBase, chrom: str, pos: int, ref: str, alt: str, build: str) -> Optional[GnomadAnnotation]:
+    def _try(
+        provider: GnomadProviderBase, chrom: str, pos: int, ref: str, alt: str, build: str
+    ) -> Optional[GnomadAnnotation]:
         try:
             return provider.query(chrom, pos, ref, alt, build)
         except Exception as exc:  # noqa: BLE001 - a provider bug must never break the pipeline

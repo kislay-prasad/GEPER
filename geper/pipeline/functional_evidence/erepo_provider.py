@@ -115,9 +115,16 @@ class ErepoFunctionalEvidenceProvider:
 
         if HEALTH.is_offline("ClinGen ERepo"):
             HEALTH.note_skip("ClinGen ERepo")
-            raise ExternalAPIError(
-                f"ClinGen ERepo request to '{url}' skipped: ClinGen ERepo was confirmed offline at startup."
-            )
+            logger.warning(f"ClinGen ERepo request to '{url}' skipped: ClinGen ERepo was confirmed offline at startup.")
+            # Round 28: the message actually raised reaches
+            # `pipeline/functional_evidence/lookup.py::_match_erepo`,
+            # which folds it into `errors`/the returned `error` field,
+            # embedded verbatim in geper_results.json AND rendered
+            # unconditionally into every Markdown report's "Stage
+            # Warnings / Errors" section via `pipeline/orchestrator.py::
+            # _run_functional_evidence_stage`. Must not embed `url`; full
+            # detail goes to the log line above only.
+            raise ExternalAPIError("ClinGen ERepo request skipped: ClinGen ERepo was confirmed offline at startup.")
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.functional_evidence.MAX_RETRIES + 1):
@@ -142,6 +149,11 @@ class ErepoFunctionalEvidenceProvider:
                 if attempt < CONFIG.functional_evidence.MAX_RETRIES:
                     time.sleep(CONFIG.functional_evidence.RETRY_BACKOFF_SECS * attempt)
         HEALTH.note_failure("ClinGen ERepo")
-        raise ExternalAPIError(
-            f"ClinGen ERepo request to '{url}' failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}"
+        logger.warning(
+            f"ClinGen ERepo request to '{url}' failed after "
+            f"{CONFIG.functional_evidence.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
         )
+        # Round 28: see the sanitization note on the offline-skip raise
+        # above -- same reach, same fix.
+        raise ExternalAPIError(f"ClinGen ERepo request failed after {CONFIG.functional_evidence.MAX_RETRIES} attempts")

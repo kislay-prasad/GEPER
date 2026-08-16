@@ -1873,3 +1873,194 @@ exercises the decision engine against static fixtures, never
 imports `pipeline.orchestrator` or anything model-loading; confirmed by
 reading each file's import block before running. `pre-commit run
 --all-files` was not run this round per instruction.
+
+---
+
+## Round 28 (closing the raw-URL leak class: six modules, thirteen sites, plus BLAST)
+
+### Design question, answered before any fix was written: per-site sanitization, not a chokepoint
+
+Round 27's audit found that all thirteen remaining leak sites reach the
+Markdown report through one shared mechanism: every `_run_*_stage`
+helper in `pipeline/orchestrator.py` appends to a single `errors:
+List[str]` parameter, which `report/report_generator.py` renders
+unconditionally into every report's "### ⚠ Stage Warnings / Errors"
+section the instant it's non-empty. Given that chokepoint, the
+question this round opened with: sanitize per-site (the rounds
+20-27 pattern) or once, where errors get appended to that list?
+
+Traced rather than assumed before choosing. **The shared `errors` list
+is not actually the only sink** -- it is one of (at least) two,
+fed by the same underlying string. `report/json_builder.py` embeds
+every provider's own result dict verbatim into `geper_results.json`
+under its own top-level key (`dbsnp`, `gnomad`, `conservation`, `hpo`,
+`clinvar_codon_matches`, etc.) -- confirmed by reading each embed site
+directly, e.g. `json_builder.py:214/219/258/286/315/323`. Each of those
+result dicts' own `error` field is populated by the provider itself
+(`GnomadAnnotation.from_error(..., str(exc))`, `{"error": str(exc)}`,
+...) at the exact point the exception is caught -- upstream of, and
+independent of, the `errors.append(...)` call in
+`pipeline/orchestrator.py` that feeds the shared list. Both sinks read
+the *same* `str(exc)`, but the JSON-embedding sink is populated before
+any single chokepoint in `orchestrator.py` ever runs.
+
+This settles it: a chokepoint sanitizing only at the `errors.append`
+layer would close the Markdown "Stage Warnings" reach but leave
+`geper_results.json`'s thirteen-plus per-provider `error`/`*_error`
+keys still leaking raw URLs, since those are populated from the
+provider's own exception handler before the orchestrator ever sees the
+string. Closing *both* sinks from one chokepoint would mean intercepting
+every provider's result-dict construction too -- which is not a
+chokepoint at all, it is per-site, just moved one call frame up and
+done with less context about what each specific message actually
+contains. The user's own two reasons for suspecting per-site (locality
+of judgment; a chokepoint can't distinguish a URL-bearing message from
+an equally-detailed-but-safe one) both hold, and this trace adds a
+third, more mechanical one: per-site is the only shape that closes both
+confirmed sinks with one change per module, because sanitizing at the
+raise -- where the exception and the URL that produced it are both
+still in scope -- is the one point in the whole call graph upstream of
+every sink. Fixed per-site, matching rounds 20-27.
+
+### `RESOLVED, round 28.` All six modules (thirteen sites) fixed
+
+Same pattern throughout: full detail (URL/endpoint, and `last_error`
+via `exc_info=last_error`) to a `logger.warning(...)` call; the raised
+`ExternalAPIError` keeps only "the lookup failed after N attempts" (or
+"...was confirmed offline at startup"), no URL, no raw exception text.
+
+- **`database/dbsnp_client.py`** -- 2 sites (`_request_json`'s
+  offline-skip and retry-exhausted raises).
+- **`pipeline/conservation/provider.py`** -- 2 sites
+  (`UCSCApiProvider._get`'s `self.endpoint`; `MyVariantGerpProvider._get`'s
+  `url`).
+- **`pipeline/gnomad/provider.py`** -- 1 site (`GraphQLGnomadProvider._post`'s
+  `self.endpoint`).
+- **`pipeline/hpo/provider.py`** -- 1 site (`LiveAPIHPOProvider._get_json`'s
+  `url`).
+- **`pipeline/functional_evidence/mavedb_provider.py`** -- 4 sites
+  across two methods (`_search_score_sets`'s offline-skip + retry-
+  exhausted; `_get`'s offline-skip + retry-exhausted). `_get`'s two
+  sites are, in the current call graph, only ever reached from
+  `_index_one_score_set`'s own swallowing `except Exception:
+  logger.warning(...)` (confirmed by grepping every caller of `_get`/
+  `_get_json`/`_get_text` in the file -- both are exclusively called
+  from within that one try block) -- so today they are log-only, not
+  report-facing. Fixed anyway, as defense in depth: they share the
+  identical shape as the other eleven live sites, and leaving one
+  pair unsanitized "because it's currently caught elsewhere" is exactly
+  the kind of gap a future refactor (a new caller added outside that
+  swallowing try, or the try itself narrowed) could silently reopen
+  without anyone noticing -- cheap and correct to close now rather than
+  wait for it to go live.
+- **`pipeline/functional_evidence/erepo_provider.py`** -- 2 sites
+  (`_get`'s offline-skip + retry-exhausted, both embedding `url`).
+- **`pipeline/sequence_context.py`** -- 1 of its 2 flagged sites needed
+  a fix. The offline-skip raise (`_fetch_region`, line ~292) only
+  embeds `region` (bare genomic coordinates, e.g.
+  `"17:43094298-43094300"`) -- confirmed inert, left unchanged. The
+  retry-exhausted raise embeds `last_error`, which for a real
+  `requests.ConnectionError` typically stringifies to include the full
+  Ensembl request URL/host -- that one site was the actual leak (per
+  round 27's own note: "the leak is `last_error`, not `region`"), fixed
+  the same way; `region` itself is intentionally still in the raised
+  message since it's not sensitive.
+
+**`database/blast_client.py`** -- a genuinely different shape, decided
+on its own merits rather than forced into the URL pattern:
+
+  - **Remote BLAST** (`_search_remote`'s retry-exhausted raise) --
+    same shape as everything else (`last_error` from Biopython's
+    `NCBIWWW.qblast`, which can stringify to include NCBI's request
+    URL) -- fixed identically.
+  - **Local BLAST** -- not a URL leak at all. `subprocess.
+    CalledProcessError.stderr` (the local `blastn` process's own error
+    text) and `subprocess.TimeoutExpired`'s `str(exc)` (which embeds
+    the full command list) both routinely carry `self.local_db_path`,
+    a local filesystem path -- the same sub-class rounds 18-22 already
+    fixed for SpliceBERT's `checkpoint_dir` and MMSplice's `h5_path`/
+    `package_dir`, not the request-URL sub-class this round's other six
+    modules belong to. `_run_blast_stage`'s own comment in
+    `pipeline/orchestrator.py` (lines ~2346-2358) explicitly documents
+    `reason`/`error` as feeding `report/clinical_report_builder.py` and
+    `report/report_generator.py` -- the most directly self-documented
+    reach of any site fixed this round. Fixed the same way regardless
+    of sub-class: full stderr/timeout detail to `logger.warning(...,
+    exc_info=True)`, the raised message keeps the failure mode (exit
+    code, or "timed out after Ns") with no path. The third BLAST site
+    audited (`FileNotFoundError` for a missing local `program` binary,
+    e.g. `'blastn'`) was checked and left alone -- a bare command name
+    is not sensitive.
+
+**Existing fixtures checked, none pinned the old wording.** Grepped
+`tests/` for every old raw message string before changing any of them;
+zero test assertions matched (checked per rounds 24/26/27's own
+standard). One historical artifact found, not a live pin:
+`tests/fixtures/offline_evidence/nuclear_test_with_mt_evidence.json`
+contains two real, frozen `conservation`/`errors` strings from an
+actual past run that captured the (then-live) UCSC URL leak verbatim
+(`"UCSC conservation API request to 'https://api.genome.ucsc.edu/...'
+failed after 3 attempts: HTTPSConnectionPool(...)"`). Checked both
+consumers of this fixture (`tests/test_acmg_net_points.py`,
+`tests/test_mtdna_compartment_gate.py`) -- neither asserts on this
+field; it is inert, along-for-the-ride context data for other
+assertions. Left as-is: it is a historical capture of a real past run,
+not a test contract, and rewriting frozen fixture data to match a
+later code change would misrepresent what that run actually produced.
+
+New `tests/test_round28_url_leak_sanitization.py` (14 tests) covers all
+six modules' fixes plus both BLAST sub-shapes, each asserting the
+sensitive substring (URL, host, or local path) is absent and the exact
+sanitized message is present.
+
+### Final audit: the class is closed
+
+Re-ran the same audit methodology round 27 used (grep every
+`raise ExternalAPIError(...)` site, both inline-f-string and multi-line
+forms, for an embedded `url`/`endpoint`/`last_error`/path variable) plus
+a broader sweep for the same shape under other exception types
+(`.format()`-built and `%`-style messages, not just f-strings) across
+the whole repo, not just the modules touched. Result: every remaining
+`raise ExternalAPIError(f"...")` site in the repo now raises a message
+built entirely from static text and `CONFIG.*.MAX_RETRIES` -- no
+`url`/`endpoint`/`last_error`/path interpolation left in any of them
+(verified by re-running the grep post-fix and reading each of the
+seventeen remaining hits). Two non-`.py`-pipeline hits from the broader
+sweep (`compare_reports.py`, `verify_clinvar_dbsnp_fix.py`) are
+standalone dev/verification scripts, never imported by the pipeline or
+report layer -- not part of this class.
+
+**Confirmed still unreachable, not part of the live count:**
+`annotation/indigenomes.py` -- re-checked this round, unchanged since
+round 27: `_run_indigenomes_stage` is defined but still never called
+from `process_variant`; `_indigenomes_retired_result()` runs in its
+place. If IndiGenomes is ever reinstated (a commercial license, per
+round 14/15's own notes), its 2 raise sites should be sanitized at that
+time -- not before, per the same "don't fix an unreachable path
+speculatively" standard round 15/27 already applied.
+
+**This is the actual end of the class.** Round 26 called it closed
+after one module and was wrong; round 27 found six more and, this time,
+audited before claiming closure again. Nothing found this round
+contradicts that closure -- if a fourteenth site turns up later, it
+will be a new leak introduced after this point, not one missed here.
+
+### Verified
+
+`py_compile` clean on all eight changed files (`database/dbsnp_client.py`,
+`pipeline/conservation/provider.py`, `pipeline/gnomad/provider.py`,
+`pipeline/hpo/provider.py`, `pipeline/functional_evidence/
+mavedb_provider.py`, `pipeline/functional_evidence/erepo_provider.py`,
+`pipeline/sequence_context.py`, `database/blast_client.py`) and the new
+test file. `tests/test_round28_url_leak_sanitization.py`: 14/14 pass.
+Full adjacent regression sweep (`test_dbsnp_client.py`,
+`test_conservation.py`, `test_gnomad_provider.py`,
+`test_gnomad_lookup.py`, `test_hpo.py`, `test_ps3_bs3.py`,
+`test_functional_evidence_provenance_capture.py`,
+`test_ps1_pm5_lookup.py`, `test_clinvar_client.py`,
+`test_report_consistency.py`): 224 passed, 6 skipped (pre-existing,
+local-fixture-dependent, unrelated to this round), 3 subtests passed.
+No touched or added test file imports `pipeline.orchestrator` or
+anything model-loading (biopython's `Bio.Blast.NCBIWWW.qblast` is
+mocked, never actually called -- no real BLAST network request made).
+`pre-commit run --all-files` was not run this round per instruction.

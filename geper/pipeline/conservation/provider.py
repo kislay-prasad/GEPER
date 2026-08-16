@@ -160,10 +160,14 @@ class LocalBigWigProvider(ConservationProviderBase):
                 timeout=CONFIG.conservation.QUERY_TIMEOUT_SECS,
             )
         except FileNotFoundError:
-            logger.warning(f"'{self.bigwigsummary_binary}' is not available on PATH after all; skipping local {self.score_type} track.")
+            logger.warning(
+                f"'{self.bigwigsummary_binary}' is not available on PATH after all; skipping local {self.score_type} track."
+            )
             return None
         except subprocess.TimeoutExpired:
-            logger.warning(f"Local {self.score_type} bigWigSummary query timed out for {query_chrom}:{pos} against '{local_path}'.")
+            logger.warning(
+                f"Local {self.score_type} bigWigSummary query timed out for {query_chrom}:{pos} against '{local_path}'."
+            )
             return ConservationAnnotation.from_error(chrom, pos, ref, alt, build, "local bigwig query timed out")
 
         stdout = (proc.stdout or "").strip()
@@ -178,15 +182,25 @@ class LocalBigWigProvider(ConservationProviderBase):
                 f"Local {self.score_type} bigWigSummary query failed (exit {proc.returncode}) for {query_chrom}:{pos}: "
                 f"{(proc.stderr or '').strip()[:300]}"
             )
-            return ConservationAnnotation.from_error(chrom, pos, ref, alt, build, f"bigWigSummary exit {proc.returncode}")
+            return ConservationAnnotation.from_error(
+                chrom, pos, ref, alt, build, f"bigWigSummary exit {proc.returncode}"
+            )
 
         try:
             score = float(stdout)
         except ValueError:
-            return ConservationAnnotation.from_error(chrom, pos, ref, alt, build, f"unparseable bigWigSummary output: {stdout!r}")
+            return ConservationAnnotation.from_error(
+                chrom, pos, ref, alt, build, f"unparseable bigWigSummary output: {stdout!r}"
+            )
 
         return ConservationAnnotation(
-            chrom=chrom, pos=pos, ref=ref, alt=alt, build=build, source=self.name, found=True,
+            chrom=chrom,
+            pos=pos,
+            ref=ref,
+            alt=alt,
+            build=build,
+            source=self.name,
+            found=True,
             **{self.score_field: score},
         )
 
@@ -217,7 +231,9 @@ class UCSCApiProvider(ConservationProviderBase):
             return None
         track = TRACK_BY_BUILD[self.score_type].get(build)
         if track is None:
-            return ConservationAnnotation.from_error(chrom, pos, ref, alt, build, f"no {self.score_type} track known for build '{build}'")
+            return ConservationAnnotation.from_error(
+                chrom, pos, ref, alt, build, f"no {self.score_type} track known for build '{build}'"
+            )
 
         genome = ucsc_genome_id(build)
         query_chrom = normalize_chrom(chrom)
@@ -244,7 +260,13 @@ class UCSCApiProvider(ConservationProviderBase):
             return ConservationAnnotation.not_found(chrom, pos, ref, alt, build, self.name)
 
         return ConservationAnnotation(
-            chrom=chrom, pos=pos, ref=ref, alt=alt, build=build, source=self.name, found=True,
+            chrom=chrom,
+            pos=pos,
+            ref=ref,
+            alt=alt,
+            build=build,
+            source=self.name,
+            found=True,
             **{self.score_field: float(score)},
         )
 
@@ -262,7 +284,20 @@ class UCSCApiProvider(ConservationProviderBase):
                 logger.warning(f"UCSC conservation API request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.conservation.MAX_RETRIES:
                     time.sleep(CONFIG.conservation.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"UCSC conservation API request to '{self.endpoint}' failed after {CONFIG.conservation.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"UCSC conservation API request to '{self.endpoint}' failed after "
+            f"{CONFIG.conservation.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        # Round 28: the message actually raised reaches
+        # `ConservationAnnotation.from_error(...)` -> `conservation_result`'s
+        # `error` field, embedded verbatim in geper_results.json AND
+        # rendered unconditionally into every Markdown report's "Stage
+        # Warnings / Errors" section via `pipeline/orchestrator.py::
+        # _run_conservation_stage`'s `errors.append(...)`. Must not embed
+        # `self.endpoint`/`last_error`; full detail goes to the log line
+        # above only.
+        raise ExternalAPIError(f"UCSC conservation API request failed after {CONFIG.conservation.MAX_RETRIES} attempts")
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +370,14 @@ class MyVariantGerpProvider(ConservationProviderBase):
             return ConservationAnnotation.not_found(chrom, pos, ref, alt, build, self.name)
 
         return ConservationAnnotation(
-            chrom=chrom, pos=pos, ref=ref, alt=alt, build=build, source=self.name, found=True, gerp_score=float(score),
+            chrom=chrom,
+            pos=pos,
+            ref=ref,
+            alt=alt,
+            build=build,
+            source=self.name,
+            found=True,
+            gerp_score=float(score),
         )
 
     @staticmethod
@@ -389,7 +431,14 @@ class MyVariantGerpProvider(ConservationProviderBase):
                 logger.warning(f"MyVariant.info GERP request attempt {attempt} failed: {exc}")
                 if attempt < CONFIG.conservation.MAX_RETRIES:
                     time.sleep(CONFIG.conservation.RETRY_BACKOFF_SECS * attempt)
-        raise ExternalAPIError(f"MyVariant.info GERP request to '{url}' failed after {CONFIG.conservation.MAX_RETRIES} attempts: {last_error}")
+        logger.warning(
+            f"MyVariant.info GERP request to '{url}' failed after "
+            f"{CONFIG.conservation.MAX_RETRIES} attempts: {last_error}",
+            exc_info=last_error,
+        )
+        # Round 28: see the sanitization note on `UCSCApiProvider._get`
+        # above -- same reach, same fix.
+        raise ExternalAPIError(f"MyVariant.info GERP request failed after {CONFIG.conservation.MAX_RETRIES} attempts")
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +468,9 @@ class _SingleScoreProvider:
             return result
         return self._try(self.api_provider, chrom, pos, ref, alt, build)
 
-    def _try(self, provider: ConservationProviderBase, chrom: str, pos: int, ref: str, alt: str, build: str) -> Optional[ConservationAnnotation]:
+    def _try(
+        self, provider: ConservationProviderBase, chrom: str, pos: int, ref: str, alt: str, build: str
+    ) -> Optional[ConservationAnnotation]:
         try:
             return provider.query(chrom, pos, ref, alt, build)
         except Exception as exc:  # noqa: BLE001 - a provider bug must never break the pipeline
@@ -452,7 +503,9 @@ class CompositeConservationProvider:
         return {
             score_type: _SingleScoreProvider(
                 score_type,
-                local_provider=LocalBigWigProvider(score_type, bigwigsummary_binary=CONFIG.conservation.BIGWIGSUMMARY_BINARY),
+                local_provider=LocalBigWigProvider(
+                    score_type, bigwigsummary_binary=CONFIG.conservation.BIGWIGSUMMARY_BINARY
+                ),
                 # GERP++ has no UCSC track (verified -- see
                 # MyVariantGerpProvider's own docstring); every other
                 # integrated score type does.

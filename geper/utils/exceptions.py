@@ -72,3 +72,15 @@ class SignoffError(GeperError):
     to act on, so it must not proceed and silently do something
     partial to a clinical record.
     """
+
+
+class LIMSExportBlockedError(GeperError):
+    """
+    Raised by `report/export_lims.py` when a caller attempts to export
+    a run whose `review_status` (see `report/json_builder.py`) is not
+    `"reviewed"` -- governance control, round 30 part 2: a LIMS is an
+    automated downstream consumer that never opens the PDF a human
+    clinician would see the DRAFT/OVERRIDDEN status on, so this must be
+    a hard, loud failure (never a silent empty/partial export) whenever
+    a run has not been through `review/signoff.py::approve()`.
+    """

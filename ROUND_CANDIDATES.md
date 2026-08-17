@@ -2416,3 +2416,119 @@ this round -- disclosed rather than silently skipped; the isolated
 `git stash push -- <other files>` / `mypy` / `git stash pop` sequence
 was still carried out up to the point mypy's absence was discovered.
 `pre-commit run --all-files` was not run this round per instruction.
+
+---
+
+### Part 2: review-status governance controls (LIMS export gate + `geper_results.json`/Markdown sign-off state)
+
+Followed directly from part 1's audit of GEPER's clinical Intended Use
+Statement (a document outside this repo, not covered above): PDF was
+the only report format that ever reflected DRAFT/REVIEWED status --
+`geper_results.json` and `geper_report.md` stayed silent on review
+state, and `review/signoff.py::approve()` never touched
+`geper_results.json` at all despite claiming to move a run "from DRAFT
+to REVIEWED". `report/export_lims.py` -- a real, built downstream
+export path for automated LIMS consumption -- had no gate whatsoever,
+so an unreviewed (or, worse, clinician-overridden-since-approval) run
+could reach a hospital's LIMS with nothing recording that it should
+not have.
+
+**Re-checked one assumption before building anything**, per explicit
+instruction: whether `override()`'s pre-existing, deliberate "does NOT
+touch `geper_patient_meta.json`" behavior conflicted with the new
+`review_status` field's semantics. It does, in one specific sequence:
+`approve()` then `override()` (with no subsequent re-approve) leaves
+the PDF footer saying "reviewed by {physician}" (untouched -- this
+round's own decision was "sign-off legal weight stays PDF-only", so
+the footer function was deliberately NOT made `review_status`-aware)
+while `geper_results.json`'s `review_status` and the new Markdown
+banner correctly say `"overridden"`. This is a real, disclosed
+divergence between the PDF and the other two formats in that one
+sequence -- not silently resolved either way, but pinned by a
+dedicated regression test
+(`tests/test_review_status_governance.py::TestPdfMarkdownReviewStatusConsistency
+::test_override_after_approve_known_pdf_markdown_divergence`) so a
+future change can't silently make it worse (or silently "fix" it
+without a decision). Every OTHER reachable state (fresh/draft,
+approved-only, overridden-without-prior-approval, and
+override-then-re-approve) is genuinely consistent across all three
+surfaces, also tested.
+
+**Built:**
+- `report/json_builder.py`: new top-level `review_status` (`"draft"`
+  default), `reviewed_by`, `reviewed_at` fields on every
+  `geper_results.json`, alongside the existing `run_complete` field
+  (same "absent/legacy reads as the less-trusting state" convention).
+- `review/signoff.py::approve()`: now actually rewrites
+  `geper_results.json` with `review_status: "reviewed"` +
+  `reviewed_by`/`reviewed_at`, before regenerating the PDFs -- the
+  root-cause fix. `results_json_sha256` in the signed manifest now
+  correctly hashes the POST-rewrite file.
+- `review/signoff.py::override()`: now unconditionally sets
+  `review_status: "overridden"`, including when called on an
+  already-approved run -- deliberately re-blocking LIMS export until a
+  fresh `approve()` covers the changed content. `reviewed_by`/
+  `reviewed_at` are left untouched (historical "who approved a
+  PREVIOUS state" record), since `review_status` alone gates export.
+- `report/export_lims.py`: hard gate
+  (`_require_reviewed`/`LIMSExportBlockedError`, new exception in
+  `utils/exceptions.py`) in `build_lims_export` -- the single choke
+  point both `export_lims_json`/`export_lims_csv`/the CLI go through.
+  `"overridden"` does NOT satisfy the gate, only exactly `"reviewed"`
+  does. A blocked attempt writes an `action: "export_blocked"` entry to
+  a `geper_signoff_audit.log` in the export path's own directory
+  (same filename `review/signoff.py`'s own audit log uses, so the two
+  interleave into one trail when co-located) before re-raising -- never
+  a silent empty/partial file.
+- `report/report_generator.py`: one-line Markdown banner
+  (`_render_review_status_banner`), sourced from `review_status`,
+  inserted right under the H1 title. Explicitly NOT a second formal
+  signature surface (no name/reg-number/hospital fields, no
+  sign-off-block visual match to the PDF's) -- its "reviewed"/
+  "overridden" text says "see the signed PDF report" precisely so it's
+  never mistaken for carrying the PDF's legal weight.
+- `LIMS_EXPORT_MAPPING.md`: new section documenting the gate for
+  whoever next reads that file to understand the export format.
+
+**Deliberately NOT built:** any change to `report/summary.py`'s
+`_icmr_ai_disclosure_footer_text` (the PDF footer logic) -- this is
+what preserves the divergence documented above rather than resolving
+it by fiat; extending the PDF footer to also read `review_status`
+is a separate decision this round's explicit scope didn't cover.
+
+**Verified:** `tests/test_export_lims.py`'s new
+`LIMSExportGovernanceTests` (6 tests: draft/missing-key/overridden all
+blocked with an audit entry and no file written; reviewed JSON and CSV
+both succeed with no audit entry). `tests/test_signoff.py`'s existing
+32 tests unmodified in assertions (only its shared fixture gained the
+three new JSON keys) -- all still pass, including
+`test_override_after_approve_preserves_reviewed_footer`, confirming
+the PDF-footer-untouched decision above didn't regress the one test
+that already covers it. New `tests/test_review_status_governance.py`
+(13 tests): `approve()`/`override()` actually rewriting
+`geper_results.json` (not just the sidecar files), the
+override-after-approve / approve-after-override transitions, real
+LIMS-export-blocked-then-allowed runs through the actual `signoff.py`
+functions (not hand-built fixtures), and the PDF/Markdown/`review_status`
+three-way consistency checks (including the one documented exception).
+Regression sweep: `test_export_lims.py`, `test_signoff.py`,
+`test_review_status_governance.py`, `test_report_consistency.py`,
+`test_report_references.py`, `test_stage_schemas.py`,
+`test_round16_not_evaluated_categories.py`,
+`test_round17_run_complete_marker.py`,
+`test_round28_url_leak_sanitization.py`, `test_consent_metadata.py`,
+`test_confidence_caption.py`, `test_timezone_utils.py`,
+`test_ai_splicing_report.py`, `test_ai_model_orchestration.py`,
+`test_indian_population_frequency.py`, `test_gnomad_integration.py`,
+`test_mmsplice_integration.py`, `test_uniprot_provider.py`,
+`test_interpro_provider.py`, `test_alphafold_provider.py`,
+`test_clingen_provider.py`, `test_clingen_integration.py`,
+`test_thousand_genomes_sas.py`, `test_mmsplice_loader.py` -- 361 passed
+combined, 0 failures (skips only from pypdf not being installed in
+this environment, confirmed via `py -3.12 -c "import pypdf"` failing;
+reportlab IS installed, so PDF generation itself -- as opposed to
+pypdf text-extraction assertions -- was exercised and passed in every
+test that calls `approve()`/`override()`). `mypy`/`ruff` remain
+uninstalled in this environment (confirmed again this part); none of
+the files touched this part are in `mypy.ini`'s scope regardless.
+`pre-commit run --all-files` was not run this round per instruction.

@@ -43,6 +43,32 @@ timestamps, real HGVS nomenclature, verbatim ACMG/AMP 2015 classification
 terms, real external accessions) so a future FHIR crosswalk is a mapping
 exercise against this table, not a rewrite.
 
+## Governance gate: review/sign-off required before export
+
+Round 30 part 2: `export_lims_json`/`export_lims_csv` (and the pure
+`build_lims_export` they both call) refuse to run at all unless the
+source `geper_results.json`'s `review_status` field is exactly
+`"reviewed"` -- raising `utils.exceptions.LIMSExportBlockedError` and
+writing an `action: "export_blocked"` entry to a `geper_signoff_audit.log`
+alongside the requested export path (see `report/export_lims.py
+::_require_reviewed`). A LIMS is an automated downstream consumer that
+never opens the PDF a human clinician would see the DRAFT/OVERRIDDEN
+status on, so this gate exists precisely so an unreviewed -- or
+subsequently clinician-overridden -- run's classification can never
+reach a hospital's LIMS silently.
+
+`review_status` starts `"draft"` (set by `report/json_builder.py` at
+generation time) and only ever changes via `review/signoff.py`:
+`approve()` sets it to `"reviewed"` (plus `reviewed_by`/`reviewed_at`);
+`override()` sets it to `"overridden"` -- deliberately re-blocking
+export even on a previously-approved run, since the prior sign-off no
+longer covers content a clinician has since changed. A fresh
+`approve()` call after an `override()` is what makes a run
+export-eligible again. `review_status`/`reviewed_by`/`reviewed_at` are
+NOT themselves part of the `LIMSExport` schema below -- they gate
+whether an export happens at all, rather than being data a LIMS needs
+mapped.
+
 ## Format
 
 - **JSON** (`export_lims_json`): one file per run, nested, matches the

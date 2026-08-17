@@ -294,6 +294,29 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
     `report/summary.py::_parse_patient_meta`'s docstring for why
     `physician` alone -- no `patient_name` required -- is sufficient).
 
+    Round 30 part 2 (root-cause fix): also rewrites `geper_results.json`
+    itself with `review_status: "reviewed"` plus `reviewed_by`/
+    `reviewed_at`. Before this, `approve()` only ever touched the
+    sidecar `geper_patient_meta.json` and regenerated the two PDFs --
+    `geper_results.json` (GEPER's primary MACHINE-readable output,
+    consumed directly by `report/export_lims.py` and anything else that
+    reads it without ever opening a PDF) stayed byte-identical to its
+    pre-review state forever. `review_status` is what
+    `report/export_lims.py::_require_reviewed` gates on and what
+    `report/report_generator.py`'s Markdown banner renders -- neither
+    existed before this JSON write, so neither could have reflected
+    review status either.
+
+    Always sets `review_status` to `"reviewed"` regardless of the
+    document's prior value (including `"overridden"` -- see
+    `override()`'s docstring for why an override needs its own,
+    subsequent `approve()` to become export-eligible again). This is
+    the intended "sign off on whatever the record currently says"
+    re-review workflow, not a bug: a clinician calling `approve()`
+    after an `override()` is attesting to the CURRENT (possibly
+    overridden) content, exactly like re-approving after any other
+    change to `geper_results.json`.
+
     Returns the manifest dict that was also written to
     `geper_signoff_manifest.json`. Raises `SignoffError` if `output_dir`
     has no `geper_results.json` (nothing to approve).
@@ -308,12 +331,17 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
     with open(patient_meta_path, "w", encoding="utf-8") as fh:
         json.dump(patient_meta_raw, fh, indent=2)
 
+    approved_at = datetime.now(timezone.utc).isoformat()
+    document["review_status"] = "reviewed"
+    document["reviewed_by"] = physician
+    document["reviewed_at"] = approved_at
+    _write_document(results_path, document)
+
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
     short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
     generate_pdf(document, pdf_path, patient_meta=patient_meta_path)
     generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_path, companion_filename=FULL_PDF_FILENAME)
 
-    approved_at = datetime.now(timezone.utc).isoformat()
     manifest = {
         "pdf_sha256": _sha256_file(pdf_path),
         "short_pdf_sha256": _sha256_file(short_pdf_path),
@@ -378,9 +406,45 @@ def override(
     whatever draft/reviewed state that file already implies (present
     with `physician` set = reviewed; absent or `physician`-less =
     draft) is read as-is and carries through unchanged into the
-    regenerated reports -- an override on a not-yet-approved run stays
-    DRAFT until a separate `approve()` call, exactly matching the
-    footer mechanism's own single source of truth.
+    regenerated PDFs -- an override on a not-yet-approved run's PDFs
+    still say DRAFT until a separate `approve()` call, exactly matching
+    the footer mechanism's own single source of truth. This is
+    UNCHANGED by round 30 part 2 below: the footer text function
+    (`report/summary.py::_icmr_ai_disclosure_footer_text`) was
+    deliberately left untouched, since "sign-off legal weight stays
+    PDF-only" was this round's explicit decision -- extending it to
+    read `review_status` would make it a second, PDF-side place that
+    decides what counts as reviewed.
+
+    Round 30 part 2: ALWAYS sets `geper_results.json`'s `review_status`
+    to `"overridden"`, regardless of the document's prior value --
+    including when the run was already `"reviewed"` (a prior
+    `approve()` call). This is what makes `report/export_lims.py`'s
+    hard gate correctly re-block export after an override: a clinician
+    changed the classification a LIMS would otherwise ship, so the
+    prior sign-off no longer covers the CURRENT content and a fresh
+    `approve()` is required before this run is export-eligible again.
+    `reviewed_by`/`reviewed_at` are deliberately left untouched (not
+    cleared) -- they still answer "who approved a PREVIOUS state of
+    this document, and when", which remains true and audit-relevant
+    even though it no longer implies "this document is currently
+    approved" (`review_status` alone is what gates that).
+
+    KNOWN, DELIBERATELY UNRESOLVED TENSION (flag this if it matters for
+    your workflow): because the PDF footer is untouched (see above),
+    calling `override()` on an already-`approve()`d run produces PDFs
+    that still literally read "reviewed by {physician}" (confirmed by
+    `tests/test_signoff.py::TestOverride::
+    test_override_after_approve_preserves_reviewed_footer`, an existing
+    test this change does not alter) while `geper_results.json`'s
+    `review_status` now says `"overridden"` and the regenerated
+    Markdown banner says so too. The PDF's claim is not literally false
+    -- that physician did review a prior state of this document -- but
+    a reader comparing all three surfaces after this exact sequence
+    (approve, then override, with no subsequent re-approve) will see
+    PDF="reviewed", JSON/Markdown="overridden". Closing this fully
+    would mean making the PDF footer override-aware too, which is a
+    separate decision from this round's explicit scope.
 
     Raises `SignoffError` if `output_dir` has no `geper_results.json`,
     `variant_key` doesn't parse, no variant matches it, or the matched
@@ -415,6 +479,7 @@ def override(
     }
     variant_result.setdefault("overrides", []).append(record)
     acmg["clinician_override"] = record
+    document["review_status"] = "overridden"
 
     _write_document(results_path, document)
 

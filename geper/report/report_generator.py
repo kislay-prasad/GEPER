@@ -75,6 +75,56 @@ _DISCLAIMER = (
     "before any medical decision is made."
 )
 
+# Governance control (round 30 part 2): a one-line review-status banner,
+# sourced from `geper_results.json`'s own `review_status` field (see
+# `report/json_builder.py`) so Markdown never has to independently
+# decide draft/reviewed/overridden -- it just reports whatever
+# `review/signoff.py::approve()`/`override()` already wrote there.
+#
+# Deliberately NOT a second formal signature surface (that decision is
+# explicit for this round): no name/registration-number/hospital
+# fields, no visual sign-off block matching
+# `report/summary.py::_build_signoff_block`'s PDF-only two-role table.
+# The "reviewed"/"overridden" banners below say so explicitly ("see the
+# signed PDF report...") precisely so this banner is never mistaken for
+# carrying the same legal weight the PDF's footer/sign-off block does.
+_REVIEW_STATUS_DRAFT_BANNER = "> **DRAFT — NOT FOR PATIENT USE — AWAITING CLINICAL REVIEW**"
+_REVIEW_STATUS_REVIEWED_BANNER_TEMPLATE = (
+    "> **REVIEWED** by {reviewed_by} on {reviewed_at}. This banner is informational only -- see the signed "
+    "PDF report for the formal clinical sign-off."
+)
+_REVIEW_STATUS_OVERRIDDEN_BANNER = (
+    "> **OVERRIDDEN — NOT FOR PATIENT USE — AWAITING CLINICAL REVIEW.** A clinician has applied a "
+    "classification override to at least one finding in this run since it was last reviewed; a fresh "
+    "sign-off is required before this run is ready for use. See the signed PDF report and the audit log "
+    "for details."
+)
+
+
+def _render_review_status_banner(json_document: Dict[str, Any]) -> str:
+    """
+    One-line review-status banner text for `json_document`, sourced
+    from its `review_status` field. Any value other than the two
+    non-draft states this pipeline actually writes -- `"reviewed"` /
+    `"overridden"` (see `review/signoff.py`) -- including `"draft"`
+    itself, a missing key (any pre-round-30 file), `None`, or an
+    unrecognized string, renders as the DRAFT banner: the same
+    fail-toward-the-less-trusting-claim discipline
+    `JSONResultBuilder.run_complete`'s own docstring already
+    establishes for exactly this reason -- a report nobody has actually
+    signed off on must never look reviewed/overridden just because a
+    field is absent or unexpected.
+    """
+    status = json_document.get("review_status")
+    if status == "reviewed":
+        return _REVIEW_STATUS_REVIEWED_BANNER_TEMPLATE.format(
+            reviewed_by=json_document.get("reviewed_by") or "an unrecorded reviewer",
+            reviewed_at=json_document.get("reviewed_at") or "an unrecorded time",
+        )
+    if status == "overridden":
+        return _REVIEW_STATUS_OVERRIDDEN_BANNER
+    return _REVIEW_STATUS_DRAFT_BANNER
+
 
 class ReportGenerator:
     """Builds a Markdown report from a GEPER JSON result document."""
@@ -82,6 +132,8 @@ class ReportGenerator:
     def generate(self, json_document: Dict[str, Any]) -> str:
         lines: List[str] = []
         lines.append("# GEPER Variant Analysis Report")
+        lines.append("")
+        lines.append(_render_review_status_banner(json_document))
         lines.append("")
         # Displayed in IST (report is for Indian hospitals); the
         # stored `generated_at` itself stays UTC (see

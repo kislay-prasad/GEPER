@@ -119,6 +119,21 @@ class JSONResultBuilder:
             "model_checkpoints": self.model_checkpoints,
             # Round 17 -- see this class's own `self.run_complete` comment.
             "run_complete": self.run_complete,
+            # Governance control (round 30, part 2): review/sign-off state.
+            # Always written as "draft" here -- the ONLY writer of any
+            # other value is `review/signoff.py` (`approve()` -> "reviewed",
+            # `override()` -> "overridden"), which loads this exact
+            # `geper_results.json` back and rewrites it in place after this
+            # class has already produced it. `reviewed_by`/`reviewed_at`
+            # are `None` here for the same reason -- honest "not yet"
+            # rather than a fabricated identity/timestamp. See
+            # `report/export_lims.py::_require_reviewed` (the one place
+            # this field gates a real action) and
+            # `report/report_generator.py::_render_review_status_banner`
+            # (the one place it is rendered) for the two consumers.
+            "review_status": "draft",
+            "reviewed_by": None,
+            "reviewed_at": None,
             # Data-source provenance (task points 1-4, 6): one entry
             # per known external source, always present (never omitted)
             # -- a source this run never consulted still appears, with

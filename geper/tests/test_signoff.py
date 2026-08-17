@@ -96,6 +96,12 @@ def _make_document():
         "assembly": "GRCh38",
         "vcf_samples": ["SAMPLE01"],
         "variant_count": len(variants),
+        # Round 30 part 2: mirrors JSONResultBuilder.build()'s own
+        # defaults, so this fixture matches what a real GEPER run
+        # actually writes before any review/signoff.py action.
+        "review_status": "draft",
+        "reviewed_by": None,
+        "reviewed_at": None,
         "variants": variants,
     }
 

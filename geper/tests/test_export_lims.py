@@ -23,9 +23,18 @@ from report.export_lims import (
     export_lims_csv,
     export_lims_json,
 )
+from utils.exceptions import LIMSExportBlockedError
 
 
-def _base_document(variants):
+def _base_document(variants, review_status="reviewed"):
+    """
+    `review_status` defaults to `"reviewed"` (round 30 part 2's
+    governance gate -- see `report/export_lims.py::_require_reviewed`):
+    every test in this file below is about FIELD MAPPING, not the gate
+    itself, so its fixtures represent an already-reviewed run unless a
+    test explicitly overrides this to exercise the gate (see
+    `LIMSExportGovernanceTests`).
+    """
     return {
         "geper_version": "1.0.0",
         "generated_at": "2026-08-02T10:00:00+00:00",
@@ -34,6 +43,7 @@ def _base_document(variants):
         "vcf_samples": ["NA00001"],
         "variant_count": len(variants),
         "code_version": "geper-test",
+        "review_status": review_status,
         "variants": variants,
     }
 
@@ -298,6 +308,93 @@ class CsvExportTests(unittest.TestCase):
         self.assertEqual(row["case_rank"], "")
         self.assertNotIn("N/A", row.values())
         self.assertNotIn("null", row.values())
+
+
+class LIMSExportGovernanceTests(unittest.TestCase):
+    """
+    Round 30 part 2: the LIMS export hard gate
+    (`report/export_lims.py::_require_reviewed`). Proves the actual
+    blocking/unblocking BEHAVIOR (exception raised, audit entry
+    written, file not written on block; export succeeds and is
+    readable when reviewed) -- not just that `review_status` exists as
+    a field.
+    """
+
+    def _audit_lines(self, directory):
+        path = os.path.join(directory, "geper_signoff_audit.log")
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def test_draft_json_export_blocked_with_audit_entry(self):
+        doc = _base_document([_clean_variant()], review_status="draft")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "export.json")
+            with self.assertRaises(LIMSExportBlockedError) as ctx:
+                export_lims_json(doc, path)
+            self.assertIn("draft", str(ctx.exception))
+            self.assertFalse(os.path.exists(path))  # never a silent partial/empty export
+
+            lines = self._audit_lines(tmp)
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["action"], "export_blocked")
+            self.assertEqual(lines[0]["format"], "json")
+            self.assertEqual(lines[0]["review_status"], "draft")
+            self.assertIn("reviewed", lines[0]["reason"])
+
+    def test_draft_csv_export_blocked_with_audit_entry(self):
+        doc = _base_document([_clean_variant()], review_status="draft")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "export.csv")
+            with self.assertRaises(LIMSExportBlockedError):
+                export_lims_csv(doc, path)
+            self.assertFalse(os.path.exists(path))
+
+            lines = self._audit_lines(tmp)
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(lines[0]["action"], "export_blocked")
+            self.assertEqual(lines[0]["format"], "csv")
+
+    def test_missing_review_status_key_blocked(self):
+        # No pre-round-30 geper_results.json will ever have this key --
+        # must not be read as reviewed just because the key is absent
+        # (same fail-toward-the-less-trusting-claim discipline as
+        # run_complete's own missing-key handling).
+        doc = _base_document([_clean_variant()])
+        del doc["review_status"]
+        with self.assertRaises(LIMSExportBlockedError):
+            build_lims_export(doc)
+
+    def test_overridden_status_also_blocked(self):
+        # "overridden" is NOT good enough for export -- a clinician
+        # changed the classification since the run was last approved,
+        # so a fresh approve() is required (see review/signoff.py
+        # ::override()'s docstring).
+        doc = _base_document([_clean_variant()], review_status="overridden")
+        with self.assertRaises(LIMSExportBlockedError):
+            build_lims_export(doc)
+
+    def test_reviewed_json_export_succeeds(self):
+        doc = _base_document([_clean_variant()], review_status="reviewed")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "export.json")
+            export_lims_json(doc, path)
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8") as fh:
+                raw = json.load(fh)
+            self.assertEqual(raw["findings"][0]["gene"]["symbol"], "BRCA1")
+            self.assertEqual(self._audit_lines(tmp), [])  # no block, no audit entry
+
+    def test_reviewed_csv_export_succeeds(self):
+        doc = _base_document([_clean_variant()], review_status="reviewed")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "export.csv")
+            export_lims_csv(doc, path)
+            self.assertTrue(os.path.exists(path))
+            with open(path, encoding="utf-8", newline="") as fh:
+                rows = list(csv.DictReader(fh))
+            self.assertEqual(rows[0]["gene_symbol"], "BRCA1")
 
 
 if __name__ == "__main__":

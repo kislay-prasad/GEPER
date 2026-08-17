@@ -71,16 +71,66 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
 from report.summary import _derive_run_id, _derive_sample_id
+from utils.exceptions import LIMSExportBlockedError
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 EXPORT_FORMAT_VERSION = "1.0.0"
+
+# Same filename `review/signoff.py::AUDIT_LOG_FILENAME` already uses --
+# a blocked-export attempt is a governance event exactly like
+# approve()/override(), and reusing the filename means both land in one
+# combined audit trail whenever the LIMS export directory is the run's
+# own --output-dir (the common case: exporting straight from a
+# completed run's directory).
+_AUDIT_LOG_FILENAME = "geper_signoff_audit.log"
+
+
+def _append_export_audit_log(directory: str, entry: Dict[str, Any]) -> None:
+    """Append one JSON-Lines record to `directory`'s audit log. Mirrors `review/signoff.py::_append_audit_log`'s shape (append-only, never truncates)."""
+    log_path = os.path.join(directory or ".", _AUDIT_LOG_FILENAME)
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry) + "\n")
+
+
+def _require_reviewed(document: Dict[str, Any]) -> None:
+    """
+    Governance gate (round 30 part 2): refuses to build a LIMS export
+    unless `document["review_status"] == "reviewed"` (see
+    `report/json_builder.py`/`review/signoff.py`). A LIMS is an
+    automated downstream consumer -- nobody opens the PDF a human
+    clinician would see the DRAFT/OVERRIDDEN status on before this
+    data reaches a hospital's own system, so this must be a hard,
+    loud failure here, not a silent pass-through.
+
+    `"overridden"` is deliberately NOT treated as good enough --
+    export requires review_status to be EXACTLY `"reviewed"`, so a run
+    a clinician has changed since it was last (or ever) approved stays
+    blocked until a fresh `review/signoff.py::approve()` call. See
+    `override()`'s docstring in that module for why this is the
+    correct, intended re-block, not an oversight.
+
+    Raises `LIMSExportBlockedError` (never returns a value) -- callers
+    with a directory to log to should catch this, write an audit entry
+    via `_append_export_audit_log`, then re-raise (see
+    `export_lims_json`/`export_lims_csv` below), so a blocked attempt
+    is never silently swallowed.
+    """
+    status = document.get("review_status")
+    if status != "reviewed":
+        raise LIMSExportBlockedError(
+            f"LIMS export refused: review_status is {status!r}, not 'reviewed'. Clinical export requires "
+            "completed review and sign-off (review/signoff.py::approve()) before this run's data may reach "
+            "a downstream LIMS."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +471,14 @@ def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) ->
     authoritative run/accession ID; falls back to the same derivation
     `_derive_run_id` already uses for the PDF report, so the two stay
     consistent when both are generated from the same document.
+
+    Raises `LIMSExportBlockedError` (round 30 part 2) if `document`
+    is not `review_status == "reviewed"` -- checked first, before any
+    of the mapping below runs, so this function stays a genuine single
+    choke point regardless of which of its callers (JSON export, CSV
+    export, or a caller using this function directly) reaches it.
     """
+    _require_reviewed(document)
     variants = document.get("variants") or []
     findings = [_build_finding(i, vr) for i, vr in enumerate(variants, start=1)]
 
@@ -446,7 +503,23 @@ def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) ->
 
 
 def export_lims_json(document: Dict[str, Any], output_path: str, run_id: Optional[str] = None) -> str:
-    export = build_lims_export(document, run_id=run_id)
+    """Raises `LIMSExportBlockedError` (see `_require_reviewed`) when `document` is not yet reviewed -- an audit-log entry is written to `output_path`'s directory before the exception propagates, so the blocked attempt is never silently swallowed."""
+    try:
+        export = build_lims_export(document, run_id=run_id)
+    except LIMSExportBlockedError as exc:
+        _append_export_audit_log(
+            os.path.dirname(output_path),
+            {
+                "action": "export_blocked",
+                "format": "json",
+                "output_path": os.path.abspath(output_path),
+                "review_status": document.get("review_status"),
+                "reason": str(exc),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        logger.warning(f"LIMS JSON export to '{output_path}' blocked: {exc}")
+        raise
     with open(output_path, "w", encoding="utf-8") as fh:
         fh.write(export.model_dump_json(indent=2))
     logger.info(f"Wrote LIMS JSON export to '{output_path}' ({len(export.findings)} finding(s)).")
@@ -551,8 +624,28 @@ def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional
     codes, stage errors) are semicolon-joined single cells rather than
     exploded into repeated rows, so this stays exactly one row per
     finding -- matching `LIMS_EXPORT_MAPPING.md`'s documented contract.
+
+    Raises `LIMSExportBlockedError` (see `_require_reviewed`) when
+    `document` is not yet reviewed -- same audit-log-then-raise
+    behavior as `export_lims_json`, so a blocked CSV attempt is
+    recorded and never a silent empty file.
     """
-    export = build_lims_export(document, run_id=run_id)
+    try:
+        export = build_lims_export(document, run_id=run_id)
+    except LIMSExportBlockedError as exc:
+        _append_export_audit_log(
+            os.path.dirname(output_path),
+            {
+                "action": "export_blocked",
+                "format": "csv",
+                "output_path": os.path.abspath(output_path),
+                "review_status": document.get("review_status"),
+                "reason": str(exc),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        logger.warning(f"LIMS CSV export to '{output_path}' blocked: {exc}")
+        raise
     with open(output_path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=_CSV_COLUMNS)
         writer.writeheader()

@@ -153,6 +153,26 @@ class BorzoiPlugin(PluginModel):
 
         import borzoi_pytorch
 
+        # Compatibility shim for the same upstream-subclass issue
+        # `pipeline/models/enformer_plugin.py::_load_impl` already shims
+        # for Enformer (see that method's own comment for the full
+        # explanation and the transformers issue references):
+        # borzoi_pytorch.Borzoi also subclasses transformers.PreTrainedModel
+        # without calling self.post_init(), so on transformers>=5 --
+        # confirmed live, 2026-08-17 -- PreTrainedModel.from_pretrained's
+        # _finalize_model_loading -> _move_missing_keys_from_meta_to_device
+        # unconditionally reads `self.all_tied_weights_keys.keys()`, which
+        # Borzoi never has set, raising `AttributeError: 'Borzoi' object
+        # has no attribute 'all_tied_weights_keys'` before any real weight
+        # loads. Borzoi ties no embedding/head weights either, so the
+        # correct value is the same empty dict post_init() would have
+        # produced -- this changes no architecture, weights, or computed
+        # output, only unblocks the real from_pretrained weight-loading
+        # path on newer transformers, identically to the Enformer shim.
+        Borzoi = borzoi_pytorch.Borzoi
+        if not hasattr(Borzoi, "all_tied_weights_keys"):
+            Borzoi.all_tied_weights_keys = getattr(Borzoi, "_tied_weights_keys", None) or {}
+
         cache_dir = self._weight_cache.ensure_dir("borzoi")
 
         try:

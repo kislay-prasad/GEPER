@@ -201,6 +201,128 @@ class TestBorzoiLoadImpl(unittest.TestCase):
                 self.instance.load()
 
 
+class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
+    """
+    Regression test for the upstream compatibility bug confirmed live
+    in a real Colab GPU run (2026-08-17, transformers>=5 installed):
+    `borzoi_pytorch.Borzoi` subclasses `transformers.PreTrainedModel`
+    but never calls `self.post_init()`, so
+    `PreTrainedModel.from_pretrained`'s `_finalize_model_loading` ->
+    `_move_missing_keys_from_meta_to_device` unconditionally reads
+    `self.all_tied_weights_keys.keys()`, which Borzoi never has set --
+    raising `AttributeError: 'Borzoi' object has no attribute
+    'all_tied_weights_keys'` before any real weight loads. Same class
+    of bug `pipeline/models/enformer_plugin.py` already shims for
+    Enformer (see that file's `_load_impl` for the full upstream
+    explanation) -- `BorzoiPlugin._load_impl` now applies the
+    identical fix.
+
+    This sandbox's own installed `transformers` predates the version
+    that actually enforces this attribute at load time (confirmed
+    below), so the original crash cannot be reproduced end-to-end here
+    via a real `from_pretrained()` call -- there is also no network
+    access to huggingface.co in this environment either way. Instead,
+    this proves the shim's mechanics directly against the REAL
+    `borzoi_pytorch.Borzoi` class (not a fake/mock class), since that
+    real-class behavior is what silently regresses if this code is
+    ever "cleaned up" by someone who doesn't know why it's there.
+    """
+
+    def setUp(self):
+        import borzoi_pytorch
+
+        self.Borzoi = borzoi_pytorch.Borzoi
+        # Undo the shim if an earlier test in this process already
+        # applied it (BorzoiPlugin._load_impl mutates the class
+        # itself, not an instance -- see the shim's own comment for
+        # why), so each test here starts from the same "unshimmed"
+        # state a fresh process would.
+        if "all_tied_weights_keys" in vars(self.Borzoi):
+            del self.Borzoi.all_tied_weights_keys
+
+    def tearDown(self):
+        # Leave the real, shared borzoi_pytorch.Borzoi class clean for
+        # any other test module that imports it in the same process.
+        if "all_tied_weights_keys" in vars(self.Borzoi):
+            del self.Borzoi.all_tied_weights_keys
+        if "_tied_weights_keys" in vars(self.Borzoi) and self.Borzoi._tied_weights_keys == {
+            "decoder.weight": "encoder.weight"
+        }:
+            del self.Borzoi._tied_weights_keys
+
+    def _make_instance(self):
+        instance = BorzoiPlugin.__new__(BorzoiPlugin)
+        instance.logger = mock.Mock()
+        instance.device = "cpu"
+        instance._loaded = False
+        instance.model = None
+        instance._weight_cache = mock.Mock()
+        instance._weight_cache.ensure_dir.return_value = "/tmp/fake_borzoi_cache"
+        return instance
+
+    def test_real_borzoi_class_lacks_the_attribute_before_the_shim(self):
+        # Confirms the bug's precondition against the REAL upstream
+        # class, not an assumption: this is exactly what
+        # `_finalize_model_loading` reads and what was missing in the
+        # live Colab crash.
+        self.assertFalse(hasattr(self.Borzoi, "all_tied_weights_keys"))
+
+    def test_load_impl_shim_sets_the_attribute_on_the_real_class(self):
+        instance = self._make_instance()
+        fake_model = _FakeBorzoiModel(value=1.0)
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
+        ):
+            instance._load_impl()
+
+        # The exact attribute access that crashed in the live traceback
+        # (`self.all_tied_weights_keys.keys()`) now succeeds on the
+        # real class.
+        self.assertTrue(hasattr(self.Borzoi, "all_tied_weights_keys"))
+        self.assertEqual(dict(self.Borzoi.all_tied_weights_keys), {})
+
+    def test_shim_does_not_override_a_real_tied_weights_keys(self):
+        # If a future borzoi_pytorch release ever DOES set a real,
+        # non-empty _tied_weights_keys, the shim must use that value,
+        # not silently clobber it with an empty dict -- exactly what
+        # `getattr(Borzoi, "_tied_weights_keys", None) or {}` already
+        # guarantees; pinned here so that behavior can't regress.
+        self.Borzoi._tied_weights_keys = {"decoder.weight": "encoder.weight"}
+        instance = self._make_instance()
+        fake_model = _FakeBorzoiModel(value=1.0)
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
+        ):
+            instance._load_impl()
+        self.assertEqual(self.Borzoi.all_tied_weights_keys, {"decoder.weight": "encoder.weight"})
+
+    def test_shim_is_idempotent_across_repeated_loads(self):
+        # BorzoiPlugin.__new__ bypasses the singleton ModelCache a real
+        # run would use, so this exercises what a second _load_impl()
+        # call (e.g. a second BorzoiPlugin instance in the same
+        # process) sees: the class attribute already set, and the
+        # `if not hasattr(...)` guard leaving it untouched rather than
+        # resetting it.
+        instance1 = self._make_instance()
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=1.0)),
+        ):
+            instance1._load_impl()
+        first_value = self.Borzoi.all_tied_weights_keys
+
+        instance2 = self._make_instance()
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=2.0)),
+        ):
+            instance2._load_impl()
+
+        self.assertIs(self.Borzoi.all_tied_weights_keys, first_value)
+
+
 class TestBorzoiMetadataAndAvailability(unittest.TestCase):
     def test_metadata_reports_commercial_use_allowed(self):
         meta = BorzoiPlugin.metadata()

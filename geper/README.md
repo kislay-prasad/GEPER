@@ -497,6 +497,11 @@ document with a clinical-use disclaimer at the top, including an
 | `GEPER_CLINGEN_CACHE_DISK_PATH` | Optional on-disk cache persistence path (survives process restart) | unset (in-memory only) |
 | `GEPER_CLINGEN_MAX_CONCURRENT` | Max concurrent batch ClinGen lookups | `8` |
 | `GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORE` / `_DOSAGE_UNLIKELY_SCORE` | ACMG PVS1-support dosage-score thresholds | `3` / `40` |
+| `GEPER_HEALTH_CHECK_ENABLED` | Enable/disable the startup external-service health probe entirely (see "26. External service health checks") | `true` |
+| `GEPER_HEALTH_CHECK_TIMEOUT` | Per-attempt timeout for every probe attempt except the final, latch-deciding one | `4.0` |
+| `GEPER_HEALTH_CHECK_ATTEMPTS` | Consecutive failed attempts required before latching a service offline for the run; only network-level failures are retried | `3` |
+| `GEPER_HEALTH_CHECK_BACKOFF` | Pause between probe attempts | `0.5` |
+| `GEPER_HEALTH_CHECK_CONFIRM_TIMEOUT` | Timeout for the final, latch-deciding attempt only — deliberately matches clients' own request timeout | `30.0` |
 | `GEPER_CONFIG_FILE` | Path to an optional `config.yaml` overlay (see "14. config.yaml") | `./config.yaml` |
 
 ## 11. AlphaMissense
@@ -1630,4 +1635,134 @@ agreement, `override` preserving the original classification while
 regenerating all three formats, `list-pending` distinguishing DRAFT
 from REVIEWED across multiple runs, and the CLI's argument parsing and
 exit codes.
+
+## 26. External service health checks (startup probe, retry, and the offline latch)
+
+Before the first variant is processed, GEPER probes every external
+service it depends on (Ensembl, ClinVar/dbSNP, ClinGen, MaveDB,
+IndiGenomes) once each, in parallel, and prints a status table. This
+is separate from — and sits on top of — the retry logic each client
+already has in its own request loop (`pipeline/sequence_context.py`,
+`pipeline/clingen/utils.py`, `pipeline/functional_evidence/
+erepo_provider.py`, etc.): the startup probe's verdict, once a service
+is marked offline, is treated as **confirmed** for the rest of the
+run, and every client checks `HEALTH.is_offline(...)` at the top of
+its own retry loop to skip straight past its own retries rather than
+burn a multi-attempt budget on a service already known dead.
+
+**Why the probe now retries before it latches.** That "confirmed"
+verdict used to come from a single request. Because a client skips its
+own retries once a service is marked offline, one unlucky slow request
+didn't just mislabel that service — it switched off the exact retry
+logic that would otherwise have ridden out the jitter. Nothing crashed
+and nothing errored (this is by design — see "3. Design principles"),
+so a run degraded this way looked clean: it finished, produced a
+report, and gave no indication anything was missing. This happened for
+real: a run lost sequence context for every variant and SpliceFormer
+went unavailable across the board, because one 4-second timeout on an
+Ensembl probe latched it offline for the whole run.
+
+**The latch itself was not weakened** — it still exists specifically
+to stop a run from hanging on a genuinely dead service, and a service
+that fails every attempt still ends up latched offline exactly as
+before. What changed is how much evidence is required before that
+latch fires:
+
+- `CONFIG.health_check.PROBE_ATTEMPTS` (default `3`) — a service is
+  only latched offline after this many consecutive failed attempts,
+  with `PROBE_BACKOFF_SECS` (default `0.5s`) between them. Only a
+  network-level failure (timeout, connection error) is retried; a 5xx
+  response is a real answer from a host that is up and routing, so
+  HEALTHY and DEGRADED verdicts still return on the first attempt,
+  exactly as before.
+- The per-attempt timeout is `CONFIG.health_check.TIMEOUT_SECS`
+  (default `4.0s`, unchanged) for every attempt **except the last**.
+  The final attempt — the one that actually decides whether to
+  latch — uses `CONFIG.health_check.LATCH_CONFIRM_TIMEOUT_SECS`
+  (default `30.0s`) instead.
+
+**Why 30 seconds, specifically, and not a new guess.** It isn't picked
+to feel generous — it's the same `REQUEST_TIMEOUT_SECS` a client's own
+retry loop already waits on before giving up, the very number the
+probe's short 4.0s timeout was originally justified against ("this
+only needs to tell up from down/slow, much shorter than a client's own
+budget"). That reasoning is sound for a status *report*, but this
+probe doesn't only report — it *latches*, and revoking a service from
+every client after 4 seconds when those same clients would have
+happily waited 30 is not defensible. Using the clients' own number
+instead of inventing a new one collapses what had been a 7.5x mismatch
+between the probe's patience and the clients' own patience down to
+exactly 1x. An earlier proposal to simply raise the probe's default
+timeout to 8.0s was considered and withdrawn for the same reason: it
+would still have been a guess at the same kind of number, just a
+larger one, with no principled reason to stop at 8 rather than 10 or
+15.
+
+**The real case that motivated this**, from this project's own logs: a
+legitimate, successful Ensembl startup probe took **21,931 ms**
+alongside ClinVar answering in 1,207 ms on the same run — a single
+public API can be that much slower than its neighbors on an ordinary
+day, with nothing wrong on either end. The old 4.0s default would have
+declared that Ensembl call dead. Under this change, the same sequence
+of attempts fails on attempt 1 and attempt 2 (each still bounded at
+4.0s) and succeeds on attempt 3, which is allowed the full 30s. No
+fixed single-shot timeout — 4s, 8s, or even 20s — would have survived
+that 22-second response; only giving the deciding attempt real
+patience does.
+
+**Cost.** A healthy service pays nothing: a first-attempt success
+still returns within the original 4.0s budget, unchanged. A
+genuinely dead service now costs roughly 4 + 0.5 + 4 + 0.5 + 30 ≈ 39
+seconds instead of failing after 4 — but that cost is paid **once per
+run**, in parallel across every probed service (probes don't queue
+behind each other), against the roughly 90 seconds **per variant**
+that a false latch used to cost by disabling a client's own retries
+for the rest of the run. On any run with more than one variant, the
+false-latch cost this change removes dominates the confirmation cost
+it adds.
+
+**A gotcha worth knowing before you rely on it**:
+`GEPER_HEALTH_CHECK_ATTEMPTS=1` does **not** fully restore the old,
+single-shot behavior. With only one attempt configured, that one
+attempt *is* the deciding attempt, so it runs with the long 30s
+confirm timeout rather than the short 4.0s fast-path timeout. This is
+intentional — the timeout budget scales with how consequential the
+decision is, not with how many attempts happen to precede it — but it
+means "set attempts back to 1" is not a way to get the exact old
+timing back.
+
+**What a reader sees when a service does end up latched offline**:
+today, a caveat naming the offline service(s) is included in the
+**PDF** report's Limitations section (`report/summary.py`); the
+Markdown report and the JSON/LIMS export do not yet carry the
+equivalent caveat. This asymmetry is tracked separately, not part of
+this fix, and is the same "one renderer got the caveat, the others
+didn't" pattern already fixed for BP7's conflicting-evidence PDF gap
+elsewhere in this project's history.
+
+**Open decision, deliberately left unresolved here — not an
+oversight**: should a latch ever be lifted mid-run, if a service that
+failed all three attempts at startup comes back later? The answer is
+no *for this change* — a re-probe/un-latch mechanism was designed but
+not implemented, on the reasoning that (a) it would extend the runtime
+contract across every one of the many call sites (`is_offline`/
+`note_skip`) that currently only ever read a latch, not clear one, and
+(b) its parameters (how often to re-check, how many re-probes to
+allow) should be chosen against evidence of how often a false latch
+still occurs now that retry-before-latch is live — evidence that
+doesn't exist yet. Revisit this once that evidence accumulates, rather
+than guessing at the parameters today the same way the original 4.0s
+timeout was guessed at.
+
+**Environment variables** for this mechanism (all five, existing and
+new, listed together — see "10. Environment variables" for the full
+table):
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GEPER_HEALTH_CHECK_ENABLED` | Enable/disable the startup probe entirely | `true` |
+| `GEPER_HEALTH_CHECK_TIMEOUT` | Per-attempt timeout for every attempt except the final, latch-deciding one | `4.0` |
+| `GEPER_HEALTH_CHECK_ATTEMPTS` | Consecutive failed attempts required before latching a service offline (only network-level failures are retried) | `3` |
+| `GEPER_HEALTH_CHECK_BACKOFF` | Pause between probe attempts | `0.5` |
+| `GEPER_HEALTH_CHECK_CONFIRM_TIMEOUT` | Timeout for the final, latch-deciding attempt only — matches clients' own request timeout rather than a new guess | `30.0` |
 

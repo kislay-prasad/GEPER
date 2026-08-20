@@ -12,14 +12,13 @@ Regression tests for GEPER Phase 1 stabilization:
   Issue 7 — Reports silently rendered `gene = null` / blank ClinVar/gnomAD
             cells with no explanation.
 """
+
 from __future__ import annotations
 
 import logging
 
-import pytest
-
-
 # ─── Issue 5: ALT=* symbolic-allele filtering ─────────────────────────────────
+
 
 class TestSymbolicAltFiltering:
     def _write_vcf(self, tmp_path):
@@ -73,8 +72,12 @@ class TestSymbolicAltFiltering:
             sample_id="S1",
         )
         assert all(v.alt != "*" for v in result.variants)
-        assert result.skipped_symbolic, "symbolic ALT=* records must be recorded, not dropped silently"
-        assert result.total_variants == 3  # 2 single-allelic + 1 real allele from multi-allelic record
+        assert result.skipped_symbolic, (
+            "symbolic ALT=* records must be recorded, not dropped silently"
+        )
+        assert (
+            result.total_variants == 3
+        )  # 2 single-allelic + 1 real allele from multi-allelic record
 
     def test_annotation_result_to_dict_exposes_skip_reason(self, tmp_path):
         from pipeline.annotation.stage import AnnotationStage
@@ -101,19 +104,23 @@ class TestSymbolicAltFiltering:
 
 # ─── Issue 6: ACMG Unknown / Insufficient-Data state ──────────────────────────
 
+
 class TestAcmgUnknownState:
     def _ev(self, **overrides):
         from pipeline.acmg.classifier import VariantEvidence
+
         base = dict(chrom="1", pos=100, ref="A", alt="T")
         base.update(overrides)
         return VariantEvidence(**base)
 
     def _clf(self, cfg=None):
         from pipeline.acmg.classifier import AcmgClassifier
+
         return AcmgClassifier(cfg=cfg or {})
 
     def test_pvs1_not_evaluated_when_gene_missing(self):
         from pipeline.acmg.classifier import STATUS_NOT_EVALUATED
+
         ev = self._ev(gene=None, is_lof=True, lof_gene_intolerant=True)
         result = self._clf().classify(ev)
         pvs1 = next(c for c in result.all_criteria if c.code == "PVS1")
@@ -125,6 +132,7 @@ class TestAcmgUnknownState:
 
     def test_pvs1_evaluated_normally_when_gene_present(self):
         from pipeline.acmg.classifier import STATUS_MET
+
         ev = self._ev(gene="BRCA1", is_lof=True, lof_gene_intolerant=True)
         result = self._clf().classify(ev)
         pvs1 = next(c for c in result.all_criteria if c.code == "PVS1")
@@ -134,6 +142,7 @@ class TestAcmgUnknownState:
     def test_pm2_not_evaluated_when_gnomad_unavailable(self):
         """gnomAD disabled/unreachable → Unknown, NOT a confident 'not met'."""
         from pipeline.acmg.classifier import STATUS_NOT_EVALUATED
+
         ev = self._ev(gnomad_af=None, gnomad_af_popmax=None, gnomad_af_absent=False)
         result = self._clf().classify(ev)
         pm2 = next(c for c in result.all_criteria if c.code == "PM2")
@@ -142,6 +151,7 @@ class TestAcmgUnknownState:
 
     def test_pm2_confirmed_absent_still_fires(self):
         from pipeline.acmg.classifier import STATUS_MET
+
         ev = self._ev(gnomad_af=None, gnomad_af_popmax=None, gnomad_af_absent=True)
         result = self._clf().classify(ev)
         pm2 = next(c for c in result.all_criteria if c.code == "PM2")
@@ -149,6 +159,7 @@ class TestAcmgUnknownState:
 
     def test_pp5_not_evaluated_when_clinvar_significance_missing(self):
         from pipeline.acmg.classifier import STATUS_NOT_EVALUATED
+
         ev = self._ev(clinvar_significance=None)
         result = self._clf().classify(ev)
         pp5 = next(c for c in result.all_criteria if c.code == "PP5")
@@ -158,6 +169,7 @@ class TestAcmgUnknownState:
         """PS4 requires case/control data never available automatically —
         must never be reported as a confirmed 'not met'."""
         from pipeline.acmg.classifier import STATUS_NOT_EVALUATED
+
         ev = self._ev()
         result = self._clf().classify(ev)
         ps4 = next(c for c in result.all_criteria if c.code == "PS4")
@@ -165,7 +177,10 @@ class TestAcmgUnknownState:
 
     def test_pp3_not_evaluated_with_no_insilico_scores(self):
         from pipeline.acmg.classifier import STATUS_NOT_EVALUATED
-        ev = self._ev(cadd_phred=None, revel_score=None, spliceai_score=None, alphamissense_score=None)
+
+        ev = self._ev(
+            cadd_phred=None, revel_score=None, spliceai_score=None, alphamissense_score=None
+        )
         result = self._clf().classify(ev)
         pp3 = next(c for c in result.all_criteria if c.code == "PP3")
         assert pp3.status == STATUS_NOT_EVALUATED
@@ -184,16 +199,30 @@ class TestAcmgUnknownState:
         assert r1.classification == r2.classification
 
     def test_criteria_result_status_and_met_stay_consistent(self):
-        from pipeline.acmg.classifier import CriteriaResult, STATUS_MET, STATUS_NOT_EVALUATED
-        r = CriteriaResult(code="X", met=False, status=STATUS_MET, strength="supporting",
-                            direction="pathogenic", reason="test")
+        from pipeline.acmg.classifier import STATUS_MET, STATUS_NOT_EVALUATED, CriteriaResult
+
+        r = CriteriaResult(
+            code="X",
+            met=False,
+            status=STATUS_MET,
+            strength="supporting",
+            direction="pathogenic",
+            reason="test",
+        )
         assert r.met is True
-        r2 = CriteriaResult(code="Y", met=False, status=STATUS_NOT_EVALUATED, strength="supporting",
-                             direction="pathogenic", reason="test")
+        r2 = CriteriaResult(
+            code="Y",
+            met=False,
+            status=STATUS_NOT_EVALUATED,
+            strength="supporting",
+            direction="pathogenic",
+            reason="test",
+        )
         assert r2.met is False
 
 
 # ─── Issue 7: Reporting transparency for unavailable annotation ──────────────
+
 
 class TestReportingTransparency:
     def test_variants_table_states_reason_for_missing_gene(self):
@@ -216,12 +245,19 @@ class TestReportingTransparency:
     def test_acmg_table_states_reason_for_missing_gene(self):
         from pipeline.reporting.stage import _acmg_to_html_table
 
-        rows = [{
-            "chrom": "1", "pos": 100, "ref": "A", "alt": "T",
-            "gene": None, "gene_unavailable_reason": "VEP disabled",
-            "classification": "Uncertain_Significance",
-            "criteria_met": [], "criteria_unknown": ["PVS1", "PM1"],
-        }]
+        rows = [
+            {
+                "chrom": "1",
+                "pos": 100,
+                "ref": "A",
+                "alt": "T",
+                "gene": None,
+                "gene_unavailable_reason": "VEP disabled",
+                "classification": "Uncertain_Significance",
+                "criteria_met": [],
+                "criteria_unknown": ["PVS1", "PM1"],
+            }
+        ]
         html = _acmg_to_html_table(rows)
         assert "Gene annotation unavailable" in html
         assert "VEP disabled" in html
@@ -230,13 +266,20 @@ class TestReportingTransparency:
     def test_acmg_table_states_clinvar_and_gnomad_disabled_reasons(self):
         from pipeline.reporting.stage import _acmg_to_html_table
 
-        rows = [{
-            "chrom": "1", "pos": 100, "ref": "A", "alt": "T", "gene": "BRCA1",
-            "classification": "Uncertain_Significance",
-            "criteria_met": [], "criteria_unknown": [],
-            "clinvar_unavailable_reason": "ClinVar lookup skipped (disabled)",
-            "gnomad_unavailable_reason": "gnomAD lookup skipped (disabled)",
-        }]
+        rows = [
+            {
+                "chrom": "1",
+                "pos": 100,
+                "ref": "A",
+                "alt": "T",
+                "gene": "BRCA1",
+                "classification": "Uncertain_Significance",
+                "criteria_met": [],
+                "criteria_unknown": [],
+                "clinvar_unavailable_reason": "ClinVar lookup skipped (disabled)",
+                "gnomad_unavailable_reason": "gnomAD lookup skipped (disabled)",
+            }
+        ]
         html = _acmg_to_html_table(rows)
         assert "ClinVar lookup skipped (disabled)" in html
         assert "gnomAD lookup skipped (disabled)" in html
@@ -248,8 +291,13 @@ class TestReportingTransparency:
             "gff3_source": "",
             "total_variants": 3,
             "skipped_symbolic": [
-                {"chrom": "1", "pos": 200, "ref": "AGCT", "alt": "*",
-                 "reason": "Symbolic VCF placeholder (ALT=*)"},
+                {
+                    "chrom": "1",
+                    "pos": 200,
+                    "ref": "AGCT",
+                    "alt": "*",
+                    "reason": "Symbolic VCF placeholder (ALT=*)",
+                },
             ],
         }
         html = _annotation_summary_to_html(ann_d)
@@ -259,6 +307,7 @@ class TestReportingTransparency:
 
 # ─── Issue 1 (exact log wording) ──────────────────────────────────────────────
 
+
 class TestGnomadConstraintOfflineMode:
     """FIX (Issue 1 extension): GnomadConstraintLookup queries the same
     gnomAD GraphQL host as GnomadLookup for gene constraint (pLI/LOEUF)
@@ -267,26 +316,21 @@ class TestGnomadConstraintOfflineMode:
     """
 
     def test_disabled_gnomad_prevents_constraint_api_calls(self):
-        from pipeline.constraint.lookup import GnomadConstraintLookup
         from unittest.mock import patch
+
+        from pipeline.constraint.lookup import GnomadConstraintLookup
 
         lkp = GnomadConstraintLookup(cfg={"gnomad": {"enabled": False}})
         assert lkp._backend == "disabled"
         with patch("requests.post") as mock_post, patch("requests.get") as mock_get:
-            lkp.is_lof_intolerant("BRCA1")
-            lkp.is_missense_constrained("BRCA1")
+            # No OMIM fallback exists any more (retired) -- with gnomAD
+            # disabled and no local data, both methods must fall back to
+            # their documented "unavailable" default (False) rather than
+            # raising or silently querying the network.
+            assert lkp.is_lof_intolerant("BRCA1") is False
+            assert lkp.is_missense_constrained("BRCA1") is False
             mock_post.assert_not_called()
             mock_get.assert_not_called()
-
-    def test_disabled_gnomad_falls_back_to_omim_for_lof_intolerance(self):
-        from pipeline.constraint.lookup import GnomadConstraintLookup
-
-        class _FakeOmim:
-            def is_lof_intolerant(self, gene):
-                return True
-
-        lkp = GnomadConstraintLookup(cfg={"gnomad": {"enabled": False}}, omim_fallback=_FakeOmim())
-        assert lkp.is_lof_intolerant("BRCA1") is True
 
     def test_local_tsv_still_used_even_if_gnomad_disabled(self, tmp_path):
         """A local constraint TSV is not a live API call, so it should
@@ -305,22 +349,26 @@ class TestGnomadConstraintOfflineMode:
 class TestExactSkipLogWording:
     def test_clinvar_disabled_logs_exact_message(self, caplog):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         with caplog.at_level(logging.INFO):
             ClinVarLookup(cfg={"clinvar": {"enabled": False}})
         assert any(r.message == "ClinVar lookup skipped (disabled)" for r in caplog.records)
 
     def test_gnomad_disabled_logs_exact_message(self, caplog):
         from pipeline.gnomad.lookup import GnomadLookup
+
         with caplog.at_level(logging.INFO):
             GnomadLookup(cfg={"gnomad": {"enabled": False}})
         assert any(r.message == "gnomAD lookup skipped (disabled)" for r in caplog.records)
 
     def test_clinvar_enabled_property(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         assert ClinVarLookup(cfg={"clinvar": {"enabled": False}}).enabled is False
         assert ClinVarLookup(cfg={"clinvar": {"enabled": True}}).enabled is True
 
     def test_gnomad_enabled_property(self):
         from pipeline.gnomad.lookup import GnomadLookup
+
         assert GnomadLookup(cfg={"gnomad": {"enabled": False}}).enabled is False
         assert GnomadLookup(cfg={"gnomad": {"enabled": True}}).enabled is True

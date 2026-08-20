@@ -184,6 +184,19 @@ class BorzoiPlugin(PluginModel):
             )
             raise RuntimeError("Borzoi model unavailable") from exc
 
+        # Defensive hardening, not a fix for observed behavior: the shim
+        # above must set a CLASS attribute (from_pretrained reads it
+        # before any instance exists to assign to -- see that comment),
+        # but transformers>=5's own post_init() sets an INSTANCE
+        # attribute, and later code (_move_missing_keys_from_meta_to_device)
+        # pops keys out of it. Borzoi ties nothing, so that pop path
+        # never fires today and a class-level dict is harmless in
+        # practice -- but it is still state shared across every Borzoi
+        # instance in this process. Give the now-loaded model its own
+        # instance copy so nothing downstream can ever mutate the shared
+        # class dict, even if a future code path starts popping from it.
+        model.all_tied_weights_keys = dict(Borzoi.all_tied_weights_keys)
+
         model.to(self.device)
         model.eval()
         self.model = model

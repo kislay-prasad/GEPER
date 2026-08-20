@@ -152,22 +152,23 @@ class BorzoiPlugin(PluginModel):
 
         import borzoi_pytorch
 
-        # Compatibility shim for the same upstream-subclass issue
-        # `pipeline/models/enformer_plugin.py::_load_impl` already shims
-        # for Enformer (see that method's own comment for the full
-        # explanation and the transformers issue references):
-        # borzoi_pytorch.Borzoi also subclasses transformers.PreTrainedModel
-        # without calling self.post_init(), so on transformers>=5 --
-        # confirmed live, 2026-08-17 -- PreTrainedModel.from_pretrained's
-        # _finalize_model_loading -> _move_missing_keys_from_meta_to_device
-        # unconditionally reads `self.all_tied_weights_keys.keys()`, which
-        # Borzoi never has set, raising `AttributeError: 'Borzoi' object
-        # has no attribute 'all_tied_weights_keys'` before any real weight
-        # loads. Borzoi ties no embedding/head weights either, so the
-        # correct value is the same empty dict post_init() would have
-        # produced -- this changes no architecture, weights, or computed
-        # output, only unblocks the real from_pretrained weight-loading
-        # path on newer transformers, identically to the Enformer shim.
+        # Compatibility shim for OLD borzoi-pytorch builds on transformers>=5.
+        # Mechanism, stated precisely (commit c1e0949's message described this
+        # correctly for the version installed at the time, but it is now stale --
+        # see below): transformers>=5's PreTrainedModel.post_init() sets
+        # `all_tied_weights_keys` unconditionally, and from_pretrained's
+        # _finalize_model_loading -> _move_missing_keys_from_meta_to_device then
+        # reads `self.all_tied_weights_keys.keys()`. The AttributeError this
+        # guards against is therefore reachable ONLY when post_init() was never
+        # called. borzoi-pytorch <=0.4.4 never calls it; 0.5.0 (2026-06-10,
+        # upstream commits 09a5950c/77c2ab42) added the call, so on any
+        # borzoi-pytorch >=0.5.0 this shim is a deliberate no-op.
+        # It is kept because `utils/auto_install.py::ensure_pip_package_available`
+        # installs only when the import is missing and NEVER upgrades: an
+        # environment that picked up <=0.4.4 keeps it indefinitely, which is
+        # exactly what the live 2026-08-17 Colab run hit. Borzoi ties no
+        # embedding/head weights, so {} is the same value post_init() would have
+        # produced -- no architecture, weight, or computed-output change.
         Borzoi = borzoi_pytorch.Borzoi
         if not hasattr(Borzoi, "all_tied_weights_keys"):
             Borzoi.all_tied_weights_keys = getattr(Borzoi, "_tied_weights_keys", None) or {}

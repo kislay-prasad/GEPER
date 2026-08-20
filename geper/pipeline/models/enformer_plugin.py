@@ -135,22 +135,23 @@ class EnformerPlugin(PluginModel):
 
         import enformer_pytorch
 
-        # Compatibility shim for a confirmed upstream enformer-pytorch bug,
-        # not a GEPER issue: enformer_pytorch.modeling_enformer.Enformer
-        # subclasses transformers.PreTrainedModel but its __init__ never
-        # calls self.post_init(). transformers>=5.0 computes the
-        # `all_tied_weights_keys` bookkeeping dict inside post_init() and
-        # PreTrainedModel.from_pretrained() now reads it unconditionally
-        # during weight loading, so on any transformers>=5 install this
-        # raises `AttributeError: 'Enformer' object has no attribute
-        # 'all_tied_weights_keys'` before a single real weight is loaded
-        # (see e.g. huggingface/transformers#42270, #43883, and the
-        # equivalent fix other third-party PreTrainedModel subclasses
-        # have shipped: adding this exact attribute). Enformer ties no
-        # embedding/head weights, so the correct value is the same empty
-        # dict post_init() would have produced -- this changes no
-        # architecture, weights, or computed output, only unblocks the
-        # real `from_pretrained` weight-loading path on newer transformers.
+        # Compatibility shim for a confirmed upstream enformer-pytorch gap, not a
+        # GEPER issue: enformer_pytorch.modeling_enformer.Enformer subclasses
+        # transformers.PreTrainedModel but never calls self.post_init() anywhere
+        # in the package (verified against 0.8.12, the current release).
+        # transformers>=5 sets `all_tied_weights_keys` inside post_init() and
+        # then reads it unconditionally while loading weights
+        # (_move_missing_keys_from_meta_to_device), so on any transformers>=5
+        # install this raises `AttributeError: 'Enformer' object has no attribute
+        # 'all_tied_weights_keys'` before a single real weight loads (see
+        # huggingface/transformers#42270, #43883).
+        # Unlike the equivalent shim in borzoi_plugin.py -- which upstream fixed
+        # in borzoi-pytorch 0.5.0, making that one a no-op on current versions --
+        # this shim is still load-bearing: upstream closed the report of it
+        # (lucidrains/enformer-pytorch#55) by pinning transformers==4.56.2 rather
+        # than adding the call, so it will not self-resolve. Enformer ties no
+        # embedding/head weights, so {} is the same value post_init() would have
+        # produced -- no architecture, weight, or computed-output change.
         Enformer = enformer_pytorch.modeling_enformer.Enformer
         if not hasattr(Enformer, "all_tied_weights_keys"):
             Enformer.all_tied_weights_keys = getattr(Enformer, "_tied_weights_keys", None) or {}

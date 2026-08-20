@@ -505,3 +505,25 @@ has completed on this box yet, for the external/environmental reasons
 described above, not for any reason connected to `requirements.txt` or
 `geper/`'s own code. Do not read this entry as claiming end-to-end
 verification has occurred on this box — it has not, as of this entry.
+
+## Borzoi/Enformer `post_init()` shim: commit `c1e0949` was accurate-but-stale, not wrong (2026-08-20)
+
+Kelly re-derived the exact upstream mechanism behind both shims (see
+the shim comments themselves, `pipeline/models/borzoi_plugin.py` and
+`pipeline/models/enformer_plugin.py`, for the full technical detail —
+not duplicated here). Worth recording as its own provenance point:
+`transformers>=5`'s `PreTrainedModel.post_init()` sets
+`all_tied_weights_keys` unconditionally, so the `AttributeError` both
+shims guard against is reachable only when a subclass never calls
+`post_init()` at all. Commit `c1e0949`'s message correctly described
+this for `borzoi-pytorch`'s installed version at the time — it is
+**stale, not wrong**, since `borzoi-pytorch` 0.5.0 (2026-06-10) added
+the missing call upstream, making that shim a no-op on any current
+install (kept only because GEPER's own installer never upgrades an
+already-present package, so a box that picked up `<=0.4.4` keeps it
+indefinitely). `enformer-pytorch` never added the equivalent call —
+upstream closed the report by pinning `transformers==4.56.2` instead —
+so the Enformer shim remains live and load-bearing. Both shims are
+behaviorally inert either way: `{}` is the same value `post_init()`
+would have produced, so neither changes architecture, weights, or
+output.

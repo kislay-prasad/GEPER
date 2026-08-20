@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from utils.logger import get_logger
-from report.clinical_report_builder import build_clinical_report
+from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER, build_clinical_report
 from pipeline.stage_schemas import build_raw_evidence_bundle, validate_interpretation_result_for_report
 
 logger = get_logger(__name__)
@@ -134,6 +134,38 @@ class JSONResultBuilder:
             "review_status": "draft",
             "reviewed_by": None,
             "reviewed_at": None,
+            # Run-level caveats: statements that qualify the WHOLE run
+            # rather than any one finding. Always present, never omitted
+            # and never empty -- the research-use disclaimer applies to
+            # every run unconditionally.
+            #
+            # This is the machine-readable half of a gap found while
+            # auditing caveat parity across the four renderers: both
+            # PDFs and the Markdown report already print run-level
+            # caveats, but nothing reached this document, so an
+            # automated consumer (`report/export_lims.py` and anything
+            # else reading `geper_results.json` without opening a PDF)
+            # had no way to see them. A caveat a human might read past
+            # in a PDF is merely missed; one absent from the JSON is
+            # invisible to a consumer that cannot apply judgment at all.
+            #
+            # PER-VARIANT CAVEATS DO NOT BELONG HERE and are deliberately
+            # untouched: `clinical_report["limitations"]` (which leads
+            # with this same `RESEARCH_USE_DISCLAIMER`) already reaches
+            # this document in full, because `build_variant_result`
+            # emits the whole `clinical_report` dict. Duplicating those
+            # into this block would create a second copy that could
+            # drift from the first.
+            #
+            # A LIST, not a bare string, on purpose: this block is the
+            # run-level *set*, and the remaining run-level caveats the
+            # parity audit identified (offline data sources, the ACMG
+            # methodology statement, the evidence-completeness caption,
+            # the QC not-applicable reason, reviewer-attention flags)
+            # are queued to join it. Appending to a list is additive for
+            # every existing consumer; widening a string to a list later
+            # would be a breaking type change.
+            "caveats": [RESEARCH_USE_DISCLAIMER],
             # Data-source provenance (task points 1-4, 6): one entry
             # per known external source, always present (never omitted)
             # -- a source this run never consulted still appears, with

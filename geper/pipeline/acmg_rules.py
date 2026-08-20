@@ -2437,11 +2437,31 @@ class ACMGRuleEngine:
             classification = plugin_result.get("classification")
             score = plugin_result.get("score")
             score_str = f"{score:.3f}" if isinstance(score, (int, float)) else "n/a"
+            # Disclosed inline, attached to the score it qualifies, rather
+            # than deferred to the report's Limitations section: both plugins
+            # already report `details.calibration_status == "uncalibrated --
+            # ..."` about themselves (see each plugin's `predict()`), and a
+            # reader deciding on this variant has to see that caveat next to
+            # the number, not several sections further down. Applied to the
+            # benign-direction branch too, not just the damaging one -- an
+            # uncalibrated "no disruption" call is what lets BP7 actually
+            # trigger, so it carries at least as much clinical weight.
+            # The caveat is bound to the model's name, ahead of its score,
+            # rather than trailing the sentence: a reader skimming the
+            # evidence list sees "uncalibrated; not clinically validated"
+            # before they see the number it qualifies. It also keeps the
+            # phrase near the start of the rendered line, so PDF line-
+            # wrapping cannot split "not clinically validated" across a
+            # break the way a trailing clause does.
+            qualified = f"{label} (uncalibrated; not clinically validated)"
+            caveat = " This is a raw model score, not a validated clinical splice-impact measure."
             if classification in ("large_effect", "moderate_effect"):
                 plugin_damaging = True
-                conflicting.append(f"{label} predicts a '{classification}' effect (score={score_str}).")
+                conflicting.append(f"{qualified} predicts a '{classification}' effect (score={score_str})." + caveat)
             else:
-                supporting.append(f"{label}: no significant splice disruption predicted (score={score_str}).")
+                supporting.append(
+                    f"{qualified}: no significant splice disruption predicted (score={score_str})." + caveat
+                )
 
         if not sources:
             return CriterionResult(

@@ -4,7 +4,7 @@
 
 # ── Core (always required) ────────────────────────────────────────────────────
 pyyaml>=6.0               # Config YAML loading
-requests>=2.31.0          # HTTP calls (NCBI Entrez, gnomAD GraphQL, OMIM API)
+requests>=2.31.0          # HTTP calls (NCBI Entrez, gnomAD GraphQL)
 
 # ── FastAPI / API server ──────────────────────────────────────────────────────
 fastapi>=0.111.0

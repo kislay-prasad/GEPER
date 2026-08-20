@@ -61,14 +61,15 @@ done
 ```
 Without this, GEPER uses the gnomAD GraphQL API (live, requires internet).
 
-### OMIM (requires free registration)
-1. Register at https://omim.org/api and obtain API key
-2. Download genemap2.txt from https://data.omim.org/downloads/<api_key>/genemap2.txt
-3. Set in config:
-```yaml
-omim:
-  genemap_path: "/data/omim/genemap2.txt"
-```
+### OMIM (retired 2026-08-20)
+**OMIM has been removed from kim_pipeline effective 2026-08-20 due to licensing restrictions.** OMIM's terms state: "This resource is intended for purely research purposes" and "Commercial use of the resource would require licensing." GEPER is being developed for eventual clinical/diagnostic deployment, which falls outside OMIM's stated research-use scope.
+
+- Previous setup (now deprecated): free registration at https://omim.org/api, genemap2.txt download from https://data.omim.org/downloads/
+- Code status: `pipeline/omim/` module and all caller references have been removed from the pipeline
+- Future reinstatement: possible if a commercial license from OMIM is obtained
+- For new deployments: do not attempt to configure OMIM; existing workflows continue without it
+
+See `geper/DATA_SOURCE_LICENSE_AUDIT.md` (OMIM retirement entry) for the full regulatory analysis.
 
 ### RefSeq GFF3 (for transcript-aware RNA analysis)
 ```bash

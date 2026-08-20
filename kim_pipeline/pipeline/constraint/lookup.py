@@ -1,15 +1,12 @@
 """
 pipeline/constraint/lookup.py
 ──────────────────────────────
-gnomAD gene constraint (pLI / LOEUF) lookup.
-
-Replaces the OMIM phenotype-text heuristic for PVS1 LoF-intolerance.
+gnomAD gene constraint (pLI / LOEUF) lookup, used for PVS1 LoF-intolerance.
 
 Two backends selected automatically:
   LOCAL  — parses gnomAD constraint TSV (gnomad.v4.1.constraint_metrics.tsv
             or any TSV with columns: gene, pLI, oe_lof_upper).
   API    — gnomAD GraphQL endpoint (same host as GnomadLookup).
-  FALLBACK — OmimLookup.is_lof_intolerant() when neither source is available.
 
 Decision rule (ClinGen recommendation):
   lof_gene_intolerant = pLI ≥ 0.9  OR  LOEUF ≤ 0.35
@@ -28,6 +25,7 @@ Download the TSV (23 MB gzipped)::
          gnomad.v4.1.constraint_metrics.tsv.bgz
     # then set gnomad_constraint.tsv_path to that path
 """
+
 from __future__ import annotations
 
 import gzip
@@ -35,7 +33,6 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import Dict, Optional
 
 logger = logging.getLogger("geper.pipeline.constraint.lookup")
 
@@ -57,12 +54,13 @@ _CONSTRAINT_QUERY = """\
 @dataclass
 class ConstraintRecord:
     """gnomAD constraint metrics for one gene."""
+
     gene: str
-    pli: Optional[float]          # probability of LoF intolerance (0–1)
-    loeuf: Optional[float]        # oe_lof_upper (lower = more constrained)
-    oe_mis: Optional[float] = None   # FIX 15: observed/expected missense ratio
-    mis_z: Optional[float] = None    # FIX 15: missense Z-score
-    transcript: Optional[str] = None
+    pli: float | None  # probability of LoF intolerance (0–1)
+    loeuf: float | None  # oe_lof_upper (lower = more constrained)
+    oe_mis: float | None = None  # FIX 15: observed/expected missense ratio
+    mis_z: float | None = None  # FIX 15: missense Z-score
+    transcript: str | None = None
     backend_used: str = "unknown"
 
     def is_lof_intolerant(self, pli_threshold: float = 0.9, loeuf_threshold: float = 0.35) -> bool:
@@ -96,28 +94,31 @@ class GnomadConstraintLookup:
 
     Args:
         cfg: Full pipeline config dict.  Reads ``cfg["gnomad_constraint"]``.
-        omim_fallback: Optional OmimLookup instance used when neither local
-                       TSV nor API is available.
     """
 
     def __init__(
         self,
-        cfg: Optional[Dict] = None,
-        omim_fallback=None,
+        cfg: dict | None = None,
+        clingen_fallback=None,
     ) -> None:
-        gc_cfg: Dict = (cfg or {}).get("gnomad_constraint", {}) or {}
+        # ClinGen Dosage Sensitivity fallback (haploinsufficiency_score),
+        # used by is_lof_intolerant() when gnomAD constraint data is
+        # unavailable for a gene. See pipeline/clingen/lookup.py's
+        # docstring for why this is a real curated score, not a
+        # heuristic, and why it isn't geper/'s ClinGen client directly.
+        self._clingen_fallback = clingen_fallback
+        gc_cfg: dict = (cfg or {}).get("gnomad_constraint", {}) or {}
         # FIX (Issue 1): the API backend below queries the same gnomAD
         # GraphQL service as pipeline/gnomad/lookup.py. `gnomad.enabled:
         # false` must disable ALL gnomAD API traffic, not just the
         # allele-frequency lookup — otherwise "offline mode" still makes
         # live HTTP requests for gene constraint (PVS1/PP2) data.
-        gn_cfg: Dict = (cfg or {}).get("gnomad", {}) or {}
+        gn_cfg: dict = (cfg or {}).get("gnomad", {}) or {}
         self._gnomad_enabled: bool = bool(gn_cfg.get("enabled", True))
-        self._tsv_path: Optional[str] = gc_cfg.get("tsv_path") or None
+        self._tsv_path: str | None = gc_cfg.get("tsv_path") or None
         self._pli_threshold: float = float(gc_cfg.get("pli_threshold", 0.9))
         self._loeuf_threshold: float = float(gc_cfg.get("loeuf_threshold", 0.35))
         self._timeout: int = int(gc_cfg.get("timeout", 20))
-        self._omim_fallback = omim_fallback
         # ── Per-run in-memory cache ──
         self._cache: dict = {}
         self._cache_hits: int = 0
@@ -125,7 +126,7 @@ class GnomadConstraintLookup:
         self._cache_lock = threading.Lock()
 
         # gene symbol (uppercase) → ConstraintRecord
-        self._by_gene: Dict[str, ConstraintRecord] = {}
+        self._by_gene: dict[str, ConstraintRecord] = {}
         self._backend = "api"
 
         if self._tsv_path and os.path.isfile(self._tsv_path):
@@ -134,29 +135,31 @@ class GnomadConstraintLookup:
                 self._backend = "local"
                 logger.info(
                     "[Constraint] Loaded local TSV: %s (%d genes)",
-                    self._tsv_path, len(self._by_gene),
+                    self._tsv_path,
+                    len(self._by_gene),
                 )
             except Exception as exc:
                 logger.warning(
-                    "[Constraint] Failed to load TSV %s: %s — falling back to API/OMIM",
-                    self._tsv_path, exc,
+                    "[Constraint] Failed to load TSV %s: %s — falling back to API",
+                    self._tsv_path,
+                    exc,
                 )
         elif not self._gnomad_enabled:
             # FIX (Issue 1): no local TSV and gnomAD API disabled — go
-            # straight to disabled/OMIM-fallback, never touch the network.
+            # straight to disabled, never touch the network.
             self._backend = "disabled"
             logger.info(
                 "[Constraint] gnomAD API disabled via config (gnomad.enabled: "
-                "false) — skipping constraint API requests; falling back to "
-                "OMIM heuristic (or unavailable) for LoF-intolerance/constraint."
+                "false) — skipping constraint API requests; LoF-intolerance/"
+                "constraint will be unavailable."
             )
         else:
             if self._tsv_path:
                 logger.warning(
-                    "[Constraint] TSV not found: %s — falling back to API/OMIM",
+                    "[Constraint] TSV not found: %s — falling back to API",
                     self._tsv_path,
                 )
-            logger.info("[Constraint] Backend: gnomAD GraphQL API (or OMIM fallback)")
+            logger.info("[Constraint] Backend: gnomAD GraphQL API")
 
     # ── TSV loading ───────────────────────────────────────────────────────────
 
@@ -188,7 +191,7 @@ class GnomadConstraintLookup:
 
                 transcript = (row.get("transcript") or "").strip() or None
 
-                pli: Optional[float] = None
+                pli: float | None = None
                 for col in ("pli", "p_li", "p(li)"):
                     raw_val = row.get(col, "").strip()
                     if raw_val and raw_val not in (".", "NA", "nan", ""):
@@ -198,7 +201,7 @@ class GnomadConstraintLookup:
                         except ValueError:
                             pass
 
-                loeuf: Optional[float] = None
+                loeuf: float | None = None
                 for col in ("oe_lof_upper", "loeuf", "oe_lof_upper_bin"):
                     raw_val = row.get(col, "").strip()
                     if raw_val and raw_val not in (".", "NA", "nan", ""):
@@ -210,7 +213,7 @@ class GnomadConstraintLookup:
 
                 # Keep highest-pLI transcript per gene (canonical choice)
                 # FIX 15: also parse missense constraint columns
-                oe_mis: Optional[float] = None
+                oe_mis: float | None = None
                 for col in ("oe_mis", "oe_mis_upper"):
                     raw_val = row.get(col, "").strip()
                     if raw_val and raw_val not in (".", "NA", "nan", ""):
@@ -220,7 +223,7 @@ class GnomadConstraintLookup:
                         except ValueError:
                             pass
 
-                mis_z: Optional[float] = None
+                mis_z: float | None = None
                 for col in ("mis_z", "z_mis", "mis_z_score"):
                     raw_val = row.get(col, "").strip()
                     if raw_val and raw_val not in (".", "NA", "nan", ""):
@@ -259,7 +262,7 @@ class GnomadConstraintLookup:
             "size": len(self._cache),
         }
 
-    def lookup(self, gene_symbol: str) -> Optional[ConstraintRecord]:
+    def lookup(self, gene_symbol: str) -> ConstraintRecord | None:
         """Return constraint metrics for a gene symbol. Results are cached per-run."""
         cache_key = (gene_symbol or "").lower()
         with self._cache_lock:
@@ -272,7 +275,7 @@ class GnomadConstraintLookup:
             self._cache[cache_key] = result
         return result
 
-    def _uncached_lookup(self, gene_symbol: str) -> Optional[ConstraintRecord]:
+    def _uncached_lookup(self, gene_symbol: str) -> ConstraintRecord | None:
         """Internal lookup without cache layer.
 
         Returns None if the gene is not found in any backend.
@@ -301,25 +304,26 @@ class GnomadConstraintLookup:
 
         Decision rule: pLI ≥ pli_threshold OR LOEUF ≤ loeuf_threshold.
 
-        Falls back to OmimLookup.is_lof_intolerant() if constraint data is
-        unavailable (no local file, API unreachable, gene not found).
+        Falls back to ClinGen Dosage Sensitivity (haploinsufficiency_score
+        >= 3, ClinGen's own "sufficient evidence" threshold) when gnomAD
+        constraint data is unavailable for this gene. Returns False if
+        neither source has data (no local file, API unreachable/disabled,
+        gene not found in either).
         """
         rec = self.lookup(gene_symbol)
         if rec is not None:
             return rec.is_lof_intolerant(self._pli_threshold, self._loeuf_threshold)
-
-        # Fallback: OMIM heuristic
-        if self._omim_fallback is not None:
+        if self._clingen_fallback is not None:
             try:
-                result = self._omim_fallback.is_lof_intolerant(gene_symbol)
+                result = self._clingen_fallback.is_dosage_sufficient_for_lof(gene_symbol)
                 logger.debug(
-                    "[Constraint] %s not found in gnomAD constraint — OMIM fallback: %s",
-                    gene_symbol, result,
+                    "[Constraint] No gnomAD data for %s — ClinGen dosage-sensitivity fallback: %s",
+                    gene_symbol,
+                    result,
                 )
                 return result
             except Exception as exc:
-                logger.debug("[Constraint] OMIM fallback failed for %s: %s", gene_symbol, exc)
-
+                logger.debug("[Constraint] ClinGen fallback failed for %s: %s", gene_symbol, exc)
         return False
 
     def is_missense_constrained(self, gene_symbol: str) -> bool:
@@ -332,16 +336,16 @@ class GnomadConstraintLookup:
         rec = self.lookup(gene_symbol)
         if rec is not None:
             return rec.is_missense_constrained()
-        # No fallback for missense constraint — OMIM does not capture this metric
         return False
 
     # ── API backend ───────────────────────────────────────────────────────────
 
-    def _api_lookup(self, gene_symbol: str) -> Optional[ConstraintRecord]:
+    def _api_lookup(self, gene_symbol: str) -> ConstraintRecord | None:
         """Query gnomAD GraphQL for gene constraint scores."""
         try:
             import requests
-            from requests.exceptions import ConnectionError as ReqConnectionError, Timeout
+            from requests.exceptions import ConnectionError as ReqConnectionError
+            from requests.exceptions import Timeout
         except ImportError:
             logger.warning("[Constraint] requests not installed — cannot use API backend")
             return None
@@ -364,7 +368,10 @@ class GnomadConstraintLookup:
                 if resp.status_code in _RETRY_STATUS and attempt < max_retries:
                     logger.warning(
                         "[Constraint API] HTTP %d on attempt %d/%d — retrying in %.0fs",
-                        resp.status_code, attempt, max_retries, delay,
+                        resp.status_code,
+                        attempt,
+                        max_retries,
+                        delay,
                     )
                     _time.sleep(delay)
                     delay *= 2
@@ -376,12 +383,18 @@ class GnomadConstraintLookup:
                 if attempt < max_retries:
                     logger.warning(
                         "[Constraint API] %s on attempt %d/%d — retrying in %.0fs: %s",
-                        type(exc).__name__, attempt, max_retries, delay, exc,
+                        type(exc).__name__,
+                        attempt,
+                        max_retries,
+                        delay,
+                        exc,
                     )
                     _time.sleep(delay)
                     delay *= 2
                 else:
-                    logger.error("[Constraint API] %s on final attempt: %s", type(exc).__name__, exc)
+                    logger.error(
+                        "[Constraint API] %s on final attempt: %s", type(exc).__name__, exc
+                    )
                     return None
             except Exception as exc:
                 logger.warning("[Constraint API] Request failed for %s: %s", gene_symbol, exc)

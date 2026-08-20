@@ -25,12 +25,6 @@ gnomad:
   cache_dir: null          # default: ~/.cache/geper/gnomad
   cache_ttl_hours: null    # null = never expire (gnomAD frequencies for a fixed release are immutable)
 
-omim:
-  enabled: true
-  # Path to OMIM genemap2.txt (download from omim.org after registration)
-  genemap_path: ""         # e.g. /data/omim/genemap2.txt
-  api_key: ""              # Optional OMIM API key for live queries
-
 # ── RNA analysis ──────────────────────────────────────────────────────────────
 rna_analysis:
   enabled: true
@@ -165,6 +159,27 @@ gnomad_constraint:
   tsv_path: ""             # e.g. /data/gnomad.v4.1.constraint_metrics.tsv.bgz
   loeuf_threshold: 0.35
   pli_threshold: 0.9
+
+# ── ClinGen Dosage Sensitivity (pipeline/clingen) ─────────────────────────────
+# LoF-intolerance fallback for genes with no gnomAD pLI/LOEUF coverage
+# (see pipeline/constraint/lookup.py::GnomadConstraintLookup.is_lof_intolerant).
+# License: ClinGen curated content is CC0 1.0 (public domain, no
+# restriction on commercial use) — see docs/DATA_PROVENANCE.md.
+clingen:
+  enabled: true
+  # Path to a local ClinGen Dosage Sensitivity download (TSV/CSV).
+  # Download from https://search.clinicalgenome.org/kb/dosage/download
+  # or the ftp.clinicalgenome.org mirror.
+  dosage_sensitivity_path: ""   # e.g. /data/clingen/ClinGen_gene_curation_list_GRCh38.tsv
+  # Live API fallback — UNVERIFIED against a real clinicalgenome.org
+  # response in this deployment (no network route to clinicalgenome.org
+  # was available during development; see pipeline/clingen/lookup.py's
+  # docstring). Leave disabled until spot-checked against a live call;
+  # the local dataset above is the only verified path today.
+  api_enabled: false
+  api_endpoint: "https://search.clinicalgenome.org/kb/gene-dosage"
+  timeout: 15
+  max_retries: 3
 
 # ── Hotspot lookup (pipeline/hotspot) ─────────────────────────────────────────
 hotspot:

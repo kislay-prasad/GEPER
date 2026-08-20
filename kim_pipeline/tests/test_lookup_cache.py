@@ -7,7 +7,7 @@ Covers:
 - Calling lookup() twice with same args only calls underlying method once
 - cache_stats() reports correct hit/miss counts
 - clear_cache() resets the cache and next lookup is a miss
-- All 5 lookup classes: ClinVar, gnomAD, OMIM, Constraint, Hotspot
+- All 4 lookup classes: ClinVar, gnomAD, Constraint, Hotspot
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pipeline.clinvar.lookup import ClinVarLookup, ClinVarHit
 from pipeline.gnomad.lookup import GnomadLookup, GnomadHit
-from pipeline.omim.lookup import OmimLookup, OmimGeneEntry
 from pipeline.constraint.lookup import GnomadConstraintLookup, ConstraintRecord
 from pipeline.hotspot.lookup import HotspotLookup
 
@@ -169,56 +168,6 @@ class TestGnomadCache(unittest.TestCase):
         self.assertEqual(mock_api.call_count, 1)
 
 
-# ─── OMIM Cache Tests ─────────────────────────────────────────────────────────
-
-class TestOmimCache(unittest.TestCase):
-
-    def _make_lookup(self) -> OmimLookup:
-        lkp = OmimLookup(cfg={})
-        lkp._backend = "api"
-        return lkp
-
-    def test_double_lookup_gene_calls_api_once(self):
-        lkp = self._make_lookup()
-        fake = OmimGeneEntry("BRCA1", "113705", "Breast cancer", "")
-        with patch.object(lkp, "_api_lookup_gene", return_value=fake) as mock_api:
-            r1 = lkp.lookup_gene("BRCA1")
-            r2 = lkp.lookup_gene("BRCA1")
-        self.assertIs(r1, fake)
-        self.assertIs(r2, fake)
-        self.assertEqual(mock_api.call_count, 1)
-
-    def test_case_insensitive_cache_key(self):
-        """BRCA1 and brca1 should hit the same cache entry."""
-        lkp = self._make_lookup()
-        fake = OmimGeneEntry("BRCA1", "113705", "Breast cancer", "")
-        with patch.object(lkp, "_api_lookup_gene", return_value=fake) as mock_api:
-            lkp.lookup_gene("BRCA1")
-            lkp.lookup_gene("brca1")
-        self.assertEqual(mock_api.call_count, 1)
-
-    def test_cache_stats(self):
-        lkp = self._make_lookup()
-        with patch.object(lkp, "_api_lookup_gene", return_value=None):
-            lkp.lookup_gene("TP53")
-            lkp.lookup_gene("TP53")
-            lkp.lookup_gene("PTEN")
-        stats = lkp.cache_stats()
-        self.assertEqual(stats["hits"], 1)
-        self.assertEqual(stats["misses"], 2)
-        self.assertEqual(stats["size"], 2)
-
-    def test_clear_cache(self):
-        lkp = self._make_lookup()
-        fake = OmimGeneEntry("TP53", "191170", "Cancer", "")
-        with patch.object(lkp, "_api_lookup_gene", return_value=fake) as mock_api:
-            lkp.lookup_gene("TP53")
-            lkp.clear_cache()
-            lkp.lookup_gene("TP53")
-        self.assertEqual(mock_api.call_count, 2)
-        self.assertEqual(lkp.cache_stats()["hits"], 0)
-
-
 # ─── Constraint Cache Tests ───────────────────────────────────────────────────
 
 class TestConstraintCache(unittest.TestCase):
@@ -293,10 +242,10 @@ class TestHotspotCache(unittest.TestCase):
         self.assertEqual(stats["misses"], 0)
 
     def test_is_in_hotspot_uses_no_external_call(self):
-        """is_in_hotspot with empty config returns False (OMIM fallback)."""
+        """is_in_hotspot with empty config and no local data returns None (not-evaluated)."""
         lkp = self._make_lookup()
         result = lkp.is_in_hotspot("1", 12345, "UNKNOWN_GENE")
-        self.assertFalse(result)
+        self.assertIsNone(result)
 
     def test_lookup_caches_result(self):
         """lookup() method caches results between calls."""

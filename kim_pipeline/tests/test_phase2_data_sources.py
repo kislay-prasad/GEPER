@@ -13,7 +13,7 @@ import os
 import sys
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -163,15 +163,14 @@ class TestGnomadConstraintLookup:
         lkp = GnomadConstraintLookup({"gnomad_constraint": {"tsv_path": str(tsv)}})
         assert lkp.is_lof_intolerant("FAKEGENE999") is False
 
-    def test_missing_tsv_falls_back_to_omim(self, tmp_path):
-        omim_mock = MagicMock()
-        omim_mock.is_lof_intolerant.return_value = True
+    def test_missing_tsv_returns_false(self, tmp_path):
+        # No OMIM fallback exists any more (retired) -- a missing/unreadable
+        # TSV must fall back to the documented "unavailable" default (False)
+        # rather than raising.
         lkp = GnomadConstraintLookup(
-            {"gnomad_constraint": {"tsv_path": str(tmp_path / "nonexistent.tsv")}},
-            omim_fallback=omim_mock,
+            {"gnomad_constraint": {"tsv_path": str(tmp_path / "nonexistent.tsv")}}
         )
-        assert lkp.is_lof_intolerant("BRCA1") is True
-        omim_mock.is_lof_intolerant.assert_called_once_with("BRCA1")
+        assert lkp.is_lof_intolerant("BRCA1") is False
 
     def test_gz_tsv_loaded(self, tmp_path):
         tsv_gz = tmp_path / "constraint.tsv.gz"
@@ -311,16 +310,13 @@ class TestHotspotLookup:
         assert rec.in_uniprot_domain is False
         assert rec.is_hotspot is False
 
-    def test_no_data_falls_back_to_omim(self):
-        omim_mock = MagicMock()
-        omim_mock.is_missense_mechanism.return_value = True
-        lkp = HotspotLookup(cfg={}, omim_fallback=omim_mock)
-        assert lkp.is_in_hotspot("chr17", 43057051, gene="BRCA1") is True
-        omim_mock.is_missense_mechanism.assert_called_once_with("BRCA1")
-
-    def test_is_in_hotspot_false_when_no_data_no_omim(self):
+    def test_is_in_hotspot_none_when_no_data(self):
+        # No OMIM fallback exists any more (retired), and no local data
+        # source is loaded -- correct result is None (not-evaluated, so
+        # PM1 shows not_evaluated), not a False that would read as a
+        # confirmed negative.
         lkp = HotspotLookup(cfg={})
-        assert lkp.is_in_hotspot("chr1", 100, gene="FAKEGENE") is False
+        assert lkp.is_in_hotspot("chr1", 100, gene="FAKEGENE") is None
 
     def test_reuses_clinvar_cfg_key(self, tmp_path):
         """hotspot.clinvar_tsv_gz_path should also accept clinvar.tsv_gz_path."""

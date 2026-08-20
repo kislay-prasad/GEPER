@@ -29,10 +29,10 @@ Download UniProt domains BED (optional, ~60 MB)::
     # Available from UCSC Table Browser → UniProt track → BED export
     # or from https://ftp.uniprot.org/pub/databases/uniprot/ (custom conversion)
 
-Fallback:
-  When neither ClinVar TSV nor domain BED is configured,
-  OmimLookup.is_missense_mechanism() is used as the last resort.
+When neither ClinVar TSV nor domain BED is configured, a position is
+simply reported as not-a-hotspot (no fallback data source).
 """
+
 from __future__ import annotations
 
 import csv
@@ -40,17 +40,18 @@ import gzip
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Set, Tuple
+from dataclasses import dataclass
 
 logger = logging.getLogger("geper.pipeline.hotspot.lookup")
 
 # Canonical P/LP significance strings from ClinVar
-_PLP_TERMS = frozenset({
-    "pathogenic",
-    "likely pathogenic",
-    "pathogenic/likely pathogenic",
-})
+_PLP_TERMS = frozenset(
+    {
+        "pathogenic",
+        "likely pathogenic",
+        "pathogenic/likely pathogenic",
+    }
+)
 
 
 def _is_plp(sig: str) -> bool:
@@ -80,11 +81,12 @@ def _is_missense_or_small_indel(variant_type: str) -> bool:
 @dataclass
 class HotspotRecord:
     """Hotspot information for a queried position."""
+
     chrom: str
     pos: int
-    plp_count: int           # number of independent P/LP ClinVar submissions
+    plp_count: int  # number of independent P/LP ClinVar submissions
     in_uniprot_domain: bool
-    domain_name: Optional[str]
+    domain_name: str | None
     is_hotspot: bool
     backend_used: str
 
@@ -93,29 +95,24 @@ class HotspotLookup:
     """Classify a genomic position as a mutational hotspot.
 
     Args:
-        cfg:           Full pipeline config dict. Reads ``cfg["hotspot"]``
-                       and falls back to ``cfg["clinvar"]["tsv_gz_path"]``.
-        omim_fallback: Optional OmimLookup instance for last-resort fallback.
+        cfg: Full pipeline config dict. Reads ``cfg["hotspot"]`` and falls
+             back to ``cfg["clinvar"]["tsv_gz_path"]``.
     """
 
     def __init__(
         self,
-        cfg: Optional[Dict] = None,
-        omim_fallback=None,
+        cfg: dict | None = None,
     ) -> None:
-        hs_cfg: Dict = (cfg or {}).get("hotspot", {}) or {}
-        cv_cfg: Dict = (cfg or {}).get("clinvar", {}) or {}
+        hs_cfg: dict = (cfg or {}).get("hotspot", {}) or {}
+        cv_cfg: dict = (cfg or {}).get("clinvar", {}) or {}
 
         # ClinVar TSV — prefer hotspot-specific key, fall back to clinvar key
-        self._clinvar_tsv: Optional[str] = (
-            hs_cfg.get("clinvar_tsv_gz_path")
-            or cv_cfg.get("tsv_gz_path")
-            or None
+        self._clinvar_tsv: str | None = (
+            hs_cfg.get("clinvar_tsv_gz_path") or cv_cfg.get("tsv_gz_path") or None
         )
         self._min_plp: int = int(hs_cfg.get("min_plp_count", 3))
-        self._domains_bed: Optional[str] = hs_cfg.get("uniprot_domains_bed") or None
+        self._domains_bed: str | None = hs_cfg.get("uniprot_domains_bed") or None
         self._timeout: int = int(hs_cfg.get("timeout", 20))
-        self._omim_fallback = omim_fallback
         # ── Per-run in-memory cache ──
         self._cache: dict = {}
         self._cache_hits: int = 0
@@ -123,11 +120,11 @@ class HotspotLookup:
         self._cache_lock = threading.Lock()
 
         # (norm_chrom, pos) → P/LP submission count for missense-like variants
-        self._plp_counts: Dict[Tuple[str, int], int] = {}
+        self._plp_counts: dict[tuple[str, int], int] = {}
 
         # Sorted list of (chrom, start, end, domain_name) BED intervals
         # for fast overlap checks (stored per chrom for binary search)
-        self._domains: Dict[str, list] = {}  # chrom → [(start, end, domain_name), ...]
+        self._domains: dict[str, list] = {}  # chrom → [(start, end, domain_name), ...]
 
         self._clinvar_loaded = False
         self._domains_loaded = False
@@ -159,8 +156,9 @@ class HotspotLookup:
 
         if not self._clinvar_loaded and not self._domains_loaded:
             logger.info(
-                "[Hotspot] No local data sources loaded — using OMIM fallback "
-                "(configure hotspot.clinvar_tsv_gz_path for real hotspot data)"
+                "[Hotspot] No local data sources loaded — hotspot lookups will "
+                "return False (configure hotspot.clinvar_tsv_gz_path for real "
+                "hotspot data)"
             )
 
     # ── ClinVar TSV loading ───────────────────────────────────────────────────
@@ -181,10 +179,8 @@ class HotspotLookup:
                     continue
 
                 chrom = (
-                    row.get("#Chromosome")
-                    or row.get("Chromosome")
-                    or ""
-                ).strip().lstrip("chr")
+                    (row.get("#Chromosome") or row.get("Chromosome") or "").strip().lstrip("chr")
+                )
                 if not chrom:
                     continue
 
@@ -219,8 +215,8 @@ class HotspotLookup:
                     continue
                 chrom = parts[0].lstrip("chr")
                 try:
-                    start = int(parts[1])   # 0-based
-                    end = int(parts[2])     # 0-based exclusive
+                    start = int(parts[1])  # 0-based
+                    end = int(parts[2])  # 0-based exclusive
                 except ValueError:
                     continue
                 domain_name = parts[3].strip() if len(parts) > 3 else "domain"
@@ -248,7 +244,7 @@ class HotspotLookup:
 
         plp_count = 0
         in_domain = False
-        domain_name: Optional[str] = None
+        domain_name: str | None = None
         backend = "none"
 
         # ClinVar P/LP count
@@ -306,7 +302,7 @@ class HotspotLookup:
             "size": len(self._cache),
         }
 
-    def lookup(self, chrom: str, pos: int) -> "HotspotRecord":
+    def lookup(self, chrom: str, pos: int) -> HotspotRecord:
         """Cached variant position lookup."""
         cache_key = f"{chrom}:{pos}"
         with self._cache_lock:
@@ -320,30 +316,23 @@ class HotspotLookup:
             self._cache[cache_key] = result
         return result
 
-    def is_in_hotspot(self, chrom: str, pos: int, gene: Optional[str] = None) -> bool:
-        """Return True if this position is a known mutational hotspot.
+    def is_in_hotspot(self, chrom: str, pos: int, gene: str | None = None) -> bool | None:
+        """Return True/False if this position's hotspot status is known.
 
-        When no local data is loaded, falls back to OmimLookup.is_missense_mechanism()
-        on the gene symbol (keeping the old heuristic as a last resort).
+        Returns None (not True/False) when no local data source (ClinVar
+        TSV / UniProt domains BED) is loaded — hotspot status was never
+        actually assessed for this position, so callers must not treat
+        that as a confirmed "not a hotspot" (see PM1 in
+        pipeline/acmg/classifier.py, which maps this to STATUS_NOT_EVALUATED
+        rather than a false negative).
 
         Args:
             chrom: Chromosome.
             pos:   1-based position.
-            gene:  Gene symbol (used for OMIM fallback only).
+            gene:  Gene symbol. Currently unused — retained in the signature
+                   because callers pass it positionally; no gene-level
+                   fallback source is wired in.
         """
         if self._clinvar_loaded or self._domains_loaded:
             return self.lookup(chrom, pos).is_hotspot
-
-        # Fallback: OMIM gene-level heuristic
-        if self._omim_fallback is not None and gene:
-            try:
-                result = self._omim_fallback.is_missense_mechanism(gene)
-                logger.debug(
-                    "[Hotspot] No local data for %s:%d — OMIM fallback: %s",
-                    chrom, pos, result,
-                )
-                return result
-            except Exception as exc:
-                logger.debug("[Hotspot] OMIM fallback failed for %s: %s", gene, exc)
-
-        return False
+        return None

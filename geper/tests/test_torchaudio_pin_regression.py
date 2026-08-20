@@ -31,7 +31,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 class TestTorchaudioIsPinnedInRequirements(unittest.TestCase):
     def setUp(self):
-        with open(os.path.join(_REPO_ROOT, "requirements.txt")) as fh:
+        with open(os.path.join(_REPO_ROOT, "requirements.txt"), encoding="utf-8") as fh:
             self.requirements_text = fh.read()
 
     def test_torchaudio_is_pinned_exactly(self):
@@ -112,7 +112,7 @@ class TestStartupValidatorCatchesTorchaudioMismatch(unittest.TestCase):
         """
         import ast
 
-        with open(os.path.join(_REPO_ROOT, "verify_environment.py")) as fh:
+        with open(os.path.join(_REPO_ROOT, "verify_environment.py"), encoding="utf-8") as fh:
             tree = ast.parse(fh.read())
         top_level_imports = set()
         for node in tree.body:

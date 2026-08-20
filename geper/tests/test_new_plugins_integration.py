@@ -35,9 +35,7 @@ class _FakeEnformerModel:
         return self
 
     def __call__(self, seqs, head="human"):
-        return torch.stack(
-            [torch.full((4, 4), self.ref_value), torch.full((4, 4), self.alt_value)], dim=0
-        )
+        return torch.stack([torch.full((4, 4), self.ref_value), torch.full((4, 4), self.alt_value)], dim=0)
 
 
 class _FakeBorzoiModel:
@@ -68,9 +66,24 @@ class TestBothPluginsDisabledByDefault(unittest.TestCase):
         self.assertEqual("borzoi" in available, BorzoiPlugin.is_available())
 
     def test_manager_predict_never_crashes_for_either(self):
+        # Whether enformer/borzoi actually load is environment-
+        # dependent (their own package/model-cache availability -- see
+        # test_enformer_borzoi_dependency_gated just above, which
+        # already documents both are enabled BY CONFIG DEFAULT and
+        # gated only by package availability, not policy). Asserting
+        # `is None` pinned a broken-environment proxy ("the package
+        # isn't installed here") as if it were the real contract. The
+        # actual contract -- this test's own name -- is just "never
+        # crashes": predict() must return either None (genuinely
+        # unavailable) or a real prediction dict (genuinely available),
+        # never raise.
         manager = ModelManager(registry=build_default_registry())
         for key in ("enformer", "borzoi"):
-            self.assertIsNone(manager.predict(key, "A" * 10, "T" * 10))
+            result = manager.predict(key, "A" * 10, "T" * 10)
+            self.assertTrue(
+                result is None or isinstance(result, dict),
+                f"{key}: predict() returned {result!r}, expected None or dict",
+            )
 
 
 class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
@@ -122,14 +135,11 @@ class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
         fake_enformer = _FakeEnformerModel(ref_value=0.0, alt_value=1.0)
         fake_borzoi = _FakeBorzoiModel()
 
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "enformer_pytorch.from_pretrained", return_value=fake_enformer
-        ), mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("enformer_pytorch.from_pretrained", return_value=fake_enformer),
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi),
         ):
             enformer_result = self.manager.predict("enformer", "A" * 10, "T" * 10)
             borzoi_result = self.manager.predict("borzoi", "A" * 10, "T" * 10)
@@ -145,14 +155,11 @@ class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
     def test_one_plugin_failing_to_load_does_not_affect_the_other(self):
         fake_borzoi = _FakeBorzoiModel()
 
-        with mock.patch(
-            "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "enformer_pytorch.from_pretrained", side_effect=ConnectionError("unreachable")
-        ), mock.patch(
-            "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("enformer_pytorch.from_pretrained", side_effect=ConnectionError("unreachable")),
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi),
         ):
             enformer_result = self.manager.predict("enformer", "A" * 10, "T" * 10)
             borzoi_result = self.manager.predict("borzoi", "A" * 10, "T" * 10)

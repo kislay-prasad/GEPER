@@ -196,14 +196,33 @@ class TestConsensusConfidence(unittest.TestCase):
 
 
 class TestEnsembleManagerDefaultConstruction(unittest.TestCase):
-    def test_default_manager_uses_real_registry_and_stays_disabled(self):
+    def test_default_manager_uses_real_registry_and_never_crashes(self):
         # No mocking at all -- exercises the real default construction
-        # path, confirming it never crashes even with both plugins
-        # disabled by default.
+        # path, confirming it never crashes regardless of which
+        # plugins actually load. Deliberately does NOT pin
+        # models_used to a specific value: enformer/borzoi are
+        # enabled BY CONFIG DEFAULT (see
+        # test_new_plugins_integration.py::
+        # TestBothPluginsDisabledByDefault::
+        # test_enformer_borzoi_dependency_gated) and only gated by
+        # their own optional pip package / model-cache availability,
+        # which is genuine machine state, not policy -- pinning an
+        # empty list here was only ever true because the packages
+        # happened to be uninstalled/broken on whichever box ran it,
+        # not because of any "disabled by default" guarantee. The
+        # `[]` case itself is already covered deterministically by
+        # TestZeroModelsAvailable::test_no_models_returns_empty_models_used
+        # above, via a mocked manager -- this test's unique value is
+        # the real, unmocked registry construction path staying crash-
+        # free and internally consistent for WHATEVER it resolves to.
         ensemble = EnsembleManager()
         result = ensemble.evaluate("A" * 10, "T" * 10)
-        self.assertEqual(result["models_used"], [])
-        self.assertEqual(result["basis"], "no_models")
+        self.assertIsInstance(result["models_used"], list)
+        self.assertLessEqual(set(result["models_used"]), {"enformer", "borzoi"})
+        if result["models_used"]:
+            self.assertNotEqual(result["basis"], "no_models")
+        else:
+            self.assertEqual(result["basis"], "no_models")
 
 
 if __name__ == "__main__":

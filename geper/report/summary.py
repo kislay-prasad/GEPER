@@ -2169,6 +2169,26 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Paragraph("<b>Supporting Evidence:</b>", styles["BodyText"]))
         flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in supporting)
 
+    # Conflicting evidence: computed by the same
+    # `report/clinical_report_builder.py` pass that fills
+    # `supporting_evidence` above, and rendered by the Markdown report
+    # ("### 6. Conflicting Evidence" in `report/report_generator.py`),
+    # but never rendered in this PDF -- the same "cited but not shown"
+    # asymmetry already noted for `decision_path` and the combining-rule
+    # trace above, and the more dangerous direction of it: this is where
+    # evidence AGAINST the benign-direction reading is stated. BP7's
+    # uncalibrated-splice-predictor disclosure lands here (see
+    # `pipeline/acmg_rules.py::ACMGRuleEngine._bp7`), so dropping the
+    # section silently dropped that caveat from the PDF while the
+    # Markdown report showed it. Placed before Limitations deliberately:
+    # a per-variant evidence caveat belongs next to that variant's
+    # evidence, not pooled into the report-wide boilerplate at the end.
+    conflicting = clinical.get("conflicting_evidence") or []
+    if conflicting:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Conflicting Evidence:</b>", styles["BodyText"]))
+        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in conflicting)
+
     flow.extend(_build_indian_population_frequency_flowables(clinical, styles))
 
     limitations = clinical.get("limitations") or []

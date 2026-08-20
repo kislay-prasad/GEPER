@@ -175,6 +175,35 @@ pip install pyyaml
 
 For Colab, use `GEPER_Colab.ipynb`, which handles all of the above.
 
+**Setup gotcha: a bare `pip install -r requirements.txt` is not
+sufficient to bring geper/ up end-to-end.** Three manual steps are
+required beyond that single command, and skipping any of them fails
+the pipeline at *startup* — a `ModuleNotFoundError` raised before any
+model-specific code runs, not a failure isolated to whichever model
+needed the missing package — because `pipeline/orchestrator.py`
+unconditionally imports `pipeline/uniprot/bootstrap.py` at module load
+time, which itself imports `Bio` (biopython):
+
+1. **torch/torchvision/torchaudio must be installed as the exact pinned
+   trio, not individually.** `torch==2.7.1` is pinned specifically
+   because `torchvision==0.22.1` and `torchaudio==2.7.1` (both pinned
+   further down in `requirements.txt`) are only guaranteed compatible
+   with that exact torch release per PyTorch's own compatibility
+   matrix. Picking up a different torch build separately (e.g. an
+   unpinned `pip install torch` pulling in a newer CPU wheel) can leave
+   torchvision/torchaudio silently mismatched, or skipped outright. See
+   "18. Environment verification & troubleshooting" for the symptom
+   this produces (`undefined symbol` at import time) if missed.
+2. **Evo 2 needs a manual, CUDA-toolkit-matched install** — see the
+   comment block directly above the `evo2>=0.6.0` line in
+   `requirements.txt` for the exact commands (Arc Institute's own
+   documented torch+CUDA+flash-attn sequence). It cannot be safely
+   pip-installed via the bare requirements file in a fresh or CPU-only
+   environment.
+3. **tensorflow must be installed before `mmsplice==2.4.0 --no-deps`**,
+   not interchangeably — see the comment block above the `tensorflow`
+   line in `requirements.txt` for why the ordering matters.
+
 ## 6. Usage
 
 ```bash

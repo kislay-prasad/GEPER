@@ -2464,7 +2464,7 @@ class SplicingConfig:
         "no",
         "off",
     )
-    ENABLE_SPLICEBERT: bool = os.environ.get("GEPER_ENABLE_SPLICEBERT", "true").strip().lower() not in (
+    ENABLE_SPLICEBERT: bool = os.environ.get("GEPER_ENABLE_SPLICEBERT", "false").strip().lower() not in (
         "0",
         "false",
         "no",

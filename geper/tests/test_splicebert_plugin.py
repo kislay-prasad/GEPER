@@ -402,6 +402,31 @@ class TestSpliceBERTThroughModelManager(unittest.TestCase):
             with self.assertRaises(PluginUnavailableError):
                 manager.get("splicebert")
 
+    def test_splicebert_disabled_by_default(self):
+        """Regression test: SpliceBERT reliably fails to load on
+        transformers 5.13.1 (2026-08-09 timeouts, see DATA_PROVENANCE.md),
+        so ENABLE_SPLICEBERT must default to False -- a defect fix, not a
+        policy call. Unlike the other tests in this file, this one does
+        NOT mock CONFIG: it exercises the real, unmodified config default
+        and the real object graph GEPER would use at startup
+        (`pipeline.models.pending_plugins.build_default_registry()`), the
+        same way `tests/test_new_plugins_integration.py`'s
+        TestBothPluginsDisabledByDefault does for Enformer/Borzoi.
+        """
+        from config import CONFIG
+        from pipeline.models.pending_plugins import build_default_registry
+
+        self.assertFalse(CONFIG.splicing.ENABLE_SPLICEBERT)
+        self.assertFalse(SpliceBERTPlugin.is_available())
+
+        registry = build_default_registry()
+        loaded_models = registry.available_keys()
+        self.assertNotIn("splicebert", loaded_models)
+        self.assertFalse(any("splicebert" in str(m).lower() for m in loaded_models))
+
+        manager = ModelManager(registry=registry)
+        self.assertIsNone(manager.predict("splicebert", "A" * 10, "T" * 10))
+
 
 if __name__ == "__main__":
     unittest.main()

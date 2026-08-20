@@ -135,9 +135,12 @@ _COMPLEMENT = str.maketrans("ACGTN", "TGCAN")
 
 class SpliceBERTPlugin(PluginModel):
     """Real SpliceBERT integration, gated by
-    `CONFIG.splicing.ENABLE_SPLICEBERT` (defaults to enabled); loads
-    the official pretrained `SpliceBERT.1024nt` checkpoint (BSD-3-
-    Clause code / CC-BY-4.0 weights) from the upstream Zenodo archive
+    `CONFIG.splicing.ENABLE_SPLICEBERT`. Currently disabled by default
+    (as of 2026-08-20) due to a known load-timeout failure against
+    `transformers` 5.13.1 (see DATA_PROVENANCE.md); will be re-enabled
+    once that issue is resolved. When enabled, loads the official
+    pretrained `SpliceBERT.1024nt` checkpoint (BSD-3-Clause code /
+    CC-BY-4.0 weights) from the upstream Zenodo archive
     (`pipeline/models/splicebert/loader.py`) via `transformers`'
     standard `BertForMaskedLM`/`BertTokenizer`."""
 

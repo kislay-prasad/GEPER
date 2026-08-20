@@ -69,6 +69,17 @@ python_files = ["test_*.py"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+# Must mirror the root ruff.toml's `select`. Ruff resolves the *nearest*
+# config to each file, so this block -- not the repo root's -- is what
+# applies to everything under kim_pipeline/. Without an explicit
+# `select` here, this subtree silently fell back to a much broader rule
+# set than the repo intends (BLE001, S110, RUF059, C408 and friends),
+# which is the opposite of root ruff.toml's stated aim of catching real
+# errors "without also forcing an unrelated style migration". Keep the
+# two lists in sync.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true

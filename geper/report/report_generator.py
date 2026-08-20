@@ -9,7 +9,7 @@ numeric payloads deliberately summarized (not dumped) for readability.
 from typing import Any, Dict, List
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
-from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION
+from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION, RESEARCH_USE_DISCLAIMER
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
@@ -66,14 +66,17 @@ def _render_1000_genomes_sas_markdown(ipf: Dict[str, Any]) -> List[str]:
     return lines
 
 
-_DISCLAIMER = (
-    "> **Disclaimer:** GEPER is a research pipeline. Outputs are generated "
-    "by pretrained machine learning models and public database lookups and "
-    "are **not** a substitute for professional clinical genetic "
-    "interpretation, diagnosis, or advice. All findings should be reviewed "
-    "and confirmed by a qualified clinical geneticist or genetic counselor "
-    "before any medical decision is made."
-)
+# Markdown presentation only -- the claim itself lives in
+# `report/clinical_report_builder.py::RESEARCH_USE_DISCLAIMER`, shared
+# with both PDFs and the per-finding limitations. This used to be an
+# independently-worded copy of the same statement, which is how the
+# PDF's own version drifted into asserting the opposite ("intended for
+# clinical use") without anything catching it. The blockquote marker
+# and bold label are applied here rather than baked into the shared
+# constant, which is what makes importing it possible at all -- the
+# previous fork existed because the other copy carried its formatting
+# with it.
+_DISCLAIMER = f"> **Disclaimer:** {RESEARCH_USE_DISCLAIMER}"
 
 # Governance control (round 30 part 2): a one-line review-status banner,
 # sourced from `geper_results.json`'s own `review_status` field (see

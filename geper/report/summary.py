@@ -58,7 +58,11 @@ from pipeline.models.status import SKIPPED as _STATUS_SKIPPED
 from pipeline.models.status import USED as _STATUS_USED
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from pipeline.stage_schemas import StageStatus as _StageStatus
-from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
+from report.clinical_report_builder import (
+    ACMG_METHODOLOGY_STATEMENT,
+    EVIDENCE_COMPLETENESS_CAPTION,
+    RESEARCH_USE_DISCLAIMER,
+)
 from report.pdf_escape import esc
 from utils.logger import get_logger
 from utils.service_health import HEALTH
@@ -101,13 +105,16 @@ _LOGO_TITLE_GAP = 4 * mm
 # same run.
 _SIGNOFF_ROLES = ("Clinical Scientist", "Consultant Clinical Scientist")
 
-_DISCLAIMER_TEXT = (
-    "Limitations and Disclaimer: This test was developed and its performance characteristics "
-    "determined by the Geper Genomic Analysis Pipeline. It is intended for clinical use in "
-    "conjunction with other clinical and diagnostic findings. Decisions regarding patient care "
-    "should not be based solely on this report. All clinical decisions must be made by a "
-    "qualified healthcare professional."
-)
+# The closing disclaimer block. `RESEARCH_USE_DISCLAIMER` is imported
+# rather than restated: this constant previously held US CLIA/LDT
+# template wording asserting the report was "intended for clinical
+# use", which contradicted both the research-use limitation this same
+# PDF prints under every finding and this module's own docstring above
+# (which describes hospital use as pending a compliance sign-off not
+# yet obtained). Retired 2026-08-21. The label is applied here, not
+# carried in the shared constant, so each renderer can present it its
+# own way -- see that constant's own comment.
+_DISCLAIMER_LABEL = "Limitations and Disclaimer: "
 
 # Mandatory ICMR-style AI-disclosure footer, printed on EVERY page of
 # every GEPER clinical PDF (see `_icmr_ai_disclosure_footer_text` for
@@ -2336,7 +2343,7 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
             ]
         ),
         Spacer(1, 8 * mm),
-        Paragraph(_DISCLAIMER_TEXT, styles["Disclaimer"]),
+        Paragraph(_DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER, styles["Disclaimer"]),
     ]
 
 

@@ -33,11 +33,15 @@ companion_filename="geper_report_full.pdf")`.
 Several helpers are imported from `report/summary.py` rather than
 reimplemented (patient-metadata parsing, Sample/Run ID derivation,
 reviewer-flag detection, logo loading, the paginating canvas, the
-legal disclaimer text). That import direction is deliberate: the two
+disclaimer block's label). That import direction is deliberate: the two
 reports must agree on identity fields, flags, and disclaimer wording,
 and duplicating any of it here is exactly how the two documents would
-silently drift apart. `report/summary.py` is left completely
-unmodified by this feature.
+silently drift apart. The disclaimer's TEXT comes from further up
+still -- `report/clinical_report_builder.py::RESEARCH_USE_DISCLAIMER`,
+shared with the Markdown report and the per-finding limitations too,
+because this principle held between the two PDFs but had not been
+extended to the other renderers, and they drifted exactly as predicted
+here (see that constant's own comment).
 
 Compliance note: identical to `report/summary.py`'s -- this module
 renders whatever patient_meta it is given and implements none of the
@@ -61,11 +65,15 @@ from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate
 
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer_short
 from pipeline.hgvs_utils import is_mitochondrial_chrom
-from report.clinical_report_builder import ACMG_METHODOLOGY_STATEMENT, EVIDENCE_COMPLETENESS_CAPTION
+from report.clinical_report_builder import (
+    ACMG_METHODOLOGY_STATEMENT,
+    EVIDENCE_COMPLETENESS_CAPTION,
+    RESEARCH_USE_DISCLAIMER,
+)
 from report.pdf_escape import esc
 from report.summary import (
     _DEIDENTIFIED_LABEL,
-    _DISCLAIMER_TEXT,
+    _DISCLAIMER_LABEL,
     _MARGIN,
     _PAGE_W,
     _SIGNOFF_ROLES,
@@ -600,7 +608,7 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
             ]
         ),
         Spacer(1, 3 * mm),
-        Paragraph(_DISCLAIMER_TEXT, styles["Footnote"]),
+        Paragraph(_DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER, styles["Footnote"]),
     ]
 
 

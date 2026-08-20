@@ -76,11 +76,10 @@ class BorzoiLicenseGuardError(RuntimeError):
 
 
 class BorzoiPlugin(PluginModel):
-    """Real Borzoi integration. Disabled by default
-    (`CONFIG.splicing.ENABLE_BORZOI`); once enabled, this loads ONLY
-    the CC-BY-4.0-licensed `johahi` HuggingFace weight mirror via the
-    Apache-2.0-licensed `borzoi-pytorch` package -- never Calico's
-    original `.h5` files."""
+    """Real Borzoi integration, gated by `CONFIG.splicing.ENABLE_BORZOI`
+    (defaults to enabled); loads ONLY the CC-BY-4.0-licensed `johahi`
+    HuggingFace weight mirror via the Apache-2.0-licensed
+    `borzoi-pytorch` package -- never Calico's original `.h5` files."""
 
     @classmethod
     def metadata(cls) -> ModelMetadata:

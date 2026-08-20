@@ -2388,23 +2388,9 @@ class ACMGRuleEngine:
         general regulatory-effect model pair already dedicated to
         PP3/BP4, not the dedicated splice predictors requested here.
 
-        INTEGRATION GAP, stated honestly rather than implied away:
-        GEPER's orchestrator does not currently run a per-variant
-        SpliceFormer/SpliceBERT inference stage feeding into this
-        engine -- both plugins are registered in the model registry and
-        directly callable (`ModelManager.predict("spliceformer"/
-        "splicebert", ref_seq, alt_seq)`, exercised in
-        `tests/test_spliceformer_integration.py` and
-        `benchmark_spliceformer.py`) and SpliceFormer specifically is
-        gated behind `CONFIG.splicing.ENABLE_SPLICEFORMER` (default
-        off), but no orchestrator stage yet reshapes either plugin's
-        output into a value it passes through
-        `InterpretationEngine.interpret()` to `evaluate()`. These two
-        parameters exist now so that gap is a plumbing task, not a rule
-        rewrite, once such a stage exists -- exactly how `ensemble_result`
-        itself was added as an accept-if-given, None-otherwise parameter
-        before any caller supplied it. Until then, BP7 in production
-        keeps operating on MMSplice alone, same as before this change.
+        SpliceFormer and SpliceBERT are run as standalone stages
+        (orchestrator.py:1457-1458); scores feed into BP7. Both are
+        uncalibrated (see pipeline/models/).
         """
         direction, strength = _STRENGTH["BP7"]
         if is_synonymous is None:

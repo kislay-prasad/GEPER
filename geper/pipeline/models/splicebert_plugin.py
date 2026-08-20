@@ -134,8 +134,8 @@ _COMPLEMENT = str.maketrans("ACGTN", "TGCAN")
 
 
 class SpliceBERTPlugin(PluginModel):
-    """Real SpliceBERT integration. Disabled by default
-    (`CONFIG.splicing.ENABLE_SPLICEBERT`); once enabled, this loads
+    """Real SpliceBERT integration, gated by
+    `CONFIG.splicing.ENABLE_SPLICEBERT` (defaults to enabled); loads
     the official pretrained `SpliceBERT.1024nt` checkpoint (BSD-3-
     Clause code / CC-BY-4.0 weights) from the upstream Zenodo archive
     (`pipeline/models/splicebert/loader.py`) via `transformers`'

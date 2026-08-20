@@ -66,10 +66,9 @@ _NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
 
 
 class EnformerPlugin(PluginModel):
-    """Real Enformer integration. Disabled by default
-    (`CONFIG.splicing.ENABLE_ENFORMER`); once enabled, this loads
-    DeepMind's official (CC-BY-4.0) weights via the MIT-licensed
-    `enformer-pytorch` wrapper."""
+    """Real Enformer integration, gated by `CONFIG.splicing.ENABLE_ENFORMER`
+    (defaults to enabled); loads DeepMind's official (CC-BY-4.0) weights
+    via the MIT-licensed `enformer-pytorch` wrapper."""
 
     @classmethod
     def metadata(cls) -> ModelMetadata:

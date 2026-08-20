@@ -115,8 +115,8 @@ _NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
 
 
 class SpliceFormerPlugin(PluginModel):
-    """Real SpliceFormer integration. Disabled by default
-    (`CONFIG.splicing.ENABLE_SPLICEFORMER`); once enabled, this vendors
+    """Real SpliceFormer integration, gated by
+    `CONFIG.splicing.ENABLE_SPLICEFORMER` (defaults to enabled); vendors
     and runs the official, unmodified model source
     (`pipeline/models/spliceformer/vendor/`) with one official
     pretrained checkpoint downloaded from the upstream MIT-licensed

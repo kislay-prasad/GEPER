@@ -1,17 +1,20 @@
 # GEPER — Genetic Evaluation & Prediction Engine for Research
 
-GEPER integrates six pretrained genomic/proteomic foundation models,
+GEPER integrates five pretrained genomic/proteomic foundation models,
 AlphaMissense missense-pathogenicity scoring, MMSplice splice-effect
 prediction, NCBI BLAST+, ClinVar, and dbSNP into one production-ready
 pipeline that takes a VCF file and produces a unified JSON result and
 a human-readable report per variant.
 
 **Scope note:** GEPER integrates existing pretrained models as-is. No
-model is retrained or fine-tuned — DNABERT-2, HyenaDNA, RNA-FM, and
-ESM-2 are used exactly as published by their respective authors, and
-Evo 2 is loaded via Arc Institute's own official `evo2` package rather
-than a custom re-implementation (see "1. Architecture" for why it
-isn't a `transformers.AutoModel` checkpoint like the others).
+model is retrained or fine-tuned — HyenaDNA, RNA-FM, and ESM-2 are used
+exactly as published by their respective authors, and Evo 2 is loaded
+via Arc Institute's own official `evo2` package rather than a custom
+re-implementation (see "1. Architecture" for why it isn't a
+`transformers.AutoModel` checkpoint like the others). DNABERT-2 was
+GEPER's original DNA-model default and has since been removed from
+this pipeline entirely — HyenaDNA is now the universal default (see
+"7. Routing logic" and `LICENSE_AUDIT.md`).
 AlphaMissense is integrated as an indexed lookup against DeepMind's
 precomputed prediction catalogue rather than a loaded model (see "11.
 AlphaMissense" for why, and read its licensing notes before any
@@ -31,8 +34,7 @@ geper/
 │
 ├── models/                       # One class per pretrained model, all independent
 │   ├── base_model.py              # Abstract base: device detection, caching, timing
-│   ├── dnabert2.py                 # DNABERT-2 (standard DNA context)
-│   ├── hyenadna.py                 # HyenaDNA (long-range DNA context, up to 450kb)
+│   ├── hyenadna.py                 # HyenaDNA (universal default DNA context, up to 450kb)
 │   ├── evo2.py                     # Evo 2 7B, StripedHyena-2 (complex/multi-species context)
 │   ├── rna_fm.py                    # RNA-FM (RNA sequence embedding)
 │   ├── esm2.py                      # ESM-2 650M (protein sequence embedding)
@@ -50,7 +52,7 @@ geper/
 │   │       └── service.py            #   exon lookup, eligibility, windows, caching, interpretation
 │   ├── vcf_parser.py               # Dependency-free VCF parsing (no pysam/cyvcf2)
 │   ├── sequence_context.py         # Fetches reference context (Ensembl REST), builds ref/alt windows
-│   ├── router.py                   # Chooses DNABERT-2 / HyenaDNA / Evo 2 / AlphaMissense eligibility
+│   ├── router.py                   # Chooses HyenaDNA / Evo 2 / AlphaMissense eligibility
 │   ├── rna_generator.py            # DNA -> RNA transcription
 │   ├── protein_translator.py       # RNA -> protein translation (standard codon table)
 │   ├── interpretation.py           # Merges all evidence into one unified interpretation
@@ -78,8 +80,7 @@ VCF file
   -> SequenceContextGenerator            (pipeline/sequence_context.py)
   -> BLASTClient.search()                 (cached/batched; see "8. External data sources")
   -> SequenceRouter.route()              (pipeline/router.py)
-       -> DNABERT-2   (standard context)
-       -> HyenaDNA     (long context, >= 10kb)
+       -> HyenaDNA     (universal default: standard AND long context, >= 10kb)
        -> Evo 2         (complex/structural/multi-species context)
   -> RNAGenerator (if transcript-relevant) -> RNA-FM
   -> ProteinTranslator (if coding)         -> ESM-2
@@ -221,7 +222,6 @@ Every run ends with a summary in the log:
 ===== GEPER Run Summary =====
 
 Loaded:
-  ✓ DNABERT2
   ✓ RNA-FM
   ✓ ESM2
   ✗ HyenaDNA (missing / not installed)
@@ -254,7 +254,7 @@ what happened for that variant; the run itself always finishes and writes a repo
 |---|---|
 | Sequence context length ≥ 10,000 bp | HyenaDNA |
 | Variant flagged structural (`SVTYPE`), tagged repeat/splice-region, or a long MNV (≥20bp) | Evo 2 |
-| Otherwise (typical SNV/indel, short window) | DNABERT-2 |
+| Otherwise (typical SNV/indel, short window) | HyenaDNA (universal default) |
 | A clean, single-residue missense SNV (see below) | AlphaMissense (in addition to the above) |
 
 A variant can be routed to more than one model when multiple
@@ -547,7 +547,6 @@ dtype:
 ```
 Model                   Device    Precision       Max Length  Status
 --------------------------------------------------------------------
-DNABERT2                 cuda      torch.float16   512         PASS
 HyenaDNA                 cuda      torch.float32   450000      PASS
 Evo2                      cuda      torch.bfloat16 (evo2_7b_base, StripedHyena-2)  8192  PASS
 RNA-FM                   cuda      torch.float32   1024        PASS
@@ -578,7 +577,7 @@ the exact real AlphaMissense schema) — end to end, alongside a full
 orchestrator run using the same known ClinVar missense variants as
 `verify_clinvar_dbsnp_fix.py`. See that script's module docstring for
 exactly what is and isn't proved without real network access to the
-DNABERT-2/etc. weights and the live GCS catalogue.
+HyenaDNA/etc. weights and the live GCS catalogue.
 
 ## 12. MMSplice
 
@@ -769,23 +768,25 @@ wiring, backward-compatibility, additive-evidence checks).
   attempting to load `evo2`, and skips it automatically — with one
   clear, specific log message naming the actual GPU and the compute
   capability shortfall — exactly like it already does when no GPU is
-  present at all. DNABERT-2, HyenaDNA, RNA-FM, ESM-2, and AlphaMissense
-  are entirely unaffected and continue to run on a T4; only the subset
+  present at all. HyenaDNA, RNA-FM, ESM-2, and AlphaMissense are
+  entirely unaffected and continue to run on a T4; only the subset
   of variants the router flags as structurally/evolutionarily complex
-  (which would otherwise route to Evo 2) fall back to DNABERT-2/
-  HyenaDNA instead, via the same graceful-degradation path already
-  used when any other model is unavailable. **To actually run Evo 2,**
+  (which would otherwise route to Evo 2) fall back to HyenaDNA instead,
+  via the same graceful-degradation path already used when any other
+  model is unavailable. **To actually run Evo 2,**
   use a GPU with compute capability >= 8.0 — e.g. A10, A100, L4, L40S,
   or H100 (Google Colab's paid tiers offer A100/L4; most major cloud
   providers offer A10/A100/L4 on-demand). Sequences longer than
   GEPER's configured safety ceiling (8,192 tokens by default, matching
   `evo2_7b_base`'s real 8K training context) are truncated with a
   warning rather than crashing, on any GPU where Evo 2 does run.
-- **HyenaDNA** is only invoked for long-context variants (≥10kb), so
-  its checkpoint does not need to be downloaded unless your VCF
-  contains structural variants. If it isn't installed, GEPER detects
-  that once at startup, logs a single warning, and falls back to
-  DNABERT-2 for those variants instead of failing.
+- **HyenaDNA** is GEPER's universal default DNA model — invoked both
+  for long-context variants (≥10kb) and as the fallback for the
+  typical short SNV/indel window, so its checkpoint should be
+  downloaded for any real run. If it isn't installed, GEPER detects
+  that once at startup, logs a single warning, and the variant
+  proceeds without DNA-model-level embedding evidence rather than
+  failing the run.
 - **AlphaMissense** runs on CPU unconditionally (it's a file lookup,
   not a GPU computation) and adds negligible overhead — one `tabix`
   subprocess call per eligible missense variant.
@@ -1046,7 +1047,7 @@ Linux distributions with a Python 3.11/3.12 environment are expected
 to work but are not part of this project's tested matrix.
 
 **Recommended GPU:** any NVIDIA GPU with compute capability ≥ 7.0 for
-DNABERT-2/HyenaDNA/RNA-FM/ESM2/AlphaMissense/MMSplice (CPU fallback
+HyenaDNA/RNA-FM/ESM2/AlphaMissense/MMSplice (CPU fallback
 also works, slower); compute capability ≥ 8.0 additionally required for
 Evo2 specifically (see "13. Hardware notes" and
 `EVO2_T4_HARDWARE_FINDINGS.md` — Evo2 is intentionally disabled below

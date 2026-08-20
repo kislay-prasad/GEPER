@@ -131,13 +131,12 @@ def _parse_spip_output(output_text: str) -> List[Dict[str, str]]:
 
 
 class SpipPlugin(PluginModel):
-    """Real SPiP integration. Disabled by default
-    (`CONFIG.splicing.ENABLE_SPIP`); once enabled, this vendors and
-    runs the official, unmodified upstream R source
-    (`pipeline/models/spip/vendor/`) as a subprocess, with reference
-    data (trained randomForest model, RefSeq transcript annotation,
-    genome sequence) downloaded from the official repository/its
-    linked SourceForge host (`pipeline/models/spip/loader.py`)."""
+    """Real SPiP integration, gated by `CONFIG.splicing.ENABLE_SPIP`
+    (defaults to enabled); vendors and runs the official, unmodified
+    upstream R source (`pipeline/models/spip/vendor/`) as a subprocess,
+    with reference data (trained randomForest model, RefSeq transcript
+    annotation, genome sequence) downloaded from the official
+    repository/its linked SourceForge host (`pipeline/models/spip/loader.py`)."""
 
     @classmethod
     def metadata(cls) -> ModelMetadata:

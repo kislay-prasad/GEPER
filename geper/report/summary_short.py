@@ -69,6 +69,9 @@ from report.clinical_report_builder import (
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
     RESEARCH_USE_DISCLAIMER,
+    _consent_value_label,
+    _offline_sources_caveat_text,
+    _variant_reviewer_flags,
 )
 from report.pdf_escape import esc
 from report.summary import (
@@ -78,15 +81,12 @@ from report.summary import (
     _PAGE_W,
     _SIGNOFF_ROLES,
     _NumberedCanvas,
-    _consent_value_label,
     _derive_run_id,
     _derive_sample_id,
     _icmr_ai_disclosure_footer_text,
     _load_cropped_logo_image,
-    _offline_sources_caveat_text,
     _parse_patient_meta,
     _resolve_logo_path,
-    _variant_reviewer_flags,
 )
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist

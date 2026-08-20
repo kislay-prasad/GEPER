@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
+from utils.service_health import HEALTH
 
 # Which evidence-combining system GEPER actually applies to turn
 # triggered ACMG/AMP criteria into a final classification -- stated
@@ -842,3 +843,105 @@ def _references(ir: Dict[str, Any]) -> List[str]:
     # true for every other entry in it.
     references.append(_ORPHANET_REFERENCE)
     return references
+
+
+# ---------------------------------------------------------------------------
+# Shared run-level caveat helpers
+#
+# These three lived in `report/summary.py` until 2026-08-21. They are read
+# by every renderer -- both PDFs, the Markdown report, and (for the offline
+# sources caveat) the JSON run-level block -- so leaving them in one
+# renderer would have made the full-PDF module the de facto shared library
+# for the whole report layer, and forced `report/report_generator.py` to
+# import from a PDF renderer to reach them.
+#
+# That is the same failure the `RESEARCH_USE_DISCLAIMER` consolidation
+# fixed, in function form rather than constant form: content every renderer
+# needs, living inside one of them, is what produced two independently
+# worded disclaimers that drifted into contradicting each other. Anything
+# a second renderer needs belongs here, where all of them already import
+# from.
+#
+# They stay `_`-prefixed rather than being renamed on the move: the point
+# of this change is the location, and renaming would have churned every
+# call site and several test modules for no behavioural gain.
+# ---------------------------------------------------------------------------
+
+
+def _offline_sources_caveat_text() -> Optional[str]:
+    """
+    Run-level, not per-finding: which external evidence sources (see
+    `utils/service_health.py`) were confirmed offline at startup and
+    therefore skipped for every variant in this run, rather than
+    genuinely queried and found to have nothing. Read once here so any
+    "not evaluated" or "not found" text for one of these sources
+    elsewhere in the report is not mistaken for a completed, negative
+    search. Returns `None` when every configured source was reachable
+    at startup (the common case, no caveat needed).
+
+    IndiGenomes no longer appears here as of 2026-08-08: it's retired
+    from GEPER's active query path (see `config.py::IndiGenomesConfig`'s
+    docstring and `DATA_SOURCE_LICENSE_AUDIT.md`), which also disables
+    its `utils/service_health.py` startup probe by default -- a source
+    that's never checked can never show up as "confirmed offline"
+    here, so this caveat mechanism naturally stops mentioning it
+    without needing a special case.
+    """
+    offline = HEALTH.offline_services()
+    if not offline:
+        return None
+    return (
+        "The following data source(s) were unreachable during this analysis run and were not queried for "
+        "any variant in this report: " + ", ".join(offline) + '. Any finding reported as "not evaluated" '
+        "or lacking data from these sources reflects a data-collection gap for this run, not a confirmed "
+        "absence -- it should not be treated as a negative result."
+    )
+
+
+def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[Dict[str, Any]]) -> List[str]:
+    """
+    Short, plain-language reasons this one variant's finding may need a
+    reviewer's attention before sign-off -- deliberately narrow (not every
+    caveat the full report carries, e.g. routine "not yet scored" pending
+    states are left to the detailed sections) so this stays a genuine
+    signal on a 30-second skim, not noise.
+
+      - No clinical interpretation could be built at all (a data gap, not
+        a benign finding -- see `_build_variant_section`'s identical
+        framing for the full-detail section).
+      - A real (Minor/Moderate/Major/Critical) evidence conflict was
+        detected -- `clinical_report["conflict_resolution"]["severity"]`,
+        the same field the Conflict Resolution Engine (Phase 6) computes.
+        "Critical" means GEPER's own classification disagrees with an
+        expert-panel/practice-guideline ClinVar record for this exact
+        variant -- see `pipeline/conflict_resolution_engine.py::
+        _expert_panel_disagreement_conflict`.
+      - Gene resolution came back genuinely ambiguous (multiple candidate
+        genes overlap this position and could not be disambiguated) --
+        see `pipeline/orchestrator.py::GeperPipeline._with_gene_resolution_context`
+        and `pipeline/clingen/utils.py::GeneResolutionStatus`. Checked
+        against the ClinGen and transcript-structure stages, the two
+        stages that surface this status onto their own result dict.
+    """
+    if not clinical:
+        return ["No clinical interpretation available"]
+
+    flags: List[str] = []
+
+    severity = (clinical.get("conflict_resolution") or {}).get("severity")
+    if severity in ("Minor", "Moderate", "Major", "Critical"):
+        flags.append(f"Conflicting evidence ({severity})")
+
+    for stage_key in ("clingen", "transcript"):
+        if (variant_result.get(stage_key) or {}).get("gene_resolution_status") == "ambiguous":
+            flags.append("Ambiguous gene resolution")
+            break
+
+    return flags
+
+
+def _consent_value_label(value: Optional[bool]) -> str:
+    """ "Yes"/"No"/"Not stated" -- matches the "Not provided" convention `_build_patient_header_table` already uses for a missing DOB/Gender/Physician, applied to a tri-state (True/False/None) field instead of a missing string."""
+    if value is None:
+        return "Not stated"
+    return "Yes" if value else "No"

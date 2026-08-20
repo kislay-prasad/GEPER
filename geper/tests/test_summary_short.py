@@ -259,12 +259,15 @@ class TestGenerateShortPdf(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "short.pdf")
-            # `_offline_sources_caveat_text` is imported by reference
-            # into `report.summary_short`'s namespace but its body still
-            # runs in `report.summary`'s module scope, so patching
-            # `report.summary.HEALTH` is enough -- no need to patch the
-            # imported name itself.
-            with mock.patch("report.summary.HEALTH", registry):
+            # `_offline_sources_caveat_text` lives in
+            # `report.clinical_report_builder` (relocated 2026-08-21, see
+            # that module's own "Shared run-level caveat helpers" note)
+            # and is imported by reference into both PDF renderers'
+            # namespaces, but its body still runs in
+            # `clinical_report_builder`'s module scope, so patching
+            # `report.clinical_report_builder.HEALTH` is enough -- no
+            # need to patch either renderer's imported name itself.
+            with mock.patch("report.clinical_report_builder.HEALTH", registry):
                 generate_short_pdf(_document(), out, companion_filename="geper_report_full.pdf")
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
         self.assertIn("IndiGenomes", text)

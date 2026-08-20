@@ -6,10 +6,17 @@ for a researcher or clinician to skim, with embeddings and other raw
 numeric payloads deliberately summarized (not dumped) for readability.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
-from report.clinical_report_builder import EVIDENCE_COMPLETENESS_CAPTION, RESEARCH_USE_DISCLAIMER
+from report.clinical_report_builder import (
+    ACMG_METHODOLOGY_STATEMENT,
+    EVIDENCE_COMPLETENESS_CAPTION,
+    RESEARCH_USE_DISCLAIMER,
+    _consent_value_label,
+    _offline_sources_caveat_text,
+    _variant_reviewer_flags,
+)
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
@@ -129,6 +136,32 @@ def _render_review_status_banner(json_document: Dict[str, Any]) -> str:
     return _REVIEW_STATUS_DRAFT_BANNER
 
 
+def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
+    """
+    One-line DPDP Act 2023 consent statement, or `None` when no consent
+    object was supplied.
+
+    Returns `None` rather than a "Not stated" line in that case, matching
+    `report/summary.py::_consent_rows`' contract exactly: a run with no
+    consent data at all must not manufacture the appearance of a
+    compliance record. Within a consent object that WAS supplied, an
+    individual unset permission still renders honestly as "Not stated"
+    (via the shared `_consent_value_label`) -- absent-object and
+    absent-field are different facts and stay different here.
+    """
+    consent = json_document.get("patient_consent")
+    if not consent:
+        return None
+    parts = [
+        f"Clinical reporting: {_consent_value_label(consent.get('clinical_reporting'))}",
+        f"Research use: {_consent_value_label(consent.get('research'))}",
+    ]
+    timestamp = consent.get("timestamp")
+    if timestamp:
+        parts.append(f"Recorded: {timestamp}")
+    return "**Data processing consent (DPDP Act 2023):** " + " · ".join(parts)
+
+
 class ReportGenerator:
     """Builds a Markdown report from a GEPER JSON result document."""
 
@@ -145,9 +178,23 @@ class ReportGenerator:
         lines.append(f"**Generated:** {format_ist_from_iso(json_document.get('generated_at'))}")
         lines.append(f"**Input VCF:** `{json_document.get('input_vcf')}`")
         lines.append(f"**Variants analyzed:** {json_document.get('variant_count')}")
+        consent_line = _render_consent_line(json_document)
+        if consent_line:
+            lines.append(consent_line)
         lines.append("")
         lines.append(_DISCLAIMER)
         lines.append("")
+        # Run-level caveats live together, immediately below the
+        # disclaimer that is itself one of them -- a reader who needs to
+        # know what qualifies this whole run finds all of it in one
+        # place, before any finding. The per-variant sections below
+        # carry their own caveats and are unaffected.
+        lines.append(f"*{ACMG_METHODOLOGY_STATEMENT}*")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+        lines.extend(self._render_reviewer_attention(json_document))
         lines.append("---")
         lines.append("")
 
@@ -174,6 +221,51 @@ class ReportGenerator:
             fh.write(content)
         logger.info(f"Wrote Markdown report to '{output_path}'.")
         return output_path
+
+    @staticmethod
+    def _render_reviewer_attention(json_document: Dict[str, Any]) -> List[str]:
+        """
+        Run-level triage: the short list of things a reviewer should look
+        at before sign-off, mirroring the full PDF's own "Reviewer
+        Attention" section (`report/summary.py`) so the two reports flag
+        the same findings for the same reasons.
+
+        Two sources, both shared rather than reimplemented here:
+        per-finding flags from `_variant_reviewer_flags` (evidence
+        conflicts, ambiguous gene resolution, findings with no clinical
+        interpretation at all), and the run-level offline-sources caveat
+        from `_offline_sources_caveat_text` -- which matters most of all,
+        because a source that was never queried must never be mistaken
+        for one queried and found empty.
+
+        Always renders, including when nothing is flagged: "nothing to
+        review" is a finding a reviewer needs stated, not an absence they
+        should have to infer from a missing section.
+
+        Narrower than the PDF's version in one respect: that one also
+        lists data sources whose version could not be pinned down
+        (`report/summary.py::_provenance_gap_sources`). That helper and
+        the constant it reads were left in the PDF renderer as out of
+        scope for this change, so they are not reflected here yet.
+        """
+        lines = ["## Reviewer Attention", ""]
+        attention: List[str] = []
+        for idx, variant_result in enumerate(json_document.get("variants", []), start=1):
+            flags = _variant_reviewer_flags(variant_result, variant_result.get("clinical_report"))
+            if flags:
+                v = variant_result.get("variant") or {}
+                locus = f"{v.get('chrom')}:{v.get('pos')} {v.get('ref')}>{v.get('alt')}"
+                attention.append(f"Finding {idx} ({locus}): {'; '.join(flags)}")
+        offline_caveat = _offline_sources_caveat_text()
+        if offline_caveat:
+            attention.append(offline_caveat)
+
+        if attention:
+            lines.extend(f"- **!** {item}" for item in attention)
+        else:
+            lines.append("*No conflicts, ambiguous gene resolution, or unreachable data sources flagged for this run.*")
+        lines.append("")
+        return lines
 
     @staticmethod
     def _render_provenance(json_document: Dict[str, Any]) -> List[str]:

@@ -261,3 +261,46 @@ plausible to be genuinely functional for a gene pair where exactly one
 candidate has a MANE Select transcript. Confirming which of (a)/(b)
 explains the specific observed cases needs a live run's logs, not
 another static-inspection pass.
+
+## `kim_pipeline` DNABERT-2 `trust_remote_code` revision pin (security fix)
+
+`kim_pipeline/pipeline/ai/engine.py::DnaBertEngine` loads
+`zhihan1996/DNABERT-2-117M` via `transformers.AutoTokenizer`/`AutoModel
+.from_pretrained(..., trust_remote_code=True)`. That flag is required
+because DNABERT-2's architecture (MosaicBERT with ALiBi/FlashAttention)
+ships as custom Python inside the HF repo, not inside the `transformers`
+library — but unpinned, it means the loader executes whatever code sits
+on the repo's default branch at load time, which the repo owner (or an
+attacker who compromises their account) could silently repoint to
+something malicious after this review.
+
+Reviewed 2026-08-20: fetched `https://huggingface.co/api/models/zhihan1996/DNABERT-2-117M`
+directly (not summarized) — current HEAD `sha` = `7bce263b15377fc15361f52cfab88f8b586abda0`.
+Read the full custom-code payload at that exact commit (`configuration_bert.py`,
+`bert_layers.py`, `bert_padding.py`, `flash_attn_triton.py` — the files
+named in the repo's `auto_map`): standard MosaicML BERT/FlashAttention
+implementation built on `torch`/`einops`/`triton`/`transformers` base
+classes. No `subprocess`, `eval`/`exec`, `socket`, HTTP calls
+(`requests`/`urllib`), `pickle.load`, dynamic imports, or file writes
+outside normal model init. **Verdict: reviewed, benign.**
+
+Fix: pinned `revision="7bce263b15377fc15361f52cfab88f8b586abda0"` on both
+`from_pretrained()` calls (this is the HF-documented mitigation — see
+["Custom models" / revision pinning](https://hf.co/docs/transformers/en/models#custom-models)),
+applied only when `model_name` is the default repo string (an
+operator-supplied `model_name` override is out of scope for this pin and
+is left unpinned so it isn't broken by a stale hash). `trust_remote_code=True`
+itself is still required and was not removed — the pin is what closes the
+moving-ref RCE surface, not the flag.
+
+Not independently re-verified in this pass: a full model-weight smoke
+load (`AutoModel.from_pretrained` pulling the ~1.87GB `pytorch_model.bin`)
+was not run in this environment — no `torch`/`transformers` stack was
+installed here beforehand, and installing the full ML stack plus a
+multi-GB download was out of scope for what should be a mechanical
+`revision=` kwarg change. What *was* verified live: the pinned commit
+hash resolves against the real HF API (see above), and the code change
+matches HF's own documented pattern exactly.
+`tests/test_dnabert2_revision_pin.py`-equivalent regression coverage is
+being added separately (asserts `from_pretrained` is called with this
+exact `revision` value).

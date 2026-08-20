@@ -54,7 +54,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger("geper.pipeline.ai.engine")
 
@@ -69,6 +68,7 @@ def _try_import_torch():
         return _torch
     try:
         import torch
+
         _torch = torch
     except ImportError:
         logger.warning(
@@ -85,6 +85,7 @@ def _try_import_transformers():
         return _transformers
     try:
         import transformers
+
         _transformers = transformers
     except ImportError:
         _transformers = False
@@ -123,8 +124,8 @@ def _log_cuda_diagnostics_once(torch) -> None:
                 "(Runtime > Change runtime type), (2) a CPU-only torch build is "
                 "installed (torch.version.cuda is None in that case), (3) a later "
                 "pip install (e.g. with --no-deps) replaced the CUDA build with a "
-                "CPU-only one. Check with: python -c \"import torch; "
-                "print(torch.__version__, torch.version.cuda, torch.cuda.is_available())\""
+                'CPU-only one. Check with: python -c "import torch; '
+                'print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"'
             )
     except Exception:
         pass  # diagnostics must never affect scoring
@@ -142,6 +143,20 @@ def _resolve_device(device_cfg: str):
 
 
 # ─── DNABERT-2 engine ─────────────────────────────────────────────────────────
+
+# DNABERT-2 loads via trust_remote_code=True (its architecture — MosaicBERT
+# with ALiBi/FlashAttention — ships as custom Python in the HF repo, not in
+# the transformers library). Pinning to a reviewed commit closes the
+# moving-ref RCE surface: without a revision pin, trust_remote_code=True
+# would execute whatever code sits on the repo's default branch at load
+# time, which the repo owner (or an attacker who compromises their account)
+# could silently repoint to something malicious after this review. Reviewed
+# 2026-08-20 (see DATA_PROVENANCE.md) — bert_layers.py / bert_padding.py /
+# configuration_bert.py / flash_attn_triton.py at this commit contain only
+# standard torch/einops/triton model code: no subprocess, eval/exec, sockets,
+# HTTP calls, or dynamic imports.
+_DNABERT2_PINNED_REVISION = "7bce263b15377fc15361f52cfab88f8b586abda0"
+
 
 class DnaBertEngine:
     """DNABERT-2 variant pathogenicity scorer.
@@ -183,25 +198,36 @@ class DnaBertEngine:
         try:
             logger.info("Loading DNABERT-2 model: %s …", self._model_name)
             self._device = _resolve_device(self._device_cfg)
+            # Only pin to the reviewed commit when loading the default repo —
+            # an operator-supplied model_name (e.g. a local fork) is their
+            # own responsibility and a stale pin would just break the load.
+            revision = (
+                _DNABERT2_PINNED_REVISION
+                if self._model_name == "zhihan1996/DNABERT-2-117M"
+                else None
+            )
             self._tokenizer = transformers.AutoTokenizer.from_pretrained(
-                self._model_name, trust_remote_code=True
+                self._model_name, trust_remote_code=True, revision=revision
             )
             self._model = transformers.AutoModel.from_pretrained(
-                self._model_name, trust_remote_code=True
+                self._model_name, trust_remote_code=True, revision=revision
             )
             self._model.eval()
             self._model.to(self._device)
             logger.info("DNABERT-2 loaded on %s", self._device)
             logger.info(
                 "[AI:DNABERT-2:LOAD] END model=%s device=%s elapsed=%.2fs",
-                self._model_name, self._device, time.monotonic() - _t0,
+                self._model_name,
+                self._device,
+                time.monotonic() - _t0,
             )
             return True
         except Exception as exc:
             logger.error("Failed to load DNABERT-2: %s", exc)
             logger.info(
                 "[AI:DNABERT-2:LOAD] END (failed) model=%s elapsed=%.2fs",
-                self._model_name, time.monotonic() - _t0,
+                self._model_name,
+                time.monotonic() - _t0,
             )
             return False
 
@@ -222,7 +248,7 @@ class DnaBertEngine:
         cls_embedding = outputs.last_hidden_state[:, 0, :]
         return cls_embedding
 
-    def score(self, ref_sequence: str, alt_sequence: str) -> Optional[float]:
+    def score(self, ref_sequence: str, alt_sequence: str) -> float | None:
         """Return a pathogenicity score in [0, 1] for a variant.
 
         Compares CLS embeddings of the reference and alternate context
@@ -251,9 +277,7 @@ class DnaBertEngine:
             # cosine_similarity in [-1, 1]; map to pathogenicity [0, 1]
             score = round((1.0 - cos_sim) / 2.0, 4)
             logger.debug("DNABERT-2 score: %.4f", score)
-            logger.info(
-                "[AI:DNABERT-2:SCORE] END elapsed=%.2fs", time.monotonic() - _t0
-            )
+            logger.info("[AI:DNABERT-2:SCORE] END elapsed=%.2fs", time.monotonic() - _t0)
             return score
         except Exception as exc:
             logger.error("DNABERT-2 inference failed: %s", exc)
@@ -263,14 +287,13 @@ class DnaBertEngine:
             )
             return None
 
-    def score_batch(
-        self, pairs: List[Tuple[str, str]]
-    ) -> List[Optional[float]]:
+    def score_batch(self, pairs: list[tuple[str, str]]) -> list[float | None]:
         """Score a batch of (ref_seq, alt_seq) pairs. Returns a list of scores."""
         return [self.score(r, a) for r, a in pairs]
 
 
 # ─── ESM-2 engine ─────────────────────────────────────────────────────────────
+
 
 class Esm2Engine:
     """ESM-2 protein variant impact scorer.
@@ -317,14 +340,17 @@ class Esm2Engine:
             logger.info("ESM-2 loaded on %s", self._device)
             logger.info(
                 "[AI:ESM-2:LOAD] END model=%s device=%s elapsed=%.2fs",
-                self._model_name, self._device, time.monotonic() - _t0,
+                self._model_name,
+                self._device,
+                time.monotonic() - _t0,
             )
             return True
         except Exception as exc:
             logger.error("Failed to load ESM-2: %s", exc)
             logger.info(
                 "[AI:ESM-2:LOAD] END (failed) model=%s elapsed=%.2fs",
-                self._model_name, time.monotonic() - _t0,
+                self._model_name,
+                time.monotonic() - _t0,
             )
             return False
 
@@ -346,7 +372,7 @@ class Esm2Engine:
         mean_emb = (outputs.last_hidden_state * mask).sum(1) / mask.sum(1)
         return mean_emb
 
-    def score(self, wildtype_aa: str, mutant_aa: str) -> Optional[float]:
+    def score(self, wildtype_aa: str, mutant_aa: str) -> float | None:
         """Return a variant impact score in [0, 1].
 
         Uses L2 distance between wild-type and mutant embeddings,
@@ -369,15 +395,13 @@ class Esm2Engine:
             return None
         try:
             torch = _torch
-            emb_wt  = self._embed(wildtype_aa)
+            emb_wt = self._embed(wildtype_aa)
             emb_mut = self._embed(mutant_aa)
             l2_dist = torch.norm(emb_wt - emb_mut, dim=-1).item()
             # Sigmoid normalisation: distance of ~4 maps to 0.5
             score = round(1.0 / (1.0 + math.exp(-l2_dist + 4.0)), 4)
             logger.debug("ESM-2 score: %.4f (L2=%.4f)", score, l2_dist)
-            logger.info(
-                "[AI:ESM-2:SCORE] END elapsed=%.2fs", time.monotonic() - _t0
-            )
+            logger.info("[AI:ESM-2:SCORE] END elapsed=%.2fs", time.monotonic() - _t0)
             return score
         except Exception as exc:
             logger.error("ESM-2 inference failed: %s", exc)
@@ -390,6 +414,7 @@ class Esm2Engine:
 
 # ─── Combined engine ──────────────────────────────────────────────────────────
 
+
 class AiEngine:
     """Unified AI inference engine combining DNABERT-2 and ESM-2.
 
@@ -401,7 +426,7 @@ class AiEngine:
              ``cfg["dnabert2"]`` and ``cfg["esm2"]``.
     """
 
-    def __init__(self, cfg: Optional[dict] = None) -> None:
+    def __init__(self, cfg: dict | None = None) -> None:
         cfg = cfg or {}
         db2_cfg = cfg.get("dnabert2", {}) or {}
         esm_cfg = cfg.get("esm2", {}) or {}
@@ -417,21 +442,21 @@ class AiEngine:
             batch_size=int(esm_cfg.get("batch_size", 4)),
         )
 
-    def score_dna(self, ref_sequence: str, alt_sequence: str) -> Optional[float]:
+    def score_dna(self, ref_sequence: str, alt_sequence: str) -> float | None:
         """DNABERT-2 pathogenicity score for a DNA context pair."""
         return self.dnabert2.score(ref_sequence, alt_sequence)
 
-    def score_protein(self, wildtype_aa: str, mutant_aa: str) -> Optional[float]:
+    def score_protein(self, wildtype_aa: str, mutant_aa: str) -> float | None:
         """ESM-2 impact score for a wild-type / mutant protein pair."""
         return self.esm2.score(wildtype_aa, mutant_aa)
 
     def combined_score(
         self,
-        dna_score: Optional[float],
-        protein_score: Optional[float],
+        dna_score: float | None,
+        protein_score: float | None,
         dna_weight: float = 0.5,
         protein_weight: float = 0.5,
-    ) -> Optional[float]:
+    ) -> float | None:
         """Weighted average of DNA and protein scores.
 
         Weights are re-normalised if only one stream is available.
@@ -440,8 +465,7 @@ class AiEngine:
             Float in [0, 1], or None if both scores are None.
         """
         available = {
-            k: v for k, v in [("dna", dna_score), ("protein", protein_score)]
-            if v is not None
+            k: v for k, v in [("dna", dna_score), ("protein", protein_score)] if v is not None
         }
         if not available:
             return None

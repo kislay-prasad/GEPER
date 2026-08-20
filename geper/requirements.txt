@@ -3,7 +3,10 @@
 # RNA-FM, ESM2, and AlphaMissense. (DNABERT-2 has been removed from
 # GEPER entirely -- see LICENSE_AUDIT.md / the AI orchestration audit.
 # Enformer and Borzoi are optional, config-gated integrations
-# (CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI, both default off)
+# (CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI -- both default
+# ENABLED, since both are commercially-cleared; opt out per-deployment
+# with GEPER_ENABLE_ENFORMER=false / GEPER_ENABLE_BORZOI=false -- see
+# config.py's SplicingConfig docstring for the full rationale)
 # whose `enformer-pytorch` / `borzoi-pytorch` packages are
 # auto-installed at runtime only when enabled -- same pattern as
 # MMSplice/RNA-FM/HyenaDNA below -- so they are intentionally not

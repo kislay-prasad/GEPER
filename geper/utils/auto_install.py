@@ -20,6 +20,7 @@ Also provides the same shape for small, common *system* CLI tools
 
 import importlib
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -28,6 +29,24 @@ from typing import Dict, Optional
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Passed to every auto-install as `pip install --constraint <this file>`
+# (see `ensure_pip_package_available` below). requirements.txt already
+# carries every version pin GEPER's own core stack actually depends on
+# (torch==2.7.1, transformers>=5.12.1,<6.0.0, torchvision==0.22.1, ...),
+# so pointing pip's own constraint-resolution at it -- rather than
+# hand-maintaining a second, parallel list of "packages that must not
+# move" -- makes pip itself refuse (clean non-zero exit, no partial
+# install) any optional auto-installed package whose own metadata
+# would otherwise force one of those pins to move. Confirmed live
+# 2026-08-20: without this, `pip install enformer-pytorch` (which pins
+# `transformers==4.56.2` exactly) silently downgraded an
+# already-installed `transformers==5.15.1` mid-process, corrupting
+# HyenaDNA/ESM2 loading later in the same run via transformers' lazy
+# submodule imports resolving against the now-downgraded on-disk tree.
+_REQUIREMENTS_CONSTRAINT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "requirements.txt"
+)
 
 # Per-package cache of the auto-install outcome, so a package that
 # genuinely can't be installed in this environment (no network, pip
@@ -59,6 +78,13 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
     disposable pipeline run, not a shared system install a user is
     curating by hand.
 
+    Constrained by `--constraint requirements.txt` (see
+    `_REQUIREMENTS_CONSTRAINT_PATH` above) so this can never silently
+    downgrade a core, already-pinned dependency (e.g. transformers) to
+    satisfy an optional package's own conflicting metadata pin -- pip
+    refuses the install outright instead, which the existing
+    non-zero-exit handling below already reports as a normal failure.
+
     Returns whether `import_name` is importable after the attempt.
     """
     import_name = import_name or pip_name
@@ -74,16 +100,20 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
         f"automatically now (pip install {pip_name}) so the pipeline "
         "can proceed without a manual setup step."
     )
-    base_cmd = [sys.executable, "-m", "pip", "install", "--quiet", pip_name]
+    base_cmd = [
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--quiet",
+        "--constraint",
+        _REQUIREMENTS_CONSTRAINT_PATH,
+        pip_name,
+    ]
     result = subprocess.run(base_cmd, capture_output=True, text=True)
     if result.returncode != 0 and "externally-managed-environment" in (result.stderr or ""):
-        logger.info(
-            "pip reported an externally-managed environment; retrying "
-            "with --break-system-packages."
-        )
-        result = subprocess.run(
-            base_cmd + ["--break-system-packages"], capture_output=True, text=True
-        )
+        logger.info("pip reported an externally-managed environment; retrying with --break-system-packages.")
+        result = subprocess.run(base_cmd + ["--break-system-packages"], capture_output=True, text=True)
 
     if result.returncode != 0:
         logger.error(

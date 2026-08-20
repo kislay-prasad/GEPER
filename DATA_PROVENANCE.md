@@ -409,37 +409,65 @@ different, Colab-provisioned environment than this local machine.
 Nothing about the finding below should be read as casting doubt on
 those Colab-run results.
 
-**2. A genuine, unsoftened gap: `requirements.txt` has never been
-proven complete on any machine.** Because every real end-to-end run
-happened on Colab, which supplies its own pre-built environment (not
-one bootstrapped from this repo's `requirements.txt` alone), the claim
-"`pip install -r requirements.txt` produces a working `geper/`" has
-never actually been demonstrated anywhere — not on Colab (which didn't
-need to test it) and not locally (which fails outright, below). This
-is a real reproducibility gap, not a hypothetical one.
+**2. A genuine, unsoftened gap — but a precise one: `requirements.txt`
+is declared-but-never-proven-to-build.** This is not a claim that the
+file is missing or misstating a dependency. Because every real
+end-to-end run happened on Colab, which supplies its own pre-built
+environment rather than one bootstrapped from this repo's
+`requirements.txt` alone, the claim "`pip install -r requirements.txt`
+produces a working `geper/`" has never actually been demonstrated
+anywhere — not on Colab (which didn't need to test it) and not locally
+(the first real attempt, below). Declaring every dependency correctly
+is not the same thing as being demonstrated to install and run. This
+is a real reproducibility gap, not a hypothetical one — and it is
+narrower than "the file is deficient."
 
-**What was found on this local box** (Andy + this session, 2026-08-20):
-a bare `pip install -r requirements.txt` leaves 7 of the 20 declared
-packages absent entirely (`rna-fm`, `evo2`, `torchvision`, `omegaconf`,
-`torchaudio`, `biopython`, `tensorflow`), and installs `torch 2.13.0+cpu`
-against a `torch==2.7.1` pin. The pipeline fails at **startup** —
-`ModuleNotFoundError: No module named 'Bio'` — not at any individual
-model's use site, because `pipeline/orchestrator.py:58` unconditionally
-imports `pipeline/uniprot/bootstrap.py`, which imports `Bio`
-(biopython) at line 64 regardless of which models a given run actually
-needs. See `geper/README.md` Section 5 ("Installation") for the
-setup-gotcha note this finding produced (torch/torchvision/torchaudio
-pinning, Evo 2's manual CUDA install, tensorflow-before-mmsplice
-ordering) — not duplicated here.
+**What was found on this local box, precisely** (Andy, 2026-08-20): a
+bare `pip install -r requirements.txt` starts from an environment
+where 7 of the 20 declared packages happen to be absent on this
+particular box (`rna-fm`, `evo2`, `torchvision`, `omegaconf`,
+`torchaudio`, `biopython`, `tensorflow`), plus a `torch 2.13.0+cpu`
+install against the file's `torch==2.7.1` pin. But walking every actual
+import site from `GeperPipeline`'s entry point found **exactly two
+hard blockers at module-load time: `transformers` (corrupted local
+install, unrelated to the pin) and `biopython`** — after resolving
+both, `from pipeline.orchestrator import GeperPipeline` imported
+cleanly, with no third blocker surfacing. **Packages needed but absent
+from `requirements.txt` itself: none.** Every package the import chain
+actually reaches is already correctly declared; the file's own
+comments proved accurate in every case checked. The failure on this
+box was declared-but-never-installed (plus one corrupted `transformers`
+install, a separate local artifact — see below), not a deficient
+`requirements.txt`. The startup-failure mechanism itself is unchanged:
+`ModuleNotFoundError: No module named 'Bio'`, because
+`pipeline/orchestrator.py:58` unconditionally imports
+`pipeline/uniprot/bootstrap.py`, which imports `Bio` (biopython) at
+line 64 regardless of which models a given run actually needs. See
+`geper/README.md` Section 5 ("Installation") for the setup-gotcha note
+this finding produced (torch/torchvision/torchaudio pinning, Evo 2's
+manual CUDA install, tensorflow-before-mmsplice ordering) — not
+duplicated here.
 
-**Explicitly out of scope for this finding**: a separate, one-off
-`transformers` package corruption also found on this box during the
-same investigation was a local install-corruption artifact, repaired,
-and confirmed not to represent a fresh-install failure mode. It is a
-different story and is not part of the `requirements.txt`-completeness
-gap described above.
+Two narrower points worth keeping in view, not part of the headline
+gap but relevant to reading `requirements.txt` accurately: `torchaudio`
+is declared but never imported by GEPER's own code at all — it's a
+purely prophylactic pin against an ABI-mismatched transitive copy
+being pulled in by another dependency, not evidence of a real GEPER
+runtime need. `evo2` is installable but unusable without a
+CUDA-toolkit-matched build that `requirements.txt`'s own comments
+already say not to attempt via a bare `pip install -r requirements.txt`
+pass — its presence in the declared list was never meant to imply a
+one-command install path.
 
-**Status**: the authoritative fix (what `requirements.txt` *should*
-declare) is being determined separately via an isolated, from-scratch
-venv build — not yet complete as of this entry. This entry documents
-the gap; it does not resolve it.
+**Explicitly out of scope for this finding**: the `transformers`
+corruption mentioned above was a local install-corruption artifact,
+repaired, and confirmed not to represent a fresh-install failure mode.
+It is a different story from the declared-but-never-proven-to-build
+gap and is not evidence against `requirements.txt`'s own correctness.
+
+**Status**: whether a bare `pip install -r requirements.txt` actually
+builds a working `geper/` is being tested for the first time via an
+isolated, from-scratch venv build, in progress as of this entry and
+**not yet concluded** — this entry documents the gap and Andy's
+precise chain-walk finding; it does not resolve or close the gap
+itself.

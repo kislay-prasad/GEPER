@@ -285,5 +285,95 @@ class TestDisclaimerHasOneSourceNotFourCopies(unittest.TestCase):
         )
 
 
+def _contains_identical_object(structure, target) -> bool:
+    """Recursively search a JSON-serializable structure (dict/list/
+    tuple/scalar) for an element that IS `target` (identity, not
+    equality) -- used for "one source, not two copies": a freshly
+    retyped copy with identical text would pass an equality check but
+    must fail this one. Deliberately does not assume `output["caveats"]`
+    is any particular shape (a bare string, a list, ...) -- that's
+    Kelly's call, not this test's."""
+    if structure is target:
+        return True
+    if isinstance(structure, dict):
+        return any(_contains_identical_object(v, target) for v in structure.values())
+    if isinstance(structure, (list, tuple)):
+        return any(_contains_identical_object(v, target) for v in structure)
+    return False
+
+
+class TestJsonRunLevelCaveatsBlock(unittest.TestCase):
+    """Follow-up to A4, surfaced while testing it and now its own
+    card: JSON's disclaimer previously reached the document ONLY via
+    each variant's `clinical_report["limitations"]` -- inclusion, not
+    a run-level field (see TestDisclaimerHasOneSourceNotFourCopies::
+    test_json_document_carries_the_same_disclaimer_object above, and
+    that class's own docstring for the mechanism). Unlike the full PDF
+    and Markdown, which print the closing disclaimer unconditionally
+    regardless of variant count, a genuinely zero-variant JSON run
+    carried NO disclaimer at all -- a live asymmetry, not a
+    hypothetical one (verified directly against both PDF renderers and
+    Markdown before this card was opened).
+
+    Kelly's fix: an ADDITIVE run-level `caveats` field in
+    json_builder.py's built document, independent of variant count,
+    alongside (not replacing) the existing per-variant inclusion.
+    """
+
+    def test_run_level_caveats_block_appears_for_typical_run(self):
+        document = _document(n_variants=2)
+        builder = JSONResultBuilder(input_vcf_path="disclaimer_test.vcf")
+        for variant in document["variants"]:
+            builder.add_variant_result(variant)
+        built = builder.build()
+        self.assertIn("caveats", built)
+        serialized = _normalize(json.dumps(built["caveats"], default=str))
+        self.assertIn(_normalize(_CANONICAL_DISCLAIMER), serialized)
+        self.assertNotIn(_RETIRED_CONTRADICTORY_CLAIM, serialized)
+
+    def test_run_level_caveats_block_appears_with_zero_variants(self):
+        # THE asymmetry fix this card exists for: a run with every
+        # variant filtered out (or none in the input at all) must
+        # still carry the run-level claim, matching how the PDF/
+        # Markdown closing block behaves unconditionally regardless of
+        # variant count.
+        built = JSONResultBuilder(input_vcf_path="disclaimer_test.vcf").build()
+        self.assertEqual(built["variant_count"], 0)
+        self.assertIn("caveats", built)
+        serialized = _normalize(json.dumps(built["caveats"], default=str))
+        self.assertIn(_normalize(_CANONICAL_DISCLAIMER), serialized)
+
+    def test_run_level_caveats_block_is_the_same_object_not_a_copy(self):
+        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
+
+        built = JSONResultBuilder(input_vcf_path="disclaimer_test.vcf").build()
+        self.assertTrue(
+            _contains_identical_object(built.get("caveats"), RESEARCH_USE_DISCLAIMER),
+            "output['caveats'] does not carry the exact shared disclaimer object -- "
+            "a locally-retyped copy would pass a text-equality check but fail this one",
+        )
+
+    def test_per_variant_limitations_still_unmodified_after_run_level_addition(self):
+        # Scope boundary: the run-level `caveats` field must be
+        # ADDITIVE. Per-variant clinical_report["limitations"] is the
+        # mechanism A4 already relied on -- it must survive unchanged,
+        # not be rewritten or removed now that a second place carries
+        # the same content.
+        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
+
+        document = _document(n_variants=1)
+        builder = JSONResultBuilder(input_vcf_path="disclaimer_test.vcf")
+        for variant in document["variants"]:
+            builder.add_variant_result(variant)
+        built = builder.build()
+        limitations = built["variants"][0]["clinical_report"]["limitations"]
+        self.assertTrue(
+            any(item is RESEARCH_USE_DISCLAIMER for item in limitations),
+            "per-variant clinical_report.limitations changed after the run-level "
+            "caveats field was added -- the addition must be additive, not a rewrite "
+            "of the existing per-variant path",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

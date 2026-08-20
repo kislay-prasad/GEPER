@@ -23,6 +23,8 @@ import unittest
 from report.export_lims import export_lims_json
 from report.json_builder import JSONResultBuilder
 from report.report_generator import ReportGenerator
+from report.summary import _ICMR_OVERRIDDEN_FOOTER_TEXT, generate_pdf
+from report.summary_short import generate_short_pdf
 from review import signoff as s
 from tests.test_signoff import _all_pdf_text, _write_run
 from utils.exceptions import LIMSExportBlockedError
@@ -192,6 +194,13 @@ class TestPdfMarkdownReviewStatusConsistency(unittest.TestCase):
             self.assertNotIn("DRAFT", banner)
 
     def test_overridden_without_prior_approval_agrees_not_ready_everywhere(self):
+        # "DRAFT" was only ever a PROXY for "not ready" -- since an
+        # override now gets its own dedicated PDF footer
+        # (`_ICMR_OVERRIDDEN_FOOTER_TEXT`) rather than being folded into
+        # DRAFT, asserting the shared "NOT FOR PATIENT USE" substring
+        # says what this test actually means (both the draft and the
+        # overridden states agree the run isn't ready), and it stays
+        # true regardless of which of those two states the PDF renders.
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _write_run(tmp)
             s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
@@ -205,20 +214,25 @@ class TestPdfMarkdownReviewStatusConsistency(unittest.TestCase):
 
             if _PYPDF_AVAILABLE:
                 full_text = _all_pdf_text(os.path.join(output_dir, s.FULL_PDF_FILENAME))
-                self.assertIn("DRAFT", full_text)  # physician was never set -- PDF also says "not ready"
+                self.assertIn("NOT FOR PATIENT USE", full_text)  # PDF also says "not ready", draft or overridden
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-    def test_override_after_approve_known_pdf_markdown_divergence(self):
+    def test_override_after_approve_pdf_and_markdown_agree_overridden(self):
         """
-        Documented exception, not a silent gap: after approve() then
-        override(), the PDF footer (untouched -- "sign-off legal weight
-        stays PDF-only") still literally reads "reviewed by {physician}",
-        while review_status/the Markdown banner correctly say
-        "overridden". Both facts are individually true (that physician
-        DID review a prior state; the CURRENT state is overridden and
-        not yet re-reviewed) -- this test pins the known divergence so
-        it cannot regress into something worse (e.g. a crash, or the
-        PDF silently losing its own signature) without being noticed.
+        Formerly a documented, deliberately-pinned divergence: after
+        approve() then override(), the PDF footer used to still
+        literally read "reviewed by {physician}" (untouched by the
+        override) while review_status/the Markdown banner correctly
+        said "overridden" -- this test pinned that gap so it couldn't
+        regress into something worse (e.g. a crash, or the PDF silently
+        losing its own signature) without being noticed.
+
+        The pin did its job: `_ICMR_OVERRIDDEN_FOOTER_TEXT` (card
+        review-status-two-sources-of-truth) closes the gap as a side
+        effect -- an override now gets its own PDF footer regardless of
+        any prior approve(), so all three surfaces (JSON, Markdown, PDF)
+        agree "overridden" instead of two of them still claiming
+        "reviewed". This test now pins that agreement.
         """
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _write_run(tmp)
@@ -231,7 +245,109 @@ class TestPdfMarkdownReviewStatusConsistency(unittest.TestCase):
             self.assertIn("OVERRIDDEN", self._md_banner(document))
 
             full_text = _all_pdf_text(os.path.join(output_dir, s.FULL_PDF_FILENAME))
-            self.assertIn("reviewed by Dr. Rajesh Sharma", full_text)  # the known divergence
+            self.assertIn(_ICMR_OVERRIDDEN_FOOTER_TEXT, full_text)
+            self.assertNotIn("reviewed by Dr. Rajesh Sharma", full_text)  # the old divergence is gone
+
+
+class TestPdfPhysicianCannotSubstituteForSignoff(unittest.TestCase):
+    """
+    Card `review-status-two-sources-of-truth`: today, BOTH PDF renderers
+    (report/summary.py::generate_pdf, report/summary_short.py::
+    generate_short_pdf) decide "DRAFT" vs "reviewed by {physician}"
+    SOLELY from the `patient_meta` argument passed to them at render
+    time -- a free-text field a caller can supply independently of
+    review_status (the field Markdown/JSON/export_lims.py all correctly
+    treat as ground truth, and which only review/signoff.py's
+    approve()/override() can ever set to a non-"draft" value). This
+    class calls `generate_pdf`/`generate_short_pdf` directly with a
+    document and a patient_meta it fully controls -- independently of
+    each other -- specifically because review/signoff.py's approve()
+    always moves review_status and physician together (writing physician
+    IS how approve() re-signs the PDF), which makes it impossible to
+    isolate "physician present, no sign-off" or "sign-off done, no
+    physician" through the CLI-level approve()/override() actions alone.
+    Testing generate_pdf/generate_short_pdf's real, observable output
+    text for each input combination is the only way to pin down which
+    of the two inputs the renderer actually trusts.
+
+    Fix requirement (human, verbatim): "IF NO SIGN-OFF EXISTS THE DRAFT
+    FOOTER STAYS REGARDLESS OF --patient-meta." Both renderers must key
+    off `review_status`, the same source Markdown/JSON already use.
+    """
+
+    def _generate_both_pdfs(self, document, patient_meta, tmp):
+        full_path = os.path.join(tmp, "full.pdf")
+        short_path = os.path.join(tmp, "short.pdf")
+        generate_pdf(document, full_path, patient_meta=patient_meta)
+        generate_short_pdf(document, short_path, patient_meta=patient_meta)
+        return _all_pdf_text(full_path), _all_pdf_text(short_path)
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_physician_supplied_without_signoff_still_shows_draft(self):
+        """THE DANGEROUS CASE, named by the human: a physician string is
+        supplied via patient_meta, but no sign-off (approve()/override())
+        has ever touched this document -- review_status is still "draft".
+        The DRAFT footer must still render on every page, in BOTH PDFs,
+        and the "reviewed by" claim must not appear anywhere. Expected to
+        FAIL against today's unfixed code (that is the defect this card
+        exists to close): both PDFs currently derive the claim from
+        patient_meta alone and would affirmatively assert review that
+        never happened."""
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            with open(os.path.join(output_dir, s.RESULTS_FILENAME), encoding="utf-8") as fh:
+                document = json.load(fh)
+            self.assertEqual(document["review_status"], "draft")  # sanity: never signed off
+
+            full_text, short_text = self._generate_both_pdfs(document, {"physician": "Dr. Rajesh Sharma"}, tmp)
+
+        for label, text in (("full", full_text), ("short", short_text)):
+            self.assertIn("DRAFT", text, f"{label} PDF must still show DRAFT with no sign-off")
+            self.assertNotIn(
+                "reviewed by Dr. Rajesh Sharma",
+                text,
+                f"{label} PDF must not claim review on the strength of patient_meta alone",
+            )
+
+        # Sanity anchor: Markdown (already correct, unaffected by this
+        # bug) agrees the underlying state really is "draft" -- confirms
+        # the fixture itself is well-formed, not just the PDF assertions.
+        md_banner = ReportGenerator().generate(document).splitlines()[2]
+        self.assertIn("DRAFT", md_banner)
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_signoff_without_physician_no_longer_shows_draft(self):
+        """THE INVERSE (flagged by god, not the human's direct mandate):
+        a real sign-off has occurred (review_status == "reviewed") but no
+        physician was supplied to patient_meta this render. Today this
+        wrongly stamps DRAFT on a genuinely reviewed report -- confusing
+        rather than dangerous, but it is the other half of the same bug
+        and its behaviour changes under the fix. Deliberately does NOT
+        assert what positive text should replace DRAFT (e.g. whether
+        physician becomes pure attribution or something else) -- that
+        wording is an open design question for Kelly/the human per the
+        card, not yet settled; only that the false DRAFT claim on an
+        actually-reviewed report must go away."""
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            with open(os.path.join(output_dir, s.RESULTS_FILENAME), encoding="utf-8") as fh:
+                document = json.load(fh)
+            document["review_status"] = "reviewed"  # simulates a real prior sign-off
+            document["reviewed_by"] = "Dr. Rajesh Sharma"
+            document["reviewed_at"] = "2026-08-21T00:00:00+00:00"
+
+            full_text, short_text = self._generate_both_pdfs(document, None, tmp)
+
+        for label, text in (("full", full_text), ("short", short_text)):
+            self.assertNotIn(
+                "DRAFT",
+                text,
+                f"{label} PDF must not claim draft/not-reviewed status on a document "
+                "review_status already marks reviewed",
+            )
+
+        md_banner = ReportGenerator().generate(document).splitlines()[2]
+        self.assertIn("REVIEWED", md_banner)
 
 
 if __name__ == "__main__":

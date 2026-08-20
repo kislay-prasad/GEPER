@@ -24,6 +24,7 @@ import tempfile
 import unittest
 
 from report.clinical_report_builder import build_clinical_report
+from report.summary import _ICMR_OVERRIDDEN_FOOTER_TEXT
 from review import signoff as s
 from review.cli import build_arg_parser, main as cli_main
 from utils.exceptions import SignoffError
@@ -311,24 +312,31 @@ class TestOverride(unittest.TestCase):
             self.assertIn("Likely Pathogenic", full_text)
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-    def test_override_alone_does_not_touch_patient_meta_stays_draft(self):
+    def test_override_alone_does_not_touch_patient_meta(self):
+        # Subject under test is patient_meta being untouched (the file
+        # is never written) -- the PDF-text expectation below only
+        # confirms an override alone produces its own dedicated footer
+        # (card review-status-two-sources-of-truth), not DRAFT as it
+        # did before that footer existed.
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _write_run(tmp)
             self.assertFalse(os.path.exists(s._patient_meta_path(output_dir)))
             s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
             self.assertFalse(os.path.exists(s._patient_meta_path(output_dir)))
             full_text = _all_pdf_text(os.path.join(output_dir, s.FULL_PDF_FILENAME))
-            self.assertIn("DRAFT", full_text)
+            self.assertIn(_ICMR_OVERRIDDEN_FOOTER_TEXT, full_text)
 
-    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-    def test_override_after_approve_preserves_reviewed_footer(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            output_dir = _write_run(tmp)
-            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
-            s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
-            full_text = _all_pdf_text(os.path.join(output_dir, s.FULL_PDF_FILENAME))
-            self.assertIn("reviewed by Dr. Rajesh Sharma", full_text)
-            self.assertNotIn("DRAFT", full_text)
+    # test_override_after_approve_preserves_reviewed_footer retired
+    # (card review-status-two-sources-of-truth): it pinned the PDF
+    # footer staying "reviewed by {physician}" after an approve() then
+    # override() sequence, which was the exact known divergence the fix
+    # closes. That scenario now has a superset of coverage (JSON,
+    # Markdown, and PDF, all checked for agreement) in
+    # tests/test_review_status_governance.py::
+    # TestPdfMarkdownReviewStatusConsistency::
+    # test_override_after_approve_pdf_and_markdown_agree_overridden --
+    # keeping both would just be duplicate assertions on the same
+    # approve()+override() call sequence.
 
     def test_override_appends_to_audit_log(self):
         with tempfile.TemporaryDirectory() as tmp:

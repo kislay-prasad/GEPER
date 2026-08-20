@@ -73,18 +73,50 @@ class TestFooterTextFunction(unittest.TestCase):
     def test_none_patient_returns_draft_text(self):
         self.assertEqual(_icmr_ai_disclosure_footer_text(None), _ICMR_DRAFT_FOOTER_TEXT)
 
-    def test_physician_present_produces_reviewed_text(self):
+    def test_physician_alone_without_document_returns_draft_text(self):
+        # Corrected contract (card review-status-two-sources-of-truth):
+        # `patient["physician"]` is attribution only. Without a
+        # `document` to supply `review_status`, the fail-safe direction
+        # is always DRAFT -- a physician string alone must never be
+        # able to assert "reviewed" by itself.
         text = _icmr_ai_disclosure_footer_text({"physician": "Dr. A. Sharma, MD"})
+        self.assertEqual(text, _ICMR_DRAFT_FOOTER_TEXT)
+
+    def test_reviewed_document_produces_reviewed_text(self):
+        document = {"review_status": "reviewed", "reviewed_by": "Dr. A. Sharma, MD"}
+        text = _icmr_ai_disclosure_footer_text({"physician": "Dr. A. Sharma, MD"}, document)
         self.assertIn("AI-assisted genomic interpretation", text)
         self.assertIn("Dr. A. Sharma, MD", text)
         self.assertIn("This is not a standalone diagnosis.", text)
         self.assertNotIn("DRAFT", text)
 
+    def test_reviewed_document_falls_back_to_patient_physician_when_reviewed_by_missing(self):
+        # `document["reviewed_by"]` is the primary name source once
+        # review_status="reviewed" establishes a sign-off exists;
+        # `patient["physician"]` is only a fallback for the NAME at
+        # that point, never for the review state itself.
+        document = {"review_status": "reviewed"}
+        text = _icmr_ai_disclosure_footer_text({"physician": "Dr. A. Sharma, MD"}, document)
+        self.assertIn("Dr. A. Sharma, MD", text)
+        self.assertNotIn("DRAFT", text)
+
+    def test_reviewed_document_without_any_reviewer_name_omits_name(self):
+        # Signed off, but no name recorded anywhere -- must not invent
+        # one, and must not fall back to DRAFT either (that would deny
+        # a sign-off that genuinely happened).
+        document = {"review_status": "reviewed"}
+        text = _icmr_ai_disclosure_footer_text({}, document)
+        self.assertIn("reviewed and signed off", text)
+        self.assertNotIn("DRAFT", text)
+
     def test_reviewed_text_never_fabricates_bracket_placeholders(self):
         # GEPER has no registration-number/hospital-name field -- the
         # rendered text must never contain literal bracket placeholders
-        # that could be mistaken for real data.
-        text = _icmr_ai_disclosure_footer_text({"physician": "Dr. A. Sharma, MD"})
+        # that could be mistaken for real data. Needs an actual
+        # reviewed document -- physician alone no longer reaches the
+        # reviewed-text branch at all under the corrected contract.
+        document = {"review_status": "reviewed", "reviewed_by": "Dr. A. Sharma, MD"}
+        text = _icmr_ai_disclosure_footer_text({"physician": "Dr. A. Sharma, MD"}, document)
         self.assertNotIn("[", text)
         self.assertNotIn("]", text)
 
@@ -101,7 +133,28 @@ class TestFullReportFooterOnEveryPage(unittest.TestCase):
                 self.assertIn("DRAFT", text, f"page {i} missing DRAFT footer")
                 self.assertIn("Awaiting clinical review", text, f"page {i} missing DRAFT footer")
 
-    def test_reviewed_footer_on_every_page_with_patient_meta(self):
+    def test_reviewed_footer_on_every_page_after_signoff(self):
+        # Corrected contract: the reviewed footer requires
+        # document["review_status"] == "reviewed" (a real sign-off
+        # record) -- patient_meta alone can no longer produce it.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "report.pdf")
+            document = _document(15)
+            document["review_status"] = "reviewed"
+            document["reviewed_by"] = "Dr. A. Sharma, MD"
+            generate_pdf(document, out, patient_meta={"patient_name": "Jane Doe", "physician": "Dr. A. Sharma, MD"})
+            texts = _all_page_texts(out)
+            self.assertGreaterEqual(len(texts), 2, "test setup should have produced a multi-page PDF")
+            for i, text in enumerate(texts):
+                self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
+                self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
+                self.assertIn("not a standalone diagnosis", text, f"page {i} missing reviewed footer")
+                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite sign-off")
+
+    def test_patient_meta_alone_no_longer_produces_reviewed_footer(self):
+        # THE vulnerability this contract fixes: physician/patient_meta
+        # alone, with no document["review_status"] sign-off, must NOT
+        # produce a reviewed-looking footer -- DRAFT must stay.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
             generate_pdf(
@@ -110,10 +163,15 @@ class TestFullReportFooterOnEveryPage(unittest.TestCase):
             texts = _all_page_texts(out)
             self.assertGreaterEqual(len(texts), 2, "test setup should have produced a multi-page PDF")
             for i, text in enumerate(texts):
-                self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
-                self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
-                self.assertIn("not a standalone diagnosis", text, f"page {i} missing reviewed footer")
-                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite patient_meta")
+                self.assertIn("DRAFT", text, f"page {i} incorrectly shows reviewed footer from patient_meta alone")
+                # "Dr. A. Sharma" alone legitimately appears in the
+                # "Referring Physician" identity block on every page --
+                # that's attribution, not a review claim (see
+                # `_icmr_ai_disclosure_footer_text`'s docstring). Only
+                # the FOOTER SENTENCE itself must not claim review.
+                self.assertNotIn(
+                    "reviewed by Dr. A. Sharma", text, f"page {i} footer incorrectly claims review with no sign-off"
+                )
 
     def test_no_usable_name_and_no_physician_still_gets_draft_footer(self):
         # An empty/insufficient patient_meta (no patient_name, no
@@ -126,23 +184,28 @@ class TestFullReportFooterOnEveryPage(unittest.TestCase):
             for text in texts:
                 self.assertIn("DRAFT", text)
 
-    def test_deidentified_run_with_physician_gets_reviewed_footer(self):
+    def test_deidentified_run_with_signoff_gets_reviewed_footer(self):
         # `physician` is intentionally decoupled from `patient_name`
         # (see `_parse_patient_meta`'s docstring): a de-identified/
         # research sample -- GEPER's stated default -- can still be
         # reviewed and signed off by a named clinician without a
         # patient name ever being attached. This is the exact
         # behavior `geper/review/signoff.py`'s `approve` command
-        # depends on, so it's asserted directly here, not just implied
-        # by the removal of the old (now-incorrect) DRAFT assertion.
+        # depends on -- approve() always writes review_status=
+        # "reviewed" AND supplies patient_meta={"physician": ...}
+        # together (never physician alone), so that's what's exercised
+        # here under the corrected contract.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
-            generate_pdf(_document(2), out, patient_meta={"physician": "Dr. A. Sharma, MD"})
+            document = _document(2)
+            document["review_status"] = "reviewed"
+            document["reviewed_by"] = "Dr. A. Sharma, MD"
+            generate_pdf(document, out, patient_meta={"physician": "Dr. A. Sharma, MD"})
             texts = _all_page_texts(out)
             for i, text in enumerate(texts):
                 self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
                 self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
-                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite physician")
+                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite sign-off")
 
     def test_corrupt_patient_meta_file_still_gets_draft_footer(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,7 +230,29 @@ class TestShortReportFooterOnEveryPage(unittest.TestCase):
                 self.assertIn("DRAFT", text, f"page {i} missing DRAFT footer")
                 self.assertIn("Awaiting clinical review", text, f"page {i} missing DRAFT footer")
 
-    def test_reviewed_footer_on_every_page_with_patient_meta(self):
+    def test_reviewed_footer_on_every_page_after_signoff(self):
+        # Corrected contract: the reviewed footer requires
+        # document["review_status"] == "reviewed" (a real sign-off
+        # record) -- patient_meta alone can no longer produce it.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            document = _document(8)
+            document["review_status"] = "reviewed"
+            document["reviewed_by"] = "Dr. A. Sharma, MD"
+            generate_short_pdf(
+                document, out, patient_meta={"patient_name": "Jane Doe", "physician": "Dr. A. Sharma, MD"}
+            )
+            texts = _all_page_texts(out)
+            self.assertGreaterEqual(len(texts), 2, "test setup should have produced a multi-page PDF")
+            for i, text in enumerate(texts):
+                self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
+                self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
+                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite sign-off")
+
+    def test_patient_meta_alone_no_longer_produces_reviewed_footer(self):
+        # THE vulnerability this contract fixes: physician/patient_meta
+        # alone, with no document["review_status"] sign-off, must NOT
+        # produce a reviewed-looking footer -- DRAFT must stay.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "short.pdf")
             generate_short_pdf(
@@ -176,9 +261,15 @@ class TestShortReportFooterOnEveryPage(unittest.TestCase):
             texts = _all_page_texts(out)
             self.assertGreaterEqual(len(texts), 2, "test setup should have produced a multi-page PDF")
             for i, text in enumerate(texts):
-                self.assertIn("AI-assisted genomic interpretation", text, f"page {i} missing reviewed footer")
-                self.assertIn("Dr. A. Sharma", text, f"page {i} missing reviewed footer")
-                self.assertNotIn("DRAFT", text, f"page {i} incorrectly shows DRAFT footer despite patient_meta")
+                self.assertIn("DRAFT", text, f"page {i} incorrectly shows reviewed footer from patient_meta alone")
+                # "Dr. A. Sharma" alone legitimately appears in the
+                # "Referring Physician" identity block on every page --
+                # that's attribution, not a review claim (see
+                # `_icmr_ai_disclosure_footer_text`'s docstring). Only
+                # the FOOTER SENTENCE itself must not claim review.
+                self.assertNotIn(
+                    "reviewed by Dr. A. Sharma", text, f"page {i} footer incorrectly claims review with no sign-off"
+                )
 
     def test_single_variant_calling_convention_still_gets_footer(self):
         # generate_short_pdf also accepts one variant_result dict

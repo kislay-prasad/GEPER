@@ -120,41 +120,102 @@ _DISCLAIMER_TEXT = (
 # added, it must not apply here.
 _ICMR_DRAFT_FOOTER_TEXT = "DRAFT -- NOT FOR PATIENT USE. Awaiting clinical review."
 
+# The `review_status == "overridden"` counterpart. Deliberately NOT
+# folded into `_ICMR_DRAFT_FOOTER_TEXT`: an override is a real,
+# recorded clinical action, and rendering it as "DRAFT" would discard
+# the fact that a human deliberately changed a classification --
+# information a reporting pathologist needs, and which no other
+# per-page surface carries. It still leads with NOT FOR PATIENT USE,
+# because an overridden run is not export-eligible either
+# (`report/export_lims.py::_require_reviewed` gates on "reviewed"
+# alone), so all three surfaces agree on readiness while differing on
+# how they got there.
+#
+# Phrased so it is true whether or not the run was ever approved --
+# `review/signoff.py::override()` can be called on a never-approved run
+# -- hence "has overridden ... in this run" rather than anything
+# implying a prior sign-off.
+#
+# Deliberately does NOT name `reviewed_by`, even though `override()`
+# preserves it: a clinician's name sitting next to review wording in a
+# footer repeated on every page is exactly the at-a-glance misread this
+# whole change set exists to remove. Identity is not lost -- the
+# override's author, reason and timestamp are already rendered per
+# finding in the report body (see the "Clinician Override" line built
+# below), and `reviewed_by`/`reviewed_at` remain in `geper_results.json`
+# and the sign-off audit log. This footer states the run's STATE; the
+# body carries the IDENTITY.
+_ICMR_OVERRIDDEN_FOOTER_TEXT = (
+    "OVERRIDDEN -- NOT FOR PATIENT USE. A clinician has overridden at least one "
+    "classification in this run; a fresh sign-off is required before use."
+)
 
-def _icmr_ai_disclosure_footer_text(patient: Dict[str, Any]) -> str:
+
+def _icmr_ai_disclosure_footer_text(
+    patient: Dict[str, Any],
+    document: Optional[Dict[str, Any]] = None,
+) -> str:
     """
     The mandatory per-page AI-disclosure footer text for this report.
 
-    Reuses `patient["physician"]` -- the one reviewing-clinician field
-    `_parse_patient_meta` already parses out of `--patient-meta` (see
-    that function's docstring) -- as the sole signal for "has a
-    clinician actually reviewed this run", rather than inventing a new
-    input path GEPER doesn't otherwise have. GEPER has no separate
-    medical-registration-number or hospital/lab-name field anywhere in
-    `patient_meta` (see `patient_metadata.example.json`: `physician` is
-    the one free-text clinician field, e.g. "Dr. A. Sharma, MD"), so
-    rather than printing the requested template's
-    "[Medical Registration Number], [Hospital/Lab Name]" placeholders
-    as literal bracketed text that could be mistaken for real,
-    fabricated-looking identifiers, this renders only the identifying
-    string GEPER actually has. A deployment that wants those additional
-    identifiers rendered should supply them as part of `physician`
-    (e.g. "Dr. A. Sharma, MD, Reg. No. 12345, ABC Diagnostics") --
-    still exactly the same one input field, no new path.
+    REVIEW STATE COMES FROM `document["review_status"]`, and from
+    nothing else. That field is written only by
+    `review/signoff.py::approve()` (`"reviewed"`) and `override()`
+    (`"overridden"`); every other path leaves the `"draft"` that
+    `report/json_builder.py` writes. Three outcomes, matching the three
+    states the Markdown banner already distinguishes
+    (`report/report_generator.py::_render_review_status_banner`):
+    `"reviewed"` names the reviewer, `"overridden"` renders
+    `_ICMR_OVERRIDDEN_FOOTER_TEXT`, and everything else -- `"draft"`, an
+    unrecognised value, a missing key, or a missing `document` entirely
+    -- renders `_ICMR_DRAFT_FOOTER_TEXT`. That last catch-all is the
+    fail-safe direction: a report nobody has attested to reviewing must
+    never look, at a glance, indistinguishable from one that is
+    actually ready for clinical use.
 
-    Before any reviewing-clinician info exists at all (`physician` is
-    `None` -- `--patient-meta` omitted, a corrupt/malformed file, or a
-    file that supplies `patient_name` but not `physician`), this
-    returns `_ICMR_DRAFT_FOOTER_TEXT` instead: a report nobody has
-    attested to reviewing must never look indistinguishable, at a
-    glance, from one that's actually ready for clinical use.
+    This deliberately reverses an earlier design in which
+    `patient["physician"]` -- a free-text field supplied by the caller
+    via `--patient-meta` -- was the sole signal for "has a clinician
+    actually reviewed this run". That made the review claim assertable
+    by an input file: supplying any physician string suppressed the
+    DRAFT warning on every page and printed "has been reviewed by X",
+    with no sign-off ever performed and `review_status` still `"draft"`.
+    An input field must not be able to make the clinician-facing
+    artefact assert something the sign-off record does not.
+
+    `physician` therefore now means ATTRIBUTION ONLY -- the referring
+    clinician, already rendered as "Referring Physician" in the patient
+    identity block of both PDFs -- and no longer carries any review
+    state. It survives here only as a fallback for the reviewer's NAME,
+    and only once `review_status` has already established that a
+    sign-off exists; it can no longer create that state on its own.
+
+    The reviewer named is `document["reviewed_by"]`, which
+    `approve()` writes alongside `review_status` from the same
+    clinician/registration/hospital string it folds into `physician`
+    (e.g. "Dr. A. Sharma, MD, Reg. No. 12345, ABC Diagnostics"), so the
+    rendered sentence is unchanged for the normal sign-off path -- it
+    is now simply sourced from the sign-off record rather than from an
+    input file.
     """
-    physician = (patient or {}).get("physician")
-    if not physician:
+    status = (document or {}).get("review_status")
+    if status == "overridden":
+        return _ICMR_OVERRIDDEN_FOOTER_TEXT
+    if status != "reviewed":
         return _ICMR_DRAFT_FOOTER_TEXT
+    reviewer = (document or {}).get("reviewed_by") or (patient or {}).get("physician")
+    if not reviewer:
+        # Signed off, but no reviewer identity was recorded. Saying DRAFT
+        # here would be the opposite error -- denying a sign-off that did
+        # happen -- so this states the attested fact and omits the name
+        # rather than inventing one.
+        return (
+            "This report was generated using AI-assisted genomic interpretation and has been "
+            "reviewed and signed off. This is not a standalone diagnosis."
+        )
     return (
         f"This report was generated using AI-assisted genomic interpretation and has been "
-        f"reviewed by {physician}. This is not a standalone diagnosis."
+        f"reviewed by {reviewer}. This is not a standalone diagnosis."
     )
 
 
@@ -2410,7 +2471,7 @@ def generate_pdf(
         # docstring) -- bound in via `functools.partial` since
         # `canvasmaker` is called as `canvasmaker(filename, **kwargs)`
         # by ReportLab itself, not pre-instantiated by this function.
-        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient)),
+        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient, document)),
     )
     logger.info(f"Wrote clinical PDF report to '{output_path}' ({len(variants)} variant finding(s)).")
     return output_path

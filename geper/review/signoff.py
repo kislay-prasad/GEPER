@@ -7,23 +7,30 @@ override on top of GEPER's own ACMG result -- WITHOUT inventing a
 second draft/final file mechanism alongside the ICMR footer's own
 draft/reviewed decision (`report/summary.py::_icmr_ai_disclosure_footer_text`).
 
-Confirmed design constraint, established by investigating that
-deliverable before writing any of this: "draft" vs "reviewed" is NOT a
+Design constraint, still true: "draft" vs "reviewed" is NOT a
 file-location choice anywhere in GEPER -- it is decided at PDF-
-generation time, purely from whether the `patient_meta` passed to
-`generate_pdf`/`generate_short_pdf` has a non-empty `physician` field
-(see `report/summary.py::_parse_patient_meta`). `physician` is
-deliberately independent of `patient_name` (see that function's
-docstring) precisely so this workflow can sign off a de-identified/
-research run -- GEPER's stated default -- without ever attaching a
-patient name to do it.
+generation time, from the document being rendered.
 
-`approve()` below therefore works by (1) writing/updating a
-`patient_meta` JSON file with `physician` populated, then (2) RE-
-INVOKING `generate_pdf`/`generate_short_pdf` against the existing
-`geper_results.json` -- exactly the same functions the orchestrator
-itself already calls (`pipeline/orchestrator.py::run`), with no new
-rendering path, no PDF-editing library, and no watermark-removal code.
+What decides it CHANGED on 2026-08-21 (see `override()`'s SUPERSEDED
+note for the full reasoning). It is now `geper_results.json`'s
+`review_status` field -- the same source `report/export_lims.py` and
+the Markdown banner already used. It was previously whether the
+`patient_meta` passed to `generate_pdf`/`generate_short_pdf` had a
+non-empty `physician` field, which meant an input file could assert
+review that no sign-off had performed. `physician` is now attribution
+only. It remains deliberately independent of `patient_name` (see
+`report/summary.py::_parse_patient_meta`) so this workflow can still
+sign off a de-identified/research run -- GEPER's stated default --
+without ever attaching a patient name to do it.
+
+`approve()` below therefore works by (1) writing `review_status`,
+`reviewed_by` and `reviewed_at` into `geper_results.json` (and
+writing/updating a `patient_meta` JSON file with `physician` populated,
+for attribution), then (2) RE-INVOKING
+`generate_pdf`/`generate_short_pdf` against that updated document --
+exactly the same functions the orchestrator itself already calls
+(`pipeline/orchestrator.py::run`), with no new rendering path, no
+PDF-editing library, and no watermark-removal code.
 `override()` similarly re-invokes `generate_pdf`/`generate_short_pdf`
 plus `report/report_generator.py::ReportGenerator` -- the same three
 render functions any GEPER run already produces its reports with.
@@ -281,18 +288,22 @@ def _load_existing_patient_meta_raw(path: str) -> Dict[str, Any]:
 
 def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str) -> Dict[str, Any]:
     """
-    Moves the run in `output_dir` from DRAFT to REVIEWED: writes/updates
-    `geper_patient_meta.json` with `physician` populated (folding
-    name/registration-number/hospital into that one existing field,
-    the same convention `report/summary.py
-    ::_icmr_ai_disclosure_footer_text`'s own docstring already
-    documents, e.g. "Dr. A. Sharma, MD, Reg. No. 12345, ABC
-    Diagnostics"), then re-invokes `generate_pdf`/`generate_short_pdf`
-    against the existing `geper_results.json` -- which, per the
-    already-confirmed footer mechanism, naturally renders "reviewed by
-    {physician}" on every page instead of "DRAFT" (see
-    `report/summary.py::_parse_patient_meta`'s docstring for why
-    `physician` alone -- no `patient_name` required -- is sufficient).
+    Moves the run in `output_dir` from DRAFT to REVIEWED: sets
+    `review_status`/`reviewed_by`/`reviewed_at` on `geper_results.json`
+    (see the round 30 part 2 note below), writes/updates
+    `geper_patient_meta.json` with `physician` populated for attribution
+    (folding name/registration-number/hospital into that one existing
+    field, e.g. "Dr. A. Sharma, MD, Reg. No. 12345, ABC Diagnostics"),
+    then re-invokes `generate_pdf`/`generate_short_pdf` against the
+    UPDATED document -- which, reading `review_status`, renders
+    "reviewed by {reviewed_by}" on every page instead of "DRAFT".
+    Note the ordering matters and is load-bearing: the document is
+    mutated in memory before it is handed to the PDF renderers, so they
+    see `"reviewed"` rather than the `"draft"` still on disk when this
+    function started. `reviewed_by` is written from the same string
+    folded into `physician`, so the rendered sentence is unchanged from
+    when the footer read `physician` directly -- it is simply sourced
+    from the sign-off record now rather than from an input file.
 
     Round 30 part 2 (root-cause fix): also rewrites `geper_results.json`
     itself with `review_status: "reviewed"` plus `reviewed_by`/
@@ -402,19 +413,38 @@ def override(
     `generate_pdf`/`generate_short_pdf`/`ReportGenerator` functions
     every GEPER run already uses -- no new rendering path.
 
-    Deliberately does NOT write or modify `geper_patient_meta.json`:
-    whatever draft/reviewed state that file already implies (present
-    with `physician` set = reviewed; absent or `physician`-less =
-    draft) is read as-is and carries through unchanged into the
-    regenerated PDFs -- an override on a not-yet-approved run's PDFs
-    still say DRAFT until a separate `approve()` call, exactly matching
-    the footer mechanism's own single source of truth. This is
-    UNCHANGED by round 30 part 2 below: the footer text function
+    Deliberately does NOT write or modify `geper_patient_meta.json`.
+    That file no longer carries any review state (see the SUPERSEDED
+    note below), so there is nothing for an override to say in it --
+    `review_status`, which this function does set, is the whole answer.
+
+    SUPERSEDED (2026-08-21) -- recorded rather than deleted, because
+    the decision below was correct when it was made and the next reader
+    needs to know it expired rather than that someone ignored it.
+    Round 30 part 2 originally left the PDF footer alone, reasoning:
+    "the footer text function
     (`report/summary.py::_icmr_ai_disclosure_footer_text`) was
-    deliberately left untouched, since "sign-off legal weight stays
-    PDF-only" was this round's explicit decision -- extending it to
+    deliberately left untouched, since 'sign-off legal weight stays
+    PDF-only' was this round's explicit decision -- extending it to
     read `review_status` would make it a second, PDF-side place that
-    decides what counts as reviewed.
+    decides what counts as reviewed."
+    That reasoning held only while `patient_meta`'s `physician` field
+    was the single source of truth for review state. Round 30 part 2
+    itself ended that, by introducing `review_status` as the gate for
+    `report/export_lims.py::_require_reviewed` and for the Markdown
+    banner: from that commit onward there were already TWO sources that
+    could disagree, and the PDF's was the weaker one -- a free-text
+    input field supplied via `--patient-meta`, which meant any caller
+    could suppress the DRAFT warning and make the clinician-facing
+    artefact assert "has been reviewed by X" with no sign-off ever
+    performed. Reading `review_status` in the PDFs therefore collapses
+    two sources into one rather than adding a third, which is the
+    opposite of what the original concern feared.
+    Both PDF renderers now derive review state from `review_status`
+    alone. `physician` remains purely attribution ("Referring
+    Physician" in the identity block) and can no longer create review
+    state -- it is still the right thing to name, just not the right
+    thing to trust.
 
     Round 30 part 2: ALWAYS sets `geper_results.json`'s `review_status`
     to `"overridden"`, regardless of the document's prior value --
@@ -430,21 +460,27 @@ def override(
     even though it no longer implies "this document is currently
     approved" (`review_status` alone is what gates that).
 
-    KNOWN, DELIBERATELY UNRESOLVED TENSION (flag this if it matters for
-    your workflow): because the PDF footer is untouched (see above),
-    calling `override()` on an already-`approve()`d run produces PDFs
-    that still literally read "reviewed by {physician}" (confirmed by
-    `tests/test_signoff.py::TestOverride::
-    test_override_after_approve_preserves_reviewed_footer`, an existing
-    test this change does not alter) while `geper_results.json`'s
-    `review_status` now says `"overridden"` and the regenerated
-    Markdown banner says so too. The PDF's claim is not literally false
-    -- that physician did review a prior state of this document -- but
-    a reader comparing all three surfaces after this exact sequence
-    (approve, then override, with no subsequent re-approve) will see
-    PDF="reviewed", JSON/Markdown="overridden". Closing this fully
-    would mean making the PDF footer override-aware too, which is a
-    separate decision from this round's explicit scope.
+    RESOLVED (2026-08-21). This docstring previously recorded a "KNOWN,
+    DELIBERATELY UNRESOLVED TENSION": calling `override()` on an
+    already-`approve()`d run produced PDFs still reading "reviewed by
+    {physician}" while `review_status` and the Markdown banner said
+    `"overridden"`, so a reader comparing all three surfaces saw
+    PDF="reviewed", JSON/Markdown="overridden". That is fixed. Making
+    the PDF footer override-aware -- named there as what closing it
+    would require -- is exactly what happened: both PDFs now render a
+    distinct overridden footer
+    (`report/summary.py::_ICMR_OVERRIDDEN_FOOTER_TEXT`), so all three
+    surfaces agree that an overridden run is not ready for use and that
+    a fresh `approve()` is required.
+    An overridden run's footer deliberately does NOT collapse into
+    DRAFT: an override is a real, recorded clinical action, and saying
+    only "DRAFT" would discard the fact that a human changed a
+    classification. It also does not name `reviewed_by` -- preserved
+    though that field is (see above) -- because a clinician's name
+    beside review wording, repeated on every page, is the same
+    at-a-glance misread that motivated this change. The override's
+    author, reason and timestamp are already rendered per finding in
+    the report body.
 
     Raises `SignoffError` if `output_dir` has no `geper_results.json`,
     `variant_key` doesn't parse, no variant matches it, or the matched

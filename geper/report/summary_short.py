@@ -728,7 +728,7 @@ def generate_short_pdf(
         story,
         onFirstPage=decoration,
         onLaterPages=decoration,
-        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient)),
+        canvasmaker=functools.partial(_NumberedCanvas, footer_text=_icmr_ai_disclosure_footer_text(patient, document)),
     )
     logger.info(f"Wrote short-form clinical PDF report to '{output_path}' ({len(variants)} variant finding(s)).")
     return output_path

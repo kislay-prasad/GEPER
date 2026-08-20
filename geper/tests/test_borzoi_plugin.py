@@ -347,9 +347,23 @@ class TestBorzoiMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_BORZOI", BorzoiPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_package_installed(self):
-        with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
+        # Mocks ensure_pip_package_available rather than relying on the
+        # real package genuinely being pip-installed -- same fix and
+        # same rationale as the equivalent Enformer test
+        # (test_enformer_plugin.py::TestEnformerMetadataAndAvailability
+        # ::test_available_when_flag_on_and_package_installed): unmocked,
+        # this used to reach a real unconstrained
+        # `pip install borzoi-pytorch` that could silently downgrade the
+        # box's transformers pin; post-47748b6 that real call now
+        # correctly fails the requirements.txt constraint instead, so
+        # this test can no longer assume the real package is present
+        # just because is_available() is True.
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+        ):
             mock_config.splicing.ENABLE_BORZOI = True
-            self.assertTrue(BorzoiPlugin.is_available())  # borzoi_pytorch really is installed
+            self.assertTrue(BorzoiPlugin.is_available())
 
 
 class TestBorzoiThroughModelManager(unittest.TestCase):

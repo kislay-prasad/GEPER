@@ -246,9 +246,22 @@ class TestEnformerMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_ENFORMER", EnformerPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_package_installed(self):
-        with mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config:
+        # Mocks ensure_pip_package_available rather than relying on the
+        # real package genuinely being pip-installed, same convention as
+        # the other enformer tests above -- this test's intent is the
+        # "package already installed" path, not the auto-install path
+        # (which, unmocked, used to reach a real unconstrained
+        # `pip install enformer-pytorch` and silently downgrade the
+        # box's transformers pin; post-47748b6 that real call now
+        # correctly fails the requirements.txt constraint instead,
+        # which is right, but means this test can no longer assume the
+        # real package is present just because is_available() is True).
+        with (
+            mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+        ):
             mock_config.splicing.ENABLE_ENFORMER = True
-            self.assertTrue(EnformerPlugin.is_available())  # enformer_pytorch really is installed
+            self.assertTrue(EnformerPlugin.is_available())
 
 
 class TestEnformerThroughModelManager(unittest.TestCase):

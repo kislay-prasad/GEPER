@@ -204,6 +204,13 @@ time, which itself imports `Bio` (biopython):
    not interchangeably — see the comment block above the `tensorflow`
    line in `requirements.txt` for why the ordering matters.
 
+**A verified, working install recipe following exactly this sequence**
+(Python 3.12.10, step-by-step install order, and the full ground-truth
+`pip freeze`) is recorded in `VENV_BUILD_RECIPE.md` — the first time
+this project has had a from-scratch build proven to resolve cleanly
+and import successfully (`evo2` excluded by design; see that file for
+what is and isn't proven by it).
+
 ## 6. Usage
 
 ```bash

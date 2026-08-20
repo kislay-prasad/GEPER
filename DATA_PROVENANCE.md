@@ -394,7 +394,7 @@ not by a dedicated audit of the PDF path.
 
 Tests: 45/45 PDF report tests pass as of commit `01a2e2d`.
 
-## End-to-end verification venue, and a genuine `requirements.txt` gap (2026-08-20)
+## End-to-end verification venue, and `requirements.txt`'s build status (2026-08-20)
 
 Two distinct claims. They are easy to conflate and must not be:
 
@@ -409,21 +409,53 @@ different, Colab-provisioned environment than this local machine.
 Nothing about the finding below should be read as casting doubt on
 those Colab-run results.
 
-**2. A genuine, unsoftened gap — but a precise one: `requirements.txt`
-is declared-but-never-proven-to-build.** This is not a claim that the
-file is missing or misstating a dependency. Because every real
-end-to-end run happened on Colab, which supplies its own pre-built
-environment rather than one bootstrapped from this repo's
-`requirements.txt` alone, the claim "`pip install -r requirements.txt`
-produces a working `geper/`" has never actually been demonstrated
-anywhere — not on Colab (which didn't need to test it) and not locally
-(the first real attempt, below). Declaring every dependency correctly
-is not the same thing as being demonstrated to install and run. This
-is a real reproducibility gap, not a hypothetical one — and it is
-narrower than "the file is deficient."
+**2. UPDATE (2026-08-20, later the same day): `requirements.txt` is now
+PROVEN TO BUILD a working `geper/` environment — minus `evo2`.** This
+supersedes the "declared-but-never-proven-to-build" status this entry
+originally recorded a few hours earlier; that gap has been closed by a
+real, from-scratch build, not merely re-argued. Andy built an isolated
+Python 3.12.10 venv (outside the git tree, shared `site-packages`
+untouched) and installed `requirements.txt`'s full declared set in the
+order the file's own comments specify: `torch==2.7.1` alone first
+(resolves to the CPU wheel from plain PyPI, no custom index-url
+needed), then the main batch (`transformers`, `accelerate`, `einops`,
+`torchvision==0.22.1`, `omegaconf`, `torchaudio==2.7.1`, `biopython`,
+and the rest), then `tensorflow` alone, then
+`mmsplice==2.4.0 --no-deps`, then `rna-fm`. All 82 packages resolved
+cleanly with **zero dependency conflicts** — `torch 2.7.1+cpu`,
+`transformers 5.15.1`, `torchvision`/`torchaudio` matching the torch
+pin exactly, `tensorflow 2.21.0`. `evo2` was deliberately not
+installed (GPU-only, requires a manual CUDA-toolkit-matched build that
+`requirements.txt`'s own comments already say not to attempt via a
+bare install pass — its absence here is by design, not a build
+failure). `from pipeline.orchestrator import GeperPipeline` **imported
+cleanly** in this venv. Full recipe and the ground-truth `pip freeze`
+are recorded in `geper/VENV_BUILD_RECIPE.md`, cross-referenced
+from `geper/README.md` Section 5 — this is the first working install
+recipe this project has ever had.
 
-**What was found on this local box, precisely** (Andy, 2026-08-20): a
-bare `pip install -r requirements.txt` starts from an environment
+**Be precise about what this does and does not prove.** Proven: the
+declared dependency set (minus `evo2`) installs cleanly with no
+conflicts, and the pipeline's own import chain works end-to-end at
+the Python-import level. **NOT proven: a full end-to-end variant-processing
+run.** No run has yet completed on this box — four attempts were
+externally killed before reaching `geper_results.json`/report
+generation (survival time shrank each attempt, 19min → 1min → 3-4min,
+consistent with an exhausted background-task/resource ceiling on this
+box, not a GEPER defect), and separately, `rest.ensembl.org` was
+independently returning `500` errors and 30-second timeouts during the
+same window — Ensembl reliability, not a GEPER defect, but also on the
+critical path for every variant, so it would slow or degrade any run
+attempted right now regardless of the killed-process issue. Neither
+failure mode says anything about `geper/`'s own correctness. **"Proven
+to build" must not be read as "proven to work end-to-end"** — those
+are different claims, and only the first one is closed as of this
+entry.
+
+**Earlier context (superseded by the full build above, kept for the
+reasoning it establishes): what was found on this local box before the
+clean venv existed** (Andy, 2026-08-20): a bare
+`pip install -r requirements.txt` starts from an environment
 where 7 of the 20 declared packages happen to be absent on this
 particular box (`rna-fm`, `evo2`, `torchvision`, `omegaconf`,
 `torchaudio`, `biopython`, `tensorflow`), plus a `torch 2.13.0+cpu`
@@ -465,9 +497,11 @@ repaired, and confirmed not to represent a fresh-install failure mode.
 It is a different story from the declared-but-never-proven-to-build
 gap and is not evidence against `requirements.txt`'s own correctness.
 
-**Status**: whether a bare `pip install -r requirements.txt` actually
-builds a working `geper/` is being tested for the first time via an
-isolated, from-scratch venv build, in progress as of this entry and
-**not yet concluded** — this entry documents the gap and Andy's
-precise chain-walk finding; it does not resolve or close the gap
-itself.
+**Status**: the build question is closed — `requirements.txt` builds a
+working `geper/` (minus `evo2`), demonstrated in a real, from-scratch
+venv, recipe recorded in `geper/VENV_BUILD_RECIPE.md`. **The
+end-to-end-run question remains open**: no full variant-processing run
+has completed on this box yet, for the external/environmental reasons
+described above, not for any reason connected to `requirements.txt` or
+`geper/`'s own code. Do not read this entry as claiming end-to-end
+verification has occurred on this box — it has not, as of this entry.

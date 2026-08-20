@@ -274,6 +274,19 @@ class LIMSRun(BaseModel):
     variant_count: Optional[int] = None
     geper_code_version: Optional[str] = None
     generated_at: Optional[str] = None  # ISO 8601, as GEPER's own document already stores it
+    # Run-level caveats: statements qualifying the WHOLE run rather than
+    # any one finding (`geper_results.json`'s own `caveats` field, see
+    # report/json_builder.py). Carried here because a LIMS integration
+    # built against this export rather than against the raw results file
+    # would otherwise never see them -- and an automated consumer, unlike
+    # a clinician reading a PDF, cannot notice a caveat it was never
+    # given. Defaults to `[]` for a pre-428a77d document with no such
+    # field, never a fabricated placeholder.
+    #
+    # Deliberately NOT merged with any finding's own caveats: per-variant
+    # limitations already ride in `clinical_report` and belong to the
+    # finding that produced them. These qualify the run.
+    caveats: List[str] = []
 
 
 class LIMSExport(BaseModel):
@@ -491,6 +504,7 @@ def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) ->
             variant_count=document.get("variant_count"),
             geper_code_version=document.get("code_version"),
             generated_at=document.get("generated_at"),
+            caveats=list(document.get("caveats") or []),
         ),
         case_phenotype_ranking_active=any(f.case_prioritization is not None for f in findings),
         findings=findings,
@@ -568,6 +582,15 @@ _CSV_COLUMNS = [
     "evidence_sources",
     "stage_errors",
     "interpretation_available",
+    # Run-level, so identical in every row of a given export -- the same
+    # denormalisation `sample_id`/`run_id` above already use. Repeated
+    # rather than omitted on purpose: a CSV-only consumer is exactly the
+    # integration that cannot go and read `geper_results.json` for the
+    # caveats instead, and leaving the column out would recreate, for
+    # tabular consumers, the same blind spot adding this field to the
+    # export was meant to close. Appended last so existing column
+    # positions are unchanged for anything already parsing this file.
+    "run_caveats",
 ]
 
 
@@ -612,6 +635,11 @@ def _csv_row(run: LIMSRun, finding: LIMSFinding) -> Dict[str, Any]:
         "evidence_sources": ";".join(finding.evidence_sources),
         "stage_errors": ";".join(finding.stage_errors),
         "interpretation_available": finding.interpretation_available,
+        # Named `run_caveats`, not `caveats`, because the flat CSV loses
+        # the nesting that makes the scope obvious in the JSON export
+        # (`run.caveats`) -- without the prefix a reader scanning a
+        # per-finding row would reasonably take it for per-finding data.
+        "run_caveats": ";".join(run.caveats),
     }
 
 
@@ -621,9 +649,14 @@ def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional
     systems that ingest tabular/spreadsheet data rather than nested
     JSON (common for smaller diagnostic labs without an HL7/FHIR
     interface). List-valued fields (evidence sources, ACMG criteria
-    codes, stage errors) are semicolon-joined single cells rather than
-    exploded into repeated rows, so this stays exactly one row per
-    finding -- matching `LIMS_EXPORT_MAPPING.md`'s documented contract.
+    codes, stage errors, run caveats) are semicolon-joined single cells
+    rather than exploded into repeated rows, so this stays exactly one
+    row per finding -- matching `LIMS_EXPORT_MAPPING.md`'s documented
+    contract.
+
+    `run_caveats` is run-level and therefore identical in every row, the
+    same denormalisation `sample_id`/`run_id` already use -- see
+    `_CSV_COLUMNS` for why it is repeated rather than omitted.
 
     Raises `LIMSExportBlockedError` (see `_require_reviewed`) when
     `document` is not yet reviewed -- same audit-log-then-raise

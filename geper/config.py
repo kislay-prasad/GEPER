@@ -2052,7 +2052,37 @@ class HealthCheckConfig:
     # a real query. Run in parallel across services (see
     # `service_health.run_startup_checks`), so total startup overhead is
     # bounded by this single timeout, not the sum of all services.
+    # This is the FAST-PATH budget only: it decides how quickly a healthy
+    # service is confirmed, and it no longer decides on its own whether a
+    # service is latched offline -- see PROBE_ATTEMPTS and
+    # LATCH_CONFIRM_TIMEOUT_SECS below.
     TIMEOUT_SECS: float = float(os.environ.get("GEPER_HEALTH_CHECK_TIMEOUT", "4.0"))
+
+    # How many probe attempts must fail before a service is latched
+    # offline for the whole run. `utils/service_health.py` treats an
+    # offline verdict as CONFIRMED and clients then skip their own retry
+    # loops entirely (see that module's docstring), so that verdict has to
+    # rest on more than one sample: a single unlucky request is exactly
+    # what a one-shot probe cannot distinguish from a real outage.
+    # Observed real Ensembl startup probes have ranged 1290-21931 ms, so
+    # jitter at this scale is normal, not exceptional.
+    # Only a network-level failure is retried; a 5xx is a real answer from
+    # a live host and is never retried (see `_http_probe`).
+    PROBE_ATTEMPTS: int = int(os.environ.get("GEPER_HEALTH_CHECK_ATTEMPTS", "3"))
+
+    # Pause between those attempts, so a brief blip is not sampled three
+    # times inside the same instant.
+    PROBE_BACKOFF_SECS: float = float(os.environ.get("GEPER_HEALTH_CHECK_BACKOFF", "0.5"))
+
+    # Timeout for the FINAL attempt only -- the one that actually decides
+    # to latch. Set to a full client budget (matching the 30s
+    # REQUEST_TIMEOUT_SECS referenced above) on purpose: it is not
+    # defensible for the probe to declare a service dead after 4s when a
+    # real client would happily have waited 30s for the same host. Earlier
+    # attempts keep the short TIMEOUT_SECS above, so a healthy service is
+    # still confirmed fast and only a failing one pays this cost -- once
+    # per run, in parallel across services.
+    LATCH_CONFIRM_TIMEOUT_SECS: float = float(os.environ.get("GEPER_HEALTH_CHECK_CONFIRM_TIMEOUT", "30.0"))
 
 
 @dataclass(frozen=True)

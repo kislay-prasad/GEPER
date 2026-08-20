@@ -194,6 +194,98 @@ class TestRunStartupChecks(unittest.TestCase):
         self.assertTrue(self.registry.is_offline("Ensembl"))
 
 
+class TestRetryBeforeLatch(unittest.TestCase):
+    """
+    Regression tests for card `ensembl-health-probe-false-negative`:
+    a single failed/timed-out probe attempt must not be enough evidence
+    to latch a service Offline for the whole run -- only REPEATED
+    failure does. Motivating real-world incident: a genuine, successful
+    production Ensembl probe took 21931 ms (geper.log:11511, alongside
+    5 other real successful probes at 1432/1605/1777/2112/2699 ms) --
+    proof that "slow" and "down" are not the same thing, and that no
+    single-shot short timeout can tell them apart.
+
+    Written against `ServiceHealthRegistry`'s public, observable surface
+    (`run_startup_checks`, `is_offline`) rather than any private retry
+    helper -- valid regardless of exactly how many attempts the fix
+    uses or where the retry loop lives, per dispatch instructions. Uses
+    the real `CONFIG.health_check` (not the file's `_fake_config()`
+    mock) specifically so any new retry/backoff config field the fix
+    introduces gets a real, sensible value rather than an unconfigured
+    Mock -- these tests never go through `_http_probe`/`requests` at
+    all (the probe is a plain Python callable supplied directly), so
+    `CONFIG.health_check.TIMEOUT_SECS`'s actual value is irrelevant
+    here regardless.
+
+    `time.sleep` is patched to a no-op throughout: if the fix's retry
+    loop backs off between attempts (the scoping's own cost model
+    assumes ~0.5s x up to 3 attempts), these tests should not have to
+    pay that wall-clock cost to prove the *outcome* is correct.
+    """
+
+    def setUp(self):
+        self.registry = sh.ServiceHealthRegistry()
+
+    def test_single_failure_does_not_latch(self):
+        """One bad attempt (Timeout), then healthy -- must NOT end up
+        Offline. This is expected to fail against the pre-fix,
+        single-shot probe (which never gets a second attempt to
+        recover) and pass once retry-before-latch lands."""
+        calls = {"n": 0}
+
+        def probe():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return sh.ServiceStatus.OFFLINE, "Timeout"
+            return sh.ServiceStatus.HEALTHY, ""
+
+        with mock.patch("utils.service_health.time.sleep", return_value=None):
+            self.registry.run_startup_checks([sh.ServiceCheck("Ensembl", probe)])
+
+        self.assertFalse(self.registry.is_offline("Ensembl"))
+        self.assertGreaterEqual(calls["n"], 2, "expected at least one retry attempt after the initial failure")
+
+    def test_repeated_failures_do_latch(self):
+        """Every attempt fails -- must still end up Offline. This is
+        the test that proves the latch itself was not weakened or
+        removed by the fix, only the evidence required to trigger it."""
+        calls = {"n": 0}
+
+        def probe():
+            calls["n"] += 1
+            return sh.ServiceStatus.OFFLINE, "Timeout"
+
+        with mock.patch("utils.service_health.time.sleep", return_value=None):
+            self.registry.run_startup_checks([sh.ServiceCheck("Ensembl", probe)])
+
+        self.assertTrue(self.registry.is_offline("Ensembl"))
+        self.assertGreaterEqual(
+            calls["n"], 2, "expected the fix to actually attempt a retry, not just latch on attempt 1"
+        )
+
+    def test_slow_but_successful_probe_is_not_offline(self):
+        """A single attempt that succeeds -- however long it took --
+        must be Online, not Offline, independent of any timeout value
+        (the human explicitly deferred picking a timeout number:
+        'retry must carry the load, not the threshold'). Mirrors the
+        real 21931ms production probe (geper.log:11511): the probe
+        callable itself is the unit under test's only view of "how the
+        attempt went", and it reports success, so the actual duration
+        is irrelevant here and deliberately not simulated with a real
+        sleep (would just slow the suite down for no added coverage --
+        `record.latency_ms` genuinely reflects wall-clock time via
+        `time.perf_counter()`, this test only needs the classification
+        outcome, not to reproduce a specific number)."""
+
+        def probe():
+            return sh.ServiceStatus.HEALTHY, ""
+
+        with mock.patch("utils.service_health.time.sleep", return_value=None):
+            self.registry.run_startup_checks([sh.ServiceCheck("Ensembl", probe)])
+
+        self.assertFalse(self.registry.is_offline("Ensembl"))
+
+
 class TestRuntimeTrackingAndSummary(unittest.TestCase):
     def setUp(self):
         self.registry = sh.ServiceHealthRegistry()

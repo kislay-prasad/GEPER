@@ -17,7 +17,12 @@ that retry logic. It adds two things on top of it:
 
 1. A one-time startup probe (`run_startup_checks`) that tells the user
    up front which services are reachable, before the first variant is
-   processed.
+   processed. It retries a network-level failure before reporting a
+   service offline (`CONFIG.health_check.PROBE_ATTEMPTS`): because an
+   offline verdict here switches off the per-client retry loops
+   described above, it has to rest on more than one sample, or a single
+   slow request silently disables the very machinery that would have
+   ridden it out.
 2. A tiny shared registry (`HEALTH`) that a client's *existing* retry
    loop can consult in one line at the top of the loop
    (`HEALTH.is_offline("IndiGenomes")`) to skip straight to raising
@@ -80,6 +85,38 @@ class ServiceCheck:
     probe: Callable[[], ProbeResult]
 
 
+def _health_check_setting(name: str, default: float) -> float:
+    """
+    Read one `CONFIG.health_check` number, falling back to *default* if
+    it is absent or not a real number.
+
+    The fallback is not defensive padding: `CONFIG` is module-global here
+    and is patched with a `mock.Mock()` in the tests, so any attribute
+    added to `HealthCheckConfig` reads back as a Mock rather than a
+    number in every test that predates it. Coercing those to the real
+    default keeps this function's behaviour identical to the shipped
+    config instead of raising TypeError deep inside a retry loop.
+    """
+    value = getattr(CONFIG.health_check, name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return value
+
+
+# Per-thread timeout override for the attempt currently in flight.
+# `ServiceCheck.probe` is a zero-argument callable (tests supply plain
+# Python functions), so the retry loop in `run_startup_checks` cannot
+# pass the attempt's timeout down as a parameter without changing that
+# signature for every existing caller. Each check already runs on its
+# own pool thread, so a thread-local carries it cleanly instead.
+_PROBE_STATE = threading.local()
+
+
+def _current_probe_timeout() -> float:
+    """Timeout for the probe attempt in flight on this thread."""
+    return getattr(_PROBE_STATE, "timeout", None) or _health_check_setting("TIMEOUT_SECS", 4.0)
+
+
 def _http_probe(
     method: str,
     url: str,
@@ -93,8 +130,16 @@ def _http_probe(
     Any response at all (even a 4xx) means the host is up and routing
     requests -- only 5xx counts as "degraded" and only a network-level
     failure (timeout, connection error) counts as "offline".
+
+    One request only: retrying is `run_startup_checks`'s job, so that it
+    applies to every `ServiceCheck` rather than only to the ones built
+    from this helper.
+
+    The timeout is `TIMEOUT_SECS` normally, but the attempt that will
+    actually decide to latch uses the longer `LATCH_CONFIRM_TIMEOUT_SECS`
+    (see `_current_probe_timeout`).
     """
-    timeout = CONFIG.health_check.TIMEOUT_SECS
+    timeout = _current_probe_timeout()
     try:
         response = requests.request(method, url, params=params, data=data, headers=headers, timeout=timeout)
     except requests.Timeout:
@@ -134,14 +179,51 @@ class ServiceHealthRegistry:
             logger.info("External service health check disabled (GEPER_HEALTH_CHECK_ENABLED=false); skipping.")
             return
 
+        attempts = max(1, int(_health_check_setting("PROBE_ATTEMPTS", 3)))
+        backoff = max(0.0, float(_health_check_setting("PROBE_BACKOFF_SECS", 0.5)))
+        fast_timeout = float(_health_check_setting("TIMEOUT_SECS", 4.0))
+        confirm_timeout = max(fast_timeout, float(_health_check_setting("LATCH_CONFIRM_TIMEOUT_SECS", 30.0)))
+
         def _run_one(check: ServiceCheck) -> None:
             record = self._get(check.name)
-            start = time.perf_counter()
-            try:
-                status, detail = check.probe()
-            except Exception as exc:  # pragma: no cover - defensive, probes shouldn't raise
-                status, detail = ServiceStatus.OFFLINE, f"{type(exc).__name__}: {exc}"
-            elapsed_ms = (time.perf_counter() - start) * 1000
+            # Retry before latching: an OFFLINE verdict here is treated as
+            # CONFIRMED for the whole run and makes every client skip its
+            # own retry loop, so it must not rest on a single sample. Only
+            # OFFLINE is retried -- HEALTHY and DEGRADED are both real
+            # answers from a host that is up and routing, and a 5xx in
+            # particular is a definitive reply, not a missing one.
+            status, detail = ServiceStatus.OFFLINE, "unreachable"
+            elapsed_ms = 0.0
+            for attempt in range(1, attempts + 1):
+                is_final = attempt == attempts
+                _PROBE_STATE.timeout = confirm_timeout if is_final else fast_timeout
+                start = time.perf_counter()
+                try:
+                    status, detail = check.probe()
+                except Exception as exc:  # pragma: no cover - defensive, probes shouldn't raise
+                    status, detail = ServiceStatus.OFFLINE, f"{type(exc).__name__}: {exc}"
+                finally:
+                    # Timed per attempt, so the recorded latency describes
+                    # the attempt whose verdict we keep rather than the sum
+                    # of the failures that preceded it.
+                    elapsed_ms = (time.perf_counter() - start) * 1000
+                    _PROBE_STATE.timeout = None
+                if status != ServiceStatus.OFFLINE:
+                    break
+                if not is_final:
+                    logger.debug(
+                        f"{check.name} health probe failed ({detail}) on attempt {attempt}/{attempts}; "
+                        f"retrying in {backoff:.1f}s before treating it as offline."
+                    )
+                    if backoff:
+                        time.sleep(backoff)
+            else:
+                # Only reached when every attempt came back OFFLINE.
+                logger.warning(
+                    f"{check.name} health probe failed all {attempts} attempts (last: {detail}); "
+                    "treating it as offline for the rest of this run -- clients will skip their "
+                    "own retries for this service."
+                )
             with self._lock:
                 record.startup_status = status
                 record.startup_detail = detail

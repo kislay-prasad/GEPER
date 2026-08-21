@@ -83,6 +83,7 @@ from report.summary import (
     _NumberedCanvas,
     _derive_run_id,
     _derive_sample_id,
+    _document_consent,
     _icmr_ai_disclosure_footer_text,
     _load_cropped_logo_image,
     _parse_patient_meta,
@@ -672,6 +673,10 @@ def generate_short_pdf(
         variants = []
 
     patient = _parse_patient_meta(patient_meta)
+    # Consent comes from the document, not from patient_meta -- see
+    # `report/summary.py::_document_consent` for why the two sources were
+    # consolidated and what it costs a direct caller.
+    patient["consent"] = _document_consent(document)
     sample_id = _derive_sample_id(document)
     resolved_run_id = _derive_run_id(document, run_id)
     assembly = document.get("assembly")

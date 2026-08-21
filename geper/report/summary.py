@@ -970,6 +970,39 @@ def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphSt
     return [header_table]
 
 
+def _document_consent(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    DPDP Act 2023 consent metadata for this run, read from the document
+    and from nowhere else.
+
+    Both PDF renderers previously took consent from whatever
+    `--patient-meta` they were handed, while the Markdown report read
+    `document["patient_consent"]`. Those are two independent inputs
+    answering one question, and a render-and-diff of a single run caught
+    them disagreeing: a document carrying consent, rendered without a
+    patient_meta argument, produced a Markdown report stating consent
+    and PDFs stating none. They had only ever agreed by convention --
+    `pipeline/orchestrator.py` happens to populate the document field by
+    calling `_parse_patient_meta` on the same file it later passes to
+    these renderers -- never by construction.
+
+    The document wins because it is the unified shape every other field
+    already flows through, and because it is what survives to
+    `geper_results.json` for `report/export_lims.py` and any other
+    machine consumer. Consequence, stated rather than buried: a
+    `--patient-meta` consent object no longer reaches a PDF on its own.
+    For a real pipeline run that changes nothing (the orchestrator
+    populates the document from that same file), but a caller invoking
+    `generate_pdf` directly against a document with no
+    `patient_consent` key will no longer see consent rows.
+
+    Same "absent, not fabricated" contract as before: `None` when the
+    run recorded no consent object at all, which `_consent_rows` renders
+    as no rows rather than three "Not stated" ones.
+    """
+    return (document or {}).get("patient_consent")
+
+
 def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphStyle) -> List[List[Paragraph]]:
     """
     DPDP Act 2023 consent-metadata rows -- shared by the full report's
@@ -2361,6 +2394,7 @@ def generate_pdf(
         variants = []
 
     patient = _parse_patient_meta(patient_meta)
+    patient["consent"] = _document_consent(document)
     parsed_qc_metrics = _parse_qc_metrics(qc_metrics)
     sample_id = _derive_sample_id(document)
     resolved_run_id = _derive_run_id(document, run_id)

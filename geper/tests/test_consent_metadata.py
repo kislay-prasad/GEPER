@@ -169,12 +169,21 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
+_EXAMPLE_CONSENT = {"clinical_reporting": True, "research": False, "timestamp": "2026-08-01T09:15:00+05:30"}
+
+
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
 class TestFullReportConsentRows(unittest.TestCase):
-    def test_consent_rows_present_when_supplied(self):
+    def test_consent_rows_present_when_supplied_via_document(self):
+        # Consent consolidation (see report/summary.py::_document_consent):
+        # the document is now the sole source, not --patient-meta -- moved
+        # from patient_meta="patient_metadata.example.json" to the
+        # document fixture, same consent values that file used to supply.
+        document = _minimal_document()
+        document["patient_consent"] = _EXAMPLE_CONSENT
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
-            generate_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            generate_pdf(document, out)
             text = _normalized(_all_text(out))
             self.assertIn("Consent -- Clinical Reporting", text)
             self.assertIn("Yes", text)
@@ -196,12 +205,38 @@ class TestFullReportConsentRows(unittest.TestCase):
             text = _all_text(out)
             self.assertNotIn("Consent --", text)
 
-    def test_consent_rows_present_for_deidentified_sample_with_consent(self):
-        # No patient_name -> de-identified header, but consent is
-        # independent of identity and must still render.
+    def test_patient_meta_consent_alone_no_longer_produces_consent_rows(self):
+        # THE dangerous case, same shape as the review-status governance
+        # fix: a --patient-meta file carrying a real consent object used
+        # to be sufficient on its own. Post-consolidation, patient_meta's
+        # consent is no longer authoritative at all -- only
+        # document["patient_consent"] is. If this test passed, the old
+        # (now-wrong) proxy would still be silently granting the claim.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
-            generate_pdf(_minimal_document(), out, patient_meta={"consent": {"research": True}})
+            generate_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            text = _all_text(out)
+        self.assertNotIn("Consent --", text)
+
+    def test_consent_rows_present_for_deidentified_sample_with_consent(self):
+        # No patient_name -> de-identified header, but consent is
+        # independent of identity and must still render. Moved to the
+        # document fixture; patient_meta omitted entirely (it no longer
+        # has any bearing on consent, and de-identified is already the
+        # no-patient_meta default).
+        document = _minimal_document()
+        # Full three-key shape, matching what `_parse_consent` always
+        # produces (and what json_builder.py always stores) -- NOT a
+        # bare {"research": True}. `_document_consent` reads
+        # document["patient_consent"] verbatim with no re-normalization
+        # step (see its own docstring), so this fixture must already be
+        # in the shape production always supplies, not raw external
+        # input shorthand the way patient_meta's consent object used to
+        # accept.
+        document["patient_consent"] = {"clinical_reporting": None, "research": True, "timestamp": None}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "report.pdf")
+            generate_pdf(document, out)
             text = _normalized(_all_text(out))
             self.assertIn("De-identified", text)
             self.assertIn("Consent -- Research Use", text)
@@ -211,10 +246,12 @@ class TestFullReportConsentRows(unittest.TestCase):
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
 class TestShortReportConsentRows(unittest.TestCase):
-    def test_consent_rows_present_when_supplied(self):
+    def test_consent_rows_present_when_supplied_via_document(self):
+        document = _minimal_document()
+        document["patient_consent"] = _EXAMPLE_CONSENT
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "short.pdf")
-            generate_short_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            generate_short_pdf(document, out)
             text = _normalized(_all_text(out))
             self.assertIn("Consent -- Clinical Reporting", text)
             self.assertIn("Consent -- Research Use", text)
@@ -226,6 +263,15 @@ class TestShortReportConsentRows(unittest.TestCase):
             generate_short_pdf(_minimal_document(), out)
             text = _all_text(out)
             self.assertNotIn("Consent --", text)
+
+    def test_patient_meta_consent_alone_no_longer_produces_consent_rows(self):
+        # Dangerous-case counterpart for the short report -- see
+        # TestFullReportConsentRows's identically-named test.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            generate_short_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            text = _all_text(out)
+        self.assertNotIn("Consent --", text)
 
 
 if __name__ == "__main__":

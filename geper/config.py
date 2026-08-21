@@ -8,7 +8,7 @@ touching pipeline logic -- only this file.
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Tuple
+from typing import Dict, FrozenSet, Tuple
 
 
 def _load_yaml_config_overrides() -> None:
@@ -949,11 +949,36 @@ class ClinGenConfig:
     CACHE_DISK_PATH: str = os.environ.get("GEPER_CLINGEN_CACHE_DISK_PATH", "")
     MAX_CONCURRENT: int = int(os.environ.get("GEPER_CLINGEN_MAX_CONCURRENT", "8"))
 
-    # ACMG-integration thresholds (requirement #5). Kept configurable
-    # rather than hard-coded, matching every other ACMG threshold in
-    # this codebase (e.g. CONFIG.gnomad.BA1_AF_THRESHOLD).
-    DOSAGE_SUFFICIENT_EVIDENCE_SCORE: int = int(os.environ.get("GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORE", "3"))
+    # ACMG-integration configuration (requirement #5). Kept
+    # configurable rather than hard-coded, matching every other ACMG
+    # knob in this codebase (e.g. CONFIG.gnomad.BA1_AF_THRESHOLD) --
+    # but configurable as an explicit SET OF QUALIFYING SCORES, never
+    # as a threshold.
+    #
+    # ClinGen's haploinsufficiency Score column is not one ordinal
+    # range: 0-3 are graded evidence levels, while 30 ("gene associated
+    # with autosomal recessive phenotype") and 40 ("dosage sensitivity
+    # unlikely") are special codes. A threshold is therefore not merely
+    # a poor fit here, it is unsound -- `30 >= 3` and `40 >= 3` are
+    # both True, so any `>=` reads the two codes that argue AGAINST
+    # haploinsufficiency as the strongest evidence FOR it.
+    #
+    # Whitelist what qualifies; never blacklist the special codes. A
+    # blacklist passes every test we can write today and breaks the
+    # first time ClinGen adds a code. That is not hypothetical: the
+    # comparison this replaced excluded 40 by name and never excluded
+    # 30, so it caught the code its author thought of and missed the
+    # one they did not.
+    DOSAGE_SUFFICIENT_EVIDENCE_SCORES: FrozenSet[int] = frozenset(
+        int(part) for part in os.environ.get("GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORES", "3").split(",") if part.strip()
+    )
+
+    # The two special codes, named so they can be recognised rather
+    # than compared against. These identify ClinGen codes; they are not
+    # thresholds, and a deployment has no more business retuning them
+    # than it has renaming the scale.
     DOSAGE_UNLIKELY_SCORE: int = int(os.environ.get("GEPER_CLINGEN_DOSAGE_UNLIKELY_SCORE", "40"))
+    DOSAGE_AUTOSOMAL_RECESSIVE_SCORE: int = int(os.environ.get("GEPER_CLINGEN_DOSAGE_AR_SCORE", "30"))
 
     # -- self-provisioning local dataset (see pipeline/clingen/bootstrap.py) --
     #

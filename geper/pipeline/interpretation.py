@@ -661,18 +661,26 @@ class InterpretationEngine:
 
           - PVS1 support: when the translation predicts a
             loss-of-function change (`is_predicted_lof`) *and* the
-            gene has ClinGen-curated "sufficient evidence" for
-            haploinsufficiency, that combination is exactly what
-            ACMG/AMP's PVS1 rule requires as its gene-level
-            prerequisite (a LOF variant in a gene where LOF is an
-            established disease mechanism) -- so it's surfaced as
-            supporting evidence with a positive weight. Conversely, a
-            predicted LOF variant in a gene ClinGen has curated as
-            "dosage sensitivity unlikely" is a caution against a naive
-            PVS1 application, surfaced with a small negative weight
-            (never below what the protein-truncating evidence already
-            added -- this only tempers it, never reverses it to
-            benign on its own).
+            gene's haploinsufficiency score is one of
+            `DOSAGE_SUFFICIENT_EVIDENCE_SCORES`, that combination is
+            exactly what ACMG/AMP's PVS1 rule requires as its
+            gene-level prerequisite (a LOF variant in a gene where
+            losing one allele is established as sufficient to cause
+            disease) -- so it's surfaced as supporting evidence with a
+            positive weight. Membership, not a threshold: ClinGen's
+            score scale is not ordinal above 3 (see that constant).
+            Conversely, a predicted LOF variant in a gene ClinGen has
+            curated as "dosage sensitivity unlikely" is a caution
+            against a naive PVS1 application, surfaced with a small
+            negative weight (never below what the protein-truncating
+            evidence already added -- this only tempers it, never
+            reverses it to benign on its own). A gene curated as
+            "associated with autosomal recessive phenotype" gets a
+            third, explicitly neutral (0.0) disclosure: it is not
+            haploinsufficiency support, but it is also not the same
+            state as "no curation exists", and collapsing those two
+            into one silence is what let the previous defect here go
+            unnoticed.
           - Gene-disease clinical validity: the strongest curated
             classification for this gene contributes a modest,
             PP5/BP6-style gene-level signal (Definitive/Strong lean
@@ -697,11 +705,13 @@ class InterpretationEngine:
         dosage = clingen_result.get("dosage_sensitivity")
         if is_predicted_lof and dosage:
             hi_score = dosage.get("haploinsufficiency_score")
-            if (
-                hi_score is not None
-                and hi_score >= cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORE
-                and hi_score != cfg.DOSAGE_UNLIKELY_SCORE
-            ):
+            # Set membership, not `>=`. ClinGen's Score column is not
+            # one ordinal range: 30 and 40 are special codes that both
+            # argue AGAINST haploinsufficiency, so an inequality reads
+            # them as the strongest support for exactly the claim they
+            # contradict. See CONFIG.clingen for why this must stay a
+            # whitelist and never become a blacklist of {30, 40}.
+            if hi_score in cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORES:
                 results.append(
                     (
                         f"ClinGen: {gene_symbol} has sufficient curated evidence for haploinsufficiency "
@@ -716,6 +726,30 @@ class InterpretationEngine:
                         f"ClinGen: {gene_symbol} is curated as '{dosage.get('haploinsufficiency_label', 'dosage sensitivity unlikely')}' "
                         f"-- a naive PVS1 application to this predicted loss-of-function variant should be applied with caution.",
                         -0.5,
+                    )
+                )
+            elif hi_score == cfg.DOSAGE_AUTOSOMAL_RECESSIVE_SCORE:
+                # Deliberately weight 0.0, and deliberately not silent.
+                # ClinGen curating a gene as autosomal-recessive says
+                # one damaged allele is NOT sufficient, so this is not
+                # PVS1 gene-level support -- but it is a real curated
+                # finding, and dropping it on the floor would make it
+                # indistinguishable from "ClinGen has no dosage
+                # curation for this gene". What the correct non-zero
+                # weight would be is a clinical judgement, not an
+                # engineering one; 0.0 surfaces the finding for a
+                # reviewer without asserting a direction this module
+                # cannot justify (the convention
+                # `_biological_context_evidence` already uses).
+                results.append(
+                    (
+                        f"ClinGen: {gene_symbol} is curated as "
+                        f"'{dosage.get('haploinsufficiency_label', 'gene associated with autosomal recessive phenotype')}' "
+                        f"(haploinsufficiency score {hi_score}), so ClinGen's dosage curation does not establish that a "
+                        f"single loss-of-function allele is sufficient to cause disease -- this predicted "
+                        f"loss-of-function variant gets no PVS1 gene-level support from dosage sensitivity. Loss of "
+                        f"function may still be this gene's disease mechanism when both alleles are affected.",
+                        0.0,
                     )
                 )
 

@@ -62,7 +62,7 @@ def _make_body(**extra) -> dict:
 def _ensure_dummy_uploads(tmp_path_factory):
     """Create empty dummy FASTQ/FASTA under /tmp/geper_uploads for API tests."""
     d = Path("/tmp/geper_uploads")
-    d.mkdir(exist_ok=True)
+    d.mkdir(parents=True, exist_ok=True)
     (d / "r1.fastq.gz").touch()
     (d / "ref.fasta").touch()
 

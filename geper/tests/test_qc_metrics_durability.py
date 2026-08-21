@@ -27,6 +27,24 @@ Written against OBSERVABLE OUTPUT: the actual rendered PDF text after
 a real approve()/override() call, never against internals. Reuses
 tests/test_signoff.py's own fixtures rather than a second hand-rolled
 one, same reasoning that module's own docstring gives.
+
+CARD A7 (extended into this same file rather than a parallel suite,
+per the dispatch -- this file already encodes the exact contract, just
+for the PDF path): QC metrics never reach the Markdown renderer at
+all. `report/report_generator.py` has zero mentions of "qc" anywhere
+in it (confirmed by grep before writing these tests) -- a run WITH
+real QC and a run genuinely WITHOUT any produce byte-identical
+Markdown today, because neither the real table nor the honest
+"no QC observed" fallback text is ever printed. That is the actual
+defect: not merely "QC is missing from Markdown" but "present and
+absent QC are indistinguishable in Markdown," which is worse than
+either alone (a reader cannot tell "QC wasn't collected" from "the
+renderer just doesn't cover this"). `TestA7MarkdownRendersQcMetrics`
+below pins the same two-sided contract this file already pins for the
+PDF path: a run WITH qc_metrics must render the real values, and a
+run genuinely WITHOUT must still print the same honest fallback text
+PDF already uses (`_NO_QC_OBSERVED_TEXT` below) -- never silence in
+either direction.
 """
 
 import json
@@ -35,6 +53,7 @@ import tempfile
 import unittest
 
 from report.json_builder import JSONResultBuilder
+from report.report_generator import ReportGenerator
 from review import signoff as s
 from tests.test_signoff import _all_pdf_text, _make_document
 
@@ -150,6 +169,52 @@ class TestEndToEndBothCardsTogether(unittest.TestCase):
 
         self.assertNotIn(_NO_QC_OBSERVED_TEXT, full_text)
         self.assertIn("42.5", full_text)
+
+
+class TestA7MarkdownRendersQcMetrics(unittest.TestCase):
+    """Card A7 (qc-metrics-never-reach-the-markdown-renderer). Calls
+    `ReportGenerator().write()` directly against a document -- no
+    signoff.py, no PDF -- so this turns green purely on Markdown's own
+    fix, independent of cards 1/2 above."""
+
+    def test_markdown_renders_real_qc_when_present(self):
+        document = _make_document()
+        document["qc_metrics"] = _REAL_QC_METRICS
+        with tempfile.TemporaryDirectory() as tmp:
+            md_path = os.path.join(tmp, "geper_report.md")
+            ReportGenerator().write(document, md_path)
+            with open(md_path, encoding="utf-8") as fh:
+                md_text = fh.read()
+
+        self.assertIn("42.5", md_text, "Markdown must render the real mean_coverage_depth value")
+        self.assertIn("96", md_text, "Markdown must render the real bases_at_20x value")
+        self.assertIn("93", md_text, "Markdown must render the real q30_score value")
+        self.assertNotIn(
+            _NO_QC_OBSERVED_TEXT,
+            md_text,
+            "Markdown must not claim no QC was observed when the document carries real qc_metrics",
+        )
+
+    def test_markdown_renders_honest_no_qc_text_when_genuinely_absent(self):
+        # `_make_document()` carries no "qc_metrics" key at all -- the
+        # same "never ran a --qc-metrics-json step" case the PDF
+        # renderer's own fallback text describes. Silence here would be
+        # indistinguishable from the "present but forgotten to render"
+        # bug this whole card exists to close -- Markdown must print
+        # the SAME honest fallback PDF already does, not say nothing.
+        document = _make_document()
+        self.assertNotIn("qc_metrics", document)
+        with tempfile.TemporaryDirectory() as tmp:
+            md_path = os.path.join(tmp, "geper_report.md")
+            ReportGenerator().write(document, md_path)
+            with open(md_path, encoding="utf-8") as fh:
+                md_text = fh.read()
+
+        self.assertIn(
+            _NO_QC_OBSERVED_TEXT,
+            md_text,
+            "a run with no upstream QC step must say so honestly in Markdown, not render nothing",
+        )
 
 
 if __name__ == "__main__":

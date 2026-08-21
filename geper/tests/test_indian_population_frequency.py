@@ -21,6 +21,7 @@ model weights -- safe to run locally), following the same pattern
 `tests/test_clinician_summary.py` already established.
 """
 
+import dataclasses
 import os
 import tempfile
 import unittest
@@ -66,9 +67,36 @@ def _ir(**overrides):
 
 
 def _patch_threshold(value=0.01):
-    patcher = mock.patch("report.clinical_report_builder.CONFIG")
-    fake_config = patcher.start()
-    fake_config.indigenomes.COMMON_AF_THRESHOLD = value
+    # Patches only the one real attribute this suite cares about, not the
+    # whole CONFIG object (see A7 fix -- Run Quality Control section):
+    # replacing all of `report.clinical_report_builder.CONFIG` with a bare
+    # MagicMock used to be harmless here because no code path this suite
+    # exercised ever touched `CONFIG.qc_report.*`. Now that both PDF and
+    # Markdown render a QC section via
+    # `clinical_report_builder._qc_threshold_pass_min` for every document
+    # (including these fixtures, none of which set `qc_metrics`, so they
+    # hit the honest NOT_RUN branch), that call auto-vivified a MagicMock
+    # threshold and crashed the `f"{threshold:g}..."` format -- a fully
+    # mocked CONFIG object answers ANY attribute access, not just the one
+    # this test intends to control. Patching just the real, already-nested
+    # attribute leaves `CONFIG.qc_report.*` at its genuine default values.
+    # `GeperConfig`/`IndiGenomesConfig` are frozen dataclasses -- no
+    # setattr onto the real instance or its nested fields is possible, so
+    # this replaces the module-level `CONFIG` *name* (same mechanism the
+    # original MagicMock version used) with a real `dataclasses.replace()`
+    # copy of the genuine CONFIG object, differing only in
+    # `indigenomes.COMMON_AF_THRESHOLD`. Every other field --
+    # including `qc_report.*`, which the A7 fix's new QC section now
+    # reads on every render -- stays at its real, valid default instead
+    # of auto-vivifying as an unconstrained MagicMock the way a bare
+    # `mock.patch("...CONFIG")` would.
+    from config import CONFIG as _real_config
+
+    fake_config = dataclasses.replace(
+        _real_config, indigenomes=dataclasses.replace(_real_config.indigenomes, COMMON_AF_THRESHOLD=value)
+    )
+    patcher = mock.patch("report.clinical_report_builder.CONFIG", fake_config)
+    patcher.start()
     return patcher
 
 

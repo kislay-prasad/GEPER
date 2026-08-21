@@ -350,7 +350,16 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
 
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
     short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
-    generate_pdf(document, pdf_path, patient_meta=patient_meta_path)
+    # Re-render with the run's own QC, read back off the document rather
+    # than from a --qc-metrics-json this function was never given. Without
+    # it these renders fell into the no-QC branch, whose text is a positive
+    # assertion ("there is no run-level QC to show here, not merely an
+    # unreported one") -- so signing a run that DID observe QC produced a
+    # signed PDF stating the opposite. `None` for a run that genuinely had
+    # none, or for a document written before qc_metrics was stored, which
+    # renders exactly as it always did.
+    qc_metrics = document.get("qc_metrics")
+    generate_pdf(document, pdf_path, patient_meta=patient_meta_path, qc_metrics=qc_metrics)
     generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_path, companion_filename=FULL_PDF_FILENAME)
 
     manifest = {
@@ -525,7 +534,16 @@ def override(
     patient_meta_arg = patient_meta_path if os.path.exists(patient_meta_path) else None
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
     short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
-    generate_pdf(document, pdf_path, patient_meta=patient_meta_arg)
+    # Re-render with the run's own QC, read back off the document rather
+    # than from a --qc-metrics-json this function was never given. Without
+    # it these renders fell into the no-QC branch, whose text is a positive
+    # assertion ("there is no run-level QC to show here, not merely an
+    # unreported one") -- so signing a run that DID observe QC produced a
+    # signed PDF stating the opposite. `None` for a run that genuinely had
+    # none, or for a document written before qc_metrics was stored, which
+    # renders exactly as it always did.
+    qc_metrics = document.get("qc_metrics")
+    generate_pdf(document, pdf_path, patient_meta=patient_meta_arg, qc_metrics=qc_metrics)
     generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_arg, companion_filename=FULL_PDF_FILENAME)
 
     _append_audit_log(

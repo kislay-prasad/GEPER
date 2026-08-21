@@ -18,11 +18,16 @@ requirement to "reuse InterpretationResult instead of rebuilding logic
 repeatedly."
 """
 
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any, Dict, List, Optional, Union
 
 from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
+from pipeline.stage_schemas import StageStatus as _StageStatus
+from utils.logger import get_logger
 from utils.service_health import HEALTH
+
+logger = get_logger(__name__)
 
 # Which evidence-combining system GEPER actually applies to turn
 # triggered ACMG/AMP criteria into a final classification -- stated
@@ -945,3 +950,191 @@ def _consent_value_label(value: Optional[bool]) -> str:
     if value is None:
         return "Not stated"
     return "Yes" if value else "No"
+
+
+# ---------------------------------------------------------------------------
+# Run-level QC metrics -- shared vocabulary, parsing and thresholds
+#
+# Relocated here from `report/summary.py` (A7 fix). None of this is
+# reportlab-specific: it is the labels, units, PASS/WARNING thresholds and
+# the validated `{status, value, reason}` shape that EVERY renderer needs in
+# order to describe the same run the same way. While it lived in the PDF
+# module the Markdown report could not reach it without importing a renderer,
+# so it rendered no QC at all -- the A7 gap. Content routed through this
+# module reaches every renderer; content each renderer implements for itself
+# drifts, which is the rule the caveat-parity work established.
+#
+# Each renderer still applies its own presentation on top (reportlab tables in
+# summary.py, a Markdown table in report_generator.py) -- what is shared is
+# plain data and plain prose, never a pre-wrapped fragment.
+# ---------------------------------------------------------------------------
+
+# Display units for each QC metric -- not a "mock" value (renamed from
+# `_MOCK_QC_METRICS`, report review round 7: the old name predated the
+# honest not-supplied/not-applicable rendering and had stopped
+# describing what this dict is actually used for, which is only ever
+# the unit suffix below).
+_QC_METRIC_UNITS: Dict[str, str] = {
+    "mean_coverage_depth": "x",
+    "bases_at_20x": "%",
+    "q30_score": "%",
+}
+
+_QC_METRIC_LABELS = {
+    "mean_coverage_depth": "Mean Coverage Depth",
+    "bases_at_20x": "Bases at >20x Coverage",
+    "q30_score": "Q30 Score",
+}
+
+_QC_METRIC_ORDER = ("mean_coverage_depth", "bases_at_20x", "q30_score")
+
+
+def _qc_threshold_pass_min(metric_key: str) -> float:
+    """PASS/WARNING threshold for one QC metric -- see QCReportConfig's docstring (config.py) for why these are placeholders, configurable via GEPER_QC_* env vars."""
+    return {
+        "mean_coverage_depth": CONFIG.qc_report.MEAN_COVERAGE_DEPTH_PASS_MIN,
+        "bases_at_20x": CONFIG.qc_report.BASES_AT_20X_PASS_MIN,
+        "q30_score": CONFIG.qc_report.Q30_SCORE_PASS_MIN,
+    }[metric_key]
+
+
+def _qc_status(metric_key: str, value: float) -> str:
+    return "PASS" if value >= _qc_threshold_pass_min(metric_key) else "WARNING"
+
+
+# ---------------------------------------------------------------------------
+# QC metrics parsing (report review round 7)
+#
+# Three states, not two: kim_pipeline genuinely measured a value
+# (FOUND), GEPER was invoked in VCF-only mode so no run-level QC could
+# ever exist (NOT_RUN, "not applicable" -- not a gap), or an upstream
+# step was attempted and failed / a tool to produce this metric simply
+# doesn't exist yet (also NOT_RUN or ERROR depending on which, each
+# with its own `reason`). Reuses `pipeline.stage_schemas.StageStatus`
+# rather than inventing a fourth status vocabulary in this codebase --
+# NOT_FOUND is deliberately unused here (a QC metric either was
+# measured or wasn't; there's no "checked, confirmed absent" reading
+# for a number the way there is for a database lookup).
+# ---------------------------------------------------------------------------
+
+_QC_METRICS_NOT_APPLICABLE_REASON = (
+    "This report was generated directly from a VCF (no --qc-metrics-json was supplied), so GEPER "
+    "never ran or observed any upstream sequencing/alignment step for this sample -- there is no "
+    "run-level QC to show here, not merely an unreported one."
+)
+
+_VALID_QC_STATUSES = {_StageStatus.NOT_RUN.value, _StageStatus.ERROR.value, _StageStatus.FOUND.value}
+
+
+def _parse_one_qc_metric(key: str, entry: Any) -> Dict[str, Any]:
+    """
+    Validates one `qc_metrics[key]` entry against the required
+    `{"status", "value", "reason"}` shape. This is the single choke
+    point a raw number must pass through before `_qc_status`'s `>=`
+    comparison can ever see it -- anything that doesn't parse into
+    exactly this shape (a bare float where the dict belongs, a missing
+    or unrecognized `status`, a `status: "found"` with no usable
+    numeric `value`) fails THIS metric closed to ERROR rather than
+    being coerced into a number to compare against a threshold. This
+    is what makes the B-series fabricated-PASS-on-placeholder-numbers
+    regression structurally impossible here, not merely avoided by
+    convention: there is no code path from an untrusted input to
+    `_qc_status` that skips this validation.
+    """
+    if entry is None:
+        return {
+            "status": _StageStatus.NOT_RUN.value,
+            "value": None,
+            "reason": "Not reported by the upstream sequencing/alignment pipeline for this run.",
+        }
+    if not isinstance(entry, dict):
+        logger.warning(
+            f"qc_metrics['{key}'] was not an object ({entry!r}); a bare number is never accepted here -- "
+            "a real value must be wrapped in {'status': 'found', 'value': ..., 'reason': ...}. Rendering "
+            "as a failed measurement rather than trusting an unvalidated number."
+        )
+        return {
+            "status": _StageStatus.ERROR.value,
+            "value": None,
+            "reason": f"Malformed qc_metrics entry for '{key}': expected an object, got {type(entry).__name__}.",
+        }
+
+    status = entry.get("status")
+    if status not in _VALID_QC_STATUSES:
+        logger.warning(f"qc_metrics['{key}']['status']={status!r} is not a recognized status; treating as ERROR.")
+        return {
+            "status": _StageStatus.ERROR.value,
+            "value": None,
+            "reason": entry.get("reason") or f"Unrecognized status {status!r} reported for '{key}'.",
+        }
+
+    reason = entry.get("reason")
+    if status == _StageStatus.FOUND.value:
+        value = entry.get("value")
+        # bool is an int subclass -- excluded explicitly so a stray
+        # `"value": true` can never be silently read as `1.0`.
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            logger.warning(
+                f"qc_metrics['{key}'] status was 'found' but 'value' was not a real number ({value!r}); "
+                "treating as ERROR rather than coercing it."
+            )
+            return {
+                "status": _StageStatus.ERROR.value,
+                "value": None,
+                "reason": f"'{key}' was reported found but carried no usable numeric value.",
+            }
+        return {"status": _StageStatus.FOUND.value, "value": float(value), "reason": reason}
+
+    # NOT_RUN / ERROR: `value` is deliberately discarded even if present
+    # -- only a FOUND status may ever hand a number to `_qc_status`.
+    return {"status": status, "value": None, "reason": reason}
+
+
+def _parse_qc_metrics(qc_metrics: Optional[Union[Dict[str, Any], str]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Accepts a dict (already-parsed, e.g. from an in-process caller), a
+    path to a JSON sidecar file (see `bridge/combined_pipeline.py`'s
+    translation of kim_pipeline's `checkpoint.json` into this shape),
+    or `None`. Always returns exactly `_QC_METRIC_ORDER`'s three keys,
+    each mapped to a validated `{"status", "value", "reason"}` dict --
+    never a partial result, so `_build_qc_flowables` never has to guess
+    whether a missing key means "not applicable" or "forgot to check".
+
+    `None` (no `--qc-metrics-json` was ever passed to `generate_pdf` --
+    the default for `main.py --vcf` today, and for every fixture/Colab
+    run so far) is NOT "missing data to apologize for". A hospital
+    handing GEPER a bare VCF has no run-level QC GEPER could ever have
+    computed -- GEPER never touched their FASTQ or BAM. Every metric is
+    therefore explicitly NOT_RUN with a reason saying exactly that,
+    distinct from a kim_pipeline-combined run where a metric was
+    genuinely attempted and failed (ERROR), or where the tool to
+    produce it has never been wired at all (also NOT_RUN, but with a
+    per-metric reason naming the missing step -- see
+    `bridge/combined_pipeline.py`'s fixed reason for `bases_at_20x`,
+    which has no computation anywhere in kim_pipeline as of this round).
+
+    A missing file, corrupt JSON, or non-object body all fall back to
+    the same all-NOT_RUN default as `None` (logged for operators, never
+    raised) -- a malformed sidecar must never look like a real
+    measurement any more than an absent one would.
+    """
+    not_applicable = {
+        key: {"status": _StageStatus.NOT_RUN.value, "value": None, "reason": _QC_METRICS_NOT_APPLICABLE_REASON}
+        for key in _QC_METRIC_ORDER
+    }
+    if not qc_metrics:
+        return not_applicable
+
+    try:
+        if isinstance(qc_metrics, dict):
+            raw = qc_metrics
+        else:
+            with open(qc_metrics, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        if not isinstance(raw, dict):
+            raise ValueError("qc_metrics JSON must be an object")
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning(f"Could not parse qc_metrics ({exc}); rendering the not-applicable default instead.")
+        return not_applicable
+
+    return {key: _parse_one_qc_metric(key, raw.get(key)) for key in _QC_METRIC_ORDER}

@@ -10,6 +10,12 @@ from typing import Any, Dict, List, Optional
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from report.clinical_report_builder import (
+    _QC_METRIC_LABELS,
+    _QC_METRIC_ORDER,
+    _QC_METRIC_UNITS,
+    _parse_qc_metrics,
+    _qc_status,
+    _qc_threshold_pass_min,
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
     RESEARCH_USE_DISCLAIMER,
@@ -22,6 +28,7 @@ from utils.timezone_utils import format_ist_from_iso
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED, FAILED, SKIPPED, USED, render_status_table_lines
+from pipeline.stage_schemas import StageStatus as _StageStatus
 
 logger = get_logger(__name__)
 
@@ -136,6 +143,80 @@ def _render_review_status_banner(json_document: Dict[str, Any]) -> str:
     return _REVIEW_STATUS_DRAFT_BANNER
 
 
+def _render_qc_metrics(json_document: Dict[str, Any]) -> List[str]:
+    """
+    Run-level sequencing/alignment QC (A7 fix).
+
+    This section did not exist. QC only ever reached the PDF, as a
+    `generate_pdf(qc_metrics=...)` argument, so this renderer had nothing
+    to read and printed nothing -- not even an omission note. In a report
+    where "no QC section" is indistinguishable from "this run had no QC",
+    that silence is the defect: the full PDF showed a real coverage/Q30
+    table for the same run this file rendered blank.
+
+    Now QC lives on the document (`json_document["qc_metrics"]`), so both
+    renderers describe the same run from the same source. The labels,
+    units, thresholds and PASS/WARNING rule come from
+    `report/clinical_report_builder.py` rather than being restated here,
+    so the two tables cannot drift into disagreeing about what "PASS"
+    means.
+
+    The honest-absence contract is preserved exactly as the PDF states
+    it: a run with no `--qc-metrics-json` renders every metric as "Not
+    applicable" and prints the per-metric reasons, which say GEPER never
+    observed an upstream sequencing step -- a positive true statement,
+    not a gap to apologise for. `_parse_qc_metrics(None)` produces that
+    default, so this function never has to decide what missing means.
+    """
+    qc_metrics = _parse_qc_metrics((json_document or {}).get("qc_metrics"))
+
+    lines: List[str] = ["## Run Quality Control", ""]
+    lines.append("| Metric | Value | Threshold | Status |")
+    lines.append("| --- | --- | --- | --- |")
+
+    not_run_entries: List[Any] = []
+    error_entries: List[Any] = []
+
+    for key in _QC_METRIC_ORDER:
+        label = _QC_METRIC_LABELS[key]
+        unit = _QC_METRIC_UNITS[key]
+        threshold = _qc_threshold_pass_min(key)
+        entry = qc_metrics.get(key) or {}
+        status = entry.get("status")
+        value = entry.get("value")
+
+        if status == _StageStatus.FOUND.value and isinstance(value, (int, float)) and not isinstance(value, bool):
+            pass_status = _qc_status(key, value)
+            lines.append(f"| {label} | {value:g}{unit} | {threshold:g}{unit} | {pass_status} |")
+        elif status == _StageStatus.ERROR.value:
+            error_entries.append((label, entry))
+            lines.append(f"| {label} | Measurement failed | {threshold:g}{unit} | ERROR |")
+        else:
+            # Same collapse the PDF makes: NOT_RUN and anything that failed
+            # validation render identically, because `_parse_qc_metrics` has
+            # already turned malformed input into a validated status.
+            not_run_entries.append((label, entry))
+            lines.append(f"| {label} | Not applicable | {threshold:g}{unit} | N/A |")
+
+    lines.append("")
+
+    # Reasons are grouped by the exact reason string rather than by a fixed
+    # enum, for the reason the PDF states: callers pass their own reason
+    # through verbatim, so the set is open-ended.
+    for heading, entries in (("Not applicable this run", not_run_entries), ("Measurement failed", error_entries)):
+        if not entries:
+            continue
+        grouped: Dict[str, List[str]] = {}
+        for label, entry in entries:
+            reason = entry.get("reason") or "No reason recorded."
+            grouped.setdefault(reason, []).append(label)
+        clauses = "; ".join(f"{', '.join(labels)} -- {reason}" for reason, labels in grouped.items())
+        lines.append(f"*{heading}: {clauses}*")
+        lines.append("")
+
+    return lines
+
+
 def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
     """
     One-line DPDP Act 2023 consent statement, or `None` when no consent
@@ -199,6 +280,12 @@ class ReportGenerator:
         lines.append("")
 
         lines.extend(self._render_provenance(json_document))
+        lines.append("---")
+        lines.append("")
+
+        # Run-level, like provenance above: describes the whole run rather
+        # than one finding, so it belongs before the per-variant sections.
+        lines.extend(_render_qc_metrics(json_document))
         lines.append("---")
         lines.append("")
 

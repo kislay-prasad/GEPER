@@ -922,7 +922,9 @@ class GeperPipeline:
         pdf_filename = "geper_report_full.pdf"
         pdf_path = os.path.join(self.output_dir, pdf_filename)
         try:
-            generate_pdf(json_document, pdf_path, patient_meta=self.patient_meta_path, qc_metrics=self.qc_metrics_path)
+            # No qc_metrics argument: this run already recorded its QC on
+            # `json_document` above, and generate_pdf reads it from there.
+            generate_pdf(json_document, pdf_path, patient_meta=self.patient_meta_path)
         except Exception as exc:  # noqa: BLE001 - additive output, must never fail an otherwise-successful run
             logger.error(f"Clinical PDF report generation failed ({exc}); JSON/Markdown outputs are unaffected.")
             pdf_path = None

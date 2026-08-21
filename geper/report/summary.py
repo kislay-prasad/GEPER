@@ -16,7 +16,8 @@ provider dicts a second time), a pathologist sign-off block, and a
 standard legal disclaimer.
 
 Entry point: `generate_pdf(document, output_path, patient_meta=None,
-qc_metrics=None, run_id=None, logo_path=None)`.
+run_id=None, logo_path=None)`. Run-level QC is read from `document`
+rather than passed in -- see `_document_qc_metrics`.
 
 Compliance note (India DPDP Act 2023, not HIPAA/GDPR -- this is an
 India-market product): this module parses and renders whatever
@@ -71,6 +72,17 @@ from report.clinical_report_builder import (
     _consent_value_label,
     _offline_sources_caveat_text,
     _variant_reviewer_flags,
+    # Relocated 2026-08-21 (A7): the QC vocabulary, thresholds and
+    # `{status, value, reason}` parsing are renderer-neutral, so the
+    # Markdown report can render the same table this module does instead
+    # of rendering nothing. Re-imported here so existing callers and
+    # tests that reach for `report.summary._parse_qc_metrics` still work.
+    _parse_qc_metrics,
+    _qc_status,
+    _qc_threshold_pass_min,
+    _QC_METRIC_LABELS,
+    _QC_METRIC_ORDER,
+    _QC_METRIC_UNITS,
 )
 from report.pdf_escape import esc
 from utils.logger import get_logger
@@ -234,175 +246,12 @@ def _icmr_ai_disclosure_footer_text(
     )
 
 
-# Display units for each QC metric -- not a "mock" value (renamed from
-# `_MOCK_QC_METRICS`, report review round 7: the old name predated the
-# honest not-supplied/not-applicable rendering and had stopped
-# describing what this dict is actually used for, which is only ever
-# the unit suffix below).
-_QC_METRIC_UNITS: Dict[str, str] = {
-    "mean_coverage_depth": "x",
-    "bases_at_20x": "%",
-    "q30_score": "%",
-}
-
-_QC_METRIC_LABELS = {
-    "mean_coverage_depth": "Mean Coverage Depth",
-    "bases_at_20x": "Bases at >20x Coverage",
-    "q30_score": "Q30 Score",
-}
-
-_QC_METRIC_ORDER = ("mean_coverage_depth", "bases_at_20x", "q30_score")
-
-
-def _qc_threshold_pass_min(metric_key: str) -> float:
-    """PASS/WARNING threshold for one QC metric -- see QCReportConfig's docstring (config.py) for why these are placeholders, configurable via GEPER_QC_* env vars."""
-    return {
-        "mean_coverage_depth": CONFIG.qc_report.MEAN_COVERAGE_DEPTH_PASS_MIN,
-        "bases_at_20x": CONFIG.qc_report.BASES_AT_20X_PASS_MIN,
-        "q30_score": CONFIG.qc_report.Q30_SCORE_PASS_MIN,
-    }[metric_key]
-
-
-def _qc_status(metric_key: str, value: float) -> str:
-    return "PASS" if value >= _qc_threshold_pass_min(metric_key) else "WARNING"
-
-
-# ---------------------------------------------------------------------------
-# QC metrics parsing (report review round 7)
-#
-# Three states, not two: kim_pipeline genuinely measured a value
-# (FOUND), GEPER was invoked in VCF-only mode so no run-level QC could
-# ever exist (NOT_RUN, "not applicable" -- not a gap), or an upstream
-# step was attempted and failed / a tool to produce this metric simply
-# doesn't exist yet (also NOT_RUN or ERROR depending on which, each
-# with its own `reason`). Reuses `pipeline.stage_schemas.StageStatus`
-# rather than inventing a fourth status vocabulary in this codebase --
-# NOT_FOUND is deliberately unused here (a QC metric either was
-# measured or wasn't; there's no "checked, confirmed absent" reading
-# for a number the way there is for a database lookup).
-# ---------------------------------------------------------------------------
-
-_QC_METRICS_NOT_APPLICABLE_REASON = (
-    "This report was generated directly from a VCF (no --qc-metrics-json was supplied), so GEPER "
-    "never ran or observed any upstream sequencing/alignment step for this sample -- there is no "
-    "run-level QC to show here, not merely an unreported one."
-)
-
-_VALID_QC_STATUSES = {_StageStatus.NOT_RUN.value, _StageStatus.ERROR.value, _StageStatus.FOUND.value}
-
-
-def _parse_one_qc_metric(key: str, entry: Any) -> Dict[str, Any]:
-    """
-    Validates one `qc_metrics[key]` entry against the required
-    `{"status", "value", "reason"}` shape. This is the single choke
-    point a raw number must pass through before `_qc_status`'s `>=`
-    comparison can ever see it -- anything that doesn't parse into
-    exactly this shape (a bare float where the dict belongs, a missing
-    or unrecognized `status`, a `status: "found"` with no usable
-    numeric `value`) fails THIS metric closed to ERROR rather than
-    being coerced into a number to compare against a threshold. This
-    is what makes the B-series fabricated-PASS-on-placeholder-numbers
-    regression structurally impossible here, not merely avoided by
-    convention: there is no code path from an untrusted input to
-    `_qc_status` that skips this validation.
-    """
-    if entry is None:
-        return {
-            "status": _StageStatus.NOT_RUN.value,
-            "value": None,
-            "reason": "Not reported by the upstream sequencing/alignment pipeline for this run.",
-        }
-    if not isinstance(entry, dict):
-        logger.warning(
-            f"qc_metrics['{key}'] was not an object ({entry!r}); a bare number is never accepted here -- "
-            "a real value must be wrapped in {'status': 'found', 'value': ..., 'reason': ...}. Rendering "
-            "as a failed measurement rather than trusting an unvalidated number."
-        )
-        return {
-            "status": _StageStatus.ERROR.value,
-            "value": None,
-            "reason": f"Malformed qc_metrics entry for '{key}': expected an object, got {type(entry).__name__}.",
-        }
-
-    status = entry.get("status")
-    if status not in _VALID_QC_STATUSES:
-        logger.warning(f"qc_metrics['{key}']['status']={status!r} is not a recognized status; treating as ERROR.")
-        return {
-            "status": _StageStatus.ERROR.value,
-            "value": None,
-            "reason": entry.get("reason") or f"Unrecognized status {status!r} reported for '{key}'.",
-        }
-
-    reason = entry.get("reason")
-    if status == _StageStatus.FOUND.value:
-        value = entry.get("value")
-        # bool is an int subclass -- excluded explicitly so a stray
-        # `"value": true` can never be silently read as `1.0`.
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            logger.warning(
-                f"qc_metrics['{key}'] status was 'found' but 'value' was not a real number ({value!r}); "
-                "treating as ERROR rather than coercing it."
-            )
-            return {
-                "status": _StageStatus.ERROR.value,
-                "value": None,
-                "reason": f"'{key}' was reported found but carried no usable numeric value.",
-            }
-        return {"status": _StageStatus.FOUND.value, "value": float(value), "reason": reason}
-
-    # NOT_RUN / ERROR: `value` is deliberately discarded even if present
-    # -- only a FOUND status may ever hand a number to `_qc_status`.
-    return {"status": status, "value": None, "reason": reason}
-
-
-def _parse_qc_metrics(qc_metrics: Optional[Union[Dict[str, Any], str]]) -> Dict[str, Dict[str, Any]]:
-    """
-    Accepts a dict (already-parsed, e.g. from an in-process caller), a
-    path to a JSON sidecar file (see `bridge/combined_pipeline.py`'s
-    translation of kim_pipeline's `checkpoint.json` into this shape),
-    or `None`. Always returns exactly `_QC_METRIC_ORDER`'s three keys,
-    each mapped to a validated `{"status", "value", "reason"}` dict --
-    never a partial result, so `_build_qc_flowables` never has to guess
-    whether a missing key means "not applicable" or "forgot to check".
-
-    `None` (no `--qc-metrics-json` was ever passed to `generate_pdf` --
-    the default for `main.py --vcf` today, and for every fixture/Colab
-    run so far) is NOT "missing data to apologize for". A hospital
-    handing GEPER a bare VCF has no run-level QC GEPER could ever have
-    computed -- GEPER never touched their FASTQ or BAM. Every metric is
-    therefore explicitly NOT_RUN with a reason saying exactly that,
-    distinct from a kim_pipeline-combined run where a metric was
-    genuinely attempted and failed (ERROR), or where the tool to
-    produce it has never been wired at all (also NOT_RUN, but with a
-    per-metric reason naming the missing step -- see
-    `bridge/combined_pipeline.py`'s fixed reason for `bases_at_20x`,
-    which has no computation anywhere in kim_pipeline as of this round).
-
-    A missing file, corrupt JSON, or non-object body all fall back to
-    the same all-NOT_RUN default as `None` (logged for operators, never
-    raised) -- a malformed sidecar must never look like a real
-    measurement any more than an absent one would.
-    """
-    not_applicable = {
-        key: {"status": _StageStatus.NOT_RUN.value, "value": None, "reason": _QC_METRICS_NOT_APPLICABLE_REASON}
-        for key in _QC_METRIC_ORDER
-    }
-    if not qc_metrics:
-        return not_applicable
-
-    try:
-        if isinstance(qc_metrics, dict):
-            raw = qc_metrics
-        else:
-            with open(qc_metrics, "r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-        if not isinstance(raw, dict):
-            raise ValueError("qc_metrics JSON must be an object")
-    except (OSError, ValueError, TypeError) as exc:
-        logger.warning(f"Could not parse qc_metrics ({exc}); rendering the not-applicable default instead.")
-        return not_applicable
-
-    return {key: _parse_one_qc_metric(key, raw.get(key)) for key in _QC_METRIC_ORDER}
+# Run-level QC parsing, thresholds and vocabulary now live in
+# `report/clinical_report_builder.py` -- they are renderer-neutral (no
+# reportlab), and the Markdown report needs the same labels, thresholds
+# and PASS/WARNING rule this module does. Re-exported via the import
+# above because `pipeline/orchestrator.py` and the test suite import
+# several of them from `report.summary`, where they lived until the A7 fix.
 
 
 # ---------------------------------------------------------------------------
@@ -1003,6 +852,42 @@ def _document_consent(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     return (document or {}).get("patient_consent")
 
 
+def _document_qc_metrics(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    Run-level sequencing/alignment QC for this run, read from the document
+    and from nowhere else -- the same consolidation `_document_consent`
+    performs one function above, for the same reason.
+
+    QC used to arrive only as a `generate_pdf(qc_metrics=...)` argument,
+    which made it a PDF-only fact that nothing else could see. Two
+    consequences, both real:
+
+      - `report/report_generator.py` rendered no QC at all and had no way
+        to -- the data never reached it. That is the A7 gap: a
+        full-fidelity human-readable renderer silently omitting a section
+        the PDF shows, which in this codebase reads identically to a run
+        that genuinely had none.
+      - `review/signoff.py` re-rendered from the stored document days
+        later with no argument to pass, so a signed report claimed no
+        upstream QC existed for runs that had supplied it (fixed in
+        ae0d9f7 by threading the document's copy through; this commit
+        removes the need to thread anything).
+
+    The document wins for the same reason it does for consent: it is the
+    unified shape every other field already flows through, and it is what
+    survives to `geper_results.json` for machine consumers.
+
+    `None` -- no `--qc-metrics-json` was supplied, or a document written
+    before QC was stored -- keeps its exact meaning. `_parse_qc_metrics`
+    turns it into the all-NOT_RUN default whose per-metric reasons say
+    plainly that GEPER never observed an upstream sequencing step, which
+    is a true statement rather than a gap. That contract is the whole
+    point: a run that DID supply QC must never render as one that did
+    not, and a run that genuinely had none must keep saying so honestly.
+    """
+    return (document or {}).get("qc_metrics")
+
+
 def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphStyle) -> List[List[Paragraph]]:
     """
     DPDP Act 2023 consent-metadata rows -- shared by the full report's
@@ -1322,8 +1207,8 @@ def _build_qc_flowables(qc_metrics: Dict[str, Dict[str, Any]], styles: Dict[str,
         flowables.append(
             Paragraph(
                 f"Not applicable this run: {clauses} To supply real values from a kim_pipeline-combined "
-                "run, see bridge/combined_pipeline.py's --qc-metrics-json handoff to "
-                "generate_pdf(qc_metrics=...).",
+                "run, see bridge/combined_pipeline.py's --qc-metrics-json handoff, which the "
+                "orchestrator records on the report document itself.",
                 styles["Footnote"],
             )
         )
@@ -2339,7 +2224,6 @@ def generate_pdf(
     document: Dict[str, Any],
     output_path: str,
     patient_meta: Optional[Union[Dict[str, Any], str]] = None,
-    qc_metrics: Optional[Union[Dict[str, Any], str]] = None,
     run_id: Optional[str] = None,
     logo_path: Optional[str] = None,
 ) -> str:
@@ -2357,7 +2241,8 @@ def generate_pdf(
     `patient_meta`: dict, path to a JSON file, or None -- see
     `_parse_patient_meta`'s docstring for the DPDP Act framing and
     de-identified fallback.
-    `qc_metrics`: dict, path to a JSON sidecar file, or None -- see
+    Run-level QC is NOT a parameter: it is read from
+    `document["qc_metrics"]` by `_document_qc_metrics`. See
     `_parse_qc_metrics`'s docstring for the three-state (found/not
     applicable/failed) shape each of "mean_coverage_depth",
     "bases_at_20x", "q30_score" is validated into, and
@@ -2395,7 +2280,7 @@ def generate_pdf(
 
     patient = _parse_patient_meta(patient_meta)
     patient["consent"] = _document_consent(document)
-    parsed_qc_metrics = _parse_qc_metrics(qc_metrics)
+    parsed_qc_metrics = _parse_qc_metrics(_document_qc_metrics(document))
     sample_id = _derive_sample_id(document)
     resolved_run_id = _derive_run_id(document, run_id)
     assembly = document.get("assembly")

@@ -219,29 +219,48 @@ def run_acmg_evidence_batch(
         gene = variant.get("gene_name") or variant.get("gene") or ""
         consequence = variant.get("consequence", "").lower()
 
-        # gnomAD lookup — returns GnomadHit, ABSENT, or UNAVAILABLE
+        # gnomAD lookup — returns GnomadHit, ABSENT, or UNAVAILABLE.
+        #
+        # None = absence NOT EVALUATED (the backend was unreachable, or the
+        # lookup raised). It must not be read as "checked, and not absent",
+        # which is what `False` means here — see
+        # pipeline/acmg/classifier.py::_pm2 / STATUS_NOT_EVALUATED. Same
+        # sentinel convention as `in_hotspot` below, and the shape d500f32
+        # established for PM1 when hotspot data was unavailable.
+        #
+        # GnomadLookupOutcome's own docstring calls these "the three states
+        # that the caller needs to differentiate"; collapsing two of them
+        # into `False` is what this distinction exists to prevent.
         gnomad_af = None
         gnomad_af_popmax = None
-        gnomad_af_absent: bool | None = False
+        gnomad_af_absent: bool | None = None
         try:
             gn_result = gnomad_lkp.lookup(chrom, pos_v, ref_v, alt_v)
             if isinstance(gn_result, GnomadHit):
                 gnomad_af = gn_result.af
                 gnomad_af_popmax = gn_result.af_popmax
+                # A real answer: the variant was found, so it is not absent.
                 gnomad_af_absent = False
             elif gn_result == GnomadLookupOutcome.ABSENT:
                 gnomad_af_absent = True
-            else:  # UNAVAILABLE
-                gnomad_af_absent = False
+            else:  # UNAVAILABLE — nothing was checked, so nothing is known.
+                gnomad_af_absent = None
         except Exception as gnomad_exc:
-            gnomad_af_absent = False
-            logger.debug(
-                "[%s] gnomAD lookup failed for %s:%s %s>%s: %s",
+            # Stays None (not evaluated) — the lookup itself failed, so this
+            # variant's presence in gnomAD is unknown, not disproved.
+            gnomad_af_absent = None
+            # WARNING, not debug: this determines whether gnomAD evidence
+            # reaches ACMG at all, so an operator must see it without
+            # re-running at debug level.
+            logger.warning(
+                "[%s] gnomAD lookup failed for %s:%s %s>%s — gnomAD evidence "
+                "not evaluated for this variant: %s: %s",
                 sample_id,
                 chrom,
                 pos_v,
                 ref_v,
                 alt_v,
+                type(gnomad_exc).__name__,
                 gnomad_exc,
             )
 

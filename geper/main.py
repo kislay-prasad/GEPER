@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="GEPER - Genetic Evaluation & Prediction Engine for Research")
+    parser = argparse.ArgumentParser(description="GEPER - Genetic Evaluation & Prediction Engine")
     parser.add_argument("--vcf", required=True, help="Path to the input VCF file (.vcf or .vcf.gz)")
     parser.add_argument(
         "--output-dir",

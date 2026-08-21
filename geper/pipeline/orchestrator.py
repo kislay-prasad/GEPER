@@ -98,7 +98,7 @@ from pipeline.sequence_context import SequenceContextGenerator
 from pipeline.uniprot.lookup import UniProtLookup
 from pipeline.vcf_parser import Variant, VCFParser
 from report.json_builder import JSONResultBuilder, build_variant_result
-from report.summary import _parse_patient_meta, generate_pdf
+from report.summary import _parse_patient_meta, _parse_qc_metrics, generate_pdf
 from report.summary_short import generate_short_pdf
 from report.report_generator import ReportGenerator
 from utils.exceptions import (
@@ -790,6 +790,12 @@ class GeperPipeline:
             code_version=self.geper_code_version,
             model_checkpoints=self.model_checkpoints,
             patient_consent=patient_consent,
+            # Parsed once here and stored on the document, so a later
+            # re-render (review/signoff.py's approve()/override()) sees
+            # the same QC this run observed instead of falling back to
+            # the "no upstream step was observed" branch -- see
+            # JSONResultBuilder.qc_metrics' own comment.
+            qc_metrics=_parse_qc_metrics(self.qc_metrics_path) if self.qc_metrics_path else None,
         )
         completed_keys = set()
         stats = {"processed": 0, "success": 0, "skipped": 0, "out_of_scope": 0, "failed": 0}

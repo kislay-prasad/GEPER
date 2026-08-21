@@ -29,6 +29,7 @@ class JSONResultBuilder:
         code_version: str = None,
         model_checkpoints: Dict[str, str] = None,
         patient_consent: Optional[Dict[str, Any]] = None,
+        qc_metrics: Optional[Dict[str, Any]] = None,
     ):
         self.input_vcf_path = input_vcf_path
         # Genome reference build resolved by the orchestrator's assembly
@@ -98,6 +99,25 @@ class JSONResultBuilder:
         # "consent" object -- both render as an explicit `null` in the
         # JSON output below, never a fabricated True/False.
         self.patient_consent = patient_consent
+        # Run-level sequencing/alignment QC, already normalised by
+        # `report/summary.py::_parse_qc_metrics` before it gets here.
+        #
+        # Lives in the document rather than only in the `qc_metrics`
+        # argument the PDF renderers take, because an argument is not
+        # durable: `review/signoff.py`'s approve()/override() re-render
+        # both PDFs from the stored document days later and have no way
+        # to know what QC file the original run was given. Without this
+        # they rendered the no-QC branch, whose text is a positive claim
+        # ("there is no run-level QC to show here, not merely an
+        # unreported one") -- so signing a run that DID have QC produced
+        # a signed PDF asserting the pipeline never observed any
+        # sequencing step. A caveat in the document survives; an
+        # argument passed once does not.
+        #
+        # `None` (the default) still means exactly what it meant before:
+        # no --qc-metrics-json was supplied, so there genuinely is no
+        # run-level QC -- never a fabricated empty table.
+        self.qc_metrics = qc_metrics
 
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
@@ -166,6 +186,13 @@ class JSONResultBuilder:
             # every existing consumer; widening a string to a list later
             # would be a breaking type change.
             "caveats": [RESEARCH_USE_DISCLAIMER],
+            # Run-level sequencing/alignment QC -- see this class's own
+            # `self.qc_metrics` comment for why it belongs in the
+            # document and not only in a renderer argument. `None` when
+            # no --qc-metrics-json was supplied, which every consumer
+            # already renders as the honest "no upstream step was
+            # observed" case rather than an empty table.
+            "qc_metrics": self.qc_metrics,
             # Data-source provenance (task points 1-4, 6): one entry
             # per known external source, always present (never omitted)
             # -- a source this run never consulted still appears, with

@@ -83,6 +83,12 @@ from report.clinical_report_builder import (
     _QC_METRIC_LABELS,
     _QC_METRIC_ORDER,
     _QC_METRIC_UNITS,
+    # Re-exported for callers/tests that read it from `report.summary`,
+    # where it lived before the A7 move. This module only names it in
+    # comments, so ruff's F401 autofix stripped it when the relocation
+    # landed and broke those readers -- the noqa is what keeps a
+    # deliberate re-export from looking like a dead import.
+    _QC_METRICS_NOT_APPLICABLE_REASON,  # noqa: F401
 )
 from report.pdf_escape import esc
 from utils.logger import get_logger

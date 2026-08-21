@@ -73,35 +73,44 @@ def _ensure_dummy_uploads(tmp_path_factory):
 
 from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence  # noqa: E402
 from pipeline.gnomad.lookup import GnomadHit, GnomadLookup, GnomadLookupOutcome  # noqa: E402
+from pipeline.orchestration.shared import run_acmg_evidence_batch  # noqa: E402
 
 
 def _simulate_gnomad_branch(mock_return) -> VariantEvidence:
-    """Reproduce the FIX-6 isinstance dispatch from runner Stage 4b."""
-    gnomad_af = None
-    gnomad_af_popmax = None
-    gnomad_af_absent: bool | None = False
-    try:
-        gn_result = mock_return
-        if isinstance(gn_result, GnomadHit):
-            gnomad_af = gn_result.af
-            gnomad_af_popmax = gn_result.af_popmax
-            gnomad_af_absent = False
-        elif gn_result == GnomadLookupOutcome.ABSENT:
-            gnomad_af_absent = True
-        else:
-            gnomad_af_absent = False
-    except Exception:
-        gnomad_af_absent = False
+    """Drives the REAL gnomAD dispatch in
+    `pipeline/orchestration/shared.py::run_acmg_evidence_batch` (mocking
+    only `GnomadLookup.lookup`/`lookup_batch`) and captures the
+    `VariantEvidence` it builds, via a spy on `AcmgClassifier.classify`
+    that delegates to the real implementation.
 
-    return VariantEvidence(
-        chrom="17",
-        pos=43057051,
-        ref="A",
-        alt="T",
-        gnomad_af=gnomad_af,
-        gnomad_af_popmax=gnomad_af_popmax,
-        gnomad_af_absent=gnomad_af_absent,
-    )
+    CORRECTION (Kelly, relayed by god, 2026-08-21): this used to be a
+    hand-copied duplicate of shared.py's isinstance dispatch, evaluated
+    entirely in-test rather than by calling the real code. It still
+    passed after shared.py's dispatch changed (UNAVAILABLE/except now
+    set `gnomad_af_absent = None`, not `False`) -- because it was
+    testing its own copy, which nobody had updated. A green test
+    asserting the opposite of production is worse than a red one: a red
+    test tells you something moved; this one would have kept passing
+    forever, silently documenting a convention the code no longer
+    follows. Calling through to the real function is what makes that
+    structurally impossible -- there is no separate copy left to drift.
+    """
+    captured: dict[str, VariantEvidence] = {}
+    real_classify = AcmgClassifier.classify
+
+    def _spy(self, evidence):
+        captured["evidence"] = evidence
+        return real_classify(self, evidence)
+
+    variant = {"chrom": "17", "pos": 43057051, "ref": "A", "alt": "T", "gene_name": "BRCA1"}
+    cfg = {"gnomad": {"enabled": True}, "clinvar": {"enabled": False}, "vep": {"enabled": False}}
+    with (
+        patch.object(GnomadLookup, "lookup", return_value=mock_return),
+        patch.object(GnomadLookup, "lookup_batch", return_value=None),
+        patch.object(AcmgClassifier, "classify", _spy),
+    ):
+        run_acmg_evidence_batch([variant], cfg, sample_id="TESTSAMPLE")
+    return captured["evidence"]
 
 
 class TestFix6GnomadLookupOutcome:
@@ -125,11 +134,18 @@ class TestFix6GnomadLookupOutcome:
         assert ev.gnomad_af_popmax is None
         assert ev.gnomad_af_absent is True
 
-    def test_gnomad_unavailable_sets_absent_false_af_none(self):
+    def test_gnomad_unavailable_sets_absent_none_af_none(self):
+        # Was `assert ev.gnomad_af_absent is False` -- true of the OLD
+        # dispatch this test used to hand-simulate, false of the real
+        # one production now runs (see this class's own gnomad-lookup-
+        # failure-collapses-into-a-confirmed-negative fix: UNAVAILABLE
+        # is "nothing was checked", not "checked and confirmed
+        # present", so it gets the same None sentinel the except-path
+        # exception case does).
         ev = _simulate_gnomad_branch(GnomadLookupOutcome.UNAVAILABLE)
         assert ev.gnomad_af is None
         assert ev.gnomad_af_popmax is None
-        assert ev.gnomad_af_absent is False
+        assert ev.gnomad_af_absent is None
 
     def test_pm2_fires_when_absent_true(self):
         """gnomad_af_absent=True → PM2 awarded."""

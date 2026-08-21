@@ -60,6 +60,7 @@ Usage::
     print(rec.haploinsufficiency_score)
     print(clingen.is_dosage_sufficient_for_lof("BRCA1"))
 """
+
 from __future__ import annotations
 
 import csv
@@ -98,15 +99,32 @@ DOSAGE_SUFFICIENT_EVIDENCE_SCORE = 3
 # shapes; scan for the header by content instead. Both real column-name
 # casings ClinGen publishes are listed so either download variant parses.
 _GENE_SYMBOL_COLUMNS = ("GENE SYMBOL", "Gene Symbol", "gene_symbol")
-_HAPLOINSUFFICIENCY_SCORE_COLUMNS = ("HAPLOINSUFFICIENCY SCORE", "Haploinsufficiency Score", "haploinsufficiency_score")
-_HAPLOINSUFFICIENCY_DESC_COLUMNS = ("HAPLOINSUFFICIENCY DESCRIPTION", "Haploinsufficiency Description", "haploinsufficiency_description")
-_TRIPLOSENSITIVITY_SCORE_COLUMNS = ("TRIPLOSENSITIVITY SCORE", "Triplosensitivity Score", "triplosensitivity_score")
-_TRIPLOSENSITIVITY_DESC_COLUMNS = ("TRIPLOSENSITIVITY DESCRIPTION", "Triplosensitivity Description", "triplosensitivity_description")
+_HAPLOINSUFFICIENCY_SCORE_COLUMNS = (
+    "HAPLOINSUFFICIENCY SCORE",
+    "Haploinsufficiency Score",
+    "haploinsufficiency_score",
+)
+_HAPLOINSUFFICIENCY_DESC_COLUMNS = (
+    "HAPLOINSUFFICIENCY DESCRIPTION",
+    "Haploinsufficiency Description",
+    "haploinsufficiency_description",
+)
+_TRIPLOSENSITIVITY_SCORE_COLUMNS = (
+    "TRIPLOSENSITIVITY SCORE",
+    "Triplosensitivity Score",
+    "triplosensitivity_score",
+)
+_TRIPLOSENSITIVITY_DESC_COLUMNS = (
+    "TRIPLOSENSITIVITY DESCRIPTION",
+    "Triplosensitivity Description",
+    "triplosensitivity_description",
+)
 
 
 @dataclass
 class DosageSensitivityRecord:
     """One ClinGen Dosage Sensitivity curation for one gene."""
+
     gene: str
     haploinsufficiency_score: Optional[int]
     haploinsufficiency_description: Optional[str] = None
@@ -116,7 +134,10 @@ class DosageSensitivityRecord:
 
     def is_lof_sufficient(self) -> bool:
         """True if haploinsufficiency_score meets ClinGen's 'sufficient evidence' threshold (score 3)."""
-        return self.haploinsufficiency_score is not None and self.haploinsufficiency_score >= DOSAGE_SUFFICIENT_EVIDENCE_SCORE
+        return (
+            self.haploinsufficiency_score is not None
+            and self.haploinsufficiency_score >= DOSAGE_SUFFICIENT_EVIDENCE_SCORE
+        )
 
 
 class ClinGenDosageLookup:
@@ -131,7 +152,9 @@ class ClinGenDosageLookup:
         self._enabled: bool = bool(cg_cfg.get("enabled", True))
         self._local_path: Optional[str] = cg_cfg.get("dosage_sensitivity_path") or None
         self._api_enabled: bool = bool(cg_cfg.get("api_enabled", False))
-        self._api_endpoint: str = cg_cfg.get("api_endpoint") or "https://search.clinicalgenome.org/kb/gene-dosage"
+        self._api_endpoint: str = (
+            cg_cfg.get("api_endpoint") or "https://search.clinicalgenome.org/kb/gene-dosage"
+        )
         self._timeout: int = int(cg_cfg.get("timeout", 15))
         self._max_retries: int = int(cg_cfg.get("max_retries", 3))
 
@@ -145,27 +168,38 @@ class ClinGenDosageLookup:
 
         if not self._enabled:
             self._backend = "disabled"
-            logger.info("[ClinGen] Dosage-sensitivity lookup disabled via config (clingen.enabled: false).")
+            logger.info(
+                "[ClinGen] Dosage-sensitivity lookup disabled via config (clingen.enabled: false)."
+            )
             return
 
         import os
+
         if self._local_path and os.path.isfile(self._local_path):
             try:
                 self._load_local(self._local_path)
                 self._backend = "local"
                 logger.info(
                     "[ClinGen] Loaded local dosage-sensitivity dataset: %s (%d genes)",
-                    self._local_path, len(self._by_gene),
+                    self._local_path,
+                    len(self._by_gene),
                 )
             except Exception as exc:
-                logger.warning("[ClinGen] Failed to load dosage-sensitivity file %s: %s", self._local_path, exc)
+                logger.warning(
+                    "[ClinGen] Failed to load dosage-sensitivity file %s: %s", self._local_path, exc
+                )
                 self._backend = "api" if self._api_enabled else "disabled"
         elif self._api_enabled:
             self._backend = "api"
-            logger.info("[ClinGen] Backend: live API (UNVERIFIED against a live response in this deployment)")
+            logger.info(
+                "[ClinGen] Backend: live API (UNVERIFIED against a live response in this deployment)"
+            )
         else:
             if self._local_path:
-                logger.warning("[ClinGen] Dosage-sensitivity file not found: %s — lookups will be unavailable", self._local_path)
+                logger.warning(
+                    "[ClinGen] Dosage-sensitivity file not found: %s — lookups will be unavailable",
+                    self._local_path,
+                )
             self._backend = "disabled"
 
     # ── Local loading ─────────────────────────────────────────────────────────
@@ -212,14 +246,20 @@ class ClinGenDosageLookup:
             cells = next(csv.reader([line], delimiter=delimiter), [])
             if cells and self._normalize_header_cell(cells[0]).lower() == "gene symbol":
                 header_idx = idx
-                header_cells = [self._normalize_header_cell(c) if i == 0 else c.strip() for i, c in enumerate(cells)]
+                header_cells = [
+                    self._normalize_header_cell(c) if i == 0 else c.strip()
+                    for i, c in enumerate(cells)
+                ]
                 break
         if header_idx is None:
-            logger.warning("[ClinGen] No recognizable 'Gene Symbol' header found in %s — treating as empty", path)
+            logger.warning(
+                "[ClinGen] No recognizable 'Gene Symbol' header found in %s — treating as empty",
+                path,
+            )
             return
 
         count = 0
-        for line in lines[header_idx + 1:]:
+        for line in lines[header_idx + 1 :]:
             cells = next(csv.reader([line], delimiter=delimiter), [])
             if not cells or not cells[0].strip():
                 continue
@@ -233,9 +273,13 @@ class ClinGenDosageLookup:
 
             record = DosageSensitivityRecord(
                 gene=gene,
-                haploinsufficiency_score=self._to_int(self._pick(row, _HAPLOINSUFFICIENCY_SCORE_COLUMNS)),
+                haploinsufficiency_score=self._to_int(
+                    self._pick(row, _HAPLOINSUFFICIENCY_SCORE_COLUMNS)
+                ),
                 haploinsufficiency_description=self._pick(row, _HAPLOINSUFFICIENCY_DESC_COLUMNS),
-                triplosensitivity_score=self._to_int(self._pick(row, _TRIPLOSENSITIVITY_SCORE_COLUMNS)),
+                triplosensitivity_score=self._to_int(
+                    self._pick(row, _TRIPLOSENSITIVITY_SCORE_COLUMNS)
+                ),
                 triplosensitivity_description=self._pick(row, _TRIPLOSENSITIVITY_DESC_COLUMNS),
                 backend_used="local",
             )
@@ -301,7 +345,9 @@ class ClinGenDosageLookup:
     def _api_lookup_gene(self, gene_symbol: str) -> Optional[DosageSensitivityRecord]:
         """Query ClinGen's live gene-dosage endpoint. Best-effort; schema not live-verified in this environment."""
         url = f"{self._api_endpoint.rstrip('/')}/{gene_symbol}"
-        resp = _api_get(url, params={}, timeout=self._timeout, max_retries=self._max_retries, logger=logger)
+        resp = _api_get(
+            url, params={}, timeout=self._timeout, max_retries=self._max_retries, logger=logger
+        )
         if resp is None or resp.status_code >= 400:
             return None
         try:

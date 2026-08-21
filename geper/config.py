@@ -949,9 +949,10 @@ class ClinGenConfig:
     CACHE_DISK_PATH: str = os.environ.get("GEPER_CLINGEN_CACHE_DISK_PATH", "")
     MAX_CONCURRENT: int = int(os.environ.get("GEPER_CLINGEN_MAX_CONCURRENT", "8"))
 
-    # ACMG-integration constants. Requirement #5 asks that thresholds
-    # stay configurable; this is deliberately not configurable, because
-    # it is not a threshold -- it is a whitelist of coded values.
+    # ACMG-integration constants. Every other ACMG knob in this
+    # codebase is deployer-tunable; this one deliberately is not,
+    # because it is not a threshold -- it is a whitelist of coded
+    # values.
     #
     # ClinGen's haploinsufficiency Score column is not one ordinal
     # range: 0-3 are graded evidence levels, while 30 ("gene associated

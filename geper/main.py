@@ -13,7 +13,9 @@ Example (Colab or local shell):
 """
 
 import argparse
+import os
 import sys
+from datetime import datetime
 
 from config import CONFIG
 from pipeline.hpo.utils import build_phenotype_result
@@ -189,6 +191,26 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    # Correlates a harness "[killed]" task-termination tag against a
+    # Windows Resource-Exhaustion-Detector event (see hive card
+    # harness-task-governor-kills-are-uninspectable and the PID-capture
+    # convention it led to) -- without this line, a killed run leaves no
+    # attributable PID anywhere. Logged FIRST, before argument parsing
+    # or anything else: kills have been observed as early as ~90s into a
+    # run, sometimes mid model-load, so anything placed later risks
+    # never being written. Uses `logger` (stdlib logging), not print --
+    # logging.StreamHandler.emit() flushes unconditionally after every
+    # record, which is what lets this line survive a hard kill (no
+    # atexit handlers run, no buffer flush); a bare print()'s buffered
+    # output would simply be discarded. Timestamp is LOCAL time,
+    # deliberately, to share a clock domain with Windows Event Log's own
+    # TimeCreated field, which is what the correlation is matched
+    # against. PARENT_PID is included because a venv-launched python.exe
+    # on this box is not always one process -- the launcher can hand off
+    # to a different worker PID under the base interpreter -- so both
+    # are logged rather than assuming they're the same.
+    logger.info(f"PID={os.getpid()} PARENT_PID={os.getppid()} START={datetime.now().isoformat()}")
+
     parser = build_arg_parser()
     args = parser.parse_args()
 

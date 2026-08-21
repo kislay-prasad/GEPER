@@ -922,7 +922,8 @@ class ACMGRuleEngine:
         )
         criteria["PP5"] = _not_evaluated(
             "PP5",
-            "deprecated in the 2015 ACMG/AMP guideline update; not applied.",
+            "recommended against by ClinGen's SVI Working Group (Biesecker & Harrison 2018) as "
+            "circular with respect to an independent ACMG/AMP evaluation; not applied.",
             category=NotEvaluatedReason.NOT_INTEGRATED,
         )
         criteria["BS2"] = _not_evaluated(

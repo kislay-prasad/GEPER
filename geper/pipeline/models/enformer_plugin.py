@@ -151,11 +151,59 @@ class EnformerPlugin(PluginModel):
         self._weight_cache = WeightCache()
 
     def _load_impl(self) -> None:
+        # MANUAL INSTALL REQUIRED IN A CORRECTLY-PINNED ENVIRONMENT -- BY
+        # DESIGN, NOT A BUG. `enformer-pytorch` cannot be acquired through
+        # the auto-install call below in any environment holding GEPER's
+        # own enforced core pin (`transformers>=5.12.1,<6.0.0`,
+        # requirements.txt). Every published enformer-pytorch release
+        # (0.8.1 through the current 0.8.12) hard-pins
+        # `transformers[torch]==4.56.2` in its own metadata (verified
+        # directly against the installed wheel's METADATA, not assumed) --
+        # a range with zero overlap against GEPER's pin.
+        # `utils/auto_install.py`'s `pip --constraint requirements.txt`
+        # therefore makes pip correctly refuse with `ResolutionImpossible`
+        # rather than silently downgrading the environment's transformers
+        # to satisfy it. THAT REFUSAL IS THE FIX WORKING, not a regression
+        # to route around: before this constraint, the same install would
+        # have silently downgraded transformers 5.x -> 4.56.2 mid-run,
+        # disabling HyenaDNA and ESM2 later in the same run.
+        #
+        # A fresh environment built from requirements.txt will ALSO not
+        # have this package -- enformer-pytorch is intentionally not a
+        # pinned top-level requirement there (see that file's header
+        # comment); it is an optional, config-gated auto-install extra,
+        # same as borzoi-pytorch below.
+        #
+        # To use Enformer, install it manually, once, before running
+        # GEPER:
+        #     pip install --no-deps enformer-pytorch
+        # `--no-deps` is required and deliberate: a plain `pip install
+        # enformer-pytorch` would satisfy the package's own metadata by
+        # downgrading transformers, reopening the exact corruption vector
+        # the constraint fix exists to close. GEPER already pins every
+        # real runtime dependency this package needs (torch, einops) via
+        # requirements.txt; the shim below covers the one genuine gap
+        # between what 0.8.12 assumes and what transformers>=5 provides.
+        #
+        # DO NOT "fix" this by scoping `--no-deps` into
+        # `ensure_pip_package_available` itself -- that was considered and
+        # rejected: the helper is shared with rna-fm, whose real
+        # dependencies are not declared in requirements.txt, and a broad
+        # `--no-deps` there would relocate the missing-vs-broken problem
+        # rather than close it (installed but import-broken,
+        # `is_available()` returning a false True).
+        #
+        # A missing Enformer is disclosed, not silent: `pipeline/models/
+        # status.py::_ensemble_model_status` reports it with a stated
+        # reason, and `report_generator.py`'s "AI Models" table renders
+        # unconditionally.
         if not ensure_pip_package_available("enformer-pytorch", import_name="enformer_pytorch"):
             raise RuntimeError(
                 "Automatic installation of 'enformer-pytorch' did not succeed "
                 "in this environment (check network access to pypi.org, or "
-                "install it yourself with `pip install enformer-pytorch`)."
+                "install it yourself with `pip install --no-deps enformer-pytorch` "
+                "-- the --no-deps is required in a correctly-pinned environment; "
+                "see the comment above this call)."
             )
 
         import enformer_pytorch

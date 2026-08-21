@@ -168,11 +168,59 @@ class BorzoiPlugin(PluginModel):
                 "load anything else. See this module's docstring."
             )
 
+        # MANUAL INSTALL REQUIRED IN A CORRECTLY-PINNED ENVIRONMENT -- BY
+        # DESIGN, NOT A BUG. Same class of conflict as enformer_plugin.py's
+        # identical note -- confirmed independently for this package, not
+        # assumed symmetric: `borzoi-pytorch` cannot be acquired through
+        # the auto-install call below in any environment holding GEPER's
+        # own enforced core pin (`transformers>=5.12.1,<6.0.0`,
+        # requirements.txt). The current release, 0.5.1, requires
+        # `transformers<5.0.0,>=4.57.6` in its own metadata (verified
+        # directly against the installed wheel's METADATA, not assumed) --
+        # a range with zero overlap against GEPER's pin.
+        # `utils/auto_install.py`'s `pip --constraint requirements.txt`
+        # therefore makes pip correctly refuse with `ResolutionImpossible`
+        # rather than silently downgrading the environment's transformers
+        # to satisfy it. THAT REFUSAL IS THE FIX WORKING, not a regression
+        # to route around: before this constraint, the same install would
+        # have silently downgraded transformers 5.x mid-run, disabling
+        # HyenaDNA and ESM2 later in the same run.
+        #
+        # A fresh environment built from requirements.txt will ALSO not
+        # have this package -- borzoi-pytorch is intentionally not a
+        # pinned top-level requirement there (see that file's header
+        # comment); it is an optional, config-gated auto-install extra,
+        # same as enformer-pytorch above.
+        #
+        # To use Borzoi, install it manually, once, before running GEPER:
+        #     pip install --no-deps borzoi-pytorch
+        # `--no-deps` is required and deliberate: a plain `pip install
+        # borzoi-pytorch` would satisfy the package's own metadata by
+        # downgrading transformers, reopening the exact corruption vector
+        # the constraint fix exists to close. GEPER already pins every
+        # real runtime dependency this package needs (torch) via
+        # requirements.txt; the shim below covers the one genuine gap
+        # between older builds and transformers>=5.
+        #
+        # DO NOT "fix" this by scoping `--no-deps` into
+        # `ensure_pip_package_available` itself -- that was considered and
+        # rejected: the helper is shared with rna-fm, whose real
+        # dependencies are not declared in requirements.txt, and a broad
+        # `--no-deps` there would relocate the missing-vs-broken problem
+        # rather than close it (installed but import-broken,
+        # `is_available()` returning a false True).
+        #
+        # A missing Borzoi is disclosed, not silent: `pipeline/models/
+        # status.py::_ensemble_model_status` reports it with a stated
+        # reason, and `report_generator.py`'s "AI Models" table renders
+        # unconditionally.
         if not ensure_pip_package_available("borzoi-pytorch", import_name="borzoi_pytorch"):
             raise RuntimeError(
                 "Automatic installation of 'borzoi-pytorch' did not succeed "
                 "in this environment (check network access to pypi.org, or "
-                "install it yourself with `pip install borzoi-pytorch`)."
+                "install it yourself with `pip install --no-deps borzoi-pytorch` "
+                "-- the --no-deps is required in a correctly-pinned environment; "
+                "see the comment above this call)."
             )
 
         import borzoi_pytorch

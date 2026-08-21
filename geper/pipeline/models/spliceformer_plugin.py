@@ -64,10 +64,10 @@ behavior.
 --------------------------------------------------------------------
 """
 
-import re
 from typing import Any, Dict
 
 import numpy as np
+import requests
 import torch
 
 from config import CONFIG
@@ -111,7 +111,24 @@ _IN_MAP = np.asarray(
 )
 _BASE_TO_CODE = {"A": 1, "C": 2, "G": 3, "T": 4}
 
-_NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
+# Network-shaped failures only -- NOT bare OSError. `spliceformer_loader.
+# download_checkpoint` fetches the checkpoint via `requests.get(...)`
+# (see pipeline/models/spliceformer/loader.py); a real connectivity/HTTP
+# failure surfaces as `requests.exceptions.RequestException` (covers
+# ConnectionError/Timeout/HTTPError from `raise_for_status()`), not a
+# bare OSError. Bare OSError was removed 2026-08-21: it is the same
+# class Windows raises for local resource exhaustion, unrelated to the
+# network -- confirmed reproducible on this project's own dev box,
+# loading ESM2: `OSError: The paging file is too small for this
+# operation to complete. (os error 1455)`. Catching that here and
+# relabeling it "SpliceFormer model unavailable" would report a wrong
+# diagnosis. A genuine local OSError now simply isn't caught in this
+# block -- it propagates through PluginModel.load()/ModelManager.get()
+# (pipeline/models/base.py, manager.py), both of which already fold
+# `str(exc)` into their own raised message and log it at `error`, so
+# the real cause stays visible rather than being relabeled a second
+# time.
+_NETWORK_ERROR_TYPES = (requests.exceptions.RequestException, ConnectionError, TimeoutError)
 
 
 class SpliceFormerPlugin(PluginModel):
@@ -168,10 +185,7 @@ class SpliceFormerPlugin(PluginModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_SPLICEFORMER:
-            return (
-                "disabled via CONFIG.splicing.ENABLE_SPLICEFORMER "
-                "(set GEPER_ENABLE_SPLICEFORMER=true to enable)"
-            )
+            return "disabled via CONFIG.splicing.ENABLE_SPLICEFORMER (set GEPER_ENABLE_SPLICEFORMER=true to enable)"
         return "the 'einops' package is not installed and automatic installation has not been attempted yet"
 
     def __init__(self):
@@ -200,9 +214,15 @@ class SpliceFormerPlugin(PluginModel):
                     checkpoint=checkpoint_name,
                 )
             except _NETWORK_ERROR_TYPES as exc:
-                self.logger.debug(
-                    f"SpliceFormer checkpoint fetch for "
-                    f"'{checkpoint_name}' failed ({exc.__class__.__name__}): {exc}",
+                # Promoted from `debug` to `warning` 2026-08-21: this line
+                # is the only place the real exception class/message
+                # survives -- the raised RuntimeError below deliberately
+                # drops it so a raw request URL never reaches the clinical
+                # report (same rationale as splicebert_plugin.py's own
+                # network-error branch). At `debug` it was invisible in a
+                # normal run's logs.
+                self.logger.warning(
+                    f"SpliceFormer checkpoint fetch for '{checkpoint_name}' failed ({exc.__class__.__name__}): {exc}",
                     exc_info=True,
                 )
                 raise RuntimeError("SpliceFormer model unavailable") from exc
@@ -245,9 +265,7 @@ class SpliceFormerPlugin(PluginModel):
         encoding. Non-ACGT characters (including 'N') map to the
         all-zero row, matching upstream.
         """
-        codes = np.fromiter(
-            (_BASE_TO_CODE.get(base, 0) for base in sequence), dtype=np.int64, count=len(sequence)
-        )
+        codes = np.fromiter((_BASE_TO_CODE.get(base, 0) for base in sequence), dtype=np.int64, count=len(sequence))
         if strand == "-":
             # Reverse-complement via upstream's own trick: reverse the
             # coded array, then map code c -> (5 - c) % 5, which sends
@@ -315,9 +333,7 @@ class SpliceFormerPlugin(PluginModel):
         top_a_disruption = float(-np.min(acceptor_delta_np))
         top_d_disruption = float(-np.min(donor_delta_np))
 
-        max_abs_delta = max(
-            abs(top_a_creation), abs(top_d_creation), abs(top_a_disruption), abs(top_d_disruption)
-        )
+        max_abs_delta = max(abs(top_a_creation), abs(top_d_creation), abs(top_a_disruption), abs(top_d_disruption))
 
         if max_abs_delta < _NO_EFFECT_THRESHOLD:
             classification = "no_significant_effect"

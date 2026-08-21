@@ -95,6 +95,7 @@ direct/programmatic use and tests, exactly like SpliceFormer.
 
 from typing import Any, Dict, List
 
+import requests
 import torch
 
 from config import CONFIG
@@ -128,7 +129,28 @@ _MODERATE_EFFECT_THRESHOLD = 0.5
 # which is where the biologically meaningful signal is.
 _MAX_SCORED_POSITIONS = 32
 
-_NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
+# Network-shaped failures only -- NOT bare OSError. `splicebert_loader.
+# download_and_extract_checkpoint` fetches the archive via
+# `requests.get(...)` (see pipeline/models/splicebert/loader.py); a
+# real connectivity/HTTP failure surfaces as `requests.exceptions.
+# RequestException` (covers ConnectionError/Timeout/HTTPError from
+# `raise_for_status()`), not a bare OSError. Bare OSError was removed
+# 2026-08-21: the same function also does purely LOCAL work
+# (tarfile extraction, shutil.move/rmtree) with no network involved,
+# and OSError is the same class Windows raises for local resource
+# exhaustion -- confirmed reproducible on this project's own dev box,
+# loading ESM2: `OSError: The paging file is too small for this
+# operation to complete. (os error 1455)`. Catching that here and
+# relabeling it "SpliceBERT model unavailable" would report a wrong
+# diagnosis. A genuine local OSError now simply isn't caught in this
+# block -- it propagates through PluginModel.load()/ModelManager.get()
+# (pipeline/models/base.py, manager.py), both of which already fold
+# `str(exc)` into their own raised message and log it at `error`, so
+# the real cause stays visible rather than being relabeled a second
+# time. (The `except` block below already logs at `warning`, not
+# `debug` -- Round 20 got that half of this fix right already; only
+# the exception-type narrowing was missing.)
+_NETWORK_ERROR_TYPES = (requests.exceptions.RequestException, ConnectionError, TimeoutError)
 
 _COMPLEMENT = str.maketrans("ACGTN", "TGCAN")
 

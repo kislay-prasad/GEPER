@@ -88,6 +88,8 @@ direct/programmatic use and tests, exactly like SpliceFormer/SpliceBERT.
 
 from typing import Any, Dict, List
 
+import requests
+
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
@@ -102,7 +104,25 @@ from pipeline.models.spip import loader as spip_loader
 # sits on the same documented 0..~1 scale as the rest of this family.
 _MODERATE_EFFECT_THRESHOLD = 0.5
 
-_NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
+# Network-shaped failures only -- NOT bare OSError. `spip_loader.
+# prepare_runtime_dir` fetches reference data via `requests.get(...)`
+# (see pipeline/models/spip/loader.py::_download_file); a real
+# connectivity/HTTP failure surfaces as `requests.exceptions.
+# RequestException` (covers ConnectionError/Timeout/HTTPError from
+# `raise_for_status()`), not a bare OSError. Bare OSError was removed
+# 2026-08-21: `prepare_runtime_dir` also does purely LOCAL work
+# (shutil.copy2/copytree/rmtree) with no network involved, and OSError
+# is the same class Windows raises for local resource exhaustion --
+# confirmed reproducible on this project's own dev box, loading ESM2:
+# `OSError: The paging file is too small for this operation to
+# complete. (os error 1455)`. Catching that here and relabeling it
+# "SPiP model unavailable" would report a wrong diagnosis. A genuine
+# local OSError now simply isn't caught in this block -- it propagates
+# through PluginModel.load()/ModelManager.get() (pipeline/models/
+# base.py, manager.py), both of which already fold `str(exc)` into
+# their own raised message and log it at `error`, so the real cause
+# stays visible rather than being relabeled a second time.
+_NETWORK_ERROR_TYPES = (requests.exceptions.RequestException, ConnectionError, TimeoutError)
 
 
 def _parse_spip_output(output_text: str) -> List[Dict[str, str]]:
@@ -174,14 +194,8 @@ class SpipPlugin(PluginModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_SPIP:
-            return (
-                "disabled via CONFIG.splicing.ENABLE_SPIP "
-                "(set GEPER_ENABLE_SPIP=true to enable)"
-            )
-        return (
-            "no 'Rscript' executable found in this environment "
-            "(install R: https://cran.r-project.org/)"
-        )
+            return "disabled via CONFIG.splicing.ENABLE_SPIP (set GEPER_ENABLE_SPIP=true to enable)"
+        return "no 'Rscript' executable found in this environment (install R: https://cran.r-project.org/)"
 
     def __init__(self):
         super().__init__()
@@ -193,17 +207,14 @@ class SpipPlugin(PluginModel):
     def _load_impl(self) -> None:
         rscript_path = spip_loader.find_rscript()
         if not rscript_path:
-            raise RuntimeError(
-                "No 'Rscript' executable found (install R: "
-                "https://cran.r-project.org/)."
-            )
+            raise RuntimeError("No 'Rscript' executable found (install R: https://cran.r-project.org/).")
         if not spip_loader.ensure_r_packages(rscript_path):
             raise RuntimeError(
                 f"Automatic installation of required R package(s) "
                 f"({spip_loader.REQUIRED_R_PACKAGES}) did not succeed in "
                 "this environment (check network access to cloud.r-project.org, "
                 "or install them yourself from an R console with "
-                "`install.packages(c(\"foreach\",\"doParallel\",\"randomForest\"))`)."
+                '`install.packages(c("foreach","doParallel","randomForest"))`).'
             )
 
         cache_dir = self._weight_cache.ensure_dir("spip")
@@ -212,9 +223,14 @@ class SpipPlugin(PluginModel):
         try:
             runtime_dir = spip_loader.prepare_runtime_dir(cache_dir, genome=genome)
         except _NETWORK_ERROR_TYPES as exc:
-            self.logger.debug(
-                f"SPiP reference-data fetch for genome '{genome}' failed "
-                f"({exc.__class__.__name__}): {exc}",
+            # Promoted from `debug` to `warning` 2026-08-21: this line is
+            # the only place the real exception class/message survives --
+            # the raised RuntimeError below deliberately drops it so a raw
+            # request URL never reaches the clinical report (same
+            # rationale as splicebert_plugin.py's own network-error
+            # branch). At `debug` it was invisible in a normal run's logs.
+            self.logger.warning(
+                f"SPiP reference-data fetch for genome '{genome}' failed ({exc.__class__.__name__}): {exc}",
                 exc_info=True,
             )
             raise RuntimeError("SPiP model unavailable") from exc

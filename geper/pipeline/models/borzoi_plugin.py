@@ -48,6 +48,7 @@ and so the constraint below is enforced in code, not just documented):
 from typing import Any, Dict
 
 import torch
+from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
@@ -65,7 +66,31 @@ _ALLOWED_BORZOI_HF_NAMESPACE = "johahi/"
 
 _BASE_TO_INDEX = {"A": 0, "C": 1, "G": 2, "T": 3}
 
-_NETWORK_ERROR_TYPES = (OSError, ConnectionError, TimeoutError)
+# `borzoi_pytorch.Borzoi.from_pretrained` is transformers'
+# `PreTrainedModel.from_pretrained`, which resolves weights through
+# `huggingface_hub`: a genuine connectivity/HTTP failure surfaces as
+# `huggingface_hub.errors.HfHubHTTPError` (also covers
+# RepositoryNotFoundError/RevisionNotFoundError/GatedRepoError, its
+# subclasses) or `EntryNotFoundError` (also covers
+# LocalEntryNotFoundError, the offline-with-no-cache case); builtin
+# `ConnectionError` also covers huggingface_hub's own
+# `OfflineModeIsEnabled`. NOT bare OSError, removed 2026-08-21: it is
+# the same class Windows raises for local resource exhaustion during
+# the tensor materialization that follows a successful download --
+# confirmed reproducible on this project's own dev box, loading ESM2:
+# `OSError: The paging file is too small for this operation to
+# complete. (os error 1455)`. Catching that here and relabeling it
+# "Borzoi model unavailable" would report a wrong diagnosis. A genuine
+# local OSError (or, e.g., transformers' own bare `OSError` for "not a
+# valid model identifier") now simply isn't caught in this block -- it
+# propagates through PluginModel.load()/ModelManager.get() (pipeline/
+# models/base.py, manager.py), both of which already fold `str(exc)`
+# into their own raised message and log it at `error`, so the real
+# cause stays visible rather than being relabeled a second time -- and
+# in that specific "not a valid model identifier" case, the propagated
+# message is more informative than the old generic label ever was, not
+# less honest.
+_NETWORK_ERROR_TYPES = (ConnectionError, TimeoutError, HfHubHTTPError, EntryNotFoundError)
 
 
 class BorzoiLicenseGuardError(RuntimeError):
@@ -178,7 +203,13 @@ class BorzoiPlugin(PluginModel):
         try:
             model = borzoi_pytorch.Borzoi.from_pretrained(repo_id, cache_dir=str(cache_dir))
         except _NETWORK_ERROR_TYPES as exc:
-            self.logger.debug(
+            # Promoted from `debug` to `warning` 2026-08-21: this line is
+            # the only place the real exception class/message survives --
+            # the raised RuntimeError below deliberately drops it so a raw
+            # request URL never reaches the clinical report (same
+            # rationale as splicebert_plugin.py's own network-error
+            # branch). At `debug` it was invisible in a normal run's logs.
+            self.logger.warning(
                 f"Borzoi weight fetch for '{repo_id}' failed ({exc.__class__.__name__}): {exc}",
                 exc_info=True,
             )

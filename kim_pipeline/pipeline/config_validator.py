@@ -216,6 +216,54 @@ def _validate_evidence_engine(cfg: dict, errors: list) -> None:
         )
 
 
+# Every key `ClinVarLookup.__init__` actually reads (lookup.py:101-103), and
+# the same three `config/default.yaml` documents. Kept next to the check that
+# uses it so the two cannot drift apart silently.
+_CLINVAR_KNOWN_KEYS = frozenset({"enabled", "tsv_gz_path", "ncbi_api_key"})
+
+
+def _validate_clinvar_keys(cfg: dict) -> None:
+    """Warn about unrecognised keys under `clinvar:`.
+
+    A misspelled key is invisible in a way a misspelled *value* is not:
+    `ClinVarLookup` reads `cv_cfg.get("tsv_gz_path")`, so a config that says
+    `tsv_path` yields None, the local-TSV branch never runs, and the lookup
+    quietly uses the live NCBI API. The operator asked for a local file and
+    got network requests, with nothing anywhere saying so.
+
+    `tsv_path` is the specific mistake worth catching, because it is not a
+    typo in the usual sense -- it is a real, correct key for a different
+    section (`gnomad_constraint.tsv_path`, read by
+    constraint/lookup.py). Accepting both spellings here would make that
+    confusion permanent instead of surfacing it once.
+
+    The asymmetry that keeps this quiet for everyone else: a config with no
+    `clinvar:` section, or an empty one, legitimately selects the API default
+    and must not warn. Only a section that says something unrecognised does.
+    """
+    cv = cfg.get("clinvar")
+    if not isinstance(cv, dict) or not cv:
+        return
+
+    unknown = sorted(set(cv) - _CLINVAR_KNOWN_KEYS)
+    if not unknown:
+        return
+
+    hint = ""
+    if "tsv_path" in unknown:
+        hint = (
+            " Did you mean 'tsv_gz_path'? ('tsv_path' is a real key, but for the "
+            "gnomad_constraint section, not clinvar.)"
+        )
+    logger.warning(
+        "Config section 'clinvar' has unrecognised key(s): %s — these are ignored, so any "
+        "setting you intended through them is NOT in effect. Recognised keys: %s.%s",
+        ", ".join(repr(k) for k in unknown),
+        ", ".join(sorted(_CLINVAR_KNOWN_KEYS)),
+        hint,
+    )
+
+
 def _validate_paths(cfg: dict) -> None:
     """Warn (not error) for optional paths that are configured but don't exist."""
     optional_paths = [
@@ -311,6 +359,7 @@ def validate_config(cfg: dict) -> None:
 
     # Warn for missing optional file paths (not hard failures)
     _validate_paths(cfg)
+    _validate_clinvar_keys(cfg)
 
     if errors:
         raise ConfigValidationError(errors)

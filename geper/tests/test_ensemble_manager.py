@@ -11,6 +11,8 @@ real models or any network access.
 import unittest
 from unittest import mock
 
+import pytest
+
 from pipeline.models.ensemble import EnsembleManager
 
 
@@ -196,25 +198,65 @@ class TestConsensusConfidence(unittest.TestCase):
 
 
 class TestEnsembleManagerDefaultConstruction(unittest.TestCase):
+    @pytest.mark.real_pip
     def test_default_manager_uses_real_registry_and_never_crashes(self):
-        # No mocking at all -- exercises the real default construction
-        # path, confirming it never crashes regardless of which
-        # plugins actually load. Deliberately does NOT pin
-        # models_used to a specific value: enformer/borzoi are
-        # enabled BY CONFIG DEFAULT (see
-        # test_new_plugins_integration.py::
-        # TestBothPluginsDisabledByDefault::
-        # test_enformer_borzoi_dependency_gated) and only gated by
-        # their own optional pip package / model-cache availability,
-        # which is genuine machine state, not policy -- pinning an
-        # empty list here was only ever true because the packages
-        # happened to be uninstalled/broken on whichever box ran it,
-        # not because of any "disabled by default" guarantee. The
-        # `[]` case itself is already covered deterministically by
-        # TestZeroModelsAvailable::test_no_models_returns_empty_models_used
-        # above, via a mocked manager -- this test's unique value is
-        # the real, unmocked registry construction path staying crash-
-        # free and internally consistent for WHATEVER it resolves to.
+        """
+        No mocking at all -- exercises the real default construction
+        path: EnsembleManager() -> real EnformerPlugin -> real
+        is_available() -> real
+        utils.auto_install.ensure_pip_package_available() -> a genuine
+        `sys.executable -m pip install` subprocess call. This is the
+        ONLY test in the suite that confirms that real chain never
+        crashes end-to-end, for whatever it resolves to (see below for
+        why the result is deliberately not pinned).
+
+        OPT-IN, NOT PART OF THE DEFAULT SUITE (see pytest.ini's
+        `real_pip` marker / `addopts`). A bare `pytest` or
+        `pytest tests/` run DOES NOT COLLECT this test -- run it
+        explicitly with `pytest -m real_pip`, and only against a
+        disposable/isolated interpreter (a throwaway venv), never the
+        shared one every agent on this floor uses.
+
+        WHY: this test shells out to a REAL pip install against
+        whatever interpreter runs it, every single time it runs. Doing
+        that against a SHARED global interpreter has a demonstrated
+        collision/data-loss risk -- a WinError 32 from two concurrent
+        pip processes fighting over the same site-packages file
+        (2026-08-20), and a live hypothesis (2026-08-21) that a
+        harness governor kill landing between pip's uninstall-old and
+        install-new steps is how a package can vanish from the shared
+        environment with no trace of an interrupted install. Mocking
+        the pip call instead was considered and rejected -- it would
+        destroy exactly the thing this test uniquely verifies (that
+        the REAL subprocess call, with all its real failure modes,
+        does not crash the manager).
+
+        THE HONEST TRADE, stated plainly per the ruling that added this
+        marker: because this test is excluded from default runs, THE
+        DEFAULT SUITE DOES NOT COVER THE REAL AUTO-INSTALL SUBPROCESS
+        PATH. If `utils.auto_install.ensure_pip_package_available()`
+        or the real pip subprocess plumbing around it breaks, a
+        default `pytest tests/` run will not catch it -- only an
+        explicit, deliberate `pytest -m real_pip` run (in a disposable
+        environment) will. This is a real, accepted coverage gap, not
+        a hidden one.
+
+        Deliberately does NOT pin models_used to a specific value:
+        enformer/borzoi are enabled BY CONFIG DEFAULT (see
+        test_new_plugins_integration.py::
+        TestBothPluginsDisabledByDefault::
+        test_enformer_borzoi_dependency_gated) and only gated by their
+        own optional pip package / model-cache availability, which is
+        genuine machine state, not policy -- pinning an empty list here
+        was only ever true because the packages happened to be
+        uninstalled/broken on whichever box ran it, not because of any
+        "disabled by default" guarantee. The `[]` case itself is
+        already covered deterministically by
+        TestZeroModelsAvailable::test_no_models_returns_empty_models_used
+        above, via a mocked manager -- this test's unique value is the
+        real, unmocked registry construction path staying crash-free
+        and internally consistent for WHATEVER it resolves to.
+        """
         ensemble = EnsembleManager()
         result = ensemble.evaluate("A" * 10, "T" * 10)
         self.assertIsInstance(result["models_used"], list)

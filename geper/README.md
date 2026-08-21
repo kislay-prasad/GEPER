@@ -496,7 +496,6 @@ document with a clinical-use disclaimer at the top, including an
 | `GEPER_CLINGEN_CACHE_ENABLED` / `_CACHE_MAX_SIZE` / `_CACHE_TTL_HOURS` | Gene-evidence LRU cache | `true` / `5000` / `24` |
 | `GEPER_CLINGEN_CACHE_DISK_PATH` | Optional on-disk cache persistence path (survives process restart) | unset (in-memory only) |
 | `GEPER_CLINGEN_MAX_CONCURRENT` | Max concurrent batch ClinGen lookups | `8` |
-| `GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORE` / `_DOSAGE_UNLIKELY_SCORE` | ACMG PVS1-support dosage-score thresholds | `3` / `40` |
 | `GEPER_HEALTH_CHECK_ENABLED` | Enable/disable the startup external-service health probe entirely (see "26. External service health checks") | `true` |
 | `GEPER_HEALTH_CHECK_TIMEOUT` | Per-attempt timeout for every probe attempt except the final, latch-deciding one | `4.0` |
 | `GEPER_HEALTH_CHECK_ATTEMPTS` | Consecutive failed attempts required before latching a service offline for the run; only network-level failures are retried | `3` |
@@ -1011,13 +1010,29 @@ contributed:
 |---|---|---|
 | Sufficient haploinsufficiency evidence + predicted LOF variant | Gene-level prerequisite ACMG/AMP's PVS1 rule requires | PVS1-supporting evidence, positive weight |
 | "Dosage sensitivity unlikely" + predicted LOF variant | Caution against a naive PVS1 application | Cautionary note, small negative weight (never reverses the underlying LOF evidence to benign) |
+| "Gene associated with autosomal recessive phenotype" + predicted LOF variant | ClinGen's curation does not establish that one damaged allele is sufficient, so there is no PVS1 gene-level support — but the gene *is* curated, which is not the same as having no curation | Disclosure only, weight `0.0` (never changes the classification; LOF may still be the mechanism biallelically) |
 | Definitive/Strong gene-disease clinical validity | Established disease mechanism for this gene | PP5/BP6-style supporting evidence |
 | Disputed/Refuted gene-disease clinical validity | Contrary evidence for this gene's disease association | Argues against a causal role, negative weight |
 
-Both the haploinsufficiency-sufficiency threshold and the
-dosage-unlikely score are configurable
-(`GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORE` / `GEPER_CLINGEN_DOSAGE_UNLIKELY_SCORE`),
-matching every other ACMG threshold in this codebase.
+The haploinsufficiency scores that count as sufficient evidence are
+**not** configurable, and deliberately so. Every other ACMG threshold in
+this codebase (CADD, REVEL, pLI, LOEUF, oe_mis) is a *continuous* score,
+where a deployer-tunable cut-point is meaningful. ClinGen's
+haploinsufficiency Score column is not: `0`-`3` are graded evidence
+levels, while `30` ("gene associated with autosomal recessive
+phenotype") and `40` ("dosage sensitivity unlikely") are *special
+codes*. On a scale like that a cut-point can only be wrong — set it to
+`30` and you admit the recessive code, set it to `40` and you admit
+both, and there is no value a deployer could correctly choose that
+`{3}` does not already express. GEPER therefore matches on an explicit
+set of qualifying scores (`CONFIG.clingen.DOSAGE_SUFFICIENT_EVIDENCE_SCORES`)
+rather than comparing against a threshold.
+
+These *were* environment-overridable, justified here as "matching every
+other ACMG threshold in this codebase" — an analogy that fails exactly
+where the defect lived, and one that licensed a `>=` comparison which
+read scores `30` and `40` as *stronger* evidence for haploinsufficiency
+than `3`.
 
 **Performance:** gene-evidence results are cached (in-memory LRU with a
 24-hour default TTL — much longer than gnomAD's, since gene curation

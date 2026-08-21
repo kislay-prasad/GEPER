@@ -949,11 +949,9 @@ class ClinGenConfig:
     CACHE_DISK_PATH: str = os.environ.get("GEPER_CLINGEN_CACHE_DISK_PATH", "")
     MAX_CONCURRENT: int = int(os.environ.get("GEPER_CLINGEN_MAX_CONCURRENT", "8"))
 
-    # ACMG-integration configuration (requirement #5). Kept
-    # configurable rather than hard-coded, matching every other ACMG
-    # knob in this codebase (e.g. CONFIG.gnomad.BA1_AF_THRESHOLD) --
-    # but configurable as an explicit SET OF QUALIFYING SCORES, never
-    # as a threshold.
+    # ACMG-integration constants. Requirement #5 asks that thresholds
+    # stay configurable; this is deliberately not configurable, because
+    # it is not a threshold -- it is a whitelist of coded values.
     #
     # ClinGen's haploinsufficiency Score column is not one ordinal
     # range: 0-3 are graded evidence levels, while 30 ("gene associated
@@ -963,22 +961,31 @@ class ClinGenConfig:
     # both True, so any `>=` reads the two codes that argue AGAINST
     # haploinsufficiency as the strongest evidence FOR it.
     #
+    # These were environment-overridable, justified in the README as
+    # "matching every other ACMG threshold in this codebase". That is a
+    # false analogy, and it is worth naming because it is what licensed
+    # the inequality: every other ACMG threshold here (CADD, REVEL,
+    # pLI, LOEUF, oe_mis) is a CONTINUOUS score, where a tunable
+    # cut-point is genuinely meaningful. This is a coded, non-ordinal
+    # scale, where it is not -- set the cut-point to 30 and you admit
+    # the recessive code, set it to 40 and you admit both. There is no
+    # value a deployer could correctly choose that {3} does not already
+    # express, so the override is removed rather than retuned.
+    #
     # Whitelist what qualifies; never blacklist the special codes. A
     # blacklist passes every test we can write today and breaks the
     # first time ClinGen adds a code. That is not hypothetical: the
     # comparison this replaced excluded 40 by name and never excluded
     # 30, so it caught the code its author thought of and missed the
     # one they did not.
-    DOSAGE_SUFFICIENT_EVIDENCE_SCORES: FrozenSet[int] = frozenset(
-        int(part) for part in os.environ.get("GEPER_CLINGEN_DOSAGE_SUFFICIENT_SCORES", "3").split(",") if part.strip()
-    )
+    DOSAGE_SUFFICIENT_EVIDENCE_SCORES: FrozenSet[int] = frozenset({3})
 
     # The two special codes, named so they can be recognised rather
-    # than compared against. These identify ClinGen codes; they are not
-    # thresholds, and a deployment has no more business retuning them
-    # than it has renaming the scale.
-    DOSAGE_UNLIKELY_SCORE: int = int(os.environ.get("GEPER_CLINGEN_DOSAGE_UNLIKELY_SCORE", "40"))
-    DOSAGE_AUTOSOMAL_RECESSIVE_SCORE: int = int(os.environ.get("GEPER_CLINGEN_DOSAGE_AR_SCORE", "30"))
+    # than compared against. Not tunable for the same reason: they
+    # identify ClinGen codes, and a deployment has no more business
+    # renumbering them than renaming the scale.
+    DOSAGE_UNLIKELY_SCORE: int = 40
+    DOSAGE_AUTOSOMAL_RECESSIVE_SCORE: int = 30
 
     # -- self-provisioning local dataset (see pipeline/clingen/bootstrap.py) --
     #

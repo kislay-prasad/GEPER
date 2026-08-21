@@ -39,6 +39,8 @@ enough, and it keeps this module small.
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -75,6 +77,21 @@ class ServiceRecord:
     success_count: int = 0
     skipped_count: int = 0
     _skip_logged: bool = False
+    # Retained so a latched service can be re-probed later. Today only
+    # `measure_latched_services()` uses it, and only to observe -- the
+    # bounded-reprobe feature (card health-probe-bounded-reprobe) is NOT
+    # implemented and this does not implement it.
+    #
+    # Underscored, and cleared the moment it has been used, to keep the
+    # surface narrow: this is not a general-purpose "re-probe this
+    # service" handle for arbitrary callers. That does not stop anyone
+    # determined -- nothing here does -- but a field that is gone after
+    # use is harder to reach for than one sitting in the record looking
+    # available.
+    _probe: Optional[Callable[[], ProbeResult]] = None
+    # `time.monotonic()` at the moment this service latched OFFLINE, so
+    # the end-of-run measurement can report how long the latch stood.
+    latched_at: Optional[float] = None
 
 
 @dataclass
@@ -83,6 +100,48 @@ class ServiceCheck:
 
     name: str
     probe: Callable[[], ProbeResult]
+
+
+# ---------------------------------------------------------------------------
+# Re-probe timing
+#
+# SIZED FROM DATA. Every real (non-mocked) healthy probe latency recorded
+# since 5094620 landed: 2144, 2327, 2376, 2606, 2831 ms. 4.0s clears the
+# slowest observed success by ~29%, so a service that has genuinely
+# recovered answers inside it. Deliberately NOT
+# `LATCH_CONFIRM_TIMEOUT_SECS` (30s): that long timeout exists to justify
+# *latching*, where a false positive costs the whole run. Re-probing
+# decides whether to *un-latch*, where being wrong costs one more skip
+# window -- the cheap direction.
+#
+# STILL PENDING, NOT GUESSED HERE: the re-probe interval (N skips / T
+# seconds) and the attempt cap. Those need latch-to-recovery durations,
+# which no log can contain until something actually re-probes -- see
+# `measure_latched_services()`, which exists to produce exactly that
+# evidence. Do not fill these in from judgement; the numbers are days
+# away, not unearnable.
+# ---------------------------------------------------------------------------
+_REPROBE_TIMEOUT_SECS = 4.0
+
+
+def _under_pytest() -> bool:
+    """
+    True when this process is running the test suite.
+
+    Health-probe log lines are tagged with the result so a later
+    analysis can exclude them. This is not cosmetic: of the 213 latch
+    events logged in the 14 hours after 5094620, effectively all came
+    from pytest -- 96 of 101 `Online` readings were `0 ms` mocks and
+    twelve read `RuntimeError: probe blew up`. Counting those as
+    evidence of real service behaviour is how a parameter gets sized
+    from fiction.
+    """
+    return "PYTEST_CURRENT_TEST" in os.environ or "pytest" in sys.modules
+
+
+def _ctx() -> str:
+    """Log-line suffix marking synthetic (test-run) samples."""
+    return " [pytest]" if _under_pytest() else ""
 
 
 def _health_check_setting(name: str, default: float) -> float:
@@ -220,14 +279,18 @@ class ServiceHealthRegistry:
             else:
                 # Only reached when every attempt came back OFFLINE.
                 logger.warning(
-                    f"{check.name} health probe failed all {attempts} attempts (last: {detail}); "
-                    "treating it as offline for the rest of this run -- clients will skip their "
-                    "own retries for this service."
+                    f"{check.name} health probe failed all {attempts} attempts (last: {detail}) "
+                    f"after {elapsed_ms:.0f} ms; treating it as offline for the rest of this run -- "
+                    f"clients will skip their own retries for this service.{_ctx()}"
                 )
             with self._lock:
                 record.startup_status = status
                 record.startup_detail = detail
                 record.latency_ms = elapsed_ms
+                # Kept for the end-of-run measurement below. Storing the
+                # callable does not make anything re-probe on its own.
+                record._probe = check.probe
+                record.latched_at = time.monotonic() if status == ServiceStatus.OFFLINE else None
 
         with ThreadPoolExecutor(max_workers=max(len(checks), 1)) as pool:
             list(pool.map(_run_one, checks))
@@ -247,7 +310,16 @@ class ServiceHealthRegistry:
             return f"✓ {label} Online ({latency})"
         if record.startup_status == ServiceStatus.DEGRADED:
             return f"⚠ {label} Degraded ({record.startup_detail})"
-        return f"✗ {label} Offline ({record.startup_detail or 'unreachable'})"
+        # Latency is reported for OFFLINE too, not just HEALTHY. It was
+        # already measured and then discarded, which left no way to tell a
+        # fast-fail (connection refused, milliseconds) from a full timeout
+        # -- the difference that decides what re-probing actually costs.
+        # Appended AFTER the detail parentheses so the existing
+        # "Offline (<detail>)" substring is unchanged.
+        offline = f"✗ {label} Offline ({record.startup_detail or 'unreachable'})"
+        if record.latency_ms is not None:
+            offline += f" after {record.latency_ms:.0f} ms"
+        return offline
 
     def _print_table(self, title: str, records: List[ServiceRecord], line_fn) -> None:
         width = 50
@@ -306,6 +378,80 @@ class ServiceHealthRegistry:
             record.success_count += 1
 
     # -- final summary ---------------------------------------------------
+
+    def measure_latched_services(self) -> None:
+        """
+        OBSERVATION ONLY. Re-probe every service that latched OFFLINE,
+        log what came back, and change nothing.
+
+        This is instrumentation, not the bounded-reprobe feature. It
+        exists because that feature's parameters (re-probe interval,
+        attempt cap) need latch-to-recovery durations, and no log can
+        ever contain those while nothing re-probes: the evidence can
+        only be produced by re-probing, so the gate could never clear on
+        its own. This produces it without touching the runtime contract.
+
+        The question it answers, once per run, per latched service: was
+        the latch still true by the end of the run? A latch that has
+        recovered is a false latch, and its age at recovery is the
+        number the interval should be sized against.
+
+        CALL THIS LAST. It consumes each latched service's retained probe
+        and clears it, which is safe only because `main.py` calls it in
+        its `finally`, after everything else. If the bounded-reprobe
+        feature (shape (a)) is built later, it will re-probe through that
+        same handle during the run -- calling this mid-run would clear
+        the handle out from under it and silently disable recovery for
+        the rest of that run. Nothing enforces the ordering; this comment
+        is the enforcement.
+
+        WHAT IT MUST NOT DO, and does not: un-latch, alter
+        `startup_status` / `startup_detail` / `latency_ms`, touch the
+        skip/failure/success counters, or influence `is_offline()`.
+        Every caller sees exactly what it saw before this ran. The
+        counters in particular are what `print_summary` reports, so
+        writing to them here would silently corrupt the run summary.
+        """
+        with self._lock:
+            latched = [r for r in self._records.values() if r.startup_status == ServiceStatus.OFFLINE and r._probe]
+        if not latched:
+            return
+
+        for record in latched:
+            # The evidenced 4.0s, not the 30s latch-confirm timeout --
+            # this is measuring recovery, not justifying a latch.
+            _PROBE_STATE.timeout = _REPROBE_TIMEOUT_SECS
+            start = time.perf_counter()
+            try:
+                status, detail = record._probe()
+            except Exception as exc:  # pragma: no cover - defensive, mirrors _run_one
+                status, detail = ServiceStatus.OFFLINE, f"{type(exc).__name__}: {exc}"
+            finally:
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                _PROBE_STATE.timeout = None
+                # Cleared here rather than after the try block so a probe
+                # that raised does not leave the handle dangling. One
+                # consequence, stated rather than discovered later: this
+                # makes measurement once-per-service-per-run -- a second
+                # call finds no probe and skips, which is what we want
+                # from something whose whole contract is "observe once".
+                record._probe = None
+
+            latched_for = f"{time.monotonic() - record.latched_at:.0f}s" if record.latched_at else "unknown"
+            if status == ServiceStatus.OFFLINE:
+                logger.warning(
+                    f"[latch-measurement] {record.name} was still offline at end of run "
+                    f"({detail}) after {elapsed_ms:.0f} ms; latch stood {latched_for} and "
+                    f"suppressed {record.skipped_count} retries. Latch was CORRECT.{_ctx()}"
+                )
+            else:
+                # The case the whole feature exists for.
+                logger.warning(
+                    f"[latch-measurement] {record.name} was latched offline at startup but is "
+                    f"reachable now ({status.value}, {elapsed_ms:.0f} ms). Latch stood {latched_for} "
+                    f"and needlessly suppressed {record.skipped_count} retries -- a bounded "
+                    f"re-probe would have recovered this run. Latch was FALSE.{_ctx()}"
+                )
 
     def print_summary(self) -> None:
         if not self._records:

@@ -232,6 +232,11 @@ def main() -> int:
         logger.warning("Interrupted by user.")
         return 130
     finally:
+        # Observation only -- re-probes latched services to record whether
+        # each latch was still true at run end, and changes nothing. This
+        # is the evidence the bounded-reprobe card needs and that no log
+        # can otherwise contain (see service_health.measure_latched_services).
+        HEALTH.measure_latched_services()
         HEALTH.print_summary()
 
     return 0

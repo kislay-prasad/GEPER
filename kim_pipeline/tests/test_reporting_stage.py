@@ -12,7 +12,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -20,18 +19,36 @@ from pipeline.reporting.stage import ReportingStage
 
 
 def _fake_qc() -> dict:
-    return {"path": "r1.fastq", "total_records": 1000, "min_read_length": 100,
-            "max_read_length": 100, "mean_read_length": 100.0, "is_gzipped": False}
+    return {
+        "path": "r1.fastq",
+        "total_records": 1000,
+        "min_read_length": 100,
+        "max_read_length": 100,
+        "mean_read_length": 100.0,
+        "is_gzipped": False,
+    }
 
 
 def _fake_align() -> dict:
-    return {"sample_id": "S01", "aligner_used": "bwa", "total_reads": 2000,
-            "mapped_reads": 1980, "pct_mapped": 99.0, "mean_depth": 25.0}
+    return {
+        "sample_id": "S01",
+        "aligner_used": "bwa",
+        "total_reads": 2000,
+        "mapped_reads": 1980,
+        "pct_mapped": 99.0,
+        "mean_depth": 25.0,
+    }
 
 
 def _fake_vc() -> dict:
-    return {"sample_id": "S01", "caller": "freebayes", "total_variants": 10,
-            "pass_variants": 8, "snvs_pass": 7, "indels_pass": 1}
+    return {
+        "sample_id": "S01",
+        "caller": "freebayes",
+        "total_variants": 10,
+        "pass_variants": 8,
+        "snvs_pass": 7,
+        "indels_pass": 1,
+    }
 
 
 def _fake_annotation() -> dict:
@@ -41,11 +58,23 @@ def _fake_annotation() -> dict:
         "annotated_count": 7,
         "unannotated_count": 1,
         "variants": [
-            {"chrom": "chr17", "pos": 43057051, "ref": "A", "alt": "T",
-             "qual": 200.0, "filter_field": "PASS", "gene_name": "BRCA1",
-             "transcript_id": "NM_007294.4", "hgvs": "NM_007294.4:g.43057051A>T",
-             "zygosity": "Heterozygous", "gt": "0/1", "dp": "25", "ad": "15,10",
-             "info": ".", "genotype": "0/1"},
+            {
+                "chrom": "chr17",
+                "pos": 43057051,
+                "ref": "A",
+                "alt": "T",
+                "qual": 200.0,
+                "filter_field": "PASS",
+                "gene_name": "BRCA1",
+                "transcript_id": "NM_007294.4",
+                "hgvs": "NM_007294.4:g.43057051A>T",
+                "zygosity": "Heterozygous",
+                "gt": "0/1",
+                "dp": "25",
+                "ad": "15,10",
+                "info": ".",
+                "genotype": "0/1",
+            },
         ],
     }
 
@@ -55,27 +84,46 @@ def _fake_annotation() -> dict:
 # badges, variant dashboard, clinical interpretation, footer, ReportLab PDF.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestIssue3ClinicalReportOverhaul:
     def _run(self, tmp_path, **overrides):
         stage = ReportingStage({"reporting": {"generate_pdf": False}})
         kwargs = dict(
-            sample_id="S01", output_dir=str(tmp_path), qc_summary=_fake_qc(),
-            alignment_stats=_fake_align(), variant_stats=_fake_vc(),
+            sample_id="S01",
+            output_dir=str(tmp_path),
+            qc_summary=_fake_qc(),
+            alignment_stats=_fake_align(),
+            variant_stats=_fake_vc(),
             annotation_result=_fake_annotation(),
-            acmg_results=[{
-                "chrom": "chr17", "pos": 43057051, "ref": "A", "alt": "T",
-                "gene": "BRCA1", "classification": "Pathogenic", "score": 8,
-                "criteria_met": ["PVS1"], "criteria_unknown": [],
-                "gnomad_af": 0.0001, "gnomad_af_popmax": 0.0002,
-            }],
+            acmg_results=[
+                {
+                    "chrom": "chr17",
+                    "pos": 43057051,
+                    "ref": "A",
+                    "alt": "T",
+                    "gene": "BRCA1",
+                    "classification": "Pathogenic",
+                    "score": 8,
+                    "criteria_met": ["PVS1"],
+                    "criteria_unknown": [],
+                    "gnomad_af": 0.0001,
+                    "gnomad_af_popmax": 0.0002,
+                }
+            ],
         )
         kwargs.update(overrides)
         return stage.run(**kwargs)
 
     def test_patient_metadata_appears_in_html(self, tmp_path):
-        result = self._run(tmp_path, patient_metadata={
-            "name": "Jane Doe", "dob": "1990-01-01", "sex": "F", "physician": "Dr. Smith",
-        })
+        result = self._run(
+            tmp_path,
+            patient_metadata={
+                "name": "Jane Doe",
+                "dob": "1990-01-01",
+                "sex": "F",
+                "physician": "Dr. Smith",
+            },
+        )
         html = Path(result.html_path).read_text()
         assert "Jane Doe" in html
         assert "1990-01-01" in html
@@ -116,7 +164,8 @@ class TestIssue3ClinicalReportOverhaul:
 
     def test_footer_contains_disclaimer_reference_genome_version_timestamp(self, tmp_path):
         result = self._run(
-            tmp_path, reference_versions={"reference_genome": "GRCh38 (test)"},
+            tmp_path,
+            reference_versions={"reference_genome": "GRCh38 (test)"},
         )
         html = Path(result.html_path).read_text()
         assert "report-footer" in html
@@ -124,10 +173,29 @@ class TestIssue3ClinicalReportOverhaul:
         assert "GEPER v8" in html
         assert "Generated:" in html
 
-    def test_signature_block_rendered(self, tmp_path):
+    def test_signature_block_not_rendered(self, tmp_path):
+        """Inverted, not deleted, from the original `assert "Reviewing
+        Pathologist" in html`: that assertion encoded a claim -- "this
+        report carries a lab sign-off block" -- that the product now
+        rules false, rather than documenting a held defect (see
+        pipeline/reporting/stage.py's own history: the signature-block/
+        signature-line div pair implied a review process kim_pipeline
+        has never had anywhere in its code -- no review_status field,
+        no approve()/override(), no export gate). A control
+        indistinguishable from no control is worse than no control,
+        because it launders the absence of one; removing the artefact
+        and inverting this assertion to a reintroduction guard is the
+        correct pair, not two separate cleanups. Guarding this (rather
+        than just deleting the test, as a purely-cosmetic static-layout
+        removal like the PDF twin in cfba75e would only need) is
+        deliberate: the artefact has demonstrated, across both the PDF
+        and HTML report surfaces, that it recurs. If this assertion
+        starts failing, that means the block came back -- do not
+        "fix" it by reverting to `in html`.
+        """
         result = self._run(tmp_path)
         html = Path(result.html_path).read_text()
-        assert "Reviewing Pathologist" in html
+        assert "Reviewing Pathologist" not in html
 
     def test_html_still_contains_backward_compatible_markers(self, tmp_path):
         """Preserve the original test's own assertions: BRCA1, S01, a table."""
@@ -150,14 +218,18 @@ class TestIssue3ClinicalReportOverhaul:
     def test_reportlab_pdf_generated_by_default(self, tmp_path):
         stage = ReportingStage({"reporting": {"generate_pdf": True}})
         result = stage.run(
-            sample_id="S01", output_dir=str(tmp_path), qc_summary=_fake_qc(),
-            alignment_stats=_fake_align(), variant_stats=_fake_vc(),
+            sample_id="S01",
+            output_dir=str(tmp_path),
+            qc_summary=_fake_qc(),
+            alignment_stats=_fake_align(),
+            variant_stats=_fake_vc(),
             annotation_result=_fake_annotation(),
             patient_metadata={"name": "Jane Doe"},
         )
         assert result.pdf_path is not None
         assert Path(result.pdf_path).exists()
         from pypdf import PdfReader
+
         text = "".join(p.extract_text() for p in PdfReader(result.pdf_path).pages)
         assert "Jane Doe" in text
         assert "BRCA1" in text
@@ -269,6 +341,7 @@ class TestReportingStage:
 # output_dir, NOT inside output_dir/<sample_id>/
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestFix1ReportingPathRegression:
     """Regression tests for: ReportingStage writes to wrong subdirectory."""
 
@@ -306,9 +379,7 @@ class TestFix1ReportingPathRegression:
         sample_id = "PATIENT42"
         self._run_stage(tmp_path, sample_id=sample_id)
         wrong_dir = tmp_path / sample_id
-        assert not wrong_dir.exists(), (
-            f"sample_id subdir should not exist: {wrong_dir}"
-        )
+        assert not wrong_dir.exists(), f"sample_id subdir should not exist: {wrong_dir}"
 
     def test_result_json_path_matches_actual_file(self, tmp_path):
         """ReportResult.json_path must point to the file that actually exists."""

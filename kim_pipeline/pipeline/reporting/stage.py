@@ -29,7 +29,7 @@ import logging
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -244,11 +244,6 @@ _HTML_TEMPLATE = """\
 {ancestry_section}
 </div>
 
-<div class="section signature-block">
-  <div class="signature-line">Reviewing Pathologist / Director, Signature</div>
-  <div class="signature-line">Date</div>
-</div>
-
 </div>
 
 <footer class="report-footer">
@@ -269,7 +264,7 @@ def _qc_status_to_html_table(qc_rows: List[Dict[str, Any]]) -> str:
         return "<p><em>No QC data available.</em></p>"
     rows_html = "".join(
         f"<tr><td>{r['label']}</td><td>{r['value']}</td>"
-        f"<td><span class=\"badge {r['status']}\">{r['status']}</span></td></tr>"
+        f'<td><span class="badge {r["status"]}">{r["status"]}</span></td></tr>'
         for r in qc_rows
     )
     return f"<table><tr><th>Metric</th><th>Value</th><th>Status</th></tr>{rows_html}</table>"
@@ -277,10 +272,7 @@ def _qc_status_to_html_table(qc_rows: List[Dict[str, Any]]) -> str:
 
 def _dict_to_html_table(data: Dict[str, Any], title: Optional[str] = None) -> str:
     """Render a flat dict as an HTML two-column table."""
-    rows = "".join(
-        f"<tr><td><strong>{k}</strong></td><td>{v}</td></tr>"
-        for k, v in data.items()
-    )
+    rows = "".join(f"<tr><td><strong>{k}</strong></td><td>{v}</td></tr>" for k, v in data.items())
     return f"<table><tr><th>Field</th><th>Value</th></tr>{rows}</table>"
 
 
@@ -302,9 +294,16 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
     _CLASS_STYLES = ACMG_CLASS_STYLES
 
     headers = [
-        "Variant", "Gene", "ACMG Class", "ACMG Score",
-        "Criteria Met", "Criteria Unknown", "ClinVar", "gnomAD",
-        "Exploratory Tier*", "Exploratory Score*",
+        "Variant",
+        "Gene",
+        "ACMG Class",
+        "ACMG Score",
+        "Criteria Met",
+        "Criteria Unknown",
+        "ClinVar",
+        "gnomAD",
+        "Exploratory Tier*",
+        "Exploratory Score*",
     ]
     header_html = "".join(f"<th>{h}</th>" for h in headers)
 
@@ -378,6 +377,7 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
     # aggregation ran), so the warning is never silently dropped.
     if disclaimer is None:
         from pipeline.evidence.aggregator import EvidenceResult
+
         disclaimer = EvidenceResult().disclaimer
 
     footnote = (
@@ -399,16 +399,20 @@ def _annotation_summary_to_html(ann_d: Dict) -> str:
     skipped.
     """
     summary = {k: v for k, v in ann_d.items() if k not in ("variants", "skipped_symbolic")}
-    table = _dict_to_html_table(summary) if summary else "<p><em>No annotation summary available.</em></p>"
+    table = (
+        _dict_to_html_table(summary)
+        if summary
+        else "<p><em>No annotation summary available.</em></p>"
+    )
 
     skipped = ann_d.get("skipped_symbolic") or []
     if not skipped:
         return table
 
     rows = "".join(
-        f"<tr><td>{s.get('chrom','')}:{s.get('pos','')}</td>"
-        f"<td>{s.get('ref','')}</td><td>{s.get('alt','')}</td>"
-        f"<td>{s.get('reason','')}</td></tr>"
+        f"<tr><td>{s.get('chrom', '')}:{s.get('pos', '')}</td>"
+        f"<td>{s.get('ref', '')}</td><td>{s.get('alt', '')}</td>"
+        f"<td>{s.get('reason', '')}</td></tr>"
         for s in skipped
     )
     skipped_table = (
@@ -419,14 +423,27 @@ def _annotation_summary_to_html(ann_d: Dict) -> str:
     return table + skipped_table
 
 
-def _variants_to_html_table(variants: List[Dict], gene_unavailable_reason: str = "Gene annotation unavailable") -> str:
+def _variants_to_html_table(
+    variants: List[Dict], gene_unavailable_reason: str = "Gene annotation unavailable"
+) -> str:
     """Render the variant list as an HTML table."""
     if not variants:
         return "<p><em>No PASS variants.</em></p>"
 
     headers = [
-        "CHROM", "POS", "REF", "ALT", "QUAL", "Gene", "Transcript",
-        "HGVS", "Consequence", "Zygosity", "GT", "DP", "AD",
+        "CHROM",
+        "POS",
+        "REF",
+        "ALT",
+        "QUAL",
+        "Gene",
+        "Transcript",
+        "HGVS",
+        "Consequence",
+        "Zygosity",
+        "GT",
+        "DP",
+        "AD",
     ]
     header_html = "".join(f"<th>{h}</th>" for h in headers)
 
@@ -434,7 +451,10 @@ def _variants_to_html_table(variants: List[Dict], gene_unavailable_reason: str =
     for v in variants:
         # FIX (Issue 7): never silently render a null gene as a bare
         # "intergenic" guess — state the actual reason it's unavailable.
-        gene_cell = v.get("gene_name") or f"<em>Gene annotation unavailable<br/>Reason: {gene_unavailable_reason}</em>"
+        gene_cell = (
+            v.get("gene_name")
+            or f"<em>Gene annotation unavailable<br/>Reason: {gene_unavailable_reason}</em>"
+        )
         cells = [
             v.get("chrom", ""),
             v.get("pos", ""),
@@ -460,7 +480,11 @@ def _pgx_to_html_section(pgx_result: Any) -> str:
     """Render PGx annotations as an HTML table section."""
     if not pgx_result:
         return "<p><em>PGx analysis not performed.</em></p>"
-    annotations = getattr(pgx_result, "annotations", None) or pgx_result.get("annotations", []) if isinstance(pgx_result, dict) else []
+    annotations = (
+        getattr(pgx_result, "annotations", None) or pgx_result.get("annotations", [])
+        if isinstance(pgx_result, dict)
+        else []
+    )
     if not annotations:
         return "<p><em>No PGx annotations available.</em></p>"
     header = "<tr><th>Gene</th><th>Diplotype</th><th>Phenotype</th><th>Activity Score</th><th>Drug Implications</th><th>Evidence</th></tr>"
@@ -480,7 +504,9 @@ def _pgx_to_html_section(pgx_result: Any) -> str:
             score = getattr(ann, "activity_score", None)
             drugs = getattr(ann, "affected_drugs", [])
             evidence = getattr(ann, "evidence_level", "")
-        drug_str = "; ".join(f"{d.get('drug','')}: {d.get('implication','')}" for d in drugs) or "None"
+        drug_str = (
+            "; ".join(f"{d.get('drug', '')}: {d.get('implication', '')}" for d in drugs) or "None"
+        )
         score_str = f"{score:.1f}" if score is not None else "N/A"
         rows += f"<tr><td>{gene}</td><td>{diplotype}</td><td>{phenotype}</td><td>{score_str}</td><td style='font-size:0.85em'>{drug_str}</td><td>{evidence}</td></tr>"
     return f"<table>{header}{rows}</table>"
@@ -516,6 +542,7 @@ def _ancestry_to_html_section(ancestry_result: Any) -> str:
 
 # ─── Stage result ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ReportResult:
     sample_id: str = ""
@@ -535,6 +562,7 @@ class ReportResult:
 
 
 # ─── Stage ────────────────────────────────────────────────────────────────────
+
 
 class ReportingStage:
     """Generate a single sample-level clinical report.
@@ -626,8 +654,16 @@ class ReportingStage:
         acmg_d = acmg_results or []
 
         # PGx and Ancestry sections
-        pgx_d = pgx_result.to_dict() if pgx_result is not None and hasattr(pgx_result, "to_dict") else {}
-        ancestry_d = ancestry_result.to_dict() if ancestry_result is not None and hasattr(ancestry_result, "to_dict") else {}
+        pgx_d = (
+            pgx_result.to_dict()
+            if pgx_result is not None and hasattr(pgx_result, "to_dict")
+            else {}
+        )
+        ancestry_d = (
+            ancestry_result.to_dict()
+            if ancestry_result is not None and hasattr(ancestry_result, "to_dict")
+            else {}
+        )
 
         # Extract variant list from annotation result
         variants: List[Dict] = []
@@ -720,14 +756,20 @@ class ReportingStage:
         pdf_path: Optional[str] = None
         if self._generate_pdf:
             pdf_path = self._try_render_pdf(
-                html_path, str(out / "report.pdf"), sample_id,
-                patient_meta=patient_meta, qc_rows=qc_rows,
-                dashboard=dashboard, interpretation=interpretation,
+                html_path,
+                str(out / "report.pdf"),
+                sample_id,
+                patient_meta=patient_meta,
+                qc_rows=qc_rows,
+                dashboard=dashboard,
+                interpretation=interpretation,
                 merged_variants=merged_variants,
                 pgx_annotations=pgx_d.get("annotations") if isinstance(pgx_d, dict) else None,
                 ancestry_summary=dashboard["ancestry_summary"],
-                reference_genome=reference_genome, pipeline_version=PIPELINE_VERSION,
-                generated_at=generated_at_str, lab_disclaimer=lab_disclaimer,
+                reference_genome=reference_genome,
+                pipeline_version=PIPELINE_VERSION,
+                generated_at=generated_at_str,
+                lab_disclaimer=lab_disclaimer,
             )
 
         result = ReportResult(
@@ -739,8 +781,11 @@ class ReportingStage:
         )
         logger.info(
             "[%s] ReportingStage complete in %.2fs: JSON=%s HTML=%s PDF=%s",
-            sample_id, result.elapsed_seconds,
-            json_path, html_path, pdf_path or "<not generated>",
+            sample_id,
+            result.elapsed_seconds,
+            json_path,
+            html_path,
+            pdf_path or "<not generated>",
         )
         return result
 
@@ -762,23 +807,29 @@ class ReportingStage:
         if nothing is available — PDF is optional, not a blocker.
         """
         try:
-            _pdf_report_mod.render_clinical_pdf(pdf_path, sample_id=sample_id, **clinical_pdf_kwargs)
+            _pdf_report_mod.render_clinical_pdf(
+                pdf_path, sample_id=sample_id, **clinical_pdf_kwargs
+            )
             logger.info("[%s] PDF written via ReportLab: %s", sample_id, pdf_path)
             return pdf_path
         except _pdf_report_mod.ReportLabUnavailableError:
             logger.info(
                 "[%s] reportlab not installed — falling back to WeasyPrint/wkhtmltopdf "
-                "(HTML-to-PDF conversion) for report.pdf.", sample_id,
+                "(HTML-to-PDF conversion) for report.pdf.",
+                sample_id,
             )
         except Exception as exc:
             logger.warning(
                 "[%s] ReportLab PDF generation failed (%s) — falling back to "
-                "WeasyPrint/wkhtmltopdf.", sample_id, exc,
+                "WeasyPrint/wkhtmltopdf.",
+                sample_id,
+                exc,
             )
 
         # Try WeasyPrint (Python library)
         try:
             from weasyprint import HTML  # type: ignore
+
             HTML(filename=html_path).write_pdf(pdf_path)
             logger.info("[%s] PDF written via WeasyPrint: %s", sample_id, pdf_path)
             return pdf_path
@@ -792,14 +843,13 @@ class ReportingStage:
             try:
                 subprocess.run(
                     ["wkhtmltopdf", html_path, pdf_path],
-                    capture_output=True, check=True,
+                    capture_output=True,
+                    check=True,
                 )
                 logger.info("[%s] PDF written via wkhtmltopdf: %s", sample_id, pdf_path)
                 return pdf_path
             except subprocess.CalledProcessError as exc:
-                logger.warning(
-                    "[%s] wkhtmltopdf failed: %s", sample_id, exc.stderr[:500]
-                )
+                logger.warning("[%s] wkhtmltopdf failed: %s", sample_id, exc.stderr[:500])
 
         logger.warning(
             "[%s] PDF generation skipped: neither ReportLab, WeasyPrint, nor "

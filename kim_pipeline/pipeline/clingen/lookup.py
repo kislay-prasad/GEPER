@@ -67,7 +67,7 @@ import csv
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, FrozenSet, List, Optional
 
 from pipeline.utils.http import _api_get
 
@@ -85,12 +85,27 @@ DOSAGE_SCORE_LABELS: Dict[int, str] = {
     40: "Dosage sensitivity unlikely",
 }
 
-# Scores counting as "sufficient evidence" for PVS1-style "is LoF an
-# established disease mechanism for this gene" reasoning — kept as an
-# explicit, named constant (not a config knob) so the threshold is
-# self-documenting and matches ClinGen's own SOP definition, not a
-# deployer-tunable heuristic.
-DOSAGE_SUFFICIENT_EVIDENCE_SCORE = 3
+# Scores that establish haploinsufficiency — i.e. that losing ONE allele
+# is sufficient to cause disease. An explicit SET, not a threshold,
+# because ClinGen's Score column is NOT one ordinal range: 0-3 are
+# evidence levels, and 30/40 are special codes (see DOSAGE_SCORE_LABELS
+# above). Any `>=` comparison silently admits both special codes, which
+# is the defect this replaced — `40 >= 3` is True, so a gene ClinGen had
+# affirmatively curated as "dosage sensitivity unlikely" was reported as
+# LoF-intolerant.
+#
+# Deliberately a whitelist of what qualifies, NOT a blacklist of {30, 40}.
+# A blacklist passes every test we could write today and silently breaks
+# the first time ClinGen adds a code — it preserves the exact shape of
+# the bug while hiding its current instance.
+#
+# 3 is the only qualifying score. 0/1/2 are "no"/"little"/"some"
+# evidence; 30 says the gene's disease model is autosomal recessive, so
+# one damaged allele is NOT sufficient; 40 says dosage sensitivity is
+# unlikely outright. Both special codes argue AGAINST haploinsufficiency,
+# which is why reading them as support was a sign error rather than
+# merely an out-of-range value.
+DOSAGE_SUFFICIENT_EVIDENCE_SCORES: FrozenSet[int] = frozenset({3})
 
 # ClinGen's real download carries a preamble before the header row (a
 # title/date/URL block for the KB export, '#'-prefixed title/date/note
@@ -133,11 +148,16 @@ class DosageSensitivityRecord:
     backend_used: str = "unknown"
 
     def is_lof_sufficient(self) -> bool:
-        """True if haploinsufficiency_score meets ClinGen's 'sufficient evidence' threshold (score 3)."""
-        return (
-            self.haploinsufficiency_score is not None
-            and self.haploinsufficiency_score >= DOSAGE_SUFFICIENT_EVIDENCE_SCORE
-        )
+        """True only if ClinGen curated this gene's haploinsufficiency score as one of
+        DOSAGE_SUFFICIENT_EVIDENCE_SCORES (currently {3}).
+
+        Membership, not a threshold: ClinGen's scale is not ordinal above
+        3, so `>=` admitted the special codes 30 and 40 as if they were
+        stronger evidence than 3. Both in fact argue against
+        haploinsufficiency. `None` (gene not curated, or no data) stays
+        False — absent, never assumed.
+        """
+        return self.haploinsufficiency_score in DOSAGE_SUFFICIENT_EVIDENCE_SCORES
 
 
 class ClinGenDosageLookup:
@@ -329,7 +349,8 @@ class ClinGenDosageLookup:
         return result
 
     def is_dosage_sufficient_for_lof(self, gene_symbol: str) -> bool:
-        """Return True if ClinGen's haploinsufficiency score meets the 'sufficient evidence' threshold (>= 3).
+        """Return True if ClinGen curated this gene's haploinsufficiency score as sufficient
+        evidence for LoF (membership of DOSAGE_SUFFICIENT_EVIDENCE_SCORES, currently {3}).
 
         Returns False if no dosage-sensitivity data is available for this
         gene (no local dataset, API unreachable/disabled, or gene not

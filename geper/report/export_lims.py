@@ -65,6 +65,13 @@ WHAT THIS DOES NOT DO
   GEPER pipeline dependency at import time beyond `pydantic` (already
   a GEPER requirement -- see `pipeline/stage_schemas.py`, the same
   validation-at-a-boundary pattern this module follows).
+- Does not carry three fields that exist in `geper_results.json` and
+  reach every other renderer -- run-level QC metrics, patient consent,
+  and per-variant `clinical_report` limitations -- by design, not
+  oversight: see `LIMS_EXPORT_MAPPING.md`'s "Documented design
+  boundaries" section for the rationale and the per-field nuances
+  (consent's regulatory caveat; why per-variant limitations is the
+  mildest of the three).
 """
 
 from __future__ import annotations

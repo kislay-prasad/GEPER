@@ -101,6 +101,7 @@ result is worse than an honest `null`.
 | `run.variant_count` | -- | `document["variant_count"]` | |
 | `run.geper_code_version` | -- | `document["code_version"]` | GEPER's own code version (`pipeline/provenance.py::get_geper_code_version`) -- for reproducibility, not a clinical field. |
 | `run.generated_at` | -- | `document["generated_at"]` | ISO 8601 UTC, verbatim -- GEPER already stores it that way. |
+| `run.caveats[]` | `run_caveats` (semicolon-joined; CSV repeats the same value in every row of a given export) | `document["caveats"]` | Statements qualifying the whole run rather than any one finding -- currently just `RESEARCH_USE_DISCLAIMER`, with more queued (see `report/json_builder.py`). `[]` for a pre-`428a77d` document with no such field, never a fabricated placeholder. Appended as the last CSV column so existing column positions are unchanged for anything already parsing this file. |
 
 ## Per-finding fields
 
@@ -188,6 +189,63 @@ cross-reference this export against those reports directly.
 | `evidence_sources[]` | `evidence_sources` (semicolon-joined) | `...["evidence_sources"]` | Which external sources actually contributed evidence to this variant's classification (e.g. `["ClinVar", "dbSNP", "ClinGen"]`). |
 | `stage_errors[]` | `stage_errors` (semicolon-joined) | `variants[i]["errors"]` | Non-fatal, per-stage failures recorded during this variant's processing (e.g. a single BLAST timeout) -- present even when `interpretation_available` is `true`, since GEPER's own "best-effort partial evidence is still a success" policy means a variant can be fully classified despite one stage failing. |
 | `interpretation_available` | `interpretation_available` | derived | `false` when `variants[i]["interpretation_result"]` is missing or itself an `{"error": ...}` record (the ACMG aggregation engine failed for this variant) -- when `false`, `classification`/`confidence`/`priority` all stay at their honest empty defaults (never fabricated), while `variant`/`gene` identity and `case_prioritization` (a genuinely independent signal -- see above) are still populated when available, so a reviewer knows *which* variant failed and *why*, not just that one did. |
+
+## Documented design boundaries: what this export doesn't carry, and why
+
+Three fields exist in `geper_results.json` and reach every other renderer
+-- the full PDF, the short PDF, and the Markdown report -- but are
+intentionally out of scope for this export today: run-level QC metrics,
+patient consent, and per-variant `clinical_report` limitations. Verified
+field-by-field against real generated output (render-and-diff, not
+schema inspection alone): none of the three appears anywhere in either
+the LIMS JSON or the flattened CSV.
+
+This follows directly from the minimalism strategy above ("Why this
+format, not HL7 FHIR"): the mapping table is a deliberate minimum
+against an unknown target spec, not an attempt at full document
+fidelity. **Out of scope by design, pending a real target LIMS spec --
+not "considered and rejected on merit."** Nothing in this project
+enumerates these three fields individually and rules them out; the
+minimalism strategy is what excludes them, not a field-by-field review.
+If a real pilot customer's LIMS spec asks for any of them, adding it is
+a mapping extension against this table (see "Extending this mapping"
+below), not a reversal of a decision.
+
+### QC metrics
+
+`geper_results.json["qc_metrics"]` (mean coverage depth, %>20x, Q30)
+reaches the full PDF's QC table and JSON verbatim, but neither
+`LIMSRun` nor `LIMSFinding` carries it -- absent from both LIMS JSON
+and CSV.
+
+### Patient consent
+
+`geper_results.json`'s `patient_consent` object (DPDP Act 2023
+clinical-reporting/research flags + timestamp) reaches the full PDF,
+the short PDF, and Markdown, and JSON carries it verbatim -- four of
+the five outputs a completed run can produce. LIMS is the sole
+omission. **One caveat that sets this boundary apart from the other
+two:** consent has a regulatory character (DPDP Act 2023), not only a
+clinical one. If a downstream LIMS ever becomes a processing
+destination for personal data in its own right, whether it must carry
+the consent record is a compliance question, not a
+mapping-completeness one -- outside what this boundary settles.
+Documented here with that caveat attached rather than closed flat.
+
+### Per-variant limitations
+
+`clinical_report["limitations"]` -- which leads with
+`RESEARCH_USE_DISCLAIMER`, the same constant `run.caveats` above
+carries -- is fully present in `geper_results.json`'s per-variant
+record, but `LIMSFinding` has no `limitations` field. **This is the
+mildest of the three, and the export is not left unqualified by its
+absence**: the research-use qualification a LIMS most needs already
+reaches it at run level, via `run.caveats` above (shipped in
+`457dd5b`; verified present in both LIMS formats). What's missing is
+the per-variant *restatement* of that qualification, plus any
+variant-specific limitation text -- not the qualification itself. Read
+"limitations missing" here as "not duplicated per finding," not as
+"this export ships unqualified."
 
 ## Regenerating this export
 

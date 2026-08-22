@@ -104,7 +104,7 @@ def _print_startup_validation(args: argparse.Namespace, cfg: Dict) -> None:
     from pipeline.utils.dependency_validator import assert_required_dependencies
 
     print("=" * 30)
-    print("GEPER Environment Validation")
+    print("Bij AI Environment Validation")
     print("=" * 30)
 
     py_ok = sys.version_info[:2] >= (3, 10)
@@ -278,7 +278,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     build_detection = warn_if_unsupported_build(str(vcf_path), sample_id=sample_id)
     if build_detection.build and build_detection.build != SUPPORTED_BUILD:
         print(
-            f"  [WARN] Detected genome build {build_detection.build}, but GEPER only "
+            f"  [WARN] Detected genome build {build_detection.build}, but Bij AI only "
             f"supports {SUPPORTED_BUILD}. ClinVar/gnomAD/PGx results will be "
             f"coordinate-mismatched. Liftover to {SUPPORTED_BUILD} first.",
             file=sys.stderr,
@@ -516,7 +516,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"Starting GEPER API server on {args.host}:{args.port} …")
+    print(f"Starting Bij AI API server on {args.host}:{args.port} …")
     uvicorn.run(
         "geper.api.app:create_app",
         host=args.host,
@@ -594,10 +594,10 @@ def cmd_test(args: argparse.Namespace) -> int:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="geper",
-        description="GEPER v8 — Genomic Evidence Pipeline with Evidence-based Risk assessment",
+        description="Bij AI v8 — Genomic Evidence Pipeline with Evidence-based Risk assessment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", action="version", version="GEPER v8.0.0")
+    parser.add_argument("--version", action="version", version="Bij AI v8.0.0")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
@@ -670,7 +670,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "ACMG/PGx/ancestry/reporting stages. 'vcf_only': stop after "
             "Variant Calling and emit filtered_variants.vcf only — use this "
             "when Kim is the FASTQ-to-VCF engine in front of another "
-            "interpretation pipeline (e.g. GEPER)."
+            "interpretation pipeline (e.g. Bij AI)."
         ),
     )
     p_analyze.add_argument(
@@ -714,7 +714,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_clf.set_defaults(func=cmd_classify)
 
     # ── serve ─────────────────────────────────────────────────────────────────
-    p_serve = sub.add_parser("serve", help="Start the GEPER FastAPI REST server")
+    p_serve = sub.add_parser("serve", help="Start the Bij AI FastAPI REST server")
     _common(p_serve)
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_serve.add_argument("--port", default=8000, type=int, help="Bind port (default: 8000)")
@@ -742,7 +742,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_env.set_defaults(func=cmd_verify_environment)
 
     # ── test ─────────────────────────────────────────────────────────────────
-    p_test = sub.add_parser("test", help="Run the GEPER test suite")
+    p_test = sub.add_parser("test", help="Run the Bij AI test suite")
     _common(p_test)
     p_test.add_argument("-k", metavar="EXPR", help="pytest -k filter expression")
     p_test.add_argument("--cov", action="store_true", help="Run with coverage report")

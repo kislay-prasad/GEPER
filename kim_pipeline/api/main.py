@@ -152,16 +152,16 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="GEPER Genomics Pipeline API",
+    title="Bij AI Genomics Pipeline API",
     description=(
-        "Production API for the GEPER clinical genomics pipeline. "
+        "Production API for the Bij AI clinical genomics pipeline. "
         "Accepts FASTQ inputs and returns annotated variant reports. "
-        "DISCLAIMER: GEPER assists qualified clinicians and pathologists; it produces a draft "
+        "DISCLAIMER: Bij AI assists qualified clinicians and pathologists; it produces a draft "
         "classification requiring qualified human review and final sign-off before any clinical "
         "use, and does not independently provide final clinical interpretation."
     ),
     version="8.0.0",
-    contact={"name": "GEPER Team"},
+    contact={"name": "Geper Team"},
     license_info={"name": "Proprietary"},
     openapi_tags=[
         {"name": "health", "description": "Liveness and readiness probes"},

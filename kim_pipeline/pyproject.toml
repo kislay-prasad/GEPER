@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "geper"
 version = "12.0.0"
-description = "GEPER — Genomic Evidence Pipeline with Evidence-based Risk assessment (v8)"
+description = "Bij AI — Genomic Evidence Pipeline with Evidence-based Risk assessment (v8)"
 readme = "docs/INSTALL.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

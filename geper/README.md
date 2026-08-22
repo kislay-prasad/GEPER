@@ -1,18 +1,18 @@
-# GEPER — Genetic Evaluation & Prediction Engine
+# Bij AI — Genetic Evaluation & Prediction Engine
 
-GEPER integrates five pretrained genomic/proteomic foundation models,
+Bij AI integrates five pretrained genomic/proteomic foundation models,
 AlphaMissense missense-pathogenicity scoring, MMSplice splice-effect
 prediction, NCBI BLAST+, ClinVar, and dbSNP into one production-ready
 pipeline that takes a VCF file and produces a unified JSON result and
 a human-readable report per variant.
 
-**Scope note:** GEPER integrates existing pretrained models as-is. No
+**Scope note:** Bij AI integrates existing pretrained models as-is. No
 model is retrained or fine-tuned — HyenaDNA, RNA-FM, and ESM-2 are used
 exactly as published by their respective authors, and Evo 2 is loaded
 via Arc Institute's own official `evo2` package rather than a custom
 re-implementation (see "1. Architecture" for why it isn't a
 `transformers.AutoModel` checkpoint like the others). DNABERT-2 was
-GEPER's original DNA-model default and has since been removed from
+Bij AI's original DNA-model default and has since been removed from
 this pipeline entirely — HyenaDNA is now the universal default (see
 "7. Routing logic" and `LICENSE_AUDIT.md`).
 AlphaMissense is integrated as an indexed lookup against DeepMind's
@@ -246,9 +246,9 @@ Options:
 | `--no-blast-cache` | Disable the persistent, cross-run on-disk BLAST result cache | cache enabled |
 | `--no-profiling` | Disable per-stage wall-clock profiling / skip `geper_benchmark.json`,`.md` | profiling enabled |
 | `--species` | Ensembl species name for reference sequence lookup | `human` |
-| `--assembly` | Genome assembly / coord system version, e.g. `GRCh38`. If omitted, GEPER auto-detects the build from the VCF header; if supplied *and* it definitely disagrees with what the header declares, the run stops with an explanatory error rather than silently fetching reference sequence from the wrong build. | Ensembl default / auto-detected |
+| `--assembly` | Genome assembly / coord system version, e.g. `GRCh38`. If omitted, Bij AI auto-detects the build from the VCF header; if supplied *and* it definitely disagrees with what the header declares, the run stops with an explanatory error rather than silently fetching reference sequence from the wrong build. | Ensembl default / auto-detected |
 | `--max-variants` | Stop after processing this many variant records. Uses the streaming parser, so the rest of the file is never even read. Intended for debugging against large VCFs. | unlimited |
-| `--no-resume` | By default, if `geper_results.json` already exists in `--output-dir`, GEPER skips variants already recorded there and continues where a previous run (e.g. before a Colab disconnect) left off. Pass this to force a from-scratch run instead. | resume enabled |
+| `--no-resume` | By default, if `geper_results.json` already exists in `--output-dir`, Bij AI skips variants already recorded there and continues where a previous run (e.g. before a Colab disconnect) left off. Pass this to force a from-scratch run instead. | resume enabled |
 | `--hpo-terms` | Comma-separated patient-observed HPO phenotype term IDs, e.g. `"HP:0001166,HP:0002011"`, evaluated against each variant's gene via the HPO gene-to-phenotype dataset for ACMG's PP4 rule (see "21. HPO" below). Malformed IDs (anything not matching `HP:#######`) are logged as a warning and skipped, never fatal. Combines with `--phenotype-file` if both are given. | — (PP4 stays `not_evaluated`) |
 | `--phenotype-file` | Path to a file with patient-observed HPO terms for PP4: either a plain text file with one `HP:#######` ID per line, or a JSON file containing a list of HPO ID strings. Alternative/addition to `--hpo-terms` for real clinical use where several observed phenotypes need to be entered at once. A missing/unreadable/malformed file is logged as a warning, never fatal. | — (PP4 stays `not_evaluated`) |
 
@@ -515,7 +515,7 @@ hg38), as a bgzip'd, tabix-indexed TSV — the same file the official
 Ensembl VEP AlphaMissense plugin queries. `models/alphamissense.py`
 integrates against that catalogue via the `tabix` CLI, matched by
 genomic coordinate (`chrom`, `pos`, `ref`, `alt`), rather than running
-a forward pass. It still participates in every piece of GEPER's model
+a forward pass. It still participates in every piece of Bij AI's model
 lifecycle (`BaseGenomicModel`, `ModelCache`, startup validation,
 `is_available()`-gated graceful degradation, the run summary) exactly
 like the five embedding models — that machinery only assumes
@@ -531,7 +531,7 @@ apt-get install tabix
 conda install -c bioconda htslib
 ```
 
-**This is the only setup step.** GEPER does **not** need, use, or
+**This is the only setup step.** Bij AI does **not** need, use, or
 import Google DeepMind's `alphamissense` PyPI/GitHub package (the one
 installed via `pip install -e .` from
 github.com/google-deepmind/alphamissense) — that package is DeepMind's
@@ -602,9 +602,9 @@ download page, the Ensembl VEP plugin docs, the EBI announcement, and
 the HuggingFace dataset mirror all instead describe the predictions as
 CC BY-NC-SA 4.0 — non-commercial research use only — and note that use
 of the GCS-hosted files is additionally subject to the Google Cloud
-Platform Terms of Service. GEPER does not know which currently governs
+Platform Terms of Service. Bij AI does not know which currently governs
 the specific file your deployment downloads; this is a genuine,
-unresolved discrepancy between DeepMind's own sources, not a GEPER
+unresolved discrepancy between DeepMind's own sources, not a Bij AI
 judgment call. **Confirm the license that applies to the exact file
 you download directly with Google DeepMind (alphamissense@google.com)
 or counsel before relying on AlphaMissense output in a commercial
@@ -635,7 +635,7 @@ extension uses a CPython-internal struct field removed in 3.12) — this
 was confirmed directly against this project's own Python 3.12
 toolchain; `pip install mmsplice` fails outright. Since `mmsplice`'s
 own `__init__.py` unconditionally imports that whole
-kipoiseq/kipoi/pyranges/cyvcf2 chain (even though GEPER never uses the
+kipoiseq/kipoi/pyranges/cyvcf2 chain (even though Bij AI never uses the
 VCF-dataloader functionality those packages exist for), this
 integration instead:
 
@@ -765,7 +765,7 @@ wiring, backward-compatibility, additive-evidence checks).
   failure) whenever no CUDA GPU is detected. `models/evo2.py` loads it
   in bfloat16, matching Arc Institute's own recommendation for the 7B
   checkpoint.
-  **Which 7B checkpoint, and why it matters:** GEPER defaults to
+  **Which 7B checkpoint, and why it matters:** Bij AI defaults to
   `evo2_7b_base` (`GEPER_EVO2_VARIANT`), not the plain `evo2_7b`
   checkpoint some older guides reference. Verified directly against
   Arc Institute's own issue tracker
@@ -803,7 +803,7 @@ wiring, backward-compatibility, additive-evidence checks).
   `No module named 'flash_attn_2_cuda'` failure some users have hit
   when forcing evo2 onto a T4. No `requirements.txt` pin changes this;
   it is a kernel-support floor, not a version-compatibility bug.
-  **What GEPER does about it:** `models/evo2.py` now checks the GPU's
+  **What Bij AI does about it:** `models/evo2.py` now checks the GPU's
   compute capability (not just "is a GPU present") before ever
   attempting to load `evo2`, and skips it automatically — with one
   clear, specific log message naming the actual GPU and the compute
@@ -817,13 +817,13 @@ wiring, backward-compatibility, additive-evidence checks).
   use a GPU with compute capability >= 8.0 — e.g. A10, A100, L4, L40S,
   or H100 (Google Colab's paid tiers offer A100/L4; most major cloud
   providers offer A10/A100/L4 on-demand). Sequences longer than
-  GEPER's configured safety ceiling (8,192 tokens by default, matching
+  Bij AI's configured safety ceiling (8,192 tokens by default, matching
   `evo2_7b_base`'s real 8K training context) are truncated with a
   warning rather than crashing, on any GPU where Evo 2 does run.
-- **HyenaDNA** is GEPER's universal default DNA model — invoked both
+- **HyenaDNA** is Bij AI's universal default DNA model — invoked both
   for long-context variants (≥10kb) and as the fallback for the
   typical short SNV/indel window, so its checkpoint should be
-  downloaded for any real run. If it isn't installed, GEPER detects
+  downloaded for any real run. If it isn't installed, Bij AI detects
   that once at startup, logs a single warning, and the variant
   proceeds without DNA-model-level embedding evidence rather than
   failing the run.
@@ -833,7 +833,7 @@ wiring, backward-compatibility, additive-evidence checks).
 
 ## 14. config.yaml
 
-Every GEPER setting can be set via an environment variable (see "10.
+Every Bij AI setting can be set via an environment variable (see "10.
 Environment variables"). `config.yaml` (copy `config.yaml.example` to
 `config.yaml`) is an optional convenience layer over that same
 mechanism — not a second, divergent configuration system: every key in
@@ -841,7 +841,7 @@ mechanism — not a second, divergent configuration system: every key in
 corresponding setting already reads. An explicit environment variable
 always takes priority over `config.yaml` if both are set. Requires
 `pip install pyyaml`; if PyYAML isn't installed, or `config.yaml` is
-missing/malformed, GEPER logs one warning and proceeds with defaults/
+missing/malformed, Bij AI logs one warning and proceeds with defaults/
 environment variables only — it never fails to start because of it.
 
 ```bash
@@ -856,11 +856,11 @@ Set `GEPER_CONFIG_FILE=/path/to/other.yaml` to use a different path.
 
 ## 15. Clinical disclaimer
 
-GEPER is a variant prioritisation system built on pretrained machine
+Bij AI is a variant prioritisation system built on pretrained machine
 learning models and public database lookups. It assists qualified
 clinicians and pathologists by producing a draft classification;
 qualified human review and final sign-off are required before any
-clinical use, and GEPER does not independently provide final clinical
+clinical use, and Bij AI does not independently provide final clinical
 interpretation. It is **not** a substitute for professional clinical
 genetic interpretation, diagnosis, or medical advice.
 
@@ -877,7 +877,7 @@ fatal error for the run.
 - **Local indexed database** (`GnomadLookup` -> `LocalIndexedGnomadProvider`):
   queries a locally-provisioned, `tabix`-indexed gnomAD "sites" VCF —
   exactly the file format Broad already publishes (bgzip + `.tbi`
-  sidecar), so GEPER never builds this index itself. Point
+  sidecar), so Bij AI never builds this index itself. Point
   `GEPER_GNOMAD_GRCH38_LOCAL_VCF` / `GEPER_GNOMAD_GRCH37_LOCAL_VCF` at
   a copy you've downloaded (e.g. via `gsutil -m cp` from gnomAD's
   public GCS bucket, or `wget` from https://gnomad.broadinstitute.org/downloads).
@@ -962,7 +962,7 @@ local-first/API-fallback shape:
   `LocalDatasetClinGenProvider`): ClinGen's own published, versioned
   Gene-Disease Validity and Dosage Sensitivity flat-file downloads
   (https://search.clinicalgenome.org/kb/gene-validity and
-  ftp.clinicalgenome.org's dosage TSV). By default GEPER **auto-fetches
+  ftp.clinicalgenome.org's dosage TSV). By default Bij AI **auto-fetches
   both files for you** (`pipeline/clingen/bootstrap.py`, same
   auto-bootstrap pattern as HPO/Orphanet below) — gated by
   `GEPER_CLINGEN_AUTO_FETCH` (default `true`), cached under
@@ -1026,7 +1026,7 @@ phenotype") and `40` ("dosage sensitivity unlikely") are *special
 codes*. On a scale like that a cut-point can only be wrong — set it to
 `30` and you admit the recessive code, set it to `40` and you admit
 both, and there is no value a deployer could correctly choose that
-`{3}` does not already express. GEPER therefore matches on an explicit
+`{3}` does not already express. Bij AI therefore matches on an explicit
 set of qualifying scores (`CONFIG.clingen.DOSAGE_SUFFICIENT_EVIDENCE_SCORES`)
 rather than comparing against a threshold.
 
@@ -1082,7 +1082,7 @@ three):
 | Python | 3.11.x or 3.12.x | Evo2's own PyPI metadata (`>=3.11,<3.13`) is the binding constraint |
 | torch | 2.7.1 | flash-attn (Evo2 only) is compiled against this exact ABI |
 | torchvision | 0.22.1 | Must match the torch pin exactly, or import fails with "undefined symbol" |
-| torchaudio | 2.7.1 | Not imported by GEPER itself, but pinned defensively — see the troubleshooting row below |
+| torchaudio | 2.7.1 | Not imported by Bij AI itself, but pinned defensively — see the troubleshooting row below |
 | transformers | ≥5.12.1,<6.0.0 | |
 | accelerate | ≥1.14.0,<2.0.0 | |
 | tensorflow | ≥2.16.0,<3.0.0 | MMSplice only |
@@ -1142,13 +1142,13 @@ the license before integrating" policy):**
 | AlphaFold DB (structures + confidence metrics) | CC-BY-4.0, explicitly for "academic and commercial use" (https://alphafold.ebi.ac.uk/faq) | Yes, with attribution |
 
 Note: this is the AlphaFold **database** license (predictions and
-confidence metrics GEPER downloads). It is distinct from the AlphaFold
-**model parameters'** license (CC-BY-NC-4.0, non-commercial) — GEPER
+confidence metrics Bij AI downloads). It is distinct from the AlphaFold
+**model parameters'** license (CC-BY-NC-4.0, non-commercial) — Bij AI
 never downloads or runs the AlphaFold model itself, only its
 already-computed, separately-licensed database entries.
 
 **Protein-position caveat (read this before trusting a residue-level
-result):** GEPER's protein translation
+result):** Bij AI's protein translation
 (`pipeline/protein_translator.py`) works from a short local flanking
 window, not a transcript-verified CDS, so it has no canonical HGVS.p
 coordinate to offer (the same limitation earlier audits of this
@@ -1245,14 +1245,14 @@ checked automatically at startup (see 20.4 below).
 ### 20.2 Provision a database
 
 Either bring a prebuilt NCBI BLAST database (e.g. an existing `nt` or
-a curated in-house reference), or let GEPER build one for you from a
+a curated in-house reference), or let Bij AI build one for you from a
 FASTA reference the first time it's needed:
 
 ```bash
 # Option A: point at an existing, prebuilt database
 export GEPER_BLAST_DATABASE=/data/blastdb/GRCh38
 
-# Option B: point at a FASTA reference; GEPER runs makeblastdb for you
+# Option B: point at a FASTA reference; Bij AI runs makeblastdb for you
 # once, then reuses the built database on every subsequent run (it is
 # never rebuilt once the .n*/.ndb files exist at GEPER_BLAST_DATABASE)
 export GEPER_BLAST_REFERENCE_FASTA=/data/reference/GRCh38.fasta
@@ -1276,7 +1276,7 @@ with no explicit `blast_mode`) resolves in this priority order:
    database is found at `GEPER_BLAST_DATABASE` (or built there from
    `GEPER_BLAST_REFERENCE_FASTA` per 20.2).
 2. **Remote NCBI BLAST** -- used when local isn't available but
-   Biopython is importable/installable (GEPER auto-installs it via pip
+   Biopython is importable/installable (Bij AI auto-installs it via pip
    the first time it's needed, same as its other optional
    dependencies).
 3. **Graceful skip** -- if neither is usable (e.g. an air-gapped
@@ -1301,7 +1301,7 @@ currently detected at the configured path:
 ```
 
 Missing binaries/database are reported as `WARN` (with a `-> Fix`
-hint), never `FAIL` -- GEPER falls back to remote BLAST, or skips
+hint), never `FAIL` -- Bij AI falls back to remote BLAST, or skips
 BLAST gracefully, rather than refusing to start.
 
 ### 20.5 Caching and performance
@@ -1349,7 +1349,7 @@ Gene-phenotype evidence from the Human Phenotype Ontology
 never-blocks-the-pipeline philosophy as every other evidence source
 here.
 
-**Bootstrap:** by default GEPER auto-fetches HPO's official
+**Bootstrap:** by default Bij AI auto-fetches HPO's official
 `genes_to_phenotype.txt` annotation file
 (`purl.obolibrary.org/obo/hp/hpoa/genes_to_phenotype.txt`) the first
 time it's needed — gated by `GEPER_HPO_AUTO_FETCH` (default `true`),
@@ -1387,7 +1387,7 @@ Gene-disorder associations from Orphanet (https://www.orphadata.com),
 implemented in `pipeline/orphanet/`. Same graceful-degradation
 philosophy as every other evidence source here.
 
-**Bootstrap:** by default GEPER auto-fetches Orphanet's
+**Bootstrap:** by default Bij AI auto-fetches Orphanet's
 `en_product6.xml` gene-disorder association file (CC BY 4.0,
 `orphadata.com/data/xml/en_product6.xml`) — gated by
 `GEPER_ORPHANET_AUTO_FETCH` (default `true`), cached under
@@ -1460,7 +1460,7 @@ the ClinGen SVI Working Group's PS3/BS3 recommendation (Brnich et al.
   own explicit override, e.g. an evidence code literally labeled
   `PS3_Moderate`, over the default `strong`) and traceable to that
   panel's published specification. CC0-licensed, same as every other
-  ClinGen curated resource GEPER already integrates. **Verified live**
+  ClinGen curated resource Bij AI already integrates. **Verified live**
   during development — unlike `ClinGenConfig.API_ENDPOINT` (see "17.
   ClinGen"), this environment *can* reach `erepo.clinicalgenome.org`:
   a real `GET .../classifications?gene=BRCA1` request returned a real
@@ -1472,7 +1472,7 @@ the ClinGen SVI Working Group's PS3/BS3 recommendation (Brnich et al.
   `api.mavedb.org`), consulted only for a variant ERepo has no
   curation for: a raw multiplexed-assay score, bucketed into
   functional/intermediate/non-functional using that score set's own
-  investigator-provided `scoreCalibrations` thresholds — GEPER never
+  investigator-provided `scoreCalibrations` thresholds — Bij AI never
   invents a threshold here. Verified live: every BRCA1/TP53 score set
   checked during development was `CC0` or `CC BY 4.0` licensed (both
   commercial-use-compatible — MaveDB relicensed its whole corpus from
@@ -1490,7 +1490,7 @@ already completed the SVI framework's four steps); a MaveDB call is
 when the score set's own calibration is flagged research-use-only
 (`scoreCalibrations[].researchUseOnly`) — one step below an
 already-adjudicated VCEP call in the SVI framework's validation
-hierarchy, since GEPER performed the bucketing itself rather than
+hierarchy, since Bij AI performed the bucketing itself rather than
 consuming an expert panel's own conclusion.
 
 **Performance:** both sources are queried once per *gene*, not per
@@ -1521,11 +1521,11 @@ passing as of this integration).
 
 A minimal, filesystem-only mechanism (`geper/review/`) that lets a
 clinician move a completed run from **DRAFT** to **REVIEWED**, and
-layer a classification override on top of GEPER's own ACMG result —
+layer a classification override on top of Bij AI's own ACMG result —
 without a database, an IP-address/hash audit trail, or an erasure/
 withdrawal workflow. Those are real DPDP Act 2023 obligations, but
 belong to a much larger patient-intake/storage-lifecycle system that
-doesn't exist in GEPER yet; this module deliberately does not bolt
+doesn't exist in Bij AI yet; this module deliberately does not bolt
 them on speculatively (see `geper/review/signoff.py`'s module
 docstring, and `report/summary.py::_parse_consent`'s docstring for the
 same discipline applied to consent metadata — see
@@ -1533,7 +1533,7 @@ same discipline applied to consent metadata — see
 
 **Design note — reuses the existing draft/reviewed mechanism, doesn't
 invent a second one.** "DRAFT" vs "REVIEWED" is not a file-location
-choice anywhere in GEPER — every clinical PDF (`geper_report_full.pdf`,
+choice anywhere in Bij AI — every clinical PDF (`geper_report_full.pdf`,
 `geper_report_short.pdf`) is stamped with a mandatory ICMR-style AI-
 disclosure footer on every page, decided purely by whether the
 `patient_meta` passed to `generate_pdf`/`generate_short_pdf` has a
@@ -1566,7 +1566,7 @@ python review/cli.py approve \
   --hospital "AIIMS Delhi"
 
 # Override: layers a clinician's classification on top of one variant's
-# GEPER-derived result -- never replaces it -- and regenerates all
+# Bij AI-derived result -- never replaces it -- and regenerates all
 # three report formats.
 python review/cli.py override \
   --output-dir ./geper_output \
@@ -1581,7 +1581,7 @@ python review/cli.py list-pending --search-root ./geper_output_root --all
 ```
 
 Both `--output-dir` arguments above must already contain a
-`geper_results.json` from a completed GEPER run
+`geper_results.json` from a completed Bij AI run
 (`python main.py --vcf ...`) — `approve`/`override` error clearly,
 without doing anything, if it's missing.
 
@@ -1602,7 +1602,7 @@ without doing anything, if it's missing.
    clinician identity, `approved_at` (ISO 8601), and one
    `{variant_id, gene, final_classification, confidence}` entry per
    variant (`final_classification` reflects an active clinician
-   override when one exists — see below — otherwise GEPER's own call).
+   override when one exists — see below — otherwise Bij AI's own call).
 6. Appends one JSON-Lines record to `geper_signoff_audit.log`.
 
 ### What `override` does
@@ -1610,7 +1610,7 @@ without doing anything, if it's missing.
 1. Parses `--variant` (`chrom:pos:ref>alt`) and finds the matching
    variant in `geper_results.json` by position **and** allele — never
    position alone.
-2. **Never overwrites GEPER's own classification.** Appends
+2. **Never overwrites Bij AI's own classification.** Appends
    `{variant_id, original_classification, new_classification, reason,
    clinician_id, timestamp}` to that variant's `"overrides"` list (full
    history, most recent last), and sets
@@ -1655,7 +1655,7 @@ exit codes.
 
 ## 26. External service health checks (startup probe, retry, and the offline latch)
 
-Before the first variant is processed, GEPER probes every external
+Before the first variant is processed, Bij AI probes every external
 service it depends on (Ensembl, ClinVar/dbSNP, ClinGen, MaveDB,
 IndiGenomes) once each, in parallel, and prints a status table. This
 is separate from — and sits on top of — the retry logic each client

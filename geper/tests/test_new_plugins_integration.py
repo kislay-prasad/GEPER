@@ -23,6 +23,28 @@ from pipeline.models.enformer_plugin import EnformerPlugin
 from pipeline.models.manager import ModelManager
 from pipeline.models.pending_plugins import build_default_registry
 
+try:
+    import enformer_pytorch  # noqa: F401
+
+    _HAS_ENFORMER_PYTORCH = True
+except ImportError:
+    _HAS_ENFORMER_PYTORCH = False
+
+try:
+    import borzoi_pytorch  # noqa: F401
+
+    _HAS_BORZOI_PYTORCH = True
+except ImportError:
+    _HAS_BORZOI_PYTORCH = False
+
+_HAS_ENFORMER_AND_BORZOI_PYTORCH = _HAS_ENFORMER_PYTORCH and _HAS_BORZOI_PYTORCH
+_ENFORMER_AND_BORZOI_SKIP_REASON = (
+    "enformer-pytorch and/or borzoi-pytorch is not installed in this "
+    "environment -- both are optional, config-gated integrations "
+    "(CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI; see requirements.txt's "
+    "own header comment for the rationale), not a broken environment."
+)
+
 
 class _FakeEnformerModel:
     def __init__(self, ref_value, alt_value):
@@ -86,10 +108,16 @@ class TestBothPluginsDisabledByDefault(unittest.TestCase):
             )
 
 
+@unittest.skipUnless(_HAS_ENFORMER_AND_BORZOI_PYTORCH, _ENFORMER_AND_BORZOI_SKIP_REASON)
 class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
     """The realistic "both plugins turned on" scenario: verifies they
     don't interfere with each other when managed by the same
-    ModelManager instance."""
+    ModelManager instance.
+
+    Every test here needs BOTH real packages installed: they assert on
+    `available_keys()` actually containing both, or mock.patch both
+    packages' real `from_pretrained` boundary -- so the class-level
+    skip is scoped to "both present", not "either present"."""
 
     def setUp(self):
         self.registry = build_default_registry()

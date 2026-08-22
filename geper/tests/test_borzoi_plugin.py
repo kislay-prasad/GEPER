@@ -23,6 +23,20 @@ from pipeline.models.manager import ModelManager, PluginUnavailableError
 from pipeline.models.registry import ModelRegistry
 from utils.exceptions import ModelLoadError
 
+try:
+    import borzoi_pytorch  # noqa: F401
+
+    _HAS_BORZOI_PYTORCH = True
+except ImportError:
+    _HAS_BORZOI_PYTORCH = False
+
+_BORZOI_SKIP_REASON = (
+    "borzoi-pytorch is not installed in this environment -- Borzoi is an "
+    "optional, config-gated integration (CONFIG.splicing.ENABLE_BORZOI; see "
+    "requirements.txt's own header comment for the rationale), not a broken "
+    "environment."
+)
+
 
 class _FakeBorzoiModel:
     """Mimics borzoi_pytorch's Borzoi.forward interface: takes a
@@ -144,6 +158,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.instance._weight_cache = mock.Mock()
         self.instance._weight_cache.ensure_dir.return_value = "/tmp/fake_borzoi_cache"
 
+    @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeBorzoiModel(value=1.0)
         with (
@@ -156,6 +171,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.assertEqual(fake_model.to_calls, ["cpu"])
         self.assertTrue(fake_model.eval_called)
 
+    @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_network_failure_is_sanitized(self):
         with (
             mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
@@ -183,6 +199,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.assertIn("johahi", str(ctx.exception))
         self.assertIn("calico/borzoi-original-weights", str(ctx.exception))
 
+    @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_license_guard_allows_johahi_repo(self):
         fake_model = _FakeBorzoiModel(value=1.0)
         with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
@@ -201,6 +218,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
                 self.instance.load()
 
 
+@unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
 class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
     """
     Regression test for the upstream compatibility bug confirmed live

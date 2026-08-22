@@ -30,6 +30,33 @@ from pipeline.models.pending_plugins import (
     build_default_registry,
 )
 
+try:
+    import enformer_pytorch  # noqa: F401
+
+    _HAS_ENFORMER_PYTORCH = True
+except ImportError:
+    _HAS_ENFORMER_PYTORCH = False
+
+try:
+    import borzoi_pytorch  # noqa: F401
+
+    _HAS_BORZOI_PYTORCH = True
+except ImportError:
+    _HAS_BORZOI_PYTORCH = False
+
+_ENFORMER_SKIP_REASON = (
+    "enformer-pytorch is not installed in this environment -- Enformer is an "
+    "optional, config-gated integration (CONFIG.splicing.ENABLE_ENFORMER; see "
+    "requirements.txt's own header comment for the rationale), not a broken "
+    "environment."
+)
+_ENFORMER_AND_BORZOI_SKIP_REASON = (
+    "enformer-pytorch and/or borzoi-pytorch is not installed in this "
+    "environment -- both are optional, config-gated integrations "
+    "(CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI; see requirements.txt's "
+    "own header comment for the rationale), not a broken environment."
+)
+
 
 class _FakeSpliceFormerModel:
     def __init__(self, ref_value, alt_value, scored_len=4):
@@ -163,6 +190,7 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
                 ["borzoi", "enformer", "splicebert", "spliceformer"],
             )
 
+    @unittest.skipUnless(_HAS_ENFORMER_PYTORCH and _HAS_BORZOI_PYTORCH, _ENFORMER_AND_BORZOI_SKIP_REASON)
     def test_all_three_plugins_load_and_predict_independently(self):
         fake_enformer = mock.Mock()
         fake_enformer.to.return_value = fake_enformer
@@ -214,6 +242,7 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
         self.assertEqual(spliceformer_result["meta"]["model"], "spliceformer")
         self.assertEqual(sorted(self.manager.loaded_keys()), ["borzoi", "enformer", "spliceformer"])
 
+    @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
     def test_spliceformer_failing_to_load_does_not_affect_enformer_or_borzoi(self):
         class _FakeEnformerModel:
             def to(self, device):

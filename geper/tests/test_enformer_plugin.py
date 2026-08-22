@@ -25,6 +25,20 @@ from pipeline.models.manager import ModelManager, PluginUnavailableError
 from pipeline.models.registry import ModelRegistry
 from utils.exceptions import ModelLoadError
 
+try:
+    import enformer_pytorch  # noqa: F401
+
+    _HAS_ENFORMER_PYTORCH = True
+except ImportError:
+    _HAS_ENFORMER_PYTORCH = False
+
+_ENFORMER_SKIP_REASON = (
+    "enformer-pytorch is not installed in this environment -- Enformer is an "
+    "optional, config-gated integration (CONFIG.splicing.ENABLE_ENFORMER; see "
+    "requirements.txt's own header comment for the rationale), not a broken "
+    "environment."
+)
+
 
 class _FakeEnformerModel:
     """Mimics enformer_pytorch's model interface just enough to drive
@@ -93,7 +107,13 @@ class TestPrepareSequence(unittest.TestCase):
         self.assertEqual(prepared, "ACGT")
 
 
+@unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
 class TestEnformerInference(unittest.TestCase):
+    """`_infer_impl` itself calls `enformer_pytorch.str_to_one_hot` (see
+    enformer_plugin.py) even though `self.model` is faked here -- so
+    every test in this class needs the real package regardless of
+    mocking, not just the ones that mock.patch it directly."""
+
     def _make_instance(self, fake_model):
         instance = EnformerPlugin.__new__(EnformerPlugin)
         instance.logger = mock.Mock()
@@ -134,6 +154,7 @@ class TestEnformerInference(unittest.TestCase):
         self.assertIn("device", result["meta"])
 
 
+@unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
 class TestEnformerDeviceMismatchFix(unittest.TestCase):
     """Regression coverage for the device-mismatch bug: the plugin
     must one-hot encode ref/alt sequences itself and move the
@@ -180,6 +201,7 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.instance._weight_cache = mock.Mock()
         self.instance._weight_cache.ensure_dir.return_value = "/tmp/fake_enformer_cache"
 
+    @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeEnformerModel(ref_value=0.0, alt_value=1.0)
         with (
@@ -192,6 +214,7 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.assertEqual(fake_model.to_calls, ["cpu"])
         self.assertTrue(fake_model.eval_called)
 
+    @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
     def test_network_failure_is_sanitized(self):
         with (
             mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
@@ -211,6 +234,7 @@ class TestEnformerLoadImpl(unittest.TestCase):
                 self.instance._load_impl()
         self.assertIn("enformer-pytorch", str(ctx.exception))
 
+    @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):
         # Exercise through PluginModel.load() (not _load_impl directly)
         # to confirm the base class's own wrapping still applies.

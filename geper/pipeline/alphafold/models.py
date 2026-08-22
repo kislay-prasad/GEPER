@@ -9,7 +9,7 @@ no network/IO dependency (the actual structure-file download/parsing
 lives in `pipeline/alphafold/provider.py`).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 
@@ -63,6 +63,15 @@ class AlphaFoldAnnotation:
     structure_fetched: bool = False
     error: Optional[str] = None
 
+    # Why no residue-level pLDDT is being reported, when none is. Set by
+    # `provider.py::_build_annotation` from the mapping gate's verdict.
+    # Distinct from `error`: `error` means the AlphaFold lookup itself
+    # failed, while this means the lookup succeeded and the model simply
+    # cannot speak about this residue. Both leave
+    # `affected_residue_plddt` None, so without this field the two are
+    # one observable.
+    mapping_unavailable_reason: Optional[str] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "accession": self.accession,
@@ -81,6 +90,7 @@ class AlphaFoldAnnotation:
             "protein_position_basis": self.protein_position_basis,
             "structure_fetched": self.structure_fetched,
             "error": self.error,
+            "mapping_unavailable_reason": self.mapping_unavailable_reason,
         }
 
     @staticmethod

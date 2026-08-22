@@ -43,6 +43,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from config import CONFIG
+from pipeline.alphafold.mapping_gate import check_alphafold_mapping_gate
 from pipeline.alphafold.models import AlphaFoldAnnotation, confidence_band
 from pipeline.alphafold.utils import normalize_accession, parse_pdb_plddt
 from utils.exceptions import ExternalAPIError
@@ -234,7 +235,36 @@ def _build_annotation(
 ) -> AlphaFoldAnnotation:
     mean_plddt = (sum(residue_plddt.values()) / len(residue_plddt)) if residue_plddt else None
 
-    affected_plddt = residue_plddt.get(protein_position) if (protein_position is not None and residue_plddt) else None
+    # The residue-level claim is the only part of this annotation that
+    # asserts something about the VARIANT rather than about the protein,
+    # and it is the part a wrong answer is invisible in -- a pLDDT
+    # belonging to another residue reads downstream exactly like a
+    # correct one. It therefore goes through the mapping gate, which is
+    # the single place that decision is made; see
+    # `mapping_gate.py::check_alphafold_mapping_gate`, including its
+    # list of what it deliberately does not check.
+    #
+    # This entry's own two coordinate claims -- the UniProt span from
+    # the summary API and the residue numbers parsed out of the
+    # structure file -- are independent, and `query()` picks
+    # `entries[0]` from a response that may hold several fragments. The
+    # gate is what reconciles them; before it, an entry declaring it
+    # covered residues 1201-1400 would still report a "very_high" band
+    # for residue 175.
+    uniprot_start = summary.get("uniprotStart")
+    uniprot_end = summary.get("uniprotEnd")
+    mapping_ok, mapping_reason = check_alphafold_mapping_gate(
+        protein_position=protein_position,
+        uniprot_start=uniprot_start,
+        uniprot_end=uniprot_end,
+        residue_plddt=residue_plddt,
+    )
+    # No fallback branch by design: there is no approximate residue to
+    # fall back TO. If the gate says no, the residue-level confidence is
+    # withdrawn and the reason recorded; the entry-level facts below
+    # (model URL, version, mean pLDDT) are unaffected because they are
+    # true of the protein regardless of which residue was asked about.
+    affected_plddt = residue_plddt[protein_position] if mapping_ok else None
 
     thresholds = dict(
         very_high=CONFIG.alphafold.PLDDT_VERY_HIGH_THRESHOLD,
@@ -249,8 +279,8 @@ def _build_annotation(
         model_version=str(summary.get("latestVersion")) if summary.get("latestVersion") is not None else None,
         pdb_url=summary.get("pdbUrl"),
         cif_url=summary.get("cifUrl"),
-        uniprot_start=summary.get("uniprotStart"),
-        uniprot_end=summary.get("uniprotEnd"),
+        uniprot_start=uniprot_start,
+        uniprot_end=uniprot_end,
         mean_plddt=mean_plddt,
         mean_plddt_band=confidence_band(mean_plddt, **thresholds),
         protein_position=protein_position,
@@ -258,6 +288,7 @@ def _build_annotation(
         affected_residue_band=confidence_band(affected_plddt, **thresholds),
         protein_position_basis="transcript_cds" if protein_position is not None else None,
         structure_fetched=structure_fetched,
+        mapping_unavailable_reason=mapping_reason,
     )
 
 

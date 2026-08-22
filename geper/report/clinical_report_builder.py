@@ -204,7 +204,6 @@ _REFERENCES = {
     "ClinGen": "ClinGen -- https://clinicalgenome.org/",
     "UniProt": "UniProt -- https://www.uniprot.org/",
     "InterPro": "InterPro/Pfam -- https://www.ebi.ac.uk/interpro/",
-    "AlphaFold DB": "AlphaFold Protein Structure Database -- https://alphafold.ebi.ac.uk/",
     "AlphaMissense": "AlphaMissense -- Cheng et al. 2023, Science (DeepMind/AlphaMissense)",
     "MMSplice": "MMSplice -- Cheng et al. 2019, Genome Biology",
     "BLAST": "NCBI BLAST -- https://blast.ncbi.nlm.nih.gov/",
@@ -233,6 +232,26 @@ _REFERENCES = {
 _ORPHANET_REFERENCE = (
     "Orphanet/Orphadata -- https://www.orphadata.com/ "
     "(Orphadata Products: Data and services from Orphanet, (c) INSERM 1999)"
+)
+
+# AlphaFold DB (CC-BY-4.0) is integrated into GEPER's pipeline
+# (`pipeline/alphafold/` — summary API queries, per-residue pLDDT confidence,
+# structure-file downloads) and surfaced in variant reports (confidence bands,
+# model version, 3D-viewer URLs when available). Like Orphanet, AlphaFold
+# doesn't contribute to ACMG criterion evidence, so it never appears in the
+# `evidence_sources` field that gates conditional citation in `_REFERENCES`
+# above -- it would be present-but-never-cited without unconditional
+# attribution. CC-BY-4.0 requires citation wherever the licensed material
+# is presented to end users as part of the product, not only in runs where
+# it happens to be consulted. Citation text follows AlphaFold's own
+# recommended attribution (https://alphafold.ebi.ac.uk/assets/License-Disclaimer.pdf,
+# verified live 2026-08-22): includes the methods paper citation, identifies
+# the source as DeepMind Technologies Limited / AlphaFold DB, and links the
+# CC-BY-4.0 license.
+_ALPHAFOLD_REFERENCE = (
+    "AlphaFold Protein Structure Database -- Jumper et al. 2021, Nature. "
+    "Structure data (c) 2021 DeepMind Technologies Limited, available under CC-BY-4.0 "
+    "(https://alphafold.ebi.ac.uk/, https://creativecommons.org/licenses/by/4.0/)"
 )
 
 _TOOL_LIMITATIONS = (
@@ -933,13 +952,13 @@ def _limitations(ir: Dict[str, Any]) -> List[str]:
 def _references(ir: Dict[str, Any]) -> List[str]:
     sources = ir.get("evidence_sources", [])
     references = [_REFERENCES[s] for s in sources if s in _REFERENCES]
-    # Orphanet is cited unconditionally, not gated on `evidence_sources`
-    # -- see `_ORPHANET_REFERENCE`'s own comment for why. Appended once,
-    # after the conditional entries, rather than merged into
-    # `_REFERENCES` itself, so that dict's docstring-documented
-    # "only what actually contributed to this variant" contract stays
-    # true for every other entry in it.
+    # Orphanet and AlphaFold are cited unconditionally, not gated on `evidence_sources`
+    # -- see their respective _*_REFERENCE comments for why. Appended after
+    # the conditional entries, rather than merged into `_REFERENCES` itself,
+    # so that dict's docstring-documented "only what actually contributed to
+    # this variant" contract stays true for every other entry in it.
     references.append(_ORPHANET_REFERENCE)
+    references.append(_ALPHAFOLD_REFERENCE)
     return references
 
 

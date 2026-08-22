@@ -1,4 +1,4 @@
-# GEPER — Docker
+# Bij AI — Docker
 
 Containerizes the whole combined pipeline described in
 [README_INTEGRATION.md](README_INTEGRATION.md): Kim (FASTQ → VCF),

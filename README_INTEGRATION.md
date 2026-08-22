@@ -1,4 +1,4 @@
-# GEPER Integrated Pipeline — Kim (FASTQ Engine) + Current Bij AI (VCF Interpretation Engine)
+# Bij AI Integrated Pipeline — Kim (FASTQ Engine) + Current Bij AI (VCF Interpretation Engine)
 
 This is **not a repository merge**. It is a bridge between two independent,
 unmodified-in-purpose projects:

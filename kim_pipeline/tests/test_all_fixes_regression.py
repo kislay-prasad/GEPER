@@ -409,7 +409,7 @@ class TestFix2PS1:
 class TestFix3StrandAwareSplice:
     """classify_region returns correct donor/acceptor for ± strand genes."""
 
-    def _make_analyser(self) -> "RnaTranscriptAnalyser":
+    def _make_analyser(self):
         from pipeline.rna.transcript import RnaTranscriptAnalyser
 
         ra = RnaTranscriptAnalyser.__new__(RnaTranscriptAnalyser)

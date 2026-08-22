@@ -106,12 +106,13 @@ ignore_missing_imports = true
 # commit from making unreviewed edits to reviewed files -- NOT because
 # they are right. Worth a pass of their own.
 "pipeline/pgx/stage.py" = ["E402", "F841"]
-# *** F821 (undefined name `RnaTranscriptAnalyser`) IS NOT A STYLE NIT AND
-# SHOULD NOT BE READ AS ONE. *** It is a forward reference in a return
-# annotation that resolves to nothing importable. It is inert today only
-# because string annotations are not evaluated at runtime; anything that
-# evaluates annotations (typing.get_type_hints, a runtime validator, or
-# `from __future__ import annotations` semantics changing) would raise.
-# Pre-existing at HEAD and carded separately -- ignored to land a reviewed
-# commit, NOT resolved.
-"tests/test_all_fixes_regression.py" = ["E402", "F841", "F821"]
+# F821 USED TO BE IGNORED HERE AND IS NOT ANY MORE, BECAUSE IT WAS FIXED
+# RATHER THAN TOLERATED. The undefined name was `RnaTranscriptAnalyser` in
+# a return annotation on `_make_analyser`. The class is real
+# (pipeline/rna/transcript.py:67) but is imported function-locally, so the
+# annotation resolved against module scope where the name does not exist.
+# The same helper is defined three times in that file and only one copy
+# carried the annotation -- a stray, not a typing decision -- so it was
+# removed. An ignore left in place for a resolved error is a false
+# statement in the config: it reads as protection and provides none.
+"tests/test_all_fixes_regression.py" = ["E402", "F841"]

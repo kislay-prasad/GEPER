@@ -1,9 +1,9 @@
 # GEPER Clinical-Validation-Readiness Rubric
 
-**Version:** 1.11.0
+**Version:** 1.12.0
 **Status:** RATIFIED. v1.0.0 (as v1.0.0-rc1) was approved by the human as-is
 and committed at `89bf125`; this document is that baseline plus the v1.1.0
-through v1.11.0 amendments below. **v1.10.0 is the human's own ruling on
+through v1.12.0 amendments below. **v1.10.0 is the human's own ruling on
 two carded questions (D1 dual-engine; 2d->8a) and is cleared to commit once
 both land -- everything else remains proposed, uncommitted, awaiting first
 read.** See Amendment history for why each version is its own version
@@ -452,6 +452,50 @@ must never be cited as one.
   Committed, not pushed, per this dispatch's explicit authorization for
   this one edit -- the standing rule (god commits and pushes) resumes
   after.
+- **v1.12.0** (this revision, dated 2026-08-23): two methodology
+  statements, both the human's own ruling that reasoning from the v1.9.0
+  and v1.11.0 amendments generalises past the row it was written for.
+  Neither corrects an existing score; both are new subsections under
+  section 1, siblings to "Scope constraints on specific claim types" and
+  "Configuration-knob legitimacy."
+  **(1) Scoring-axis stability.** 6c's split-declined reasoning --
+  splitting a row on which fact currently happens to be observable, not
+  on a structural difference in what is being measured, would make the
+  row's own shape track the observer rather than the property -- is
+  ruled load-bearing beyond 6c, stated as: *"A row whose scoring axis
+  moves when the evidence moves would be measuring the observer."* 6c
+  stays the worked example; D1's 1a/1e split and 3d's split are named as
+  the contrast case (legitimate splits, because each names a structurally
+  distinct question, not an evidence-source snapshot).
+  **(2) Unanchored temporal claims, prohibited as a form.** v1.11.0's own
+  text called the "as of today" failure "a recurring failure mode... not
+  a one-off"; this decides what follows from that. **Chose prohibition
+  over continued detection.** The evidence: this class was diagnosed by
+  name in v1.1.0 (2c) and the document produced two further instances
+  after the diagnosis (6a/6b in v1.9.0, 6c in v1.11.0) -- naming the
+  class did not defend against it, which is the same conclusion reached
+  independently the same night on two other parts of this floor
+  (`VALIDATION_STUDY_DESIGN.md`'s EJ-13 pooled-metric form-prohibition;
+  the board's own "naming a class does not defend against it" finding,
+  which cites this rubric's v1.1.0 diagnosis as one of its two proof
+  cases). **The cost, stated rather than hidden:** an anchored claim
+  reads harder at a glance and does not stop failing -- it fails as a
+  stale *pointer* instead of a stale *claim*, which is accepted as
+  strictly better because a stale pointer is self-diagnosing (a reader
+  can check the cited commit) where a stale unanchored claim gives no
+  signal at all. **Why this document specifically has no legitimate
+  claims the rule would wrongly burden:** every Satisfier/Falsifier here
+  is already a claim about current codebase state by Tier A/B/C's own
+  definitions -- there is no timeless-sentence class here for the rule to
+  tax for nothing. Practical form: any temporal qualifier about codebase
+  state needs a commit/tag/CI-run/date anchor in the same or adjacent
+  sentence, or the claim reads as Tier D regardless of phrasing.
+  **Not applied retroactively as a sweep** -- existing rows are not
+  combed for unanchored language under this version; the rule binds any
+  row touched from here forward. A retroactive sweep, if wanted, is
+  separate work.
+  Committed, not pushed, same one-off authorization as v1.11.0; the
+  standing rule resumes after.
 
 ---
 
@@ -697,6 +741,128 @@ and any future config-knob sweep) is legitimate. Not written as a new
 scored sub-criterion with its own weight -- a methodology this rubric's
 existing and future criteria must apply, the same shape as the "Scope
 constraints" subsection above, not new scope of its own.
+
+### Scoring-axis stability: a row may not be restructured around where evidence currently happens to come from
+
+**The rule, the human's own formulation, carried verbatim because nothing
+sharper was found while writing this:** *"A row whose scoring axis moves
+when the evidence moves would be measuring the observer."* A
+sub-criterion's structure -- whether it is one row or several, and what
+each row's satisfier/falsifier actually asks -- must be fixed by the
+**property being measured**, never by **which specific fact currently
+happens to be checkable**. If a proposed split, merge, or re-scoping would
+need undoing the moment the observable evidence moved back, the
+restructuring was never about the property; it was a snapshot of this
+week's evidence wearing the shape of a permanent criterion.
+
+**Worked example (6c, v1.11.0):** 6c's property is singular -- is
+package auto-install sandboxed, or made safe against interruption? Before
+`3b0ede6`, both the test-run and the pipeline-run path demonstrated the
+falsifier being met; after `3b0ede6`, only the pipeline-run path does. The
+UNMET score never moved (the satisfier -- sandboxing or atomicity -- was
+never reached either way), but *which run-type currently supplies the
+observable evidence* shifted. Splitting 6c into "test-run" and
+"pipeline-run" halves at that moment would have created two rows whose
+existence was justified by which fact happened to be checkable that week,
+not by two independently meaningful properties a deployer or reviewer
+would actually want scored apart. Declined for exactly this reason -- see
+6c's own row and the v1.11.0 amendment entry for the full reasoning; this
+subsection is where that reasoning is generalised, so a future editor
+proposing a similar split does not have to re-derive it from one row's
+history.
+
+**The test for a future editor, stated so it is applicable without
+re-reading 6c:** before splitting or restructuring any row on the grounds
+that "right now, the evidence for this only covers case X, not case Y,"
+ask whether the split survives the evidence for X and Y trading places
+again. If it would need undoing, the split is keyed to the observer's
+current view, not to the property, and the correct move is a **dated
+scope note on the existing row** (as 6c already carries, and as the
+"Scope constraints" subsection above already establishes for claims
+broader than their evidence) -- not a new row.
+
+**What this is not:** a rule against ever splitting a row. D1's 1a/1e
+split (rank-order integrity carved out as its own falsifier, v1.7.0) and
+3d's split (mandatory-review enforcement named apart from label
+consistency, v1.4.0) are both legitimate splits under this test, because
+each names a **structurally distinct question** a single satisfier could
+not ask at once -- neither depends on which fact happened to be
+observable when it was written, and neither would need undoing if the
+evidence available today changed tomorrow.
+
+**Applies to:** any future proposal to split, merge, or re-scope a
+sub-criterion. Not a new scored sub-criterion with its own weight -- a
+methodology this rubric's existing and future criteria must apply, same
+standing as the two subsections above.
+
+### Unanchored temporal claims are a prohibited form, not a monitored one
+
+**Decision: prohibited, not merely watched for.** A Satisfier or Falsifier
+cell may not assert a bare, unanchored temporal claim about codebase
+state -- "currently", "as of today", "now", "newly surfaced", "already" --
+unless the same sentence (or the one immediately adjacent) names the
+specific commit, tag, or dated CI run the reader can check it against.
+An unanchored temporal claim is not a phrasing preference: it is a claim
+with a hidden, moving denominator (the instant it was written), and unlike
+a stale citation it carries **no signal in its own text** that a later
+reader should doubt it. It reads exactly the same the day it goes stale as
+the day it was true.
+
+**Why prohibition, not detection, and why this document is the evidence
+for that choice rather than merely the beneficiary of someone else's:**
+this exact class was named explicitly, in the sharpest terms available, in
+v1.1.0's correction of 2c -- *"a falsifier tests the codebase, not whether
+an annotation describing the codebase is still current."* The document
+then produced **two further instances after that diagnosis was written
+down**: 6a and 6b (v1.9.0, a `geper/`-side claim that had never been true)
+and 6c (v1.11.0, a claim true when written that expired silently). Three
+instances, one of them predating the diagnosis and two of them following
+it, is direct evidence that naming the class did not defend this document
+against it. The same conclusion was reached independently the same night
+on two other parts of this floor -- `VALIDATION_STUDY_DESIGN.md`'s EJ-13
+forbids a pooled SNV/indel accuracy figure as a **form**, regardless of
+its value, rather than relying on a reader to notice when pooling
+misleads; and the board's own audit tonight reached "naming a class does
+not defend against it" as a general finding, citing this rubric's v1.1.0
+diagnosis as one of its two proof cases. Three independent routes to the
+same rule is stronger grounds than this document reasoning about itself
+alone.
+
+**The cost, stated rather than left implied, because a prohibition that
+hides its price is the same failure this subsection exists to prevent:**
+an anchored claim is harder to read at a glance -- a reader has to resolve
+"as of `3b0ede6`" against the current tree rather than trust an adjective
+-- and anchoring does not remove the failure mode, it changes its shape.
+An anchored claim goes stale as a **pointer** (the cited commit ages, and
+the sentence may no longer describe HEAD) rather than as a **claim** (the
+sentence asserts something false with nothing in its own text to flag
+it). That is accepted as a strictly better failure: a stale pointer is
+self-diagnosing -- a reader can check whether the named commit is still
+the relevant one, and the citation itself tells them what to check against
+-- where a stale unanchored claim gives no way to tell from the sentence
+alone.
+
+**Why this document specifically has no legitimate claims the prohibition
+would wrongly burden:** every Satisfier and Falsifier in this rubric is,
+by Tier A/B/C's own definitions above, a claim about a **repeatable check
+against the current state of an evolving codebase** -- there is no class
+of timeless architectural sentence here (the kind a general-purpose
+document is mostly made of) that an anchor requirement would tax for no
+reason. The prohibition costs verbosity uniformly and protects against a
+failure that has already happened three times.
+
+**Practical form:** any Satisfier/Falsifier sentence using a temporal
+qualifier about codebase state must name the commit hash, tag, CI run, or
+date it was checked against, in the same or the immediately adjacent
+sentence. A temporal claim with no anchor anywhere near it is to be read
+as Tier D (Asserted) regardless of how confidently it is phrased, until
+anchored.
+
+**Applies to:** every sub-criterion below and any future one. Not a new
+scored sub-criterion with its own weight -- same standing as the three
+subsections above; existing rows are not swept to retrofit anchors under
+this version (that is separate work, not this correction), but any row
+touched from here forward is held to this form.
 
 Each sub-criterion below states its **expected tier** in advance -- decided
 now, not chosen after looking at what currently exists -- and a **satisfier**

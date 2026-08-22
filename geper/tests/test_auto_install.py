@@ -29,9 +29,15 @@ class TestEnsurePipPackageAvailableConstraint(unittest.TestCase):
     def tearDown(self):
         auto_install._INSTALL_RESULTS.clear()
 
+    @mock.patch("utils.auto_install._auto_install_disabled_for_tests", return_value=False)
     @mock.patch("utils.auto_install.subprocess.run")
     @mock.patch("utils.auto_install.is_pip_package_installed")
-    def test_install_command_always_carries_constraint(self, mock_installed, mock_run):
+    def test_install_command_always_carries_constraint(self, mock_installed, mock_run, mock_disabled):
+        # Forces the real subprocess-invoking path -- this test exists
+        # specifically to check the --constraint mechanics of that
+        # path, which the pytest guard (CI-geper-suite-live-installs-
+        # unpinned-packages-mid-run-results-depend-on-order) now skips
+        # by default for every other test in the suite.
         mock_installed.side_effect = [False, True]
         mock_run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
 
@@ -45,9 +51,14 @@ class TestEnsurePipPackageAvailableConstraint(unittest.TestCase):
         self.assertEqual(cmd[constraint_index + 1], _REQUIREMENTS_CONSTRAINT_PATH)
         self.assertIn("some-fictitious-package", cmd)
 
+    @mock.patch("utils.auto_install._auto_install_disabled_for_tests", return_value=False)
     @mock.patch("utils.auto_install.subprocess.run")
     @mock.patch("utils.auto_install.is_pip_package_installed")
-    def test_constraint_conflict_returns_false_without_disturbing_constrained_package(self, mock_installed, mock_run):
+    def test_constraint_conflict_returns_false_without_disturbing_constrained_package(
+        self, mock_installed, mock_run, mock_disabled
+    ):
+        # Forces the real subprocess-invoking path -- see the note on
+        # test_install_command_always_carries_constraint above.
         # Simulates exactly what pip does when an optional package's
         # own pin (e.g. enformer-pytorch's `transformers==4.56.2`)
         # conflicts with something requirements.txt constrains (e.g.
@@ -84,6 +95,49 @@ class TestEnsurePipPackageAvailableConstraint(unittest.TestCase):
 
         self.assertTrue(ok)
         mock_run.assert_not_called()
+
+
+class TestAutoInstallDisabledUnderPytest(unittest.TestCase):
+    """
+    CI-geper-suite-live-installs-unpinned-packages-mid-run-results-depend-on-order:
+    a real, unpinned `pip install` subprocess running mid-test-run made
+    outcomes depend on execution order and network reachability (proven
+    live in CI run 32599323393 -- enformer_pytorch went ABSENT ->
+    PRESENT inside one pytest process). ensure_pip_package_available
+    must not spawn that subprocess while running under pytest; it must
+    report the package unavailable instead -- which is also the honest
+    answer, since in CI those optional packages genuinely are not
+    installed. Runtime behaviour outside pytest is unchanged.
+    """
+
+    def setUp(self):
+        auto_install._INSTALL_RESULTS.clear()
+
+    def tearDown(self):
+        auto_install._INSTALL_RESULTS.clear()
+
+    @mock.patch("utils.auto_install.subprocess.run")
+    @mock.patch("utils.auto_install.is_pip_package_installed", return_value=False)
+    def test_missing_package_does_not_spawn_pip_subprocess_under_pytest(self, mock_installed, mock_run):
+        """
+        THE DANGEROUS CASE. Deliberately does NOT patch
+        `_auto_install_disabled_for_tests` -- this runs under the real,
+        default guard, exactly like every other test in the suite.
+        Asserting only the return value would pass for the wrong reason
+        if the install ran and then failed regardless, so this asserts
+        directly on the subprocess boundary the function itself calls.
+        """
+        ok = ensure_pip_package_available("definitely-not-a-real-package-xyz")
+
+        self.assertFalse(ok)
+        mock_run.assert_not_called()
+
+    def test_disabled_helper_reports_true_under_the_real_pytest_process(self):
+        # Sanity check on the guard's own signal, since sys.modules is
+        # real process state here, not something this test mocks: this
+        # file is by definition running under pytest, so the helper
+        # that gates the subprocess call must say so.
+        self.assertTrue(auto_install._auto_install_disabled_for_tests())
 
 
 if __name__ == "__main__":

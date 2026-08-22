@@ -65,6 +65,33 @@ def is_pip_package_installed(import_name: str) -> bool:
     return importlib.util.find_spec(import_name) is not None
 
 
+def _auto_install_disabled_for_tests() -> bool:
+    """
+    True when this process is running under pytest -- in which case
+    `ensure_pip_package_available` must not spawn a real `pip install`
+    subprocess. See CI-geper-suite-live-installs-unpinned-packages-mid-
+    run-results-depend-on-order: a live, unpinned install running mid-
+    test-run made package availability mutable process state, so test
+    outcomes depended on execution order and network reachability
+    (proven live in CI run 32599323393 -- `enformer_pytorch` went
+    ABSENT -> PRESENT inside a single pytest process). Reporting the
+    package unavailable instead is also the honest answer: in CI those
+    optional packages genuinely are not installed.
+
+    `"pytest" in sys.modules` rather than `PYTEST_CURRENT_TEST` (only
+    set while a specific test's `call` phase is executing) so this
+    covers collection and fixture setup too, not just in-test calls.
+
+    Extracted as its own function, rather than inlining the check,
+    purely so this module's OWN tests of the real subprocess-invocation
+    mechanics (constraint flag, conflict handling) can patch this one
+    seam to force the real path deliberately -- see test_auto_install.py.
+    Runtime behaviour outside pytest (the auto-install pattern itself,
+    documented in requirements.txt lines 5-13) is completely unchanged.
+    """
+    return "pytest" in sys.modules
+
+
 def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = None) -> bool:
     """
     Idempotent, automatic setup: if `import_name` (defaults to
@@ -94,6 +121,18 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
 
     if pip_name in _INSTALL_RESULTS:
         return _INSTALL_RESULTS[pip_name]
+
+    if _auto_install_disabled_for_tests():
+        logger.info(
+            f"'{import_name}' is not importable and auto-install is "
+            "disabled while running under pytest -- reporting it "
+            "unavailable rather than installing it from PyPI mid-test-"
+            "run (see CI-geper-suite-live-installs-unpinned-packages-"
+            "mid-run-results-depend-on-order). Real, non-test runs are "
+            "unaffected."
+        )
+        _INSTALL_RESULTS[pip_name] = False
+        return False
 
     logger.info(
         f"'{import_name}' is not yet installed; installing it "

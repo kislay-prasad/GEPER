@@ -73,7 +73,93 @@ One (DECIPHER) is a clean reject.
 | **License, verbatim** | "Information that is created by or for the US government on this site is within the public domain... may be freely distributed and copied" (`ncbi.nlm.nih.gov/home/about/policies/`, already the basis for ClinVar's "usable" verdict in `DATA_SOURCE_LICENSE_AUDIT.md`). Independently re-confirmed for this specific use (validation ground truth, not runtime evidence) via ClinVar's own submission-policy page: **"Once the data are in ClinVar, they are available for unrestricted distribution"** (`ncbi.nlm.nih.gov/clinvar/docs/submit/`, "Do I need consent to submit?" section) -- this directly answers the question this audit needed that the prior one didn't: whether individual *submitters* (clinical labs, expert panels) retain any redistribution/commercial restriction on their own contributed classifications. They do not; once submitted, ClinVar's public-domain terms govern regardless of submitter. |
 | **Primary source fetched** | `ncbi.nlm.nih.gov/clinvar/docs/statistics/` (star-rating counts), `ncbi.nlm.nih.gov/clinvar/docs/review_status/` (star-rating definitions), `ncbi.nlm.nih.gov/clinvar/docs/submit/` (submitter redistribution terms) -- all fetched directly this session. |
 | **Commercial-use verdict** | **Usable.** No restriction found, none expected given NCBI's site-wide policy already governs the rest of ClinVar. |
-| **Methodological flag, not a licensing issue** | GEPER's own ACMG engine already consumes ClinVar's `clinical_significance`/`review_status` fields as live evidence for PP5/BP6 (direct-match) and PS1/PM5 (same-residue) criteria (`geper/database/clinvar_client.py:344-345`, `pipeline/ps1_pm5/`). For any variant where GEPER's classification was itself informed by that variant's own ClinVar entry, comparing GEPER's output back against ClinVar's classification is not a fully independent concordance check -- it partly measures whether GEPER correctly echoed what it was told, not whether it reached the right answer independently. This is a fact about study design, not about the dataset's licensing or availability; flagging it for whoever designs the concordance study, not resolving it here. |
+| **Methodological flag, not a licensing issue** | GEPER's own ACMG engine already consumes ClinVar's `clinical_significance`/`review_status` fields as live evidence for PP5/BP6 (direct-match) and PS1/PM5 (same-residue) criteria (`geper/database/clinvar_client.py:344-345`, `pipeline/ps1_pm5/`). For any variant where GEPER's classification was itself informed by that variant's own ClinVar entry, comparing GEPER's output back against ClinVar's classification is not a fully independent concordance check -- it partly measures whether GEPER correctly echoed what it was told, not whether it reached the right answer independently. This is a fact about study design, not about the dataset's licensing or availability; flagging it for whoever designs the concordance study, not resolving it here. **CORRECTED below -- see "Addendum (2026-08-21, post-commit)" immediately after this table. The row above, as originally committed at `6f27e7b`, is left unedited; the correction changes which channel is actually live and what remedy it implies, not whether the flag itself was worth raising.** |
+
+#### Addendum (2026-08-21, post-commit 6f27e7b): the channel list above is wrong about *which* ClinGen/ClinVar-consuming path is live -- correction, not a retraction
+
+**What the row above said, as committed:** that PP5, BP6, and PS1/PM5 are
+each live channels by which GEPER's ACMG engine consumes a variant's *own*
+ClinVar entry, so a concordance check against ClinVar risks measuring
+"did GEPER echo what it was told" for any of the three.
+
+**What is actually true, independently verified in the source (not taken on
+the framing I was handed -- see "How verified" below):**
+
+- **PP5 never fires, for any variant.** `geper/pipeline/acmg_rules.py:923-926`
+  sets it unconditionally `_not_evaluated`, with its own stated reason:
+  "recommended against by ClinGen's SVI Working Group (Biesecker & Harrison
+  2018) as circular with respect to an independent ACMG/AMP evaluation; not
+  applied." (Quote current as of commit `e037e9f`, which corrected the
+  reason text itself -- the original 2026-08-21 wording quoted here at
+  first draft, "deprecated in the 2015 ACMG/AMP guideline update," was
+  false: Richards et al. 2015 is the paper that defines PP5, not one that
+  deprecates it. That defect and this quote are unrelated to what this
+  addendum is establishing -- PP5 never fires either way, under either
+  wording of its stated reason -- but a quote of source text must match
+  the source, so it is corrected here rather than left stale.) There is
+  no code path in which PP5 contributes anything, so it cannot be a
+  circularity channel -- it is not a channel at all.
+- **BP6 fires but cannot move a classification.** `acmg_rules.py:3509-3522`'s
+  point-combining loop explicitly skips it (`if code == "BP6": ... continue`),
+  and the comment immediately above that line **names this exact
+  circularity by citation**: "it would let ClinVar's own classification move
+  GEPER's classification, the exact circularity ClinGen SVI's 2018 PP5/BP6
+  deprecation warns against." BP6 still reaches the rendered evidence
+  *text* (`trace`) for transparency, but is excluded from `pathogenic_points`/
+  `benign_points` -- i.e. from anything that decides the output classification.
+- **`_clinvar_crossref` (`acmg_rules.py:3419-3428`) is descriptive-only** --
+  it is not part of the combining rules at all, so it was never a channel
+  either.
+- **PS1/PM5 are the only channel that actually reaches the classification**
+  (`acmg_rules.py:1116-1170`'s `_ps1`/`_pm5`, combined normally through the
+  point tally, unlike BP6). But the residual circularity here is narrower
+  and subtler than "the variant's own ClinVar entry": PS1/PM5 consume
+  *other* ClinVar records at the *same codon*, with the query variant's own
+  record explicitly excluded (`pipeline/ps1_pm5/decision.py:137`, "excluding
+  this variant's own record" -- also surfaced in the user-facing trace text,
+  so this exclusion is not just an internal detail but a stated, auditable
+  fact of the method).
+
+**How verified:** read all four sites directly in this session --
+`acmg_rules.py:915-932` (PP5's unconditional not-evaluated block),
+`acmg_rules.py:3495-3528` (the combining loop and its BP6 skip + citation
+comment), `acmg_rules.py:3419-3428` (`_clinvar_crossref`'s own docstring),
+`acmg_rules.py:1116-1141` (`_ps1`, confirmed it returns a normally-combined
+`CriterionResult`, not excluded the way BP6 is), and
+`pipeline/ps1_pm5/decision.py:125-138` (`_opening_path`, confirming the
+self-exclusion). This was independent verification of what I was told, not
+a restatement of it -- the same sourcing standard the rest of this document
+holds every other row to.
+
+**Why this makes the original flag *stronger*, not weaker, which is the
+part worth leading with:** the record-level circularity (a variant's own
+ClinVar entry moving its own classification) was already closed, deliberately,
+by GEPER's own authors, with the reasoning written into a code comment
+citing ClinGen SVI's 2018 guidance -- years before any validation study
+existed to pressure it. That is a materially better fact to hand a NABL/ICMR
+assessor than "we controlled for this during validation": it was designed
+out of the classification logic itself, not patched around a study's
+results afterward. The flag I raised is what caused anyone to go looking and
+find this, so it was the right thing to raise -- the channel attribution
+was simply incomplete.
+
+**Why the remedy implied by the original row is a no-op control, and must
+not be used:** the row as committed implies a natural-sounding fix --
+"disable PP5/BP6 for validation runs to remove the circular channels." PP5
+never fires and BP6 cannot move a classification either way, so disabling
+both would change nothing about a validation run's output while *appearing*
+to have controlled for circularity. A control that looks like a control and
+changes nothing is worse than no control at all, because it manufactures
+false confidence in the validation result rather than leaving the risk
+visible. **The actual residual circularity risk for whoever designs the
+concordance study is PS1/PM5 specifically** -- and because PS1/PM5 already
+excludes the query variant's own record by design, the open question is
+narrower than originally implied: whether *other* same-codon ClinVar
+records used as PS1/PM5 evidence for a validation-set variant were
+themselves classified using information that correlates with -- rather than
+being independent of -- the ground-truth label being validated against.
+That is a real, subtler question for the concordance study's design, not
+one this audit resolves.
 
 ### GIAB (Genome in a Bottle, NIST)
 
@@ -195,12 +281,14 @@ at any scale, that offers *graded* ACMG-relevant classification ground truth
 obtainable today without a purchase or a DAC application. GIAB validates a
 different, narrower question (did the caller get the right genotype) and has
 no bearing on whether a classification is correct. If ClinVar's terms
-changed, or if the methodological circularity flagged above (GEPER already
-consumes ClinVar as live evidence for some of the same variants) turns out to
-disqualify it as independent ground truth for those variants, there is
-currently no alternative of comparable scale to fall back on -- that is a
-real single point of failure in the whole validation plan, not a hypothetical
-one.
+changed, or if the methodological circularity flagged above turns out to
+disqualify it as independent ground truth for some variants -- **corrected
+by addendum, above: not PP5/BP6 (PP5 never fires; BP6 is excluded from the
+point tally by design, precisely to avoid this) but the narrower PS1/PM5
+channel, which consumes *other* same-codon ClinVar records with the query
+variant's own record already excluded** -- there is currently no alternative
+of comparable scale to fall back on -- that is a real single point of
+failure in the whole validation plan, not a hypothetical one.
 
 **The most consequential negative finding is the ICMR/India gap above.** If
 population-matched ground truth is a hard requirement for ICMR/NABL

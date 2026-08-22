@@ -58,6 +58,55 @@ logger = logging.getLogger("geper.pipeline.acmg.classifier")
 # ─── Evidence input ───────────────────────────────────────────────────────────
 
 
+# Minimum number of in-silico predictors that must agree before PP3/BP4
+# is met. An ABSOLUTE count, deliberately not a majority of whoever
+# happened to have data.
+#
+# A majority rule is not invariant to which predictors are present, and
+# that is not a tuning problem -- it is what "majority" means. Removing a
+# DISSENTING predictor shrinks the denominator and LOWERS the bar, so
+# dropping a voter can flip PP3 from not-met to met without any new
+# evidence about the variant. That is the wrong direction: it makes more
+# variants meet a pathogenicity criterion as a side effect of removing a
+# tool. No denominator can fix this, because the denominator is not the
+# defect -- `votes` already contains only predictors that had data (every
+# append is guarded by an `is not None` check), so it never counted
+# absent voters in the first place.
+#
+# An absolute count is invariant where it matters: removing a predictor
+# that DISAGREED leaves the agreeing count untouched, so the verdict does
+# not move. Removing one that AGREED lowers the count and can only make
+# the criterion harder to meet -- the conservative direction.
+#
+# 2 also matches what PP3/BP4 actually say: "MULTIPLE lines of
+# computational evidence" (Richards et al. 2015). One predictor is not
+# multiple, whatever fraction of the available predictors it represents.
+# *** IF YOU ARE HERE BECAUSE FIVE TESTS ARE FAILING, THEY ARE FAILING ON
+# PURPOSE. DO NOT MAKE THEM PASS. ***
+#
+# test_bp4_fires_with_low_alphamissense_alone,
+# test_cadd_still_counted_regardless_of_missense_status,
+# test_revel_counted_for_missense_variant,
+# test_spliceai_still_counted_regardless_of_missense_status and
+# test_pp3_and_bp4_symmetric_with_alphamissense each assert that ONE
+# predictor alone may satisfy PP3/BP4. The four tests in
+# test_pp3_bp4_spliceai_removal_invariance.py assert that removing a
+# predictor must not move the verdict. Both sets are currently in the
+# tree and both are currently honest: the two requirements cannot both
+# hold, and the human ruled that having both red and green at once is
+# the correct representation of an unresolved question rather than
+# something to tidy.
+#
+# The question is with a clinical expert (board card
+# kelly-classifier-denominator-fix-pp3-bp4, status `waiting`). Until it
+# is answered, EITHER of the obvious repairs destroys that ruling:
+# lowering this constant to 1 makes PP3 and BP4 fire on the same variant,
+# and editing those five tests decides a clinical rule by rewriting its
+# evidence. A deliberately-red suite and an accidentally-red suite look
+# identical from the terminal, which is the only reason this note exists.
+_MIN_CONCORDANT_PREDICTORS = 2
+
+
 @dataclass
 class VariantEvidence:
     """All evidence fields needed to evaluate ACMG/AMP criteria.
@@ -828,7 +877,7 @@ class AcmgClassifier:
                 reason="Unknown / Insufficient Data — no in-silico scores available",
             )
         n_dam = sum(1 for _, d in votes if d)
-        met = n_dam >= max(1, len(votes) // 2 + 1)  # majority damaging
+        met = n_dam >= _MIN_CONCORDANT_PREDICTORS
         detail = ", ".join(f"{n}={'damaging' if d else 'benign'}" for n, d in votes)
         return CriteriaResult(
             code="PP3",
@@ -836,7 +885,11 @@ class AcmgClassifier:
             status=(STATUS_MET if met else STATUS_NOT_MET),
             strength="supporting",
             direction="pathogenic",
-            reason=f"In-silico: {detail} ({'majority damaging' if met else 'not majority damaging'})",
+            reason=(
+                f"In-silico: {detail} "
+                f"({n_dam} of {len(votes)} predictor(s) damaging; "
+                f"{'meets' if met else 'below'} the {_MIN_CONCORDANT_PREDICTORS}-predictor concordance required)"
+            ),
         )
 
     def _pp4(self, e: VariantEvidence) -> CriteriaResult:
@@ -1185,7 +1238,7 @@ class AcmgClassifier:
                 reason="Unknown / Insufficient Data — no in-silico scores available",
             )
         n_ben = sum(1 for _, b in votes if b)
-        met = n_ben >= max(1, len(votes) // 2 + 1)
+        met = n_ben >= _MIN_CONCORDANT_PREDICTORS
         detail = ", ".join(f"{n}={'benign' if b else 'damaging'}" for n, b in votes)
         return CriteriaResult(
             code="BP4",

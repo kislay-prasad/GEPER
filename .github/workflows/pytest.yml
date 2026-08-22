@@ -37,8 +37,78 @@ jobs:
           cache: "pip"
           cache-dependency-path: geper/requirements.txt
 
+      # DO NOT REVERT THIS AS A TIDY-UP. It is load-bearing.
+      #
+      # This is not only about removing weight the runner cannot use. It
+      # fixes an INTERMITTENT out-of-disk failure whose error message points
+      # at the wrong thing. MEASURED across the two runs either side of it:
+      # cp311 run 32597004559 downloaded 186 wheels totalling 3740.1 MB and
+      # DIED on disk; cp312 run 32599323393 downloaded 195 wheels totalling
+      # 3740.5 MB and PASSED. A delta of 0.4 MB -- 0.01% -- with the LARGER
+      # install succeeding. Both runs logged "pip cache is not found", so
+      # neither had a warm cache. Interpreter, cache and dependency set are
+      # all eliminated: the variable was which runner the job landed on.
+      #
+      # That is the worst diagnostic shape available. The job fails on
+      # IDENTICAL INPUTS, and the message says "No space left on device"
+      # while the actual variable is the machine. Anyone debugging it reads
+      # that message and goes looking at the dependency set -- at whichever
+      # change happened to be in flight -- which is where the cause is not.
+      # Reverting this restores that failure mode, and it will not reappear
+      # on the commit that reverted it.
+      #
+      # CPU-only torch. The runner has no GPU, so the ~2.2 GB of nvidia
+      # CUDA libraries that PyPI's default linux torch wheel drags in are
+      # unusable there by construction -- and their unpacked footprint
+      # exhausted the runner's disk outright (run 32597004559: "ERROR: Could
+      # not install packages due to an OSError: [Errno 28] No space left on
+      # device", raised during "Installing collected packages"; the wheels
+      # alone were torch 821.2 MB + cudnn 571.0 MB + cublas 393.1 MB + 39
+      # further nvidia components).
+      #
+      # WHAT THIS COSTS, so no future reader misreads a green tick: CI DOES
+      # NOT VALIDATE ANY GPU CODE PATH. It never did -- a GPU-less runner
+      # could not execute one -- so this loses no coverage that existed. But
+      # do not treat a passing run here as evidence that device placement,
+      # CUDA memory handling, or multi-GPU behaviour works. Nothing in this
+      # workflow tests those.
+      #
+      # Checked before adopting, not assumed: (1) no test requires a real
+      # GPU -- tests/test_evo2.py MOCKS torch.cuda.is_available in both
+      # directions, which works because CPU builds still expose torch.cuda
+      # and torch.cuda.get_device_name, and torch.device("cuda") constructs
+      # without a device; the 53 tests across test_evo2/test_model_manager/
+      # test_torchaudio_pin_regression all pass on torch 2.7.1+cpu with zero
+      # nvidia packages installed. (2) evo2 does not need the CUDA tree to
+      # install: evo2 0.6.0 requires only biopython, huggingface_hub, torch,
+      # vtx>=1.1.0, and vtx 1.1.0 requires only torch, numpy, einops,
+      # packaging, rich, tqdm, PyYAML -- no flash-attn, no nvidia-* pins.
+      #
+      # These three versions MUST match the torch/torchvision/torchaudio
+      # pins in requirements.txt. If they drift, pip resolves the conflict
+      # by reinstalling the CUDA build and the disk failure returns. The
+      # guard step below turns that coupling into something CI enforces
+      # rather than something a reader has to remember.
+      - name: Install CPU-only torch
+        run: >-
+          pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1
+          --index-url https://download.pytorch.org/whl/cpu
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # Fails loudly if the CUDA stack came back -- the pins above drifting
+      # from requirements.txt is the expected way for that to happen, and it
+      # would otherwise show up as an intermittent out-of-disk error whose
+      # cause is nowhere near the change that caused it.
+      - name: Assert the CUDA stack was not pulled in
+        run: |
+          if pip list --format=freeze | grep -qiE '^(nvidia-|triton==)'; then
+            echo "::error::CUDA packages are installed. The CPU-index pins in this workflow have drifted from requirements.txt, or a new dependency pulled GPU torch."
+            pip list --format=freeze | grep -iE '^(nvidia-|triton==)'
+            exit 1
+          fi
+          python -c "import torch; print('torch', torch.__version__, '| cuda build:', torch.version.cuda)"
 
       - name: Run pytest
         run: python -m pytest tests/ -v

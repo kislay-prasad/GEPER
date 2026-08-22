@@ -25,7 +25,7 @@ import os
 import tempfile
 import unittest
 
-from report.clinical_report_builder import _ORPHANET_REFERENCE, _references, build_clinical_report
+from report.clinical_report_builder import _ALPHAFOLD_REFERENCE, _ORPHANET_REFERENCE, _references, build_clinical_report
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from report.summary_short import generate_short_pdf
@@ -66,12 +66,25 @@ def _ir(evidence_sources=None, **overrides):
 
 class TestReferencesUnit(unittest.TestCase):
     def test_orphanet_always_present_even_with_no_evidence_sources(self):
-        self.assertEqual(_references(_ir(evidence_sources=[])), [_ORPHANET_REFERENCE])
+        # Was `[_ORPHANET_REFERENCE]` alone until commit 3927c82
+        # (2026-08-22): AlphaFold DB is CC-BY-4.0 like Orphanet, was
+        # present-but-unreachable via the same `evidence_sources` gate
+        # (it doesn't contribute ACMG evidence, only structural context,
+        # so it never legitimately appears there), and got the identical
+        # unconditional-citation fix. `_references()` appends Orphanet
+        # then AlphaFold, in that order -- see `_references()`'s own
+        # source. Count intentionally +1 from before that commit, not a
+        # regression.
+        self.assertEqual(_references(_ir(evidence_sources=[])), [_ORPHANET_REFERENCE, _ALPHAFOLD_REFERENCE])
 
     def test_orphanet_always_present_alongside_other_sources(self):
+        # 2 conditional entries (ClinVar, gnomAD) + Orphanet + AlphaFold
+        # (both unconditional, see the comment above) = 4, not 3 as
+        # before commit 3927c82.
         refs = _references(_ir(evidence_sources=["ClinVar", "gnomAD"]))
         self.assertIn(_ORPHANET_REFERENCE, refs)
-        self.assertEqual(len(refs), 3)
+        self.assertIn(_ALPHAFOLD_REFERENCE, refs)
+        self.assertEqual(len(refs), 4)
 
     def test_hpo_present_when_evidence_sources_contains_hpo(self):
         refs = _references(_ir(evidence_sources=["HPO"]))

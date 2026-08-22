@@ -191,11 +191,7 @@ def population_af_from_gnomad(gnomad_result: Optional[Dict[str, Any]]) -> Tuple[
     but a variant genuinely absent from gnomAD is reported as 0.0 so the
     frequency caveat can be recorded as checked rather than unchecked.
     """
-    # `error` by presence, not truthiness: the 0.0 below is only
-    # honest for a variant GENUINELY absent from gnomAD, and a failed
-    # lookup whose exception carried no message (error="") used to
-    # reach it -- fabricating a frequency for a variant nobody looked up.
-    if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") is not None:
+    if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
         return None, None
     if not gnomad_result.get("found"):
         return 0.0, "absent from gnomAD"

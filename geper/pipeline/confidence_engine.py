@@ -246,10 +246,7 @@ class ConfidenceEngine:
         quality_parts: List[float] = []
         notes: List[str] = []
 
-        # `error` by presence: this branch's own rationale asserts the
-        # lookup "queried successfully", so a falsy-but-present error
-        # string put a false statement into reader-facing text.
-        if gnomad_result and not gnomad_result.get("skipped") and gnomad_result.get("error") is None:
+        if gnomad_result and not gnomad_result.get("skipped") and not gnomad_result.get("error"):
             sources.append("gnomAD")
             presence_parts.append(1.0)
             if gnomad_result.get("found"):

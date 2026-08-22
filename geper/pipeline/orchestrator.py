@@ -1661,7 +1661,7 @@ class GeperPipeline:
                 dataset_id = gnomad_dataset_id_for_build(self.sequence_context_gen.assembly or "GRCh38")
                 if dataset_id:
                     self.provenance.record("gnomAD", VersionStatus.VERSION_KNOWN, version=dataset_id)
-                elif gnomad_result.get("error") is not None:
+                elif gnomad_result.get("error"):
                     self.provenance.record(
                         "gnomAD", VersionStatus.UNKNOWN, notes=f"Query failed: {gnomad_result['error']}"
                     )
@@ -2409,19 +2409,13 @@ class GeperPipeline:
         try:
             with self._timer("gnomad"):
                 result = self.gnomad_client.query_variant(variant, assembly=assembly)
-            if result.get("error") is not None:
+            if result.get("error"):
                 errors.append(f"gnomAD stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            # `str(exc)` is "" for any exception raised without a message
-            # (RuntimeError(), MemoryError(), TimeoutError()). That empty
-            # string is printed verbatim into the report's Stage Warnings
-            # section, so fall back to the exception's type name rather
-            # than reporting a failure with nothing said about it.
-            detail = str(exc) or type(exc).__name__
-            errors.append(f"gnomAD stage failed: {detail}")
+            errors.append(f"gnomAD stage failed: {exc}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": detail}
+            return {"found": False, "skipped": False, "error": str(exc)}
 
     def _indigenomes_retired_result(self) -> Dict[str, Any]:
         """

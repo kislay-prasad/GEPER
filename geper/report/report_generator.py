@@ -1554,7 +1554,7 @@ class ReportGenerator:
         lines.append(f"- **Source:** {gnomad_result.get('source', 'n/a')}")
         lines.append(f"- **Genome build:** {gnomad_result.get('build', 'n/a')}")
 
-        if gnomad_result.get("error") is not None:
+        if gnomad_result.get("error"):
             lines.append(f"- **Status:** query failed ({gnomad_result['error']})")
             lines.append("")
             return lines

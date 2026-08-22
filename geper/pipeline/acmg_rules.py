@@ -1361,14 +1361,7 @@ class ACMGRuleEngine:
     @staticmethod
     def _pm2(gnomad_result: Optional[Dict[str, Any]]) -> CriterionResult:
         direction, strength = _STRENGTH["PM2"]
-        # `error` read by PRESENCE, not truthiness: `not_found()` and
-        # `from_error()` both set found=False, so `error` is the only
-        # field separating "checked, genuinely absent" (PM2 evidence)
-        # from "never actually checked". An exception raised without a
-        # message reaches here as error="" -- falsy, present, and under
-        # the old truthiness check it awarded PM2 outright. See
-        # tests/test_gnomad_lookup_failure_not_absent.py.
-        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") is not None:
+        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
             return _not_evaluated("PM2", "gnomAD lookup was skipped or errored for this variant.")
         cfg = CONFIG.gnomad
         if not gnomad_result.get("found"):
@@ -1490,7 +1483,7 @@ class ACMGRuleEngine:
             "case-control study) is integrated, so the case-control comparison PS4 requires cannot be "
             "computed, and this criterion can never be triggered by this pipeline as currently built."
         )
-        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") is not None:
+        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
             return _not_evaluated(
                 "PS4",
                 base_reason + " gnomAD control-population data was also unavailable for this variant.",
@@ -2239,7 +2232,7 @@ class ACMGRuleEngine:
         if (
             not gnomad_result
             or gnomad_result.get("skipped")
-            or gnomad_result.get("error") is not None
+            or gnomad_result.get("error")
             or not gnomad_result.get("found")
         ):
             reason = (

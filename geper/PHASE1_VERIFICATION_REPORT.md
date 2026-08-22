@@ -80,6 +80,18 @@ real output from this sandbox, not a mockup):
         OK: none. Failed to import: DNABERT-2 (No module named 'torch'); HyenaDNA (No module named 'torch'); ...
 ```
 
+> **[2026-08-22] This captured output is no longer reproducible against current code — retained, not corrected.**
+> The block above was real output when this verification ran, and the "not a mockup" claim was true at the time.
+> It has since been falsified by changes elsewhere: `verify_environment.py`'s model map no longer contains
+> **DNABERT-2** (zero occurrences in that file today) and now contains **Enformer** and **Borzoi**, which the
+> block never mentions — 7 entries where the capture shows 6. **No current run can produce this text.**
+> It is kept rather than rewritten because this is a verification record: replacing captured output with a
+> hand-written approximation would re-commit the defect the "not a mockup" claim exists to rule out.
+> Read it as evidence of what was observed then, never as current output.
+> Found by Andy's doc-quoted-program-strings inventory; annotated by god. See also `verify_environment.py:573`,
+> which still hardcodes "All 6 model wrapper modules" against that same 7-entry map — a source defect, not
+> documentation, and therefore left for the human.
+
 instead of a bare `ModuleNotFoundError` traceback surfacing from deep
 inside `models/__init__.py` the first time any model is touched.
 
@@ -148,6 +160,18 @@ not a defect introduced by this pass):
 ✅ [PASS] Database client imports
         All import cleanly: ClinVar, dbSNP, BLAST, gnomAD.
 ```
+
+> **[2026-08-22] This captured output is no longer reproducible against current code — retained, not corrected.**
+> The block above was real output when this verification ran, and the "not a mockup" claim was true at the time.
+> It has since been falsified by changes elsewhere: `verify_environment.py`'s model map no longer contains
+> **DNABERT-2** (zero occurrences in that file today) and now contains **Enformer** and **Borzoi**, which the
+> block never mentions — 7 entries where the capture shows 6. **No current run can produce this text.**
+> It is kept rather than rewritten because this is a verification record: replacing captured output with a
+> hand-written approximation would re-commit the defect the "not a mockup" claim exists to rule out.
+> Read it as evidence of what was observed then, never as current output.
+> Found by Andy's doc-quoted-program-strings inventory; annotated by god. See also `verify_environment.py:573`,
+> which still hardcodes "All 6 model wrapper modules" against that same 7-entry map — a source defect, not
+> documentation, and therefore left for the human.
 
 **To actually confirm requirement #9 in a real deployment:** install
 the pinned versions from `requirements.txt`, run

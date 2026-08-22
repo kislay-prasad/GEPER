@@ -249,7 +249,7 @@ class ReportGenerator:
 
     def generate(self, json_document: Dict[str, Any]) -> str:
         lines: List[str] = []
-        lines.append("# GEPER Variant Analysis Report")
+        lines.append("# Bij AI Variant Analysis Report")
         lines.append("")
         lines.append(_render_review_status_banner(json_document))
         lines.append("")
@@ -378,7 +378,7 @@ class ReportGenerator:
             "the exact data-source versions and code version below are what to match.*"
         )
         lines.append("")
-        lines.append(f"- **GEPER code version:** `{json_document.get('code_version') or 'unknown'}`")
+        lines.append(f"- **Bij AI code version:** `{json_document.get('code_version') or 'unknown'}`")
         lines.append("")
 
         checkpoints = json_document.get("model_checkpoints") or {}
@@ -582,7 +582,7 @@ class ReportGenerator:
             # unassessable variant class.
             lines.append(f"**Status:** Out of scope ({out_of_scope.get('scope', 'unspecified')})")
             lines.append("")
-            lines.append(out_of_scope.get("reason") or "This variant is out of scope for this GEPER build.")
+            lines.append(out_of_scope.get("reason") or "This variant is out of scope for this Bij AI build.")
             lines.append("")
             lines.append(
                 "*No ACMG/AMP criteria were evaluated for this variant. This is not a Variant of "

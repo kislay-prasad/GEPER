@@ -133,7 +133,7 @@ def check_python() -> CheckResult:
     return CheckResult(
         "Python",
         "FAIL",
-        f"Python {platform.python_version()} detected; GEPER requires "
+        f"Python {platform.python_version()} detected; Bij AI requires "
         f"{lo[0]}.{lo[1]} <= python < {hi[0]}.{hi[1]} (evo2's own published "
         f"metadata is the binding constraint; torch/transformers/rna-fm "
         f"all separately accept a wider range).",
@@ -160,7 +160,7 @@ def check_torch() -> CheckResult:
     else:
         status = "WARN"
         detail = (
-            f"torch {torch.__version__} detected; GEPER is pinned/tested against "
+            f"torch {torch.__version__} detected; Bij AI is pinned/tested against "
             f"exactly {EXPECTED['torch']} because Evo2's flash-attn dependency is "
             f"compiled from source against a specific torch+CUDA ABI. A different "
             f"torch version may still work for HyenaDNA/RNA-FM/ESM2/"
@@ -191,7 +191,7 @@ def check_torchvision() -> CheckResult:
     return CheckResult(
         "torchvision",
         "WARN",
-        f"torchvision {torchvision.__version__} detected; GEPER pins "
+        f"torchvision {torchvision.__version__} detected; Bij AI pins "
         f"{EXPECTED['torchvision']} (PyTorch's own compatibility matrix pairing "
         f"for torch {EXPECTED['torch']}). A mismatched torch/torchvision pair is "
         f"the single most common cause of a cryptic 'undefined symbol' import "
@@ -219,7 +219,7 @@ def check_torchaudio() -> CheckResult:
         return CheckResult(
             "torchaudio",
             "WARN",
-            "torchaudio is not installed. GEPER itself never imports it, but leaving "
+            "torchaudio is not installed. Bij AI itself never imports it, but leaving "
             "it absent/unpinned in a shared environment (e.g. Colab, which ships its "
             "own pre-installed torchaudio build) is exactly how a mismatched version "
             "gets pulled in later and crashes an unrelated import "
@@ -233,7 +233,7 @@ def check_torchaudio() -> CheckResult:
     return CheckResult(
         "torchaudio",
         "FAIL",
-        f"torchaudio {torchaudio.__version__} detected; GEPER pins "
+        f"torchaudio {torchaudio.__version__} detected; Bij AI pins "
         f"{EXPECTED['torchaudio']} (PyTorch's own compatibility matrix pairing for "
         f"torch {EXPECTED['torch']}). A mismatched torch/torchaudio pair fails with "
         f"`OSError: undefined symbol: torch_library_impl` the moment torchaudio is "
@@ -259,7 +259,7 @@ def check_transformers() -> CheckResult:
     return CheckResult(
         "transformers",
         "FAIL",
-        f"transformers {transformers.__version__} detected; GEPER requires "
+        f"transformers {transformers.__version__} detected; Bij AI requires "
         f">={EXPECTED['transformers_min']},<{EXPECTED['transformers_max_exclusive']}.",
         fix=f"pip install 'transformers>={EXPECTED['transformers_min']},<{EXPECTED['transformers_max_exclusive']}'",
     )
@@ -280,7 +280,7 @@ def check_accelerate() -> CheckResult:
     return CheckResult(
         "accelerate",
         "WARN",
-        f"accelerate {accelerate.__version__} detected; GEPER requires "
+        f"accelerate {accelerate.__version__} detected; Bij AI requires "
         f">={EXPECTED['accelerate_min']},<{EXPECTED['accelerate_max_exclusive']}.",
         fix=f"pip install 'accelerate>={EXPECTED['accelerate_min']},<{EXPECTED['accelerate_max_exclusive']}'",
     )
@@ -302,7 +302,7 @@ def check_tensorflow() -> CheckResult:
     return CheckResult(
         "tensorflow",
         "WARN",
-        f"tensorflow {tf.__version__} detected; GEPER requires "
+        f"tensorflow {tf.__version__} detected; Bij AI requires "
         f">={EXPECTED['tensorflow_min']},<{EXPECTED['tensorflow_max_exclusive']}.",
         fix=f"pip install 'tensorflow>={EXPECTED['tensorflow_min']},<{EXPECTED['tensorflow_max_exclusive']}'",
     )
@@ -531,7 +531,7 @@ def check_tabix() -> CheckResult:
         "WARN",
         "No 'tabix' binary on PATH. AlphaMissense and any locally-indexed "
         "gnomAD catalogue lookups are unavailable and will be skipped gracefully "
-        "until this is installed (GEPER auto-installs it via apt-get on Debian/"
+        "until this is installed (Bij AI auto-installs it via apt-get on Debian/"
         "Ubuntu the first time it's needed).",
         fix="apt-get install tabix  (or: conda install -c bioconda htslib)",
     )

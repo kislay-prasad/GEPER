@@ -456,7 +456,7 @@ def _write_html_report(result: PGxResult, output_dir: str) -> str:
   </table>
   <div class="footer">
     Guidelines: CPIC (cpicpgx.org), DPWG. Data embedded from PharmGKB (GRCh38).
-    GEPER assists qualified clinicians and pathologists; this report requires qualified human
+    Bij AI assists qualified clinicians and pathologists; this report requires qualified human
     review before any clinical use, and does not independently provide final clinical
     interpretation.
   </div>

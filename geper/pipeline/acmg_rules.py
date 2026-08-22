@@ -136,7 +136,7 @@ _MTDNA_STRUCTURALLY_INAPPLICABLE_REASONS: Dict[str, str] = {
         "thousands of copies per cell) and pathogenicity is heteroplasmy-threshold-driven, not "
         "haploinsufficiency-driven. The ACMG/AMP mitochondrial DNA specification (McCormick et al. "
         "2020) defines PVS1 differently per mitochondrial gene class (protein-coding/tRNA/rRNA); "
-        "GEPER does not implement that mtDNA-specific version, so PVS1 is not evaluated for this "
+        "Bij AI does not implement that mtDNA-specific version, so PVS1 is not evaluated for this "
         "compartment rather than applying the nuclear framework where it does not hold."
     ),
     "PM2": (
@@ -328,11 +328,11 @@ def mtdna_interpretation_disclaimer(
         )
     return (
         "Mitochondrial (mtDNA) compartment notice: this variant is on the mitochondrial genome. Of "
-        f"the 28 standard ACMG/AMP criteria, GEPER never evaluates 9 for any variant (no data source "
+        f"the 28 standard ACMG/AMP criteria, Bij AI never evaluates 9 for any variant (no data source "
         f"integrated), and {middle} This evaluation does NOT incorporate heteroplasmy level, maternal "
         "inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has a separate mitochondrial "
         "DNA variant interpretation specification (McCormick et al. 2020) that this evaluation does "
-        "not fully implement. The classification below reflects only the criteria GEPER actually "
+        "not fully implement. The classification below reflects only the criteria Bij AI actually "
         "evaluated for this compartment -- it is not a complete, mtDNA-specification-compliant "
         "interpretation."
     )

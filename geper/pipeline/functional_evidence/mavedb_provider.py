@@ -210,7 +210,7 @@ class MaveDBFunctionalEvidenceProvider:
         if license_short_name not in _COMMERCIAL_SAFE_LICENSE_SHORT_NAMES:
             logger.warning(
                 f"MaveDB score set '{urn}' has license '{license_short_name!r}', which is not in "
-                f"GEPER's confirmed commercial-use-safe set {sorted(_COMMERCIAL_SAFE_LICENSE_SHORT_NAMES)} "
+                f"Bij AI's confirmed commercial-use-safe set {sorted(_COMMERCIAL_SAFE_LICENSE_SHORT_NAMES)} "
                 "-- excluding it from PS3/BS3 evidence (see DATA_SOURCE_LICENSE_AUDIT.md)."
             )
             return  # not a confirmed commercial-safe license -- nothing usable from this score set

@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="GEPER genomics pipeline API server")
+    parser = argparse.ArgumentParser(description="Bij AI genomics pipeline API server")
     parser.add_argument("--host", default=os.getenv("GEPER_API_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.getenv("GEPER_API_PORT", "8000")))
     parser.add_argument("--reload", action="store_true", help="Enable hot-reload (dev only)")
@@ -43,7 +43,7 @@ def main() -> None:
         print("ERROR: uvicorn not installed. Run: pip install uvicorn[standard]", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Starting GEPER API on http://{args.host}:{args.port}")
+    print(f"Starting Bij AI API on http://{args.host}:{args.port}")
     print(f"Swagger UI: http://{args.host}:{args.port}/docs")
     print(f"OpenAPI JSON: http://{args.host}:{args.port}/openapi.json")
 

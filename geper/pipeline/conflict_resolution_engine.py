@@ -338,20 +338,20 @@ class ConflictResolutionEngine:
             return None
 
         return ConflictItem(
-            conflict_type="GEPER classification disagrees with an expert-panel/practice-guideline ClinVar classification",
+            conflict_type="Bij AI classification disagrees with an expert-panel/practice-guideline ClinVar classification",
             category="Clinical",
             evidence_a={
                 "source": "ClinVar",
                 "statement": f"'{top.get('clinical_significance')}' (review status: {top.get('review_status')}).",
             },
-            evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: '{acmg_classification}'."},
+            evidence_b={"source": "Bij AI ACMG engine", "statement": f"classification: '{acmg_classification}'."},
             severity="Critical",
             resolution=(
-                "This variant's GEPER classification must be manually reviewed before clinical use. GEPER's "
+                "This variant's Bij AI classification must be manually reviewed before clinical use. Bij AI's "
                 "ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input, so "
                 "this disagreement did not automatically change the classification above -- but a mismatch "
                 "against ClinVar's most authoritative review tier is the strongest signal this engine can "
-                "raise that GEPER's primary-evidence-based classification may be missing something ClinVar's "
+                "raise that Bij AI's primary-evidence-based classification may be missing something ClinVar's "
                 "curators saw (or vice versa)."
             ),
             resolution_rationale=(
@@ -359,7 +359,7 @@ class ConflictResolutionEngine:
                 "own two highest-confidence review tiers (3- and 4-star), reflecting multi-submitter or "
                 "guideline-level curation rather than a single lab's assertion -- disagreement with one of "
                 "these is materially more serious than disagreement with an unreviewed or single-submitter "
-                "record, which is why this is GEPER's highest-severity reviewer flag."
+                "record, which is why this is Bij AI's highest-severity reviewer flag."
             ),
             confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty.",
             priority_impact="Not currently counted in the prioritization engine's numeric conflict penalty.",
@@ -453,21 +453,21 @@ class ConflictResolutionEngine:
             return None
 
         return ConflictItem(
-            conflict_type="GEPER classification disagrees with a curated (non-expert-panel) ClinVar classification",
+            conflict_type="Bij AI classification disagrees with a curated (non-expert-panel) ClinVar classification",
             category="Clinical",
             evidence_a={
                 "source": "ClinVar",
                 "statement": f"'{top.get('clinical_significance')}' (review status: {top.get('review_status')}).",
             },
-            evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: '{acmg_classification}'."},
+            evidence_b={"source": "Bij AI ACMG engine", "statement": f"classification: '{acmg_classification}'."},
             severity="Moderate",
             resolution=(
-                "This variant's GEPER classification should be manually reviewed before clinical use. GEPER's "
+                "This variant's Bij AI classification should be manually reviewed before clinical use. Bij AI's "
                 "ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input, so "
                 "this disagreement did not automatically change the classification above -- but ClinVar's "
                 "record here still reflects independently curated submitter assertions, not an unreviewed "
                 "single claim, so the disagreement is worth a reviewer's attention even though it does not "
-                "meet the expert-panel/practice-guideline bar for GEPER's highest-severity flag."
+                "meet the expert-panel/practice-guideline bar for Bij AI's highest-severity flag."
             ),
             resolution_rationale=(
                 "1- and 2-star ClinVar records ('criteria provided, single submitter' / 'criteria provided, "
@@ -509,7 +509,7 @@ class ConflictResolutionEngine:
                 "statement": f"Gene-disease validity for {clingen_result.get('gene_symbol', 'this gene')} curated as '{clingen_result.get('clinical_validity_summary')}'.",
             },
             severity="Major",
-            resolution="ACMG classification is unchanged by this conflict. GEPER's ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",
+            resolution="ACMG classification is unchanged by this conflict. Bij AI's ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",
             resolution_rationale="A pathogenic variant call is only as trustworthy as the underlying gene-disease relationship. ClinGen's curated validity rating is the more conservative, systematically-curated signal here.",
             confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty (that penalty only counts ACMG-criterion-level conflicts and AI-model disagreement); the Clinical Evidence category score in confidence_breakdown does, however, already reflect ClinGen's validity rating directly.",
             priority_impact="Not currently counted in the prioritization engine's numeric conflict penalty; the Clinical Evidence priority factor is computed as an average across ClinVar and ClinGen, so a weak ClinGen validity already partially offsets a pathogenic ClinVar signal there.",
@@ -541,7 +541,7 @@ class ConflictResolutionEngine:
         clinical_sources = []
         if pathogenic_leaning:
             clinical_side.append(f"ACMG classification: {acmg_classification}")
-            clinical_sources.append("GEPER ACMG engine")
+            clinical_sources.append("Bij AI ACMG engine")
         if clinvar_pathogenic and clinvar_primary:
             # `clinvar_pathogenic` being True already implies
             # `clinvar_primary` is truthy (line above), but mypy can't
@@ -689,7 +689,7 @@ class ConflictResolutionEngine:
             },
             severity="Not evaluable",
             resolution="No conflict check performed.",
-            resolution_rationale="GEPER has no directional (pathogenic/benign) signal from either BLAST or Ensembl to compare against other evidence, so a genuine conflict cannot be detected here without fabricating one.",
+            resolution_rationale="Bij AI has no directional (pathogenic/benign) signal from either BLAST or Ensembl to compare against other evidence, so a genuine conflict cannot be detected here without fabricating one.",
             confidence_impact="Not applicable.",
             priority_impact="Not applicable.",
         )

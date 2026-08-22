@@ -196,7 +196,7 @@ class ExplainabilityEngine:
             f", conflict severity {conflict_severity}" if conflict_severity and conflict_severity != "None" else ""
         )
         return (
-            f"GEPER classified {locus}{gene_clause} as '{classification or 'not classified'}' "
+            f"Bij AI classified {locus}{gene_clause} as '{classification or 'not classified'}' "
             f"({conf_clause}; {pri_clause}{conflict_clause})."
         )
 
@@ -316,7 +316,7 @@ class ExplainabilityEngine:
         # into the pipeline layer, which would invert this codebase's
         # existing pipeline -> report dependency direction.
         items = [
-            "GEPER is a variant prioritisation system that assists qualified clinicians and pathologists; "
+            "Bij AI is a variant prioritisation system that assists qualified clinicians and pathologists; "
             "it produces a draft classification requiring qualified human review and final sign-off "
             "before any clinical use, and does not independently provide final clinical interpretation.",
         ]

@@ -38,6 +38,7 @@ from typing import Callable, Dict, List, Optional
 # Some tools have alternate/interchangeable binaries (e.g. bwa vs bwa-mem2);
 # any one of the candidates being present satisfies the requirement.
 
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -61,7 +62,7 @@ TOOL_SPECS: List[ToolSpec] = [
         version_args=("--version",),
         required=False,
         notes="Long-read / alternate aligner. Only required if bwa is unavailable "
-              "and minimap2 is selected as the aligner.",
+        "and minimap2 is selected as the aligner.",
     ),
     ToolSpec(
         name="samtools",
@@ -89,7 +90,7 @@ TOOL_SPECS: List[ToolSpec] = [
         candidates=("vep",),
         version_args=("--help",),
         required=False,
-        notes="Optional external annotator. GEPER degrades gracefully without it.",
+        notes="Optional external annotator. Bij AI degrades gracefully without it.",
     ),
 ]
 
@@ -128,13 +129,15 @@ class DependencyReport:
         headers = ("Tool", "Found?", "Version", "Required?", "Status")
         rows = []
         for r in self.results:
-            rows.append((
-                r.name,
-                "Yes" if r.found else "No",
-                r.version or "-",
-                "Yes" if r.required else "No (optional)",
-                r.status,
-            ))
+            rows.append(
+                (
+                    r.name,
+                    "Yes" if r.found else "No",
+                    r.version or "-",
+                    "Yes" if r.required else "No (optional)",
+                    r.status,
+                )
+            )
         widths = [len(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row):
@@ -178,7 +181,7 @@ class DependencyValidationError(RuntimeError):
         message = (
             f"Missing required external tool(s): {missing}.\n\n"
             f"{report.as_table()}\n\n"
-            f"Install missing tools before running GEPER. See "
+            f"Install missing tools before running Bij AI. See "
             f"docs/INSTALL_DEPENDENCIES.md or run ./install_dependencies.sh.\n"
             f"You can also run `python main.py verify-environment` for a full "
             f"environment check."
@@ -187,6 +190,7 @@ class DependencyValidationError(RuntimeError):
 
 
 # ─── Low-level discovery helpers (monkeypatchable in tests) ──────────────────
+
 
 def _which(executable: str) -> Optional[str]:
     return shutil.which(executable)
@@ -226,8 +230,10 @@ def _extract_version(output: str) -> Optional[str]:
 
 # ─── Core validation ──────────────────────────────────────────────────────────
 
-def check_tool(spec: ToolSpec, which_fn: Optional[Callable] = None,
-               version_fn: Optional[Callable] = None) -> ToolCheckResult:
+
+def check_tool(
+    spec: ToolSpec, which_fn: Optional[Callable] = None, version_fn: Optional[Callable] = None
+) -> ToolCheckResult:
     """Check a single tool against its candidate executable names.
 
     which_fn/version_fn default to the module-level _which/_run_version_command
@@ -291,13 +297,19 @@ def validate_dependencies(
         effective_spec = spec
         if spec.name == "minimap2" and require_minimap2:
             effective_spec = ToolSpec(
-                name=spec.name, candidates=spec.candidates,
-                version_args=spec.version_args, required=True, notes=spec.notes,
+                name=spec.name,
+                candidates=spec.candidates,
+                version_args=spec.version_args,
+                required=True,
+                notes=spec.notes,
             )
         elif spec.name == "vep" and require_vep:
             effective_spec = ToolSpec(
-                name=spec.name, candidates=spec.candidates,
-                version_args=spec.version_args, required=True, notes=spec.notes,
+                name=spec.name,
+                candidates=spec.candidates,
+                version_args=spec.version_args,
+                required=True,
+                notes=spec.notes,
             )
         report.results.append(check_tool(effective_spec, which_fn=which_fn, version_fn=version_fn))
     return report

@@ -68,7 +68,7 @@ except ImportError:
 # no --qc-metrics-json was ever supplied -- a POSITIVE claim, not a
 # gap, and the thing this whole card exists to stop a signed-off,
 # QC-carrying run from asserting.
-_NO_QC_OBSERVED_TEXT = "GEPER never ran or observed any upstream sequencing/alignment step"
+_NO_QC_OBSERVED_TEXT = "Bij AI never ran or observed any upstream sequencing/alignment step"
 
 _REAL_QC_METRICS = {
     "mean_coverage_depth": {"status": "found", "value": 42.5, "reason": None},

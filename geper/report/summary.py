@@ -621,7 +621,7 @@ def _make_later_page_decoration(header_label: str):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.grey)
-        canvas.drawString(_MARGIN, _PAGE_H - 12 * mm, f"GEPER Clinical Genomic Report -- {header_label}")
+        canvas.drawString(_MARGIN, _PAGE_H - 12 * mm, f"Bij AI Clinical Genomic Report -- {header_label}")
         canvas.setStrokeColor(colors.lightgrey)
         canvas.line(_MARGIN, _PAGE_H - 14 * mm, _PAGE_W - _MARGIN, _PAGE_H - 14 * mm)
         canvas.restoreState()
@@ -806,7 +806,7 @@ def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphSt
     before this feature existed.
     """
     content_width = _PAGE_W - 2 * _MARGIN
-    title = Paragraph("GEPER Clinical Genomic Analysis Report", styles["ReportTitle"])
+    title = Paragraph("Bij AI Clinical Genomic Analysis Report", styles["ReportTitle"])
     _, title_height = title.wrap(content_width, 1000)
 
     resolved = _resolve_logo_path(logo_path)
@@ -1033,7 +1033,7 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
             styles["Footnote"],
         ),
         Spacer(1, 2 * mm),
-        Paragraph(f"<b>GEPER code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),
+        Paragraph(f"<b>Bij AI code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),
         Spacer(1, 2 * mm),
     ]
 
@@ -1587,7 +1587,7 @@ def _multi_finding_observation_lines(document: Dict[str, Any], variants: List[Di
         finding_list = ", ".join(f"#{i}" for i in cluster)
         lines.append(
             f"Findings {finding_list} sit within {window_bp:,} bp of each other on chromosome {chrom} "
-            f"(positions {min(positions)}-{max(positions)}). GEPER has no phase data and does not infer "
+            f"(positions {min(positions)}-{max(positions)}). Bij AI has no phase data and does not infer "
             "compound heterozygosity or a cis/trans relationship from this -- proximity is noted for "
             "reviewer awareness only."
         )
@@ -1873,7 +1873,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         )
         flow.append(
             Paragraph(
-                esc(out_of_scope.get("reason")) or "This variant is out of scope for this GEPER build.",
+                esc(out_of_scope.get("reason")) or "This variant is out of scope for this Bij AI build.",
                 styles["BodyText"],
             )
         )
@@ -2326,7 +2326,7 @@ def generate_pdf(
         bottomMargin=30 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
-        title="GEPER Clinical Genomic Analysis Report",
+        title="Bij AI Clinical Genomic Analysis Report",
     )
 
     story: List[Any] = list(_build_report_header(logo_path, styles))

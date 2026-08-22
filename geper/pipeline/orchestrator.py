@@ -675,7 +675,7 @@ class GeperPipeline:
                 present there are skipped and the run continues from
                 where it left off (issue #8 -- Colab-disconnect resume).
         """
-        logger.info(f"Starting GEPER pipeline run for '{vcf_path}'.")
+        logger.info(f"Starting Bij AI pipeline run for '{vcf_path}'.")
         if self.enable_profiling:
             self.profiler.mark_run_start()
         if max_variants is not None and max_variants <= 0:
@@ -949,7 +949,7 @@ class GeperPipeline:
             short_pdf_path = None
 
         logger.info(
-            f"GEPER run complete. {len(json_document['variants'])} variant(s) "
+            f"Bij AI run complete. {len(json_document['variants'])} variant(s) "
             f"total in output. JSON: '{json_path}', Report: '{report_path}'"
             + (f", PDF: '{pdf_path}'" if pdf_path else " (full PDF generation failed -- see error above)")
             + (
@@ -1184,7 +1184,7 @@ class GeperPipeline:
             return "".join(parts)
 
         header = _render_row({key: label for key, label, _floor in columns})
-        lines = ["", "===== GEPER Startup Model Validation =====", "", header, "-" * len(header)]
+        lines = ["", "===== Bij AI Startup Model Validation =====", "", header, "-" * len(header)]
         for row in rows:
             lines.append(_render_row(row))
         lines.append("=" * len(header))
@@ -2442,7 +2442,7 @@ class GeperPipeline:
         """
         return {
             "skipped": True,
-            "reason": "IndiGenomes retired from GEPER's active query path (commercial-use licensing "
+            "reason": "IndiGenomes retired from Bij AI's active query path (commercial-use licensing "
             "restriction) -- see DATA_SOURCE_LICENSE_AUDIT.md.",
             "found": False,
         }

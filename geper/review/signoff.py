@@ -157,7 +157,7 @@ def _require_results(output_dir: str) -> str:
     results_path = _results_path(output_dir)
     if not os.path.exists(results_path):
         raise SignoffError(
-            f"No '{RESULTS_FILENAME}' found in '{output_dir}'. This directory must be a GEPER "
+            f"No '{RESULTS_FILENAME}' found in '{output_dir}'. This directory must be a Bij AI "
             f"--output-dir from a completed run (python main.py --vcf ... --output-dir '{output_dir}') "
             f"before it can be reviewed."
         )

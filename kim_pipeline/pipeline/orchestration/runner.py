@@ -1027,7 +1027,7 @@ def _build_cli_parser():
     import argparse
 
     p = argparse.ArgumentParser(
-        description="GEPER genomic pipeline: FASTQ → QC → Alignment → Variant Calling "
+        description="Bij AI genomic pipeline: FASTQ → QC → Alignment → Variant Calling "
         "→ Annotation → Report",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1052,7 +1052,7 @@ def _build_cli_parser():
             "'vcf_only' stops after Variant Calling and returns "
             "filtered_variants.vcf, skipping Kim's own annotation/ACMG/"
             "PGx/ancestry/reporting stages — used when Kim is feeding "
-            "another interpretation pipeline (e.g. GEPER)."
+            "another interpretation pipeline (e.g. Bij AI)."
         ),
     )
     p.add_argument(

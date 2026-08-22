@@ -570,6 +570,8 @@ class TestBlastPropagation:
 
     def test_blast_hits_merged_into_variant(self):
         """Simulate what runner does: merge BLAST hits keyed by chrom:pos:ref:alt."""
+        from pipeline.orchestration.runner import BLAST_SUMMARY_NOTE
+
         blast_data = self._make_blast_data("chr17", 43057051, "A", "T")
 
         # Simulate annotation result.annotation dict
@@ -594,7 +596,7 @@ class TestBlastPropagation:
         annotation["blast_summary"] = {
             "total_hits": blast_data.get("hit_count", 0),
             "blast_db": blast_data.get("database", ""),
-            "note": "BLAST results are supporting information only and do not override ACMG evidence.",
+            "note": BLAST_SUMMARY_NOTE,
         }
 
         assert "blast_hits" in annotation["variants"][0]
@@ -603,10 +605,36 @@ class TestBlastPropagation:
         assert "supporting information" in annotation["blast_summary"]["note"]
 
     def test_blast_note_does_not_override_acmg(self):
-        """The BLAST summary note must state it does not override ACMG evidence."""
-        blast_data = self._make_blast_data("chr1", 100, "A", "T")  # noqa: F841 -- unused until the fix in the next commit uses it; the noqa goes with it
-        note = "BLAST results are supporting information only and do not override ACMG evidence."
-        assert "not override ACMG evidence" in note
+        """The BLAST summary note must state it does not override ACMG evidence.
+
+        Before fix: this built `blast_data` and then discarded it, asserting
+        a hardcoded `note` string literal against itself two lines below --
+        a tautology that could never fail regardless of blast_data's content
+        or runner.py's actual behaviour. Reproducing the sibling test's merge
+        logic was NOT enough on its own -- the sibling had the identical
+        hole, since both were independently transcribing the same literal
+        rather than reading it from anywhere. `grep -rn "do not override
+        ACMG evidence"` used to return three hits (runner.py:757 plus one
+        in each test) and deleting runner.py:757 left both tests green.
+
+        FIX 12 extracted the literal to a module-level constant,
+        `BLAST_SUMMARY_NOTE` in pipeline/orchestration/runner.py, which
+        this test now imports instead of retyping -- so editing or
+        removing the disclaimer in source is what this test is actually
+        pinned to.
+        """
+        from pipeline.orchestration.runner import BLAST_SUMMARY_NOTE
+
+        blast_data = self._make_blast_data("chr1", 100, "A", "T")
+
+        annotation: Dict = {"variants": [{"chrom": "chr1", "pos": 100, "ref": "A", "alt": "T"}]}
+        annotation["blast_summary"] = {
+            "total_hits": blast_data.get("hit_count", 0),
+            "blast_db": blast_data.get("database", ""),
+            "note": BLAST_SUMMARY_NOTE,
+        }
+
+        assert "not override ACMG evidence" in annotation["blast_summary"]["note"]
 
     def test_no_blast_data_does_not_crash(self):
         """When blast_result_data is None, annotation proceeds normally."""
@@ -702,9 +730,35 @@ class TestClinVarCache:
         return ClinVarLookup(cfg={"clinvar": {"backend": "local", "tsv_path": None}})
 
     def test_lookup_does_not_raise_nameerror(self):
-        """Before fix, lookup() raised NameError: name 'cache_key' is not defined."""
+        """Before fix, lookup() raised NameError: name 'cache_key' is not defined.
+
+        Mocked because the test's config keys don't match what __init__
+        reads, so backend silently defaults to 'api' instead of 'local'.
+        Mock prevents the network call; it does not route to local TSV as
+        this docstring used to claim.
+
+        Same root cause as the ClinVar config key-name defect (commit
+        b2e819c, config_validator._validate_clinvar_keys / test coverage
+        in test_clinvar_config_e.py): `_lkp()` passes `tsv_path`, but
+        ClinVarLookup.__init__ only reads `tsv_gz_path`. That defect fix
+        (human-ruled: warn only, not accept-both -- see
+        clinvar-lookup-silently-ignores-tsv-path-config-and-falls-back-to-live-network
+        on the board) makes a mis-keyed config warn at validate_config
+        time, but does NOT change ClinVarLookup's own routing -- a direct
+        ClinVarLookup(cfg=...) construction (as this test does, bypassing
+        validate_config) still silently falls to 'api' on this same
+        mis-key. So this mock still stands even with that defect fixed.
+        The constructor was deliberately not changed to accept both keys;
+        see b2e819c.
+
+        When the key mismatch in `_lkp()` is corrected to `tsv_gz_path`
+        pointing at a real local-mode fixture, this mock should be removed
+        and the test rewritten to exercise the real offline path. A mock
+        nobody revisits is how a test stops testing.
+        """
         lkp = self._lkp()
-        result = lkp.lookup("chr17", 43057051, "A", "T")
+        with patch.object(type(lkp), "_api_lookup", return_value=None):
+            result = lkp.lookup("chr17", 43057051, "A", "T")
         assert result is None  # no local TSV loaded, but should not raise
 
     def test_lookup_caches_result(self):

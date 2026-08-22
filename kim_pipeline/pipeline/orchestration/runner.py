@@ -72,6 +72,17 @@ _STAGES_IN_ORDER = [
     "reporting",
 ]
 
+# FIX 12: this exists as a constant, not an inline literal, so that
+# test_defect_regression.py can IMPORT it rather than retype it. Both
+# blast_summary tests used to hardcode this string themselves and assert
+# against their own copy -- a tautology that stayed green even after this
+# text was deleted from here. Importing this constant is what makes those
+# tests fail when the disclaimer changes; inlining it back "as a tidy-up"
+# would silently restore that exact defect. Do not inline it.
+BLAST_SUMMARY_NOTE = (
+    "BLAST results are supporting information only and do not override ACMG evidence."
+)
+
 
 def _checkpoint_path(work_dir: Path) -> Path:
     return work_dir / "checkpoint.json"
@@ -754,7 +765,7 @@ class PipelineRunner:
                     result.annotation["blast_summary"] = {
                         "total_hits": blast_result_data.get("hit_count", 0),
                         "blast_db": blast_result_data.get("database", ""),
-                        "note": "BLAST results are supporting information only and do not override ACMG evidence.",
+                        "note": BLAST_SUMMARY_NOTE,
                     }
                     logger.info(
                         "[%s] BLAST results integrated into annotation: %d hits",

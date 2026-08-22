@@ -85,6 +85,17 @@ be doing no work. (I first wrote this list with THREE harmless entries
 source rather than a run. The test disagreed: it returns a fabricated
 0.0. The list above is the one the run produced.)
 
+A THIRD STATE, ADDED 2026-08-23. `skipped` -- the integration
+disabled by config -- is neither a failure nor a confirmed absence, and
+it carries NO `error` key at all, so it does not ride on the `error`
+guard this file is built around. It was missing from these fixtures
+entirely when they were first written; a board audit surfaced it.
+`TestSkippedLookupNeverReadsAsConfirmedAbsence` covers it. The code was
+already correct there, so each of those tests was watched failing
+against a deliberately broken `_pm2` before being kept -- a test written
+against already-correct code is exactly where a tautology hides, because
+green proves nothing about whether it is wired to anything.
+
 THE CONTROLS MATTER AS MUCH AS THE DANGEROUS CASE. A "fix" that made
 every uncertain gnomAD result read as unavailable would pass the
 dangerous case and destroy PM2. So each consumer below is asserted in
@@ -97,11 +108,13 @@ from unittest import mock
 
 from pipeline.acmg_rules import ACMGRuleEngine
 from pipeline.confidence_engine import ConfidenceEngine
+from pipeline.gnomad.lookup import GnomadLookup
 from pipeline.gnomad.models import GnomadAnnotation
 from pipeline.interpretation import InterpretationEngine
 from pipeline.orchestrator import GeperPipeline
 from pipeline.prioritization_engine import PrioritizationEngine
 from pipeline.pvs1.utils import population_af_from_gnomad
+from pipeline.vcf_parser import Variant
 from report.report_generator import ReportGenerator
 
 # A lookup that FAILED, whose exception carried no message. This is the
@@ -118,6 +131,21 @@ FAILED_WITH_MESSAGE = {"found": False, "skipped": False, "error": "network unrea
 # that separates them, which is exactly why it must be read by presence.
 CONFIRMED_ABSENT = {"found": False, "skipped": False, "error": None, "source": "local_index", "build": "GRCh38"}
 
+# A lookup that NEVER RAN, because the integration is disabled by
+# config. Copied verbatim from `GnomadLookup.query_variant`'s FIRST
+# branch (`pipeline/gnomad/lookup.py:57`) and pinned against the real
+# class below so it cannot drift away from production.
+#
+# Note what is NOT in it: no `error` key at all. A consumer that reads
+# only `error` sees found=False and nothing to object to -- which is the
+# confirmed-absence shape exactly. `skipped` is a THIRD state, and the
+# one this file did not cover when it was first written.
+SKIPPED_DISABLED = {
+    "skipped": True,
+    "reason": "gnomAD integration disabled via GEPER_ENABLE_GNOMAD=false",
+    "found": False,
+}
+
 # A lookup that SUCCEEDED and found a common variant.
 CONFIRMED_PRESENT = {
     "found": True,
@@ -128,6 +156,25 @@ CONFIRMED_PRESENT = {
     "global_af": 0.15,
     "population_breakdown": {},
 }
+
+
+def _gnomad_result_when_disabled() -> dict:
+    """
+    Drive the REAL `GnomadLookup.query_variant` down its disabled
+    branch and return what production actually produces.
+
+    Used instead of asserting against `SKIPPED_DISABLED` directly
+    wherever the claim is about production's SHAPE, so those assertions
+    are wired to the code rather than to the literal beside them.
+    """
+    provider = mock.Mock()
+    lookup = GnomadLookup(provider=provider, cache=None)
+    variant = Variant(chrom="17", pos=43057051, variant_id=".", ref="A", alt="T", qual=None, filter_status=None)
+    with mock.patch("pipeline.gnomad.lookup.CONFIG") as fake_config:
+        fake_config.gnomad.ENABLED = False
+        result = lookup.query_variant(variant)
+    provider.query.assert_not_called()
+    return result
 
 
 class TestFailedLookupNeverReadsAsConfirmedAbsence(unittest.TestCase):
@@ -205,6 +252,85 @@ class TestFailedLookupWithAMessageStillBehaves(unittest.TestCase):
         self.assertNotIn(
             "queried successfully", ConfidenceEngine._population_quality(FAILED_WITH_MESSAGE, None, 1.0).rationale
         )
+
+
+class TestSkippedLookupNeverReadsAsConfirmedAbsence(unittest.TestCase):
+    """
+    A lookup that never ran is not a lookup that found nothing.
+
+    HOW THIS GAP WAS FOUND, since it is the useful part: not by reading
+    the guard, but by enumerating every `_pm2` call site in the whole
+    geper suite -- eleven of them, across two files -- and noticing that
+    ALL ELEVEN pass `"skipped": False`. The nearest miss,
+    `test_gnomad_population_priority.py:104`, passes
+    `{"skipped": False, "found": False}`, which is the CONFIRMED-ABSENCE
+    case wearing similar clothes. Grepping for "skipped" returns hits in
+    three files and looks like coverage; listing every call site WITH ITS
+    ARGUMENT is what showed the property was unpinned.
+
+    THE CODE WAS MEASURED CORRECT BEFORE THESE TESTS WERE WRITTEN --
+    they pin behaviour, they do not fix it. That makes them exactly the
+    kind of test a tautology hides in, so each one below was watched
+    failing against a deliberately broken `_pm2` before being kept.
+    Worth having because PM2 *is* "absent from controls": a consumer
+    that grew a skipped-shaped hole would manufacture pathogenic
+    evidence, which is the failure this whole file exists to prevent.
+    """
+
+    def test_pm2_is_not_triggered_by_a_skipped_lookup(self):
+        result = ACMGRuleEngine._pm2(SKIPPED_DISABLED)
+        self.assertNotEqual(
+            result.status,
+            "triggered",
+            "a gnomAD lookup that never ran must never award PM2 -- 'absent from controls' "
+            "cannot be concluded from controls that were never consulted",
+        )
+        self.assertEqual(result.status, "not_evaluated")
+
+    def test_the_skipped_fixture_matches_what_gnomad_lookup_actually_returns(self):
+        """
+        The fixture above is a claim about production code, so it is
+        pinned to the real class rather than trusted. If
+        `query_variant`'s disabled branch ever changes shape -- gains an
+        `error` key, drops `found` -- this fails and the class above
+        stops testing a shape that no longer occurs.
+        """
+        self.assertEqual(_gnomad_result_when_disabled(), SKIPPED_DISABLED)
+
+    def test_skipped_carries_no_error_key_which_is_why_it_needs_its_own_guard(self):
+        """
+        The characterisation half: WHY `skipped` cannot ride on the
+        `error` check.
+
+        Deliberately asserted against the REAL disabled-path result and
+        not against `SKIPPED_DISABLED`. Read off the fixture it would be
+        a statement about a literal three lines up -- green forever, and
+        unable to notice the day production starts emitting `error: ""`
+        here, which is precisely the shape this whole file was written
+        against.
+        """
+        real = _gnomad_result_when_disabled()
+        self.assertNotIn("error", real)
+        self.assertFalse(real["found"])
+        self.assertFalse(
+            CONFIRMED_ABSENT["found"],
+            "both are found=False -- as with the error case, `found` alone cannot discriminate",
+        )
+
+    def test_pm2_declines_for_every_shape_that_means_no_usable_lookup(self):
+        """`{}` and `None` reach `_pm2` from stages that never populated a result at all."""
+        for label, payload in (("skipped", SKIPPED_DISABLED), ("empty dict", {}), ("None", None)):
+            with self.subTest(shape=label):
+                self.assertEqual(ACMGRuleEngine._pm2(payload).status, "not_evaluated")
+
+    def test_a_skipped_lookup_and_a_confirmed_absence_do_not_agree(self):
+        """
+        The discriminating control, in both directions at once. A change
+        that made `skipped` read as absence fails the first assertion; a
+        blur-everything-to-unavailable change fails the second.
+        """
+        self.assertEqual(ACMGRuleEngine._pm2(SKIPPED_DISABLED).status, "not_evaluated")
+        self.assertEqual(ACMGRuleEngine._pm2(CONFIRMED_ABSENT).status, "triggered")
 
 
 class TestConfirmedAbsenceStillCountsAsEvidence(unittest.TestCase):

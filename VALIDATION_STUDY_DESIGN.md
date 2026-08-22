@@ -1281,6 +1281,41 @@ statement.
 **Population, specimen, operator and regulatory scope remain unfilled**, and EJ-01 therefore
 stays open for those components.
 
+> **⚠ WHAT THIS RATIFICATION RESTS ON THAT HAS NOT BEEN CHECKED — surfaced here, beside the
+> statement, added 2026-08-22 on the human's ruling that a reader should meet it WITHOUT having
+> to read §5.1.1, and that anyone citing this decision should meet it where the decision is
+> recorded.**
+>
+> **The premise:** that a **triage tool falls outside the regulatory scope that applies to a
+> diagnostic interpretation**.
+>
+> **Its status: UNVERIFIED.** **[ANALOGY]** — **no source was consulted for it**; it is a
+> **regulatory determination, outside this document's competence**; and §5.1.1 names it as the
+> single most consequential untagged assumption available to a reader of that comparison. It is
+> cross-referenced rather than restated here: §5.1.1 carries the full text and the comparison
+> it underwrites.
+>
+> **What rests on it — the human's own sharpening, which is stronger than the flag §5.1.1
+> carries:** *"My ratification of Statement B rests on an unverified premise for **its entire
+> cost advantage, not part of it**. Every lighter-obligation row depends on triage falling
+> outside diagnostic-interpretation scope."* **Every** such row in §5.1.1's comparison rests on
+> it, not merely several — so **if the premise is wrong, Statement B's cost profile is wrong
+> with it**, and much of that comparison's right-hand column collapses toward the left.
+>
+> **⚠ WHAT IS NOT IN DOUBT, STATED AS PLAINLY AS THE RISK — because overstating this in the
+> other direction would be the same defect reversed.** **The ratified statement stands on its
+> merits, independently of this premise.** In the human's words: *"the clinical claim stands on
+> its merits regardless — but the reason B looked cheaper is conditional."* **What is
+> conditional is the COST COMPARISON, not the ratification.** Nothing here reopens the shape
+> that was chosen; it bounds what may be claimed about what that choice **costs**.
+>
+> **Ownership: regulatory counsel, not this floor — and it is NOT discharged by the
+> ratification having happened.** A decision taken against a conditional cost comparison leaves
+> the condition outstanding rather than settling it. **The sequencing ruling attached to this
+> premise — counsel's determination BEFORE the amended statement is relied upon for any scope
+> decision, governing EJ-11, EJ-15, EJ-16 and EJ-18 — is recorded further down this subsection
+> and is unchanged by this addition.**
+
 **§5.1.1's selection is superseded.** The ratified shape is the prioritisation shape, so
 there is no longer a choice to make between the two provisional statements. **EJ-23 HAS NOW
 BEEN REMOVED (2026-08-22), taking the count 24 → 23** — the pending-removal note that stood

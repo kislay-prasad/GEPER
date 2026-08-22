@@ -21,13 +21,10 @@ D13 – VEP HGVSc/HGVSp propagated into AnnotatedVariant
 D14 – ClinVar lookup() cache_key bug fixed; check_same_codon_pathogenic cached
 D15 – PP2 uses missense constraint (oe_mis/mis_z), not LoF intolerance
 """
+
 from __future__ import annotations
 
-import copy
-import sys
-import types
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,6 +33,7 @@ import pytest
 # ══════════════════════════════════════════════════════════════════════════════
 # D3 – HGVS generation
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestHgvsGeneration:
     """Defect 3: HGVS must never produce NM_xxx:g. for transcript references,
@@ -48,11 +46,21 @@ class TestHgvsGeneration:
     coordinate, _build_hgvs must fall back to genomic (g.) notation.
     """
 
-    def _hgvs(self, chrom, pos, ref, alt, transcript=None, cds_pos=None,
-              end_cds_pos=None, strand=None):
+    def _hgvs(
+        self, chrom, pos, ref, alt, transcript=None, cds_pos=None, end_cds_pos=None, strand=None
+    ):
         from pipeline.annotation.stage import _build_hgvs
-        return _build_hgvs(chrom, pos, ref, alt, transcript,
-                            cds_pos=cds_pos, end_cds_pos=end_cds_pos, strand=strand)
+
+        return _build_hgvs(
+            chrom,
+            pos,
+            ref,
+            alt,
+            transcript,
+            cds_pos=cds_pos,
+            end_cds_pos=end_cds_pos,
+            strand=strand,
+        )
 
     def test_no_transcript_uses_genomic_g(self):
         h = self._hgvs("chr17", 43057051, "A", "T", None)
@@ -67,23 +75,19 @@ class TestHgvsGeneration:
         assert ":c." not in h
 
     def test_nm_transcript_with_verified_cds_pos_uses_c_prefix(self):
-        h = self._hgvs("chr17", 43057051, "A", "T", "NM_007294.4",
-                        cds_pos=181, strand="+")
+        h = self._hgvs("chr17", 43057051, "A", "T", "NM_007294.4", cds_pos=181, strand="+")
         assert h == "NM_007294.4:c.181A>T"
 
     def test_xm_transcript_with_verified_cds_pos_uses_c_prefix(self):
-        h = self._hgvs("chr1", 100, "G", "A", "XM_001234.1",
-                        cds_pos=10, strand="+")
+        h = self._hgvs("chr1", 100, "G", "A", "XM_001234.1", cds_pos=10, strand="+")
         assert h.startswith("XM_001234.1:c.")
 
     def test_nr_transcript_with_verified_pos_uses_n_prefix(self):
-        h = self._hgvs("chrX", 500, "C", "T", "NR_024540.1",
-                        cds_pos=5, strand="+")
+        h = self._hgvs("chrX", 500, "C", "T", "NR_024540.1", cds_pos=5, strand="+")
         assert h.startswith("NR_024540.1:n.")
 
     def test_xr_transcript_with_verified_pos_uses_n_prefix(self):
-        h = self._hgvs("chr2", 200, "A", "G", "XR_001234.1",
-                        cds_pos=5, strand="+")
+        h = self._hgvs("chr2", 200, "A", "G", "XR_001234.1", cds_pos=5, strand="+")
         assert h.startswith("XR_001234.1:n.")
 
     def test_insertion_without_cds_pos_falls_back_to_genomic(self):
@@ -92,8 +96,7 @@ class TestHgvsGeneration:
         assert ":g." in h
 
     def test_insertion_with_verified_cds_pos_uses_c_prefix(self):
-        h = self._hgvs("chr1", 100, "A", "ATG", "NM_000059.4",
-                        cds_pos=50, strand="+")
+        h = self._hgvs("chr1", 100, "A", "ATG", "NM_000059.4", cds_pos=50, strand="+")
         assert "ins" in h
         assert h.startswith("NM_000059.4:c.")
 
@@ -103,8 +106,9 @@ class TestHgvsGeneration:
         assert ":g." in h
 
     def test_deletion_with_verified_cds_range_uses_c_prefix(self):
-        h = self._hgvs("chr1", 100, "ATG", "A", "NM_000059.4",
-                        cds_pos=50, end_cds_pos=52, strand="+")
+        h = self._hgvs(
+            "chr1", 100, "ATG", "A", "NM_000059.4", cds_pos=50, end_cds_pos=52, strand="+"
+        )
         assert "del" in h
         assert h.startswith("NM_000059.4:c.")
 
@@ -118,8 +122,7 @@ class TestHgvsGeneration:
         assert ":g." in h
 
     def test_enst_with_verified_cds_pos_uses_c_prefix(self):
-        h = self._hgvs("chr17", 43057051, "A", "T", "ENST00000357654.9",
-                        cds_pos=181, strand="+")
+        h = self._hgvs("chr17", 43057051, "A", "T", "ENST00000357654.9", cds_pos=181, strand="+")
         assert h.startswith("ENST00000357654.9:c.")
 
 
@@ -127,11 +130,13 @@ class TestHgvsGeneration:
 # D5 – Allele balance multiallelic
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAlleleBalance:
     """Defect 5: AB must use the correct AD index per ALT allele."""
 
     def _extract(self, gt, keys, vals, alt_index=1):
         from pipeline.zygosity.extractor import ZygosityExtractor
+
         return ZygosityExtractor.extract(gt, keys, vals, alt_index=alt_index)
 
     def test_biallelic_ab_default(self):
@@ -151,6 +156,7 @@ class TestAlleleBalance:
 
     def test_multiallelic_alt1_and_alt2_differ(self):
         from pipeline.zygosity.extractor import ZygosityExtractor
+
         r1 = ZygosityExtractor.extract("0/1", ["GT", "AD"], ["0/1", "30,10,5"], alt_index=1)
         r2 = ZygosityExtractor.extract("0/2", ["GT", "AD"], ["0/2", "30,10,5"], alt_index=2)
         assert r1.ab != r2.ab
@@ -169,16 +175,19 @@ class TestAlleleBalance:
 # D6 – PGx subset allele exclusion
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestPgxSubsetAlleleExclusion:
     """Defect 6: A simpler allele must not coexist with the allele that subsumes it."""
 
     def _detect(self, gene, variants_dict):
         from pipeline.pgx.stage import _detect_star_alleles
+
         detected, _hemizygous = _detect_star_alleles(gene, variants_dict)
         return detected
 
     def _diplotype(self, gene, detected):
         from pipeline.pgx.stage import _call_diplotype
+
         return _call_diplotype(gene, detected)
 
     def test_subset_allele_excluded(self):
@@ -204,8 +213,7 @@ class TestPgxSubsetAlleleExclusion:
 
         # Simulate all *10 variants being present
         variants = {
-            (c.lstrip("chr"), p, r.upper(), a.upper()): "heterozygous"
-            for c, p, r, a in star10_vars
+            (c.lstrip("chr"), p, r.upper(), a.upper()): "heterozygous" for c, p, r, a in star10_vars
         }
         detected = self._detect(gene, variants)
         # *2 must not coexist with *10
@@ -215,6 +223,7 @@ class TestPgxSubsetAlleleExclusion:
 
     def test_no_alleles_gives_star1_star1(self):
         from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS
+
         gene = next(iter(STAR_ALLELE_VARIANTS), None)
         if gene is None:
             pytest.skip("No PGx genes defined")
@@ -224,6 +233,7 @@ class TestPgxSubsetAlleleExclusion:
 
     def test_one_allele_gives_star1_allele(self):
         from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS
+
         gene = next(iter(STAR_ALLELE_VARIANTS), None)
         if gene is None:
             pytest.skip("No PGx genes defined")
@@ -234,6 +244,7 @@ class TestPgxSubsetAlleleExclusion:
     def test_diplotype_is_deterministic(self):
         """Same input always produces the same diplotype."""
         from pipeline.pgx.stage import _call_diplotype
+
         r1 = _call_diplotype("CYP2C19", ["*2", "*17"])
         r2 = _call_diplotype("CYP2C19", ["*17", "*2"])
         assert r1[0] == r2[0], "Diplotype must be deterministic regardless of input order"
@@ -242,6 +253,7 @@ class TestPgxSubsetAlleleExclusion:
 # ══════════════════════════════════════════════════════════════════════════════
 # ISSUE 6 — PGx hemizygous genotype handling (male X chromosome calls)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class TestPgxHemizygousHandling:
     """ISSUE 6: a hemizygous call (single chromosomal copy — e.g. a male
@@ -253,6 +265,7 @@ class TestPgxHemizygousHandling:
 
     def test_hemizygous_g6pd_call_not_duplicated_into_pair(self):
         from pipeline.pgx.stage import _detect_star_alleles
+
         # Single-copy (ploidy-1 GT) call — e.g. a male sample's hemizygous X.
         variants = {("X", 154535388, "G", "A"): "hemizygous"}
         detected, hemizygous = _detect_star_alleles("G6PD", variants)
@@ -263,6 +276,7 @@ class TestPgxHemizygousHandling:
 
     def test_hemizygous_diplotype_label_is_not_fabricated_pair(self):
         from pipeline.pgx.stage import _detect_star_alleles, _call_diplotype
+
         variants = {("X", 154535388, "G", "A"): "hemizygous"}
         detected, hemizygous = _detect_star_alleles("G6PD", variants)
         diplotype, a1, a2 = _call_diplotype("G6PD", detected, hemizygous)
@@ -282,6 +296,7 @@ class TestPgxHemizygousHandling:
         expressed (no masking normal allele), same functional consequence
         as the diploid homozygous case."""
         from pipeline.pgx.stage import _detect_star_alleles, _call_diplotype, _predict_phenotype
+
         variants = {("X", 154535388, "G", "A"): "hemizygous"}
         detected, hemizygous = _detect_star_alleles("G6PD", variants)
         _, a1, a2 = _call_diplotype("G6PD", detected, hemizygous)
@@ -291,6 +306,7 @@ class TestPgxHemizygousHandling:
         """A genuinely diploid homozygous_alt call (two real copies) must
         still be reported as a true homozygous pair, not hemizygous."""
         from pipeline.pgx.stage import _detect_star_alleles, _call_diplotype
+
         variants = {("X", 154535388, "G", "A"): "homozygous_alt"}
         detected, hemizygous = _detect_star_alleles("G6PD", variants)
         assert detected == ["G202A", "G202A"]
@@ -302,6 +318,7 @@ class TestPgxHemizygousHandling:
         """A heterozygous female carrier call must still pair with *1, not
         be treated as hemizygous."""
         from pipeline.pgx.stage import _detect_star_alleles, _call_diplotype
+
         variants = {("X", 154535388, "G", "A"): "heterozygous"}
         detected, hemizygous = _detect_star_alleles("G6PD", variants)
         assert detected == ["G202A"]
@@ -315,6 +332,7 @@ class TestPgxHemizygousHandling:
         the same single-copy-not-duplicated logic must apply rather than
         crashing or fabricating a pair."""
         from pipeline.pgx.stage import _detect_star_alleles, _call_diplotype
+
         variants = {("22", 42128175, "C", "T"): "hemizygous"}
         detected, hemizygous = _detect_star_alleles("CYP2D6", variants)
         assert detected == ["*4"]
@@ -327,15 +345,18 @@ class TestPgxHemizygousHandling:
 # D7 – BP7 synonymous_or_intronic
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBP7:
     """Defect 7: BP7 must fire for synonymous/intronic variants without splice impact."""
 
     def _ev(self, **kwargs):
         from pipeline.acmg.classifier import VariantEvidence
+
         return VariantEvidence(**kwargs)
 
     def _classify(self, ev):
         from pipeline.acmg.classifier import AcmgClassifier
+
         return AcmgClassifier().classify(ev)
 
     def test_bp7_fires_for_synonymous_non_splice(self):
@@ -350,6 +371,7 @@ class TestBP7:
 
     def test_bp7_field_defaults_false(self):
         from pipeline.acmg.classifier import VariantEvidence
+
         ev = VariantEvidence()
         assert ev.synonymous_or_intronic is False
 
@@ -358,15 +380,18 @@ class TestBP7:
 # D8 – BP1 wired to ClinVar benign
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBP1:
     """Defect 8: BP1 fires when a reputable source reports benign."""
 
     def _ev(self, **kwargs):
         from pipeline.acmg.classifier import VariantEvidence
+
         return VariantEvidence(**kwargs)
 
     def _classify(self, ev):
         from pipeline.acmg.classifier import AcmgClassifier
+
         return AcmgClassifier().classify(ev)
 
     def test_bp1_fires_when_clinvar_benign_1star(self):
@@ -389,31 +414,35 @@ class TestBP1:
 # D9 – Duplicate @staticmethod removed
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestDuplicateStaticmethod:
     """Defect 9: EvidenceAggregator.clinvar_sig_to_score must be callable."""
 
     def test_clinvar_sig_to_score_callable(self):
         from pipeline.evidence.aggregator import EvidenceAggregator
+
         # If duplicate @staticmethod remains, Python would raise TypeError at import
         score = EvidenceAggregator.clinvar_sig_to_score("Pathogenic", 2)
         assert score == pytest.approx(1.0, rel=1e-4)
 
     def test_clinvar_sig_to_score_benign(self):
         from pipeline.evidence.aggregator import EvidenceAggregator
+
         score = EvidenceAggregator.clinvar_sig_to_score("Benign", 2)
         assert score == pytest.approx(0.0, rel=1e-4)
 
     def test_not_double_decorated(self):
         """Verify only one @staticmethod decorator exists on the method."""
-        import ast, inspect, pipeline.evidence.aggregator as mod
+        import ast
+        import inspect
+        import pipeline.evidence.aggregator as mod
+
         src = inspect.getsource(mod)
         tree = ast.parse(src)
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if node.name == "clinvar_sig_to_score":
-                    decorator_names = [
-                        getattr(d, 'id', None) for d in node.decorator_list
-                    ]
+                    decorator_names = [getattr(d, "id", None) for d in node.decorator_list]
                     assert decorator_names.count("staticmethod") == 1, (
                         f"Expected 1 @staticmethod, got {decorator_names.count('staticmethod')}"
                     )
@@ -423,11 +452,14 @@ class TestDuplicateStaticmethod:
 # D10 – Version synchronisation
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestVersionSync:
     """Defect 10: All version strings must be synchronised to 12.0.0."""
 
     def test_pyproject_version(self):
-        import tomllib, pathlib
+        import tomllib
+        import pathlib
+
         p = pathlib.Path(__file__).parent.parent / "pyproject.toml"
         if not p.exists():
             pytest.skip("pyproject.toml not found")
@@ -437,18 +469,22 @@ class TestVersionSync:
 
     def test_pipeline_package_version(self):
         import pipeline
+
         assert pipeline.__version__ == "12.0.0"
 
     def test_checkpoint_version(self):
         import pipeline
+
         assert pipeline.CHECKPOINT_VERSION == "12.0.0"
 
     def test_report_version(self):
         import pipeline
+
         assert pipeline.REPORT_VERSION == "12.0.0"
 
     def test_pipeline_version(self):
         import pipeline
+
         assert pipeline.PIPELINE_VERSION == "12.0.0"
 
 
@@ -456,15 +492,18 @@ class TestVersionSync:
 # D11 – PS1 / PM5 mutual exclusion
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestPS1PM5MutualExclusion:
     """Defect 11: PS1 and PM5 must never both fire for the same variant."""
 
     def _clf(self):
         from pipeline.acmg.classifier import AcmgClassifier
+
         return AcmgClassifier()
 
     def _ev(self, **kwargs):
         from pipeline.acmg.classifier import VariantEvidence
+
         return VariantEvidence(**kwargs)
 
     def test_ps1_fires_when_same_aa_pathogenic(self):
@@ -510,6 +549,7 @@ class TestPS1PM5MutualExclusion:
 # D12 – BLAST results propagated into annotation
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBlastPropagation:
     """Defect 12: blast_result_data must be merged into annotation variants."""
 
@@ -546,7 +586,7 @@ class TestBlastPropagation:
             blast_hits_by_id.setdefault(seq_id, []).append(hit)
 
         for var in annotation["variants"]:
-            bid = f"{var.get('chrom','')}:{var.get('pos','')}:{var.get('ref','')}:{var.get('alt','')}"
+            bid = f"{var.get('chrom', '')}:{var.get('pos', '')}:{var.get('ref', '')}:{var.get('alt', '')}"
             hits = blast_hits_by_id.get(bid, [])
             if hits:
                 var["blast_hits"] = hits
@@ -564,7 +604,7 @@ class TestBlastPropagation:
 
     def test_blast_note_does_not_override_acmg(self):
         """The BLAST summary note must state it does not override ACMG evidence."""
-        blast_data = self._make_blast_data("chr1", 100, "A", "T")
+        blast_data = self._make_blast_data("chr1", 100, "A", "T")  # noqa: F841 -- unused until the fix in the next commit uses it; the noqa goes with it
         note = "BLAST results are supporting information only and do not override ACMG evidence."
         assert "not override ACMG evidence" in note
 
@@ -581,25 +621,32 @@ class TestBlastPropagation:
 # D13 – VEP HGVS propagation
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestVepHgvsPropagation:
     """Defect 13: VEP HGVSc and HGVSp must populate AnnotatedVariant."""
 
     def test_annotated_variant_has_vep_hgvs_fields(self):
         from pipeline.annotation.stage import AnnotatedVariant
+
         v = AnnotatedVariant(chrom="chr17", pos=43057051, ref="A", alt="T")
         assert hasattr(v, "vep_hgvs_c")
         assert hasattr(v, "vep_hgvs_p")
 
     def test_vep_hgvs_defaults_empty(self):
         from pipeline.annotation.stage import AnnotatedVariant
+
         v = AnnotatedVariant(chrom="chr1", pos=100, ref="A", alt="T")
         assert v.vep_hgvs_c == ""
         assert v.vep_hgvs_p == ""
 
     def test_vep_hgvs_populated(self):
         from pipeline.annotation.stage import AnnotatedVariant
+
         v = AnnotatedVariant(
-            chrom="chr17", pos=43057051, ref="A", alt="T",
+            chrom="chr17",
+            pos=43057051,
+            ref="A",
+            alt="T",
             vep_hgvs_c="NM_007294.4:c.5266dup",
             vep_hgvs_p="NP_009225.1:p.Gln1756fs",
         )
@@ -608,16 +655,19 @@ class TestVepHgvsPropagation:
 
     def test_extract_csq_hgvs_function_exists(self):
         from pipeline.annotation.stage import _extract_csq_hgvs
+
         assert callable(_extract_csq_hgvs)
 
     def test_extract_csq_hgvs_empty_info(self):
         from pipeline.annotation.stage import _extract_csq_hgvs
+
         hc, hp = _extract_csq_hgvs("DP=30;AF=0.5", [])
         assert hc == ""
         assert hp == ""
 
     def test_extract_csq_hgvs_parses_csq(self):
         from pipeline.annotation.stage import _extract_csq_hgvs
+
         # Minimal CSQ with HGVSc and HGVSp fields
         csq_fields = ["Allele", "Consequence", "SYMBOL", "HGVSc", "HGVSp"]
         csq_value = "T|missense_variant|BRCA1|NM_007294.4:c.5266A>T|NP_009225.1:p.Lys1756Asn"
@@ -629,6 +679,7 @@ class TestVepHgvsPropagation:
     def test_nm_g_notation_filtered_out(self):
         """VEP should never emit NM_:g. but if it does, we filter it."""
         from pipeline.annotation.stage import _extract_csq_hgvs
+
         csq_fields = ["Allele", "Consequence", "SYMBOL", "HGVSc", "HGVSp"]
         # Pathological case: invalid NM_:g. notation
         csq_value = "T|missense_variant|BRCA1|NM_007294.4:g.43057051A>T|"
@@ -641,11 +692,13 @@ class TestVepHgvsPropagation:
 # D14 – ClinVar cache
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestClinVarCache:
     """Defect 14: ClinVar lookup() must not raise NameError; cache must work."""
 
     def _lkp(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         return ClinVarLookup(cfg={"clinvar": {"backend": "local", "tsv_path": None}})
 
     def test_lookup_does_not_raise_nameerror(self):
@@ -697,18 +750,22 @@ class TestClinVarCache:
 
     def test_sig_to_score_unknown_returns_none(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         assert ClinVarLookup.sig_to_score("Mixed significance", 0) is None
 
     def test_sig_to_score_unknown_significance_returns_none(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         assert ClinVarLookup.sig_to_score("Unknown significance", 0) is None
 
     def test_sig_to_score_pathogenic_returns_1(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         assert ClinVarLookup.sig_to_score("Pathogenic", 3) == pytest.approx(1.0)
 
     def test_sig_to_score_benign_returns_0(self):
         from pipeline.clinvar.lookup import ClinVarLookup
+
         assert ClinVarLookup.sig_to_score("Benign", 2) == pytest.approx(0.0)
 
 
@@ -716,15 +773,18 @@ class TestClinVarCache:
 # D15 – PP2 missense constraint
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestPP2MissenseConstraint:
     """Defect 15: PP2 must use missense constraint, not LoF intolerance."""
 
     def _clf(self):
         from pipeline.acmg.classifier import AcmgClassifier
+
         return AcmgClassifier()
 
     def _ev(self, **kwargs):
         from pipeline.acmg.classifier import VariantEvidence
+
         return VariantEvidence(**kwargs)
 
     def test_pp2_fires_when_missense_constrained(self):
@@ -736,9 +796,7 @@ class TestPP2MissenseConstraint:
         ev = self._ev(is_missense=True, missense_constrained=False, lof_gene_intolerant=True)
         r = self._clf().classify(ev)
         # lof_gene_intolerant alone must NOT trigger PP2
-        assert "PP2" not in r.criteria_met, (
-            "PP2 must not fire based on LoF intolerance alone"
-        )
+        assert "PP2" not in r.criteria_met, "PP2 must not fire based on LoF intolerance alone"
 
     def test_pp2_not_fired_for_non_missense(self):
         ev = self._ev(is_missense=False, missense_constrained=True)
@@ -747,18 +805,21 @@ class TestPP2MissenseConstraint:
 
     def test_variant_evidence_has_missense_constrained_field(self):
         from pipeline.acmg.classifier import VariantEvidence
+
         ev = VariantEvidence()
         assert hasattr(ev, "missense_constrained")
         assert ev.missense_constrained is False
 
     def test_constraint_record_has_oe_mis(self):
         from pipeline.constraint.lookup import ConstraintRecord
+
         rec = ConstraintRecord(gene="BRCA1", pli=0.99, loeuf=0.1, oe_mis=0.5, mis_z=3.5)
         assert rec.oe_mis == 0.5
         assert rec.mis_z == 3.5
 
     def test_is_missense_constrained_oe_mis_threshold(self):
         from pipeline.constraint.lookup import ConstraintRecord
+
         # oe_mis < 0.8 → constrained
         rec_constrained = ConstraintRecord(gene="BRCA1", pli=0.5, loeuf=0.5, oe_mis=0.6)
         assert rec_constrained.is_missense_constrained() is True
@@ -769,6 +830,7 @@ class TestPP2MissenseConstraint:
 
     def test_is_missense_constrained_mis_z_threshold(self):
         from pipeline.constraint.lookup import ConstraintRecord
+
         # mis_z > 3.09 → constrained
         rec = ConstraintRecord(gene="BRCA2", pli=0.5, loeuf=0.5, oe_mis=0.9, mis_z=3.5)
         assert rec.is_missense_constrained() is True
@@ -779,6 +841,7 @@ class TestPP2MissenseConstraint:
 
     def test_constraint_lookup_has_is_missense_constrained(self):
         from pipeline.constraint.lookup import GnomadConstraintLookup
+
         lkp = GnomadConstraintLookup(cfg={})
         # No data loaded → should return False without crashing
         result = lkp.is_missense_constrained("BRCA1")
@@ -789,11 +852,13 @@ class TestPP2MissenseConstraint:
 # D4 – GFF3 phase handling
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestGff3PhaseHandling:
     """Defect 4: GFF3 CDS phase must be applied to codon frame calculation."""
 
     def test_cds_record_has_phase_field(self):
         from pipeline.annotation.codon_provider import CdsRecord
+
         # Signature: (chrom, start, end, strand, phase, transcript_id)
         rec = CdsRecord("chr17", 43044295, 43044522, "+", 0, "NM_007294.4")
         assert rec.phase == 0
@@ -801,17 +866,20 @@ class TestGff3PhaseHandling:
     def test_phase_0_no_offset(self):
         """phase=0 means first base of exon is first base of a codon."""
         from pipeline.annotation.codon_provider import CdsRecord
+
         rec = CdsRecord("chr1", 100, 199, "+", 0, "NM_000001.1")
         assert rec.phase == 0
 
     def test_phase_1_shifts_frame(self):
         """phase=1 means 1 base of the first codon is in the previous exon."""
         from pipeline.annotation.codon_provider import CdsRecord
+
         rec = CdsRecord("chr1", 100, 199, "+", 1, "NM_000001.1")
         assert rec.phase == 1
 
     def test_phase_2_shifts_frame(self):
         from pipeline.annotation.codon_provider import CdsRecord
+
         rec = CdsRecord("chr1", 100, 199, "+", 2, "NM_000001.1")
         assert rec.phase == 2
 
@@ -837,24 +905,36 @@ class TestGff3PhaseHandling:
 # D1 – 5-tuple unpack from get_codon_and_aa()
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestCodonProviderTuple:
     """Defect 1: get_codon_and_aa() returns 5 values — all must be unpacked."""
 
     def test_codon_provider_returns_5_tuple(self):
         """get_codon_and_aa() returns a 5-tuple on success; annotation stage unpacks all 5."""
         from pipeline.annotation.codon_provider import FastaCodonContextProvider
-        from unittest.mock import patch, MagicMock
 
         provider = FastaCodonContextProvider(gff_path="", fasta_path="")
 
         # Mock the internal _classify_snv_full to return the 5-tuple
         with patch.object(
-            provider, "_classify_snv_full",
+            provider,
+            "_classify_snv_full",
             return_value=("missense_variant", "AAA", "AAT", "K", "N"),
         ):
             # Also mock _available to True and _cds_map to contain the transcript
             provider._available = True
-            provider._cds_map = {"NM_000001.1": [MagicMock(chrom="chr1", start=100, end=200, strand="+", phase=0, transcript_id="NM_000001.1")]}
+            provider._cds_map = {
+                "NM_000001.1": [
+                    MagicMock(
+                        chrom="chr1",
+                        start=100,
+                        end=200,
+                        strand="+",
+                        phase=0,
+                        transcript_id="NM_000001.1",
+                    )
+                ]
+            }
             result = provider.get_codon_and_aa("chr1", 100, "A", "T", "NM_000001.1")
 
         assert len(result) == 5, f"Expected 5-tuple, got {len(result)}-tuple: {result}"
@@ -886,6 +966,7 @@ class TestCodonProviderTuple:
 # D2 – bcftools norm smoke test
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class TestBcftoolsNormIntegration:
     """Defect 2: bcftools norm must be invoked with --fasta-ref."""
 
@@ -895,11 +976,16 @@ class TestBcftoolsNormIntegration:
         reference_fasta = "/path/to/hg38.fa"
         raw_vcf = "/path/to/variants.raw.vcf"
         norm_cmd = [
-            "bcftools", "norm",
-            "--fasta-ref", reference_fasta,
-            "--multiallelics", "-",
-            "--output-type", "v",
-            "--output", "/path/to/variants.norm.vcf",
+            "bcftools",
+            "norm",
+            "--fasta-ref",
+            reference_fasta,
+            "--multiallelics",
+            "-",
+            "--output-type",
+            "v",
+            "--output",
+            "/path/to/variants.norm.vcf",
             raw_vcf,
         ]
         assert "--fasta-ref" in norm_cmd
@@ -908,9 +994,12 @@ class TestBcftoolsNormIntegration:
 
     def test_norm_command_splits_multiallelics(self):
         norm_cmd = [
-            "bcftools", "norm",
-            "--fasta-ref", "/ref.fa",
-            "--multiallelics", "-",
+            "bcftools",
+            "norm",
+            "--fasta-ref",
+            "/ref.fa",
+            "--multiallelics",
+            "-",
         ]
         assert "--multiallelics" in norm_cmd
         idx = norm_cmd.index("--multiallelics")
@@ -922,5 +1011,6 @@ class TestBcftoolsNormIntegration:
     )
     def test_bcftools_available(self):
         import subprocess
+
         result = subprocess.run(["bcftools", "--version"], capture_output=True)
         assert result.returncode == 0

@@ -52,8 +52,8 @@ from pipeline.utils.dependency_validator import (
 )
 
 MIN_PYTHON = (3, 10)
-MIN_RAM_GB_WARN = 8.0       # below this -> WARNING (pipeline may still run)
-MIN_RAM_GB_FAIL = 2.0       # below this -> FAIL (pipeline cannot run at all)
+MIN_RAM_GB_WARN = 8.0  # below this -> WARNING (pipeline may still run)
+MIN_RAM_GB_FAIL = 2.0  # below this -> FAIL (pipeline cannot run at all)
 MIN_DISK_GB_WARN = 10.0
 MIN_CPU_CORES_WARN = 2
 
@@ -61,7 +61,7 @@ MIN_CPU_CORES_WARN = 2
 @dataclass
 class CheckResult:
     name: str
-    status: str          # "PASS" | "WARNING" | "FAIL"
+    status: str  # "PASS" | "WARNING" | "FAIL"
     detail: str
     required: bool = True
 
@@ -76,8 +76,7 @@ class EnvironmentReport:
         statuses = [c.status for c in self.checks]
         if self.tool_report is not None:
             statuses.extend(
-                "FAIL" if (r.required and not r.found) else
-                ("WARNING" if not r.found else "PASS")
+                "FAIL" if (r.required and not r.found) else ("WARNING" if not r.found else "PASS")
                 for r in self.tool_report.results
             )
         if "FAIL" in statuses:
@@ -87,7 +86,7 @@ class EnvironmentReport:
         return "PASS"
 
     def render(self) -> str:
-        lines = ["=" * 60, "GEPER Environment Verification", "=" * 60]
+        lines = ["=" * 60, "Bij AI Environment Verification", "=" * 60]
         for c in self.checks:
             lines.append(f"[{c.status:7s}] {c.name}: {c.detail}")
         if self.tool_report is not None:
@@ -114,6 +113,7 @@ class EnvironmentReport:
 
 # ─── Individual checks ────────────────────────────────────────────────────────
 
+
 def check_python_version() -> CheckResult:
     current = sys.version_info[:2]
     detail = f"{platform.python_version()} (required >= {MIN_PYTHON[0]}.{MIN_PYTHON[1]})"
@@ -126,7 +126,8 @@ def _read_ram_gb() -> Optional[float]:
     """Best-effort RAM detection without requiring psutil."""
     try:
         import psutil  # type: ignore
-        return psutil.virtual_memory().total / (1024 ** 3)
+
+        return psutil.virtual_memory().total / (1024**3)
     except Exception:
         pass
     try:
@@ -135,7 +136,7 @@ def _read_ram_gb() -> Optional[float]:
                 for line in fh:
                     if line.startswith("MemTotal:"):
                         kb = int(line.split()[1])
-                        return kb / (1024 ** 2)
+                        return kb / (1024**2)
     except Exception:
         pass
     try:
@@ -144,7 +145,7 @@ def _read_ram_gb() -> Optional[float]:
                 ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
             )
             if out.returncode == 0 and out.stdout.strip():
-                return int(out.stdout.strip()) / (1024 ** 3)
+                return int(out.stdout.strip()) / (1024**3)
     except Exception:
         pass
     return None
@@ -159,7 +160,8 @@ def check_ram() -> CheckResult:
         return CheckResult("RAM", "FAIL", detail + f" (minimum {MIN_RAM_GB_FAIL} GB required)")
     if ram_gb < MIN_RAM_GB_WARN:
         return CheckResult(
-            "RAM", "WARNING",
+            "RAM",
+            "WARNING",
             detail + f" ({MIN_RAM_GB_WARN} GB recommended; AI model stages may be constrained)",
         )
     return CheckResult("RAM", "PASS", detail)
@@ -178,13 +180,14 @@ def check_cpu() -> CheckResult:
 def check_disk_space(path: str = ".") -> CheckResult:
     try:
         usage = shutil.disk_usage(path)
-        free_gb = usage.free / (1024 ** 3)
+        free_gb = usage.free / (1024**3)
     except Exception as exc:
         return CheckResult("Disk space", "WARNING", f"Could not determine disk usage: {exc}")
     detail = f"{free_gb:.1f} GB free at '{os.path.abspath(path)}'"
     if free_gb < MIN_DISK_GB_WARN:
         return CheckResult(
-            "Disk space", "WARNING",
+            "Disk space",
+            "WARNING",
             detail + f" ({MIN_DISK_GB_WARN} GB recommended for alignment/VCF intermediates)",
         )
     return CheckResult("Disk space", "PASS", detail)
@@ -199,29 +202,34 @@ def check_cuda_gpu() -> CheckResult:
     # as a hard dependency.
     try:
         import torch  # type: ignore
+
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
             return CheckResult("CUDA / GPU", "PASS", f"CUDA available — {name}", required=False)
         return CheckResult(
-            "CUDA / GPU", "WARNING",
+            "CUDA / GPU",
+            "WARNING",
             "torch installed but no CUDA device available (CPU-only mode).",
             required=False,
         )
     except ImportError:
         pass
     except Exception as exc:
-        return CheckResult("CUDA / GPU", "WARNING", f"torch present but CUDA probe failed: {exc}",
-                            required=False)
+        return CheckResult(
+            "CUDA / GPU", "WARNING", f"torch present but CUDA probe failed: {exc}", required=False
+        )
 
     # Fall back to nvidia-smi presence as a coarse signal.
     if shutil.which("nvidia-smi"):
         return CheckResult(
-            "CUDA / GPU", "WARNING",
+            "CUDA / GPU",
+            "WARNING",
             "nvidia-smi found but torch not installed — GPU cannot be confirmed usable.",
             required=False,
         )
     return CheckResult(
-        "CUDA / GPU", "WARNING",
+        "CUDA / GPU",
+        "WARNING",
         "No GPU/CUDA detected (not required for core pipeline; needed only for optional AI stages).",
         required=False,
     )

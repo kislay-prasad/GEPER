@@ -163,7 +163,7 @@ def test_cmd_verify_environment_returns_zero_on_pass(monkeypatch, capsys):
     rc = geper_main.cmd_verify_environment(args)
     assert rc == 0
     out = capsys.readouterr().out
-    assert "GEPER Environment Verification" in out
+    assert "Bij AI Environment Verification" in out
 
 
 def test_cmd_verify_environment_returns_one_on_fail(monkeypatch, capsys):

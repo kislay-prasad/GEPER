@@ -766,7 +766,7 @@ def run_all() -> Report:
 
 def print_human(report: Report) -> None:
     print("=" * 78)
-    print("GEPER Environment Verification")
+    print("Bij AI Environment Verification")
     print("=" * 78)
     for r in report.results:
         icon = _STATUS_ICON.get(r.status, "?")

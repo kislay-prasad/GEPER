@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -22,6 +21,7 @@ from pipeline.utils.dependency_validator import DependencyReport, ToolCheckResul
 
 
 # ─── check_python_version ──────────────────────────────────────────────────────
+
 
 def test_check_python_version_pass_on_supported_version(monkeypatch):
     monkeypatch.setattr(ve.sys, "version_info", (3, 11, 0))
@@ -36,6 +36,7 @@ def test_check_python_version_fail_on_unsupported_version(monkeypatch):
 
 
 # ─── check_ram ──────────────────────────────────────────────────────────────────
+
 
 def test_check_ram_pass_when_plenty(monkeypatch):
     monkeypatch.setattr(ve, "_read_ram_gb", lambda: 32.0)
@@ -63,6 +64,7 @@ def test_check_ram_warning_when_undetectable(monkeypatch):
 
 # ─── check_cpu ──────────────────────────────────────────────────────────────────
 
+
 def test_check_cpu_pass(monkeypatch):
     monkeypatch.setattr(ve.os, "cpu_count", lambda: 8)
     result = ve.check_cpu()
@@ -77,6 +79,7 @@ def test_check_cpu_warning_low_cores(monkeypatch):
 
 # ─── check_disk_space ───────────────────────────────────────────────────────────
 
+
 class _FakeUsage:
     def __init__(self, free_bytes):
         self.free = free_bytes
@@ -85,13 +88,13 @@ class _FakeUsage:
 
 
 def test_check_disk_space_pass(monkeypatch):
-    monkeypatch.setattr(ve.shutil, "disk_usage", lambda path: _FakeUsage(50 * 1024 ** 3))
+    monkeypatch.setattr(ve.shutil, "disk_usage", lambda path: _FakeUsage(50 * 1024**3))
     result = ve.check_disk_space(".")
     assert result.status == "PASS"
 
 
 def test_check_disk_space_warning_low(monkeypatch):
-    monkeypatch.setattr(ve.shutil, "disk_usage", lambda path: _FakeUsage(1 * 1024 ** 3))
+    monkeypatch.setattr(ve.shutil, "disk_usage", lambda path: _FakeUsage(1 * 1024**3))
     result = ve.check_disk_space(".")
     assert result.status == "WARNING"
 
@@ -99,12 +102,14 @@ def test_check_disk_space_warning_low(monkeypatch):
 def test_check_disk_space_warning_on_error(monkeypatch):
     def _raise(path):
         raise OSError("boom")
+
     monkeypatch.setattr(ve.shutil, "disk_usage", _raise)
     result = ve.check_disk_space(".")
     assert result.status == "WARNING"
 
 
 # ─── check_cuda_gpu ─────────────────────────────────────────────────────────────
+
 
 def test_check_cuda_gpu_never_fails_when_absent(monkeypatch):
     """GPU is never required for the core pipeline — absence must be a
@@ -118,23 +123,35 @@ def test_check_cuda_gpu_never_fails_when_absent(monkeypatch):
 
 # ─── run_environment_checks / EnvironmentReport ───────────────────────────────
 
+
 def _fake_tool_report(all_ok: bool) -> DependencyReport:
     report = DependencyReport()
     report.results.append(
-        ToolCheckResult(name="bwa", found=all_ok, version="1.0" if all_ok else None,
-                        required=True, status="OK" if all_ok else "MISSING")
+        ToolCheckResult(
+            name="bwa",
+            found=all_ok,
+            version="1.0" if all_ok else None,
+            required=True,
+            status="OK" if all_ok else "MISSING",
+        )
     )
     return report
 
 
 def test_overall_status_fail_when_required_tool_missing(monkeypatch):
-    monkeypatch.setattr(ve, "check_python_version",
-                         lambda: ve.CheckResult("Python version", "PASS", "ok"))
+    monkeypatch.setattr(
+        ve, "check_python_version", lambda: ve.CheckResult("Python version", "PASS", "ok")
+    )
     monkeypatch.setattr(ve, "check_ram", lambda: ve.CheckResult("RAM", "PASS", "ok"))
     monkeypatch.setattr(ve, "check_cpu", lambda: ve.CheckResult("CPU", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_cuda_gpu",
-                         lambda: ve.CheckResult("CUDA / GPU", "WARNING", "no gpu", required=False))
+    monkeypatch.setattr(
+        ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok")
+    )
+    monkeypatch.setattr(
+        ve,
+        "check_cuda_gpu",
+        lambda: ve.CheckResult("CUDA / GPU", "WARNING", "no gpu", required=False),
+    )
     monkeypatch.setattr(ve, "check_external_tools", lambda: _fake_tool_report(all_ok=False))
 
     report = ve.run_environment_checks()
@@ -142,13 +159,19 @@ def test_overall_status_fail_when_required_tool_missing(monkeypatch):
 
 
 def test_overall_status_pass_when_everything_ok(monkeypatch):
-    monkeypatch.setattr(ve, "check_python_version",
-                         lambda: ve.CheckResult("Python version", "PASS", "ok"))
+    monkeypatch.setattr(
+        ve, "check_python_version", lambda: ve.CheckResult("Python version", "PASS", "ok")
+    )
     monkeypatch.setattr(ve, "check_ram", lambda: ve.CheckResult("RAM", "PASS", "ok"))
     monkeypatch.setattr(ve, "check_cpu", lambda: ve.CheckResult("CPU", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_cuda_gpu",
-                         lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False))
+    monkeypatch.setattr(
+        ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok")
+    )
+    monkeypatch.setattr(
+        ve,
+        "check_cuda_gpu",
+        lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False),
+    )
     monkeypatch.setattr(ve, "check_external_tools", lambda: _fake_tool_report(all_ok=True))
 
     report = ve.run_environment_checks()
@@ -156,29 +179,41 @@ def test_overall_status_pass_when_everything_ok(monkeypatch):
 
 
 def test_render_includes_banner_and_overall_status(monkeypatch):
-    monkeypatch.setattr(ve, "check_python_version",
-                         lambda: ve.CheckResult("Python version", "PASS", "ok"))
+    monkeypatch.setattr(
+        ve, "check_python_version", lambda: ve.CheckResult("Python version", "PASS", "ok")
+    )
     monkeypatch.setattr(ve, "check_ram", lambda: ve.CheckResult("RAM", "PASS", "ok"))
     monkeypatch.setattr(ve, "check_cpu", lambda: ve.CheckResult("CPU", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_cuda_gpu",
-                         lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False))
+    monkeypatch.setattr(
+        ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok")
+    )
+    monkeypatch.setattr(
+        ve,
+        "check_cuda_gpu",
+        lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False),
+    )
     monkeypatch.setattr(ve, "check_external_tools", lambda: _fake_tool_report(all_ok=True))
 
     report = ve.run_environment_checks()
     text = report.render()
-    assert "GEPER Environment Verification" in text
+    assert "Bij AI Environment Verification" in text
     assert "Overall: PASS" in text
 
 
 def test_as_dict_structure(monkeypatch):
-    monkeypatch.setattr(ve, "check_python_version",
-                         lambda: ve.CheckResult("Python version", "PASS", "ok"))
+    monkeypatch.setattr(
+        ve, "check_python_version", lambda: ve.CheckResult("Python version", "PASS", "ok")
+    )
     monkeypatch.setattr(ve, "check_ram", lambda: ve.CheckResult("RAM", "PASS", "ok"))
     monkeypatch.setattr(ve, "check_cpu", lambda: ve.CheckResult("CPU", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok"))
-    monkeypatch.setattr(ve, "check_cuda_gpu",
-                         lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False))
+    monkeypatch.setattr(
+        ve, "check_disk_space", lambda path=".": ve.CheckResult("Disk space", "PASS", "ok")
+    )
+    monkeypatch.setattr(
+        ve,
+        "check_cuda_gpu",
+        lambda: ve.CheckResult("CUDA / GPU", "PASS", "gpu found", required=False),
+    )
     monkeypatch.setattr(ve, "check_external_tools", lambda: _fake_tool_report(all_ok=True))
 
     report = ve.run_environment_checks()

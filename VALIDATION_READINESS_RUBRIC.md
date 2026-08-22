@@ -24,8 +24,8 @@ must never be cited as one.
 - **v1.0.0** (ratified, committed `89bf125`): initial 8-domain rubric,
   falsifiers on every sub-criterion, tier-split-never-summed scoring mechanic,
   Tier D kept.
-- **v1.1.0** (this revision, proposed, uncommitted -- awaiting human review of
-  this specific change): amends sub-criterion **1b (Inter-run
+- **v1.1.0** (**APPROVED BY THE HUMAN 2026-08-22, as written** -- reviewed in
+  full, not in summary): amends sub-criterion **1b (Inter-run
   reproducibility)** and adds a new **"Scope constraints on specific claim
   types" subsection** under section 1, per `geper/REPRODUCIBILITY_PROTOCOL.md`
   @ `71d0e37` section 0. **Also folds in three flags Vic raised against the
@@ -77,8 +77,9 @@ must never be cited as one.
   this version. See the covering messages for the full reasoning and why
   this is still one MINOR bump, not a patch, a re-baseline, or six separate
   revisions.
-- **v1.2.0** (this revision, proposed, uncommitted, sequenced after v1.1.0
-  rather than folded into it -- see reasoning below): adds a new
+- **v1.2.0** (**APPROVED BY THE HUMAN 2026-08-22, as written**, sequenced after
+  v1.1.0 rather than folded into it -- and the sequencing is what let it be
+  approved on its own terms, exactly as the reasoning below predicted): adds a new
   **"Configuration-knob legitimacy: threshold the sanitised derivative,
   never the raw code" subsection**, sibling to "Scope constraints" under
   section 1, per a human ruling on Meredith's config-knob sweep. States the
@@ -448,7 +449,21 @@ automatically -- stated once here, centrally, because it is uniform across
 every current Tier-A claim in this rubric, not a per-criterion judgment
 call.** Andy confirmed, 2026-08-21: **no `.github/workflows` directory
 exists anywhere in this repo, for either `geper/` or `kim_pipeline/` --
-nothing automated ever runs `pytest` for either tree.** Tier A's definition
+nothing automated ever runs `pytest` for either tree.**
+
+> *** DO NOT DISTRIBUTE THIS NOTE INTO THE ROWS IT APPLIES TO, AND DO NOT DROP
+> IT WHEN SECTIONS MOVE. *** It is stated once, centrally, precisely BECAUSE it
+> is uniform across every Tier-A row. That uniformity is what makes it look
+> like boilerplate to a future editor restructuring this document -- and a fact
+> that qualifies every row of a table is the kind that survives least well when
+> the table is reorganised, because no single row owns it.
+>
+> **What breaks if it is lost:** every Tier-A claim in this rubric silently
+> reverts to reading as "continuously enforced", which is what Tier A means
+> everywhere else that phrase is used. The rubric would then overstate its own
+> evidence grade across every domain at once, with no individual row having
+> changed. **If this document is ever restructured, this note moves WITH the
+> tier definitions or the restructuring is not finished.** Tier A's definition
 above ("a persisted, automated check exists that would go RED... re-runnable
 by someone other than the person who built the fix") is satisfied by the
 check requiring no human judgment to interpret once run -- it does **not**

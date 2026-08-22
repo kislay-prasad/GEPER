@@ -140,10 +140,6 @@ _HTML_TEMPLATE = """\
   }}
   .interpretation-box p {{ margin: 0 0 10px 0; }}
   .interpretation-box p:last-child {{ margin-bottom: 0; }}
-  .signature-block {{
-    display: flex; gap: 60px; margin-top: 40px; padding-top: 16px;
-  }}
-  .signature-line {{ flex: 1; border-top: 1px solid var(--ink); padding-top: 6px; font-size: 0.85em; color: var(--muted); }}
   footer.report-footer {{
     max-width: 1100px; margin: 40px auto 0 auto; padding: 14px 24px;
     border-top: 1px solid var(--border); font-size: 0.75em; color: var(--muted);

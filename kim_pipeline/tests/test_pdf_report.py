@@ -4,12 +4,16 @@ tests/test_pdf_report.py
 Tests for pipeline/reporting/pdf_report.py — the ReportLab-native
 clinical PDF generator (Issue 3).
 """
+
 from __future__ import annotations
 
 from pipeline.reporting.pdf_report import render_clinical_pdf, ReportLabUnavailableError
 from pipeline.reporting.clinical_sections import (
-    normalize_patient_metadata, qc_status_summary, variant_dashboard,
-    clinical_interpretation, merge_variants_with_acmg,
+    normalize_patient_metadata,
+    qc_status_summary,
+    variant_dashboard,
+    clinical_interpretation,
+    merge_variants_with_acmg,
 )
 
 
@@ -19,15 +23,38 @@ def _minimal_kwargs():
     dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {}, {})
     interpretation = clinical_interpretation(dashboard)
     merged = merge_variants_with_acmg(
-        [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "gene_name": "MT-TL1",
-          "transcript_id": "rna-TRNL1", "hgvs": "MT:g.3243A>G", "consequence": "gene_region_variant"}],
-        [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "gene": "MT-TL1",
-          "classification": "Uncertain_Significance", "gnomad_af": 0.0001}],
+        [
+            {
+                "chrom": "MT",
+                "pos": 3243,
+                "ref": "A",
+                "alt": "G",
+                "gene_name": "MT-TL1",
+                "transcript_id": "rna-TRNL1",
+                "hgvs": "MT:g.3243A>G",
+                "consequence": "gene_region_variant",
+            }
+        ],
+        [
+            {
+                "chrom": "MT",
+                "pos": 3243,
+                "ref": "A",
+                "alt": "G",
+                "gene": "MT-TL1",
+                "classification": "Uncertain_Significance",
+                "gnomad_af": 0.0001,
+            }
+        ],
     )
     return dict(
-        patient_meta=patient, qc_rows=qc_rows, dashboard=dashboard,
-        interpretation=interpretation, merged_variants=merged,
-        reference_genome="GRCh38", pipeline_version="GEPER v8",
+        patient_meta=patient,
+        qc_rows=qc_rows,
+        dashboard=dashboard,
+        interpretation=interpretation,
+        merged_variants=merged,
+        reference_genome="GRCh38",
+        pipeline_version="GEPER v8",
     )
 
 
@@ -45,7 +72,9 @@ class TestRenderClinicalPdf:
         from pypdf import PdfReader
 
         kwargs = _minimal_kwargs()
-        kwargs["patient_meta"] = normalize_patient_metadata({"name": "Jane Doe", "physician": "Dr. Smith"})
+        kwargs["patient_meta"] = normalize_patient_metadata(
+            {"name": "Jane Doe", "physician": "Dr. Smith"}
+        )
         out = str(tmp_path / "report.pdf")
         render_clinical_pdf(out, sample_id="S01", **kwargs)
         text = "".join(p.extract_text() for p in PdfReader(out).pages)
@@ -98,13 +127,30 @@ class TestRenderClinicalPdf:
         text = "".join(p.extract_text() for p in PdfReader(out).pages)
         assert "CUSTOM DISCLAIMER TEXT" in text
 
-    def test_signature_block_present(self, tmp_path):
+    def test_signature_block_not_rendered(self, tmp_path):
+        """Inverted, not deleted, from the original `assert "Pathologist"
+        in text`: that assertion encoded a claim -- "this report carries
+        a lab sign-off block" -- that the product now rules false, rather
+        than documenting a held defect. This is the PDF twin of the same
+        signature-block/signature-line pair removed from the HTML report
+        (see test_reporting_stage.py::test_signature_block_not_rendered
+        for the full reasoning: no review_status field, no
+        approve()/override(), no export gate anywhere in kim_pipeline --
+        a control indistinguishable from no control is worse than no
+        control, because it launders the absence of one). The block
+        itself was removed from pipeline/reporting/pdf_report.py in
+        cfba75e; this test was missed by that commit's authorization
+        (named only pdf_report.py and one other test file) because it
+        lives in a second test file pinning the same artefact. If this
+        assertion starts failing, that means the block came back -- do
+        not "fix" it by reverting to `in text`.
+        """
         from pypdf import PdfReader
 
         out = str(tmp_path / "report.pdf")
         render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
         text = "".join(p.extract_text() for p in PdfReader(out).pages)
-        assert "Pathologist" in text
+        assert "Pathologist" not in text
 
     def test_page_x_of_y_pagination(self, tmp_path):
         """Force multiple pages via a long variant list and confirm each
@@ -113,13 +159,28 @@ class TestRenderClinicalPdf:
 
         kwargs = _minimal_kwargs()
         many_variants = [
-            {"chrom": "17", "pos": i, "ref": "A", "alt": "T", "gene_name": f"GENE{i}",
-             "transcript_id": f"NM_{i}", "hgvs": f"g.{i}A>T", "consequence": "missense_variant"}
+            {
+                "chrom": "17",
+                "pos": i,
+                "ref": "A",
+                "alt": "T",
+                "gene_name": f"GENE{i}",
+                "transcript_id": f"NM_{i}",
+                "hgvs": f"g.{i}A>T",
+                "consequence": "missense_variant",
+            }
             for i in range(200)
         ]
         many_acmg = [
-            {"chrom": "17", "pos": i, "ref": "A", "alt": "T", "gene": f"GENE{i}",
-             "classification": "Uncertain_Significance", "gnomad_af": 0.001}
+            {
+                "chrom": "17",
+                "pos": i,
+                "ref": "A",
+                "alt": "T",
+                "gene": f"GENE{i}",
+                "classification": "Uncertain_Significance",
+                "gnomad_af": 0.001,
+            }
             for i in range(200)
         ]
         kwargs["merged_variants"] = merge_variants_with_acmg(many_variants, many_acmg)
@@ -144,7 +205,12 @@ class TestRenderClinicalPdf:
 
         kwargs = _minimal_kwargs()
         kwargs["pgx_annotations"] = [
-            {"gene": "CYP2D6", "diplotype": "*1/*4", "phenotype": "Intermediate Metabolizer", "evidence_level": "1A"}
+            {
+                "gene": "CYP2D6",
+                "diplotype": "*1/*4",
+                "phenotype": "Intermediate Metabolizer",
+                "evidence_level": "1A",
+            }
         ]
         out = str(tmp_path / "report.pdf")
         render_clinical_pdf(out, sample_id="S01", **kwargs)

@@ -140,7 +140,7 @@ class StageEvidence(BaseModel):
                 f"error message present ({self.error!r}) but status is "
                 f"'{self.status.value}', not 'error' -- status/error must agree"
             )
-        if self.status == StageStatus.ERROR and not self.error:
+        if self.status == StageStatus.ERROR and self.error is None:
             raise ValueError("status is 'error' but no error message was recorded")
         return self
 
@@ -196,7 +196,7 @@ class StageEvidence(BaseModel):
         if not raw:
             return cls(status=StageStatus.NOT_RUN, data={})
         error = raw.get("error")
-        if error:
+        if error is not None:
             return cls(status=StageStatus.ERROR, error=str(error), data=raw)
         if raw.get("skipped") is True:
             return cls(status=StageStatus.NOT_RUN, data=raw)

@@ -226,3 +226,34 @@ Pillow>=9.0
 # the mmsplice line means pip will not pull it in automatically).
 tensorflow>=2.16.0,<3.0.0
 
+# --- Test-only dependencies (not imported by pipeline/ at runtime) -----------
+# These belong HERE, not in a separate requirements-dev.txt, because this
+# file's own header declares itself "ONE environment" for GEPER -- and this
+# project's environment has to be able to run this project's tests. That
+# reconciles the header with reality; until 2026-08-23 the two contradicted
+# each other, and the contradiction was silent.
+#
+# Undeclared until 2026-08-23. Not a decision -- an oversight. This file
+# documents its rationale for five DELIBERATE omissions (enformer, borzoi,
+# spliceformer, splicebert, mmsplice); it documented none for the test
+# runner, which is the asymmetry that identified this as an accident. The
+# consequence: `.github/workflows/pytest.yml` runs `pip install -r
+# requirements.txt` and then `python -m pytest tests/ -v`, so in a clean
+# environment the second step died with "No module named pytest". The geper
+# job has therefore produced ZERO test results for its entire existence
+# while reporting red -- indistinguishable, from the outside, from a job
+# that ran the suite and failed it.
+#
+# pytest: the runner. Lower bound matches kim_pipeline's. MEASURED, not
+# assumed: 22 geper test files use unittest's `subTest`. Under pytest 8 a
+# failing subtest still fails its test (verified with a deliberate 3-case
+# probe: 2 of 3 cases failing -> 1 reported failure), so there is no
+# false-green risk at the lower bound; pytest 9 additionally reports each
+# subtest separately (same probe -> SUBFAILED(i=2) and SUBFAILED(i=3)).
+# Granularity differs, correctness does not. No pytest-subtests plugin is
+# required at either version.
+pytest>=8.0.0
+# pypdf: READS BACK the PDFs that reportlab (pinned above) writes, so tests
+# can assert page count / rendered text. Production never imports it --
+# `grep -rn pypdf` outside tests/ returns nothing.
+pypdf>=4.0.0

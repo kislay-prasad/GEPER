@@ -1,5 +1,22 @@
 name: pytest
 
+# Interpreter: 3.12.
+#
+# geper/requirements.txt line 39 documents the hard constraint -- 3.11 or
+# 3.12 ONLY, forced by evo2's own PyPI metadata (requires-python:
+# >=3.11,<3.13). Both are equally permitted by it. 3.12 is chosen because
+# it is the project's validated interpreter of record: the mmsplice/cyvcf2
+# incompatibility documented in that same file was established by testing
+# against 3.12, and the clean-venv installs that identified geper's missing
+# test runner were done on 3.12.
+#
+# THE COST, stated here so it is not discovered later: a 3.12-only CI will
+# not catch a regression specific to 3.11, which requires-python still
+# permits. That cost is currently theoretical -- no 3.11 environment is
+# reachable from this project's development floor to reproduce such a
+# regression against (`py --list` -> 3.14.7 and 3.12.10 only). Revisit --
+# as a build matrix over both -- if a 3.11 environment becomes reachable.
+
 on:
   push:
   pull_request:
@@ -16,7 +33,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: geper/requirements.txt
 
@@ -37,7 +54,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
           cache-dependency-path: kim_pipeline/requirements.txt
 

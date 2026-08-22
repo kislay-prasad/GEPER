@@ -252,23 +252,41 @@ Options:
 | `--hpo-terms` | Comma-separated patient-observed HPO phenotype term IDs, e.g. `"HP:0001166,HP:0002011"`, evaluated against each variant's gene via the HPO gene-to-phenotype dataset for ACMG's PP4 rule (see "21. HPO" below). Malformed IDs (anything not matching `HP:#######`) are logged as a warning and skipped, never fatal. Combines with `--phenotype-file` if both are given. | — (PP4 stays `not_evaluated`) |
 | `--phenotype-file` | Path to a file with patient-observed HPO terms for PP4: either a plain text file with one `HP:#######` ID per line, or a JSON file containing a list of HPO ID strings. Alternative/addition to `--hpo-terms` for real clinical use where several observed phenotypes need to be entered at once. A missing/unreadable/malformed file is logged as a warning, never fatal. | — (PP4 stays `not_evaluated`) |
 
-Every run ends with a summary in the log:
+Every run ends with a summary in the log. The block below is real, captured
+output — not a mockup — from `python main.py --vcf test_data/nuclear_test.vcf
+--ai-only --max-variants 1`, run on a machine with **no CUDA GPU** and
+**`torchvision`, `rna-fm`, and `tensorflow` not installed** (captured
+2026-08-22, one variant processed):
 
 ```
 ===== GEPER Run Summary =====
 
 Loaded:
-  ✓ RNA-FM
+  ✗ HyenaDNA (not installed)
+  ✗ Evo2 (no CUDA GPU detected (Evo 2 has no practical CPU path))
+  ✗ RNA-FM (not installed)
   ✓ ESM2
-  ✗ HyenaDNA (missing / not installed)
-  – Evo2 (not invoked -- no variant routed to it)
+  ✗ AlphaMissense (not installed)
+  ✗ MMSplice (tensorflow could not be installed automatically)
 
-Processed variants: 20
-Successful predictions: 18
-Skipped: 2
+Processed variants: 1
+Successful predictions: 1
+Skipped: 0
 Failed: 0
 ==============================
 ```
+
+On this specific machine, five of the six loaded-model rows are `✗` rather
+than `✓` — a machine with a CUDA GPU and `torchvision`/`rna-fm`/`tensorflow`
+installed would show `✓` across every row instead, and processing more than
+one variant would naturally produce different `Processed`/`Successful`/
+`Skipped`/`Failed` counts. Six models are listed, not the four an earlier
+version of this block showed — `HyenaDNA`, `Evo2`, `RNA-FM`, `ESM2`,
+`AlphaMissense`, and `MMSplice` are exactly the six the pipeline's own
+`MODEL_REGISTRY` tracks in this summary (`pipeline/orchestrator.py:131`);
+Enformer, Borzoi, SpliceFormer, and SpliceBERT are real models the pipeline
+also loads, but through a separate plugin-manager subsystem that logs its
+own messages and was never part of this particular block.
 
 Programmatic usage:
 

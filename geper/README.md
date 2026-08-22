@@ -578,21 +578,39 @@ synonymous, nonsense, frameshift, intronic/splice, and structural
 variants never are.
 
 **Startup validation table:** AlphaMissense gets its own row, same as
-every embedding model, but with values that reflect what's actually
-happening — there's no tensor computation, so `Device` is always `cpu`
-(no GPU is ever used, regardless of what's available) and `Precision`
-reads `n/a (lookup table, no weights)` rather than a fabricated torch
-dtype:
+every embedding model. When AlphaMissense actually loads (its own tabix
+catalogue reachable), there's no tensor computation, so its `Device` reads
+`cpu` (no GPU is ever used for it, regardless of what's available) and
+`Precision` reads `n/a (lookup table, no weights)` rather than a fabricated
+torch dtype — that PASS-path rendering is a property of the code, not of
+any one machine.
+
+The table below is real, captured output — not a mockup, and not the
+idealized all-PASS run above — from `python main.py --vcf
+test_data/nuclear_test.vcf --ai-only --max-variants 1`, run on a machine
+with **no CUDA GPU** and **`torchvision`, `rna-fm`, and `tensorflow` not
+installed** (captured 2026-08-22):
 
 ```
-Model                   Device    Precision       Max Length  Status
---------------------------------------------------------------------
-HyenaDNA                 cuda      torch.float32   450000      PASS
-Evo2                      cuda      torch.bfloat16 (evo2_7b_base, StripedHyena-2)  8192  PASS
-RNA-FM                   cuda      torch.float32   1024        PASS
-ESM2                     cuda      torch.float32   1024        PASS
-AlphaMissense             cpu      n/a (lookup table, no weights)  n/a  PASS
+Model                     Device      Precision         Max Length    Status
+----------------------------------------------------------------------------
+HyenaDNA                  n/a         n/a               n/a           FAIL (Failed to load model 'hyenadna': No module named 'torchvision')
+Evo2                      n/a         n/a               n/a           SKIP (no CUDA GPU detected (Evo 2 has no practical CPU path))
+RNA-FM                    n/a         n/a               n/a           SKIP (not installed)
+ESM2                      cpu         torch.float32     1024          PASS
+AlphaMissense              n/a         n/a               n/a          SKIP (not installed)
+MMSplice                  n/a         n/a               n/a           SKIP (tensorflow could not be installed automatically)
 ```
+
+On this specific machine, five of the six rows are FAIL/SKIP rather than
+PASS — a machine with a CUDA GPU and `torchvision`/`rna-fm`/`tensorflow`
+installed would show `cuda`, a real torch dtype, and PASS across every row
+instead (AlphaMissense included, per the paragraph above — this particular
+capture shows its SKIP path, not its PASS path, since the tabix catalogue
+wasn't installed on this machine either). Shown degraded-but-real rather
+than replaced with another idealized table, on purpose: a reader seeing
+actual FAIL/SKIP handling learns more about what the pipeline really does
+than an all-PASS example ever could.
 
 **Licensing — read before commercial deployment.** Sources disagree.
 The current official repository (github.com/google-deepmind/alphamissense,

@@ -1261,7 +1261,7 @@ class ACMGRuleEngine:
         if (
             not interpro_result
             or interpro_result.get("skipped")
-            or interpro_result.get("error")
+            or interpro_result.get("error") is not None
             or not interpro_result.get("found")
         ):
             return _not_evaluated("PM1", "InterPro domain annotation was unavailable for this gene/residue.")
@@ -1579,7 +1579,7 @@ class ACMGRuleEngine:
         if (
             not uniprot_result
             or uniprot_result.get("skipped")
-            or uniprot_result.get("error")
+            or uniprot_result.get("error") is not None
             or not uniprot_result.get("found")
         ):
             return None, None
@@ -1757,7 +1757,7 @@ class ACMGRuleEngine:
         if (
             not conservation_result
             or conservation_result.get("skipped")
-            or conservation_result.get("error")
+            or conservation_result.get("error") is not None
             or not conservation_result.get("found")
         ):
             return None, None
@@ -2553,7 +2553,7 @@ class ACMGRuleEngine:
         if (
             not clingen_result
             or clingen_result.get("skipped")
-            or clingen_result.get("error")
+            or clingen_result.get("error") is not None
             or not clingen_result.get("found")
         ):
             return _not_evaluated(
@@ -2611,7 +2611,7 @@ class ACMGRuleEngine:
         if (
             not clingen_result
             or clingen_result.get("skipped")
-            or clingen_result.get("error")
+            or clingen_result.get("error") is not None
             or not clingen_result.get("found")
         ):
             return _not_evaluated(
@@ -3153,7 +3153,12 @@ class ACMGRuleEngine:
                 "and this logic runs automatically once phenotype terms are provided.",
             )
 
-        if not hpo_result or hpo_result.get("skipped") or hpo_result.get("error") or not hpo_result.get("found"):
+        if (
+            not hpo_result
+            or hpo_result.get("skipped")
+            or hpo_result.get("error") is not None
+            or not hpo_result.get("found")
+        ):
             return _not_evaluated(
                 "PP4",
                 "patient phenotype data was provided, but this variant's gene has no HPO gene-phenotype "
@@ -3261,7 +3266,7 @@ class ACMGRuleEngine:
         if (
             not functional_evidence_result
             or functional_evidence_result.get("skipped")
-            or functional_evidence_result.get("error")
+            or functional_evidence_result.get("error") is not None
             or not functional_evidence_result.get("found")
         ):
             return _not_evaluated("PS3", _functional_evidence_not_evaluated_reason(functional_evidence_result))
@@ -3309,7 +3314,7 @@ class ACMGRuleEngine:
         if (
             not functional_evidence_result
             or functional_evidence_result.get("skipped")
-            or functional_evidence_result.get("error")
+            or functional_evidence_result.get("error") is not None
             or not functional_evidence_result.get("found")
         ):
             return _not_evaluated("BS3", _functional_evidence_not_evaluated_reason(functional_evidence_result))

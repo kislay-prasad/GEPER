@@ -7,7 +7,20 @@ Design goals (per project requirements):
   - Each model is loaded only once and cached (via ModelCache).
   - GPU is auto-detected with CPU fallback.
   - Adding a new model later = subclass BaseGenomicModel + implement
-    3 methods. No other file needs to change.
+    3 methods, then add one line to `models/__init__.py::MODEL_REGISTRY`.
+
+CORRECTED 2026-08-22 -- the last bullet used to end "No other file
+needs to change." That was TRUE WHEN WRITTEN, for the original
+five-model set (hyenadna/evo2/rna_fm/esm2/alphamissense). It is not
+true in general: this is only ONE of two contracts GEPER now uses to
+add a model. Five models (Enformer, Borzoi, SpliceFormer, SpliceBERT,
+SPiP) don't subclass BaseGenomicModel at all -- they subclass
+`PluginModel` (`pipeline/models/base.py`) and register through
+`pipeline/models/pending_plugins.py::build_default_registry()` /
+`pipeline/models/manager.py::ModelManager`, plus a `config.py`
+`ENABLE_<MODEL>` flag. See `models/__init__.py`'s module docstring for
+the full explanation of both contracts and when each applies -- not
+repeated here to avoid the two copies drifting against each other.
 """
 
 import abc
@@ -120,13 +133,10 @@ class BaseGenomicModel(abc.ABC):
                 # first forward pass that happens to touch that tensor.
                 self._verify_materialized()
             except Exception as exc:  # noqa: BLE001 - translate all load errors
-                raise ModelLoadError(
-                    f"Failed to load model '{self.cache_key()}': {exc}"
-                ) from exc
+                raise ModelLoadError(f"Failed to load model '{self.cache_key()}': {exc}") from exc
             elapsed = time.time() - start
             self.logger.info(
-                f"Loaded '{self.cache_key()}' on {self.device} "
-                f"({self._report_precision()}) in {elapsed:.1f}s."
+                f"Loaded '{self.cache_key()}' on {self.device} ({self._report_precision()}) in {elapsed:.1f}s."
             )
             self._loaded = True
             return self
@@ -152,14 +162,8 @@ class BaseGenomicModel(abc.ABC):
         """
         if self.model is None:
             return
-        meta_params = [
-            name for name, tensor in self.model.named_parameters()
-            if tensor.device.type == "meta"
-        ]
-        meta_buffers = [
-            name for name, tensor in self.model.named_buffers()
-            if tensor.device.type == "meta"
-        ]
+        meta_params = [name for name, tensor in self.model.named_parameters() if tensor.device.type == "meta"]
+        meta_buffers = [name for name, tensor in self.model.named_buffers() if tensor.device.type == "meta"]
         if meta_params or meta_buffers:
             raise ModelLoadError(
                 f"'{self.cache_key()}' has unmaterialized (meta-device) "
@@ -196,9 +200,7 @@ class BaseGenomicModel(abc.ABC):
         if not self._loaded:
             self.load()
         if not sequence:
-            raise ModelInferenceError(
-                f"'{self.cache_key()}' received an empty sequence."
-            )
+            raise ModelInferenceError(f"'{self.cache_key()}' received an empty sequence.")
         start = time.time()
         try:
             # inference_mode() is strictly stronger than no_grad(): it
@@ -231,13 +233,11 @@ class BaseGenomicModel(abc.ABC):
                 )
                 self.unload()
             raise ModelInferenceError(
-                f"Inference failed for '{self.cache_key()}' on sequence of "
-                f"length {len(sequence)}: {exc}"
+                f"Inference failed for '{self.cache_key()}' on sequence of length {len(sequence)}: {exc}"
             ) from exc
         except Exception as exc:  # noqa: BLE001
             raise ModelInferenceError(
-                f"Inference failed for '{self.cache_key()}' on sequence of "
-                f"length {len(sequence)}: {exc}"
+                f"Inference failed for '{self.cache_key()}' on sequence of length {len(sequence)}: {exc}"
             ) from exc
         elapsed = time.time() - start
         result.setdefault("meta", {})

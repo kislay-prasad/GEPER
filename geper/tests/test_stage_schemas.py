@@ -40,8 +40,17 @@ class TestRawEvidenceBundleCatchesTheRealBug(unittest.TestCase):
         self.assertEqual(
             missing_fields,
             {
-                "clinvar", "dbsnp", "protein", "blast", "alphamissense",
-                "mmsplice", "gnomad", "clingen", "uniprot", "interpro", "alphafold",
+                "clinvar",
+                "dbsnp",
+                "protein",
+                "blast",
+                "alphamissense",
+                "mmsplice",
+                "gnomad",
+                "clingen",
+                "uniprot",
+                "interpro",
+                "alphafold",
             },
         )
 
@@ -104,9 +113,13 @@ class TestStageEvidenceStatusDerivation(unittest.TestCase):
             StageEvidence(status=StageStatus.ERROR)  # error status with no error message
 
     def test_blast_uses_hit_count_not_found_key(self):
-        ev = StageEvidence.from_raw({"hits": [{"id": "x"}], "hit_count": 1}, found_when=lambda r: (r.get("hit_count") or 0) > 0)
+        ev = StageEvidence.from_raw(
+            {"hits": [{"id": "x"}], "hit_count": 1}, found_when=lambda r: (r.get("hit_count") or 0) > 0
+        )
         self.assertEqual(ev.status, StageStatus.FOUND)
-        ev_empty = StageEvidence.from_raw({"hits": [], "hit_count": 0}, found_when=lambda r: (r.get("hit_count") or 0) > 0)
+        ev_empty = StageEvidence.from_raw(
+            {"hits": [], "hit_count": 0}, found_when=lambda r: (r.get("hit_count") or 0) > 0
+        )
         self.assertEqual(ev_empty.status, StageStatus.NOT_FOUND)
 
     def test_mmsplice_uses_predicted_key(self):
@@ -118,6 +131,80 @@ class TestStageEvidenceStatusDerivation(unittest.TestCase):
         # means real translation/ESM-2 data exists.
         ev = StageEvidence.from_raw({"skipped": False, "translation": {}, "esm2": {}}, found_when=lambda r: True)
         self.assertEqual(ev.status, StageStatus.FOUND)
+
+
+class TestStageEvidenceEmptyStringErrorIsNotDroppedAsAbsent(unittest.TestCase):
+    """
+    PRE-FIX regression tests, written before the fix exists.
+
+    `test_error_key_is_error_not_not_found` above (line 82) already pins
+    that a NON-EMPTY error string produces `StageStatus.ERROR`. It never
+    exercises the one value that actually breaks the check that reads it --
+    `""`. `StageEvidence.from_raw`'s `if error:` (stage_schemas.py:199) and
+    the class-level validator's `not self.error` (stage_schemas.py:138,143)
+    are both TRUTHINESS checks on a field whose contract is PRESENCE:
+    `error = raw.get("error")` returns `""` whenever a producer's own
+    `error` key is explicitly set to the empty string, and `if error:` is
+    `False` for `""` exactly as it is for `None` -- so a stage that
+    genuinely errored, with nothing to say about why, is silently
+    reclassified as `NOT_FOUND`/`FOUND`/`NOT_RUN` instead of `ERROR`, and
+    whatever it did say (an empty string, but a REAL one) is discarded
+    entirely rather than surfaced.
+
+    THIS IS NOT A HYPOTHETICAL VALUE. This is the exact same defect class
+    already found and fixed for gnomAD's own producer in `d1128ee`
+    (`_run_gnomad_stage`'s `except Exception` used to do bare
+    `errors.append(...); return {..., "error": str(exc)}`, and `str(exc)`
+    is `""` for any exception raised with no message -- `RuntimeError()`,
+    `MemoryError()`, `TimeoutError()` -- until that commit added a
+    `type(exc).__name__` fallback specifically to stop producing `""`).
+    `stage_schemas.py::StageEvidence.from_raw` is the SHARED conversion
+    boundary every one of `RawEvidenceBundle`'s 11 stages passes through
+    (`stage_schemas.py:264-275` -- clinvar, dbsnp, protein, blast,
+    alphamissense, gnomad, clingen, uniprot, interpro, alphafold, and
+    mmsplice all call it), so this defect is not confined to whichever
+    producer's own except-block happens to still do bare `str(exc)` today
+    -- it is a property of the boundary itself, and will bite again for any
+    producer that regresses to (or was never fixed away from) an
+    unqualified `str(exc)`. Checked directly, not assumed: dbSNP's and
+    ClinVar's own stage handlers (`orchestrator.py:2384`, `:2395`) still do
+    exactly this -- `return {..., "error": str(exc)}`, no fallback -- so
+    the same empty-string producer-side risk gnomAD had before `d1128ee`
+    is, as of this writing, still live for at least these two.
+
+    Pre-fix: both tests below are RED. The fix touches two sites in
+    tandem, not one -- fixing `from_raw`'s `if error:` alone (to
+    `is not None`) without also fixing the validator's `not self.error`
+    (to `is None`) would convert today's silent misclassification into a
+    hard crash for this exact input, which is not an improvement. Neither
+    test below asserts on which specific fix shape lands (e.g. whether
+    `""` is preserved verbatim or normalized to a fallback string) -- only
+    on what a caller of `StageEvidence.from_raw` can observe: the status
+    must be ERROR, and the error state must not collapse into any other
+    status.
+    """
+
+    def test_empty_string_error_produces_error_status_not_not_found(self):
+        # Realistic shape: any producer whose exception handler does bare
+        # `str(exc)` with no fallback (dbSNP/ClinVar today, gnomAD before
+        # d1128ee) emits exactly this for a message-less exception.
+        ev = StageEvidence.from_raw({"error": "", "found": False})
+        self.assertEqual(
+            ev.status,
+            StageStatus.ERROR,
+            "A stage result carrying an explicit (even empty) 'error' key "
+            "must never resolve to the same status as a lookup that ran "
+            "cleanly and found nothing -- that is the exact shape of the "
+            "gnomAD defect fixed in d1128ee, reachable here through any "
+            "other producer's own empty-message exception.",
+        )
+
+    def test_empty_string_error_produces_error_status_not_found_true(self):
+        # Same defect, the other branch: a producer that also happens to
+        # set found=True (or any other confirmed-positive field) alongside
+        # an empty error must not let that positive field win either.
+        ev = StageEvidence.from_raw({"error": "", "found": True, "accession": "P12345"})
+        self.assertEqual(ev.status, StageStatus.ERROR)
 
 
 class TestRawEvidenceBundleFromRaw(unittest.TestCase):
@@ -146,10 +233,22 @@ class TestRawEvidenceBundleFromRaw(unittest.TestCase):
         bundle, _ = build_raw_evidence_bundle(uniprot_result=original_uniprot)
         legacy = bundle.to_legacy_dict()
         self.assertEqual(legacy["uniprot"], original_uniprot)
-        self.assertEqual(set(legacy.keys()), {
-            "clinvar", "dbsnp", "protein", "blast", "alphamissense", "mmsplice",
-            "gnomad", "clingen", "uniprot", "interpro", "alphafold",
-        })
+        self.assertEqual(
+            set(legacy.keys()),
+            {
+                "clinvar",
+                "dbsnp",
+                "protein",
+                "blast",
+                "alphamissense",
+                "mmsplice",
+                "gnomad",
+                "clingen",
+                "uniprot",
+                "interpro",
+                "alphafold",
+            },
+        )
 
     def test_bundle_is_frozen(self):
         bundle, _ = build_raw_evidence_bundle()
@@ -160,15 +259,35 @@ class TestRawEvidenceBundleFromRaw(unittest.TestCase):
 class TestInterpretationResultForReport(unittest.TestCase):
     def _good_ir(self, **overrides):
         base = {
-            "variant": {"chrom": "17", "pos": 100}, "gene_symbol": "BRCA1", "acmg_classification": "Pathogenic",
-            "triggered_rules": [], "not_triggered_rules": [], "not_evaluated_rules": [],
-            "combining_rule_trace": [], "supporting_evidence": [], "conflicting_evidence": [],
-            "ai_consensus": [], "ai_context_models": [],
-            "confidence_pending": False, "confidence_score": 0.9, "confidence_label": "High", "confidence_breakdown": {},
-            "priority_pending": False, "priority_score": 0.8, "priority_category": "Critical", "priority_rank": None,
-            "priority_explanation": [], "priority_breakdown": {},
-            "conflict_summary": None, "conflict_list": [], "conflict_score": 0.0, "conflict_severity": None,
-            "conflict_resolution": None, "explainability": None, "recommendations": [], "evidence_sources": [],
+            "variant": {"chrom": "17", "pos": 100},
+            "gene_symbol": "BRCA1",
+            "acmg_classification": "Pathogenic",
+            "triggered_rules": [],
+            "not_triggered_rules": [],
+            "not_evaluated_rules": [],
+            "combining_rule_trace": [],
+            "supporting_evidence": [],
+            "conflicting_evidence": [],
+            "ai_consensus": [],
+            "ai_context_models": [],
+            "confidence_pending": False,
+            "confidence_score": 0.9,
+            "confidence_label": "High",
+            "confidence_breakdown": {},
+            "priority_pending": False,
+            "priority_score": 0.8,
+            "priority_category": "Critical",
+            "priority_rank": None,
+            "priority_explanation": [],
+            "priority_breakdown": {},
+            "conflict_summary": None,
+            "conflict_list": [],
+            "conflict_score": 0.0,
+            "conflict_severity": None,
+            "conflict_resolution": None,
+            "explainability": None,
+            "recommendations": [],
+            "evidence_sources": [],
             "ai_model_errors": [],
         }
         base.update(overrides)
@@ -185,7 +304,9 @@ class TestInterpretationResultForReport(unittest.TestCase):
         self.assertIsNone(err)
 
     def test_errored_aggregation_sentinel_is_not_a_schema_error(self):
-        result, err = validate_interpretation_result_for_report({"error": "InterpretationResult aggregation failed; see logs."})
+        result, err = validate_interpretation_result_for_report(
+            {"error": "InterpretationResult aggregation failed; see logs."}
+        )
         self.assertIsNone(result)
         self.assertIsNone(err)  # documented "aggregation failed" state, not a validation failure
 
@@ -214,8 +335,14 @@ class TestInterpretationResultForReport(unittest.TestCase):
     def test_pending_true_with_none_values_is_valid(self):
         # The legitimate "engine didn't run / failed for this variant" state.
         pending = self._good_ir(
-            confidence_pending=True, confidence_score=None, confidence_label=None, confidence_breakdown=None,
-            priority_pending=True, priority_score=None, priority_category=None, priority_breakdown=None,
+            confidence_pending=True,
+            confidence_score=None,
+            confidence_label=None,
+            confidence_breakdown=None,
+            priority_pending=True,
+            priority_score=None,
+            priority_category=None,
+            priority_breakdown=None,
         )
         result, err = validate_interpretation_result_for_report(pending)
         self.assertIsNone(err)
@@ -224,11 +351,15 @@ class TestInterpretationResultForReport(unittest.TestCase):
 
 class TestAcmgEvaluationSchema(unittest.TestCase):
     def test_valid_evaluation_passes(self):
-        result, err = validate_acmg_evaluation({
-            "classification": "Likely Pathogenic",
-            "triggered_criteria": [{"code": "PM2"}],
-            "not_triggered_criteria": [], "not_evaluated_criteria": [], "combining_rule_trace": ["PM2 -> Likely Pathogenic"],
-        })
+        result, err = validate_acmg_evaluation(
+            {
+                "classification": "Likely Pathogenic",
+                "triggered_criteria": [{"code": "PM2"}],
+                "not_triggered_criteria": [],
+                "not_evaluated_criteria": [],
+                "combining_rule_trace": ["PM2 -> Likely Pathogenic"],
+            }
+        )
         self.assertIsNone(err)
         self.assertIsInstance(result, AcmgEvaluationSchema)
         self.assertEqual(result.classification, "Likely Pathogenic")
@@ -265,7 +396,9 @@ class TestNeverRaisesPastTheBoundary(unittest.TestCase):
         self.assertIsNone(bundle)
 
     def test_validate_interpretation_result_never_raises_on_garbage(self):
-        result, err = validate_interpretation_result_for_report({"triggered_rules": "not-a-list", "confidence_pending": "not-a-bool"})
+        result, err = validate_interpretation_result_for_report(
+            {"triggered_rules": "not-a-list", "confidence_pending": "not-a-bool"}
+        )
         self.assertIsNone(result)
         self.assertIsNotNone(err)
 

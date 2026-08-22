@@ -1,9 +1,9 @@
 # GEPER Clinical-Validation-Readiness Rubric
 
-**Version:** 1.10.0
+**Version:** 1.11.0
 **Status:** RATIFIED. v1.0.0 (as v1.0.0-rc1) was approved by the human as-is
 and committed at `89bf125`; this document is that baseline plus the v1.1.0
-through v1.10.0 amendments below. **v1.10.0 is the human's own ruling on
+through v1.11.0 amendments below. **v1.10.0 is the human's own ruling on
 two carded questions (D1 dual-engine; 2d->8a) and is cleared to commit once
 both land -- everything else remains proposed, uncommitted, awaiting first
 read.** See Amendment history for why each version is its own version
@@ -412,6 +412,46 @@ must never be cited as one.
   **The human's own instruction once both land: commit the rubric.** god
   commits and pushes; this agent still commits nothing itself, per the
   standing rule.
+- **v1.11.0** (this revision, dated 2026-08-23): corrects sub-criterion
+  **6c**'s falsifier, which made a factual claim about "today" that had
+  gone stale -- found and dispatched by god, ruled here. `3b0ede6` (Andy)
+  added `_auto_install_disabled_for_tests()` to
+  `geper/utils/auto_install.py`: `ensure_pip_package_available` now
+  returns `False` under pytest instead of shelling a real `pip install`,
+  closing the **test-run half** of 6c's falsifier in `geper/` (measured:
+  CI run `32602931028` @ `3b0ede6` completed with zero live pip
+  installs). **Not a tier move, for three reasons, all now stated on the
+  row itself:** the **pipeline-run half** is untouched -- a real,
+  non-test run still auto-installs -- so the falsifier remains met and
+  the UNMET score is unchanged; 6c's satisfier asks for sandboxing OR
+  atomicity-against-interruption, and `3b0ede6` delivers neither (it
+  makes the unsafe path unreachable under exactly one condition, running
+  under pytest, which is a third, narrower thing than either disjunct);
+  and `kim_pipeline`'s six call sites remain unverified either way,
+  unchanged from the v1.9.0 scope note.
+  **Chose text correction over the other two options the dispatch
+  offered (tier change; splitting 6c into test-run/pipeline-run
+  halves).** A tier change is ruled out directly by the three reasons
+  above -- the satisfier is still unmet, full stop. A split was
+  considered and declined: sandboxing-or-atomicity is one property of
+  the auto-install mechanism, not two independently-scorable ones: which
+  run-type currently happens to supply the falsifying evidence is a fact
+  about the evidence available today, not a second axis this row's own
+  satisfier asks about separately, and it can move again in either
+  direction without the underlying property changing. Splitting would
+  produce two rows that would both still read UNMET, diluting weight for
+  no scoring benefit. Same remedy category as 6a/6b (v1.9.0): a false
+  assertion gets corrected in place, dated, with the original quoted
+  verbatim rather than silently rewritten -- applied here to a claim
+  that was true when written and expired without anyone updating it,
+  the same "claim with a shelf life" shape 2c's v1.1.0 correction and
+  6a/6b both already established, now confirmed as a recurring failure
+  mode of this rubric's own "as of today" phrasing rather than a one-off.
+  **No weight, tier, or satisfier changed; only the falsifier cell's
+  stale half and a clarifying sentence in the satisfier cell.**
+  Committed, not pushed, per this dispatch's explicit authorization for
+  this one edit -- the standing rule (god commits and pushes) resumes
+  after.
 
 ---
 
@@ -1047,7 +1087,7 @@ Both corrected below, in place, no tier/weight/falsifier change:
 |---|---|---|---|---|---|
 | 6a | RCE-shaped surfaces are pinned | 4 | A | **Tree: `kim_pipeline` (the evidence), scored against both trees (the falsifier).** Every `trust_remote_code=True` (or equivalent) load resolves to a specific, reviewed commit SHA, not a floating/default branch ref, with an in-code review note. **CORRECTED, dated 2026-08-22 -- this row previously asserted something false, not merely silent about scope.** This row's text from `v1.0.0` (`89bf125`) through `v1.8.0`, verbatim, read: *"Current: MET at A (DNABERT-2, committed)."* Read plainly, and read the way every other unmarked row in this domain was read before this sweep, that sentence asserts a `geper/`-side DNABERT-2 pin. **No such pin exists**: `geper/` removed DNABERT-2 entirely (HyenaDNA replaced it as the default DNA model, per `LICENSE_AUDIT.md`) -- there was never a `geper/`-side load for this row's evidence to be citing. **What the row was actually, correctly citing all along is `kim_pipeline`'s own, separate DNABERT-2 pin** (`1fa8c56`, `kim_pipeline/pipeline/ai/engine.py`) -- the tier and MET status were never wrong, only the unstated (and, once D1-D5's `geper/`-only convention was established, actively misleading) attribution. Checked directly against `1fa8c56`'s own commit message before correcting, not assumed. The record should show this was found, not that it was always right. | Any `trust_remote_code=True` load point, in either tree, resolves to a floating ref rather than a pinned, reviewed commit. |
 | 6b | No unresolved commercial-license conflict | 3 | A (closure) + C (record) | **Tree: `kim_pipeline` (the evidence), scored against both trees (the falsifier).** No active integration has an unresolved non-commercial or copyleft-conflict license; any past conflict has both the offending code removed/gated **and** a decision record. **CORRECTED, dated 2026-08-22 -- same shape as 6a: previously ambiguous in a way that reads as false, not merely silent.** This row's text from `v1.0.0` (`89bf125`) through `v1.8.0`, verbatim, read: *"Current: MET (OMIM retired, 51558c1/bd86103, with a decision record matching the IndiGenomes precedent's rigor)."* Naming IndiGenomes only as a *precedent* for OMIM's rigor, without ever stating that OMIM itself is a `kim_pipeline` finding (per `DATA_SOURCE_LICENSE_AUDIT.md`: "removed from kim_pipeline") while IndiGenomes is `geper/`'s own, let a reader assume both examples came from the same tree D1-D5's convention would suggest. **The MET status and record quality were never wrong** -- OMIM's retirement is real and well-documented -- only the tree attribution was left for a reader to guess rather than stated. The record should show this was found, not that it was always right. | An integration is found, in either tree, whose upstream license forbids commercial use or redistribution and no decision record or code change addresses it. |
-| 6c | Auto-install/pip safety against the shared interpreter | 3 | A | **Tree: both, product-wide by the falsifier's own wording; `kim_pipeline` coverage unverified (see note below).** Package auto-install is either sandboxed (isolated venv / separate site-packages per the pattern Andy already uses) or made safe against interruption (no live `pip install` shelled against a shared interpreter mid-test-run; any install step is atomic against a kill). **Currently UNMET at any tier** -- newly surfaced by today's floor-wide pip advisory; nothing in the repo addresses this yet. **Scope note, v1.9.0**: this row's own falsifier ("any test run or pipeline run") already reads as product-wide in intent, and it is -- `kim_pipeline` has its own, separate pip-install call sites (`main.py`, `pipeline/ai/engine.py`, `pipeline/orchestration/runner.py`, `pipeline/reporting/stage.py`, `pipeline/utils/reference_cache.py`, `serve_api.py`; `geper/`'s own fixed instance was `geper/utils/auto_install.py`, closed by `47748b6`) that have **not been independently checked** against this same falsifier -- named as an open coverage question, not folded silently into the existing UNMET score (which was already UNMET before this note and stays UNMET after it). | Any test run or pipeline run, in either tree, can be observed shelling real `pip install`/`uninstall` against the shared global interpreter. **This falsifier is already met as of today, in `geper/`** -- confirming the unmet score, not a hypothetical; `kim_pipeline`'s own call sites are unverified either way. |
+| 6c | Auto-install/pip safety against the shared interpreter | 3 | A | **Tree: both, product-wide by the falsifier's own wording; `kim_pipeline` coverage unverified (see note below).** Package auto-install is either sandboxed (isolated venv / separate site-packages per the pattern Andy already uses) or made safe against interruption (no live `pip install` shelled against a shared interpreter mid-test-run; any install step is atomic against a kill). **Currently UNMET at any tier** -- newly surfaced by the floor-wide pip advisory that originally raised this row; nothing in the repo satisfies it yet, and `3b0ede6` (see Falsifier correction, dated 2026-08-23) does not change that -- it makes the unsafe path unreachable under one specific condition (running under pytest), a third thing distinct from both sandboxing and atomicity-against-interruption, so it satisfies neither disjunct this row's satisfier actually asks for. **Scope note, v1.9.0**: this row's own falsifier ("any test run or pipeline run") already reads as product-wide in intent, and it is -- `kim_pipeline` has its own, separate pip-install call sites (`main.py`, `pipeline/ai/engine.py`, `pipeline/orchestration/runner.py`, `pipeline/reporting/stage.py`, `pipeline/utils/reference_cache.py`, `serve_api.py`; `geper/`'s own fixed instance was `geper/utils/auto_install.py`, closed by `47748b6`) that have **not been independently checked** against this same falsifier -- named as an open coverage question, not folded silently into the existing UNMET score (which was already UNMET before this note and stays UNMET after it). | Any test run or pipeline run, in either tree, can be observed shelling real `pip install`/`uninstall` against the shared global interpreter. **CORRECTED, dated 2026-08-23 (original v1.9.0-through-v1.10.0 text, quoted verbatim, had gone stale):** *"This falsifier is already met as of today, in `geper/`"* was true when written and is no longer true for half of what it claims. As of `3b0ede6`, `geper/utils/auto_install.py::_auto_install_disabled_for_tests()` makes `ensure_pip_package_available` return `False` under pytest without shelling pip -- so the **test-run half** of this falsifier is no longer observable in `geper/` (measured, not inferred: CI run `32602931028` @ `3b0ede6` completed with zero live pip installs). The falsifier remains met via the **pipeline-run half**, untouched by `3b0ede6` -- a real, non-test `geper/` run still auto-installs against the shared interpreter exactly as before, so the UNMET score is unchanged. `kim_pipeline`'s own six call sites remain unverified either way, per the Satisfier cell's scope note. |
 
 ### D7. Operational Resilience -- weight 8
 

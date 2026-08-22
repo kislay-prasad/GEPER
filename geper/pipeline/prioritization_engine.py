@@ -270,7 +270,7 @@ class PrioritizationEngine:
     @staticmethod
     def _population_rarity_factor(gnomad_result, weight, reasons) -> PriorityFactor:
         gcfg = CONFIG.gnomad
-        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
+        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") is not None:
             return PriorityFactor("Population Rarity", weight, 0.0, 0.0, "gnomAD lookup unavailable for this variant.")
         if not gnomad_result.get("found"):
             reasons.append("✓ Absent from gnomAD (very rare)")

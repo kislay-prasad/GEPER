@@ -588,7 +588,10 @@ class InterpretationEngine:
         testable without constructing a full InterpretationEngine call
         (see tests/test_gnomad_acmg.py).
         """
-        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error"):
+        # `error` by presence -- see `acmg_rules.py::_pm2`: a failed
+        # lookup must contribute no evidence and no score weight, and
+        # an empty error message is still a failure.
+        if not gnomad_result or gnomad_result.get("skipped") or gnomad_result.get("error") is not None:
             return []
 
         cfg = CONFIG.gnomad

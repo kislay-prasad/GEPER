@@ -18,6 +18,10 @@ Current GEPER                        (geper/)
   Annotation → AI Models → Databases → Interpretation Engine → Clinical Report
 ```
 
+"Clinical Report" here denotes a draft classification: no output is clinically
+actionable before mandatory qualified human review and final sign-off (see
+`geper/review/signoff.py`).
+
 ## Directory layout
 
 ```

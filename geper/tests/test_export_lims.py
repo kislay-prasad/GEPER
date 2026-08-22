@@ -79,7 +79,7 @@ def _clean_variant():
         "alphamissense": {"found": False},
         "errors": [],
         "interpretation_result": {"gene_symbol": "BRCA1", "acmg_classification": "Pathogenic"},
-        "clinical_report": {
+        "candidate_interpretation": {
             "acmg_classification": {
                 "classification": "Pathogenic",
                 "triggered_criteria": [{"code": "PS3", "strength": "Strong", "direction": "pathogenic"}],
@@ -147,7 +147,7 @@ class BuildLimsExportTests(unittest.TestCase):
     def test_errored_interpretation_result_produces_honest_empty_record(self):
         v = _clean_variant()
         v["interpretation_result"] = {"error": "ACMG evaluation failed: transcript structure unavailable"}
-        v["clinical_report"] = None
+        v["candidate_interpretation"] = None
         v["errors"] = ["BLAST search failed: connection timeout"]
         export = build_lims_export(_base_document([v]))
         f = export.findings[0]
@@ -175,7 +175,7 @@ class BuildLimsExportTests(unittest.TestCase):
         # priority would silently hide that honest signal.
         v = _clean_variant()
         v["interpretation_result"] = {"error": "boom"}
-        v["clinical_report"] = None
+        v["candidate_interpretation"] = None
         v["case_prioritization"] = {
             "case_rank": None,
             "case_rank_score": None,
@@ -295,7 +295,7 @@ class CsvExportTests(unittest.TestCase):
     def test_honest_gaps_render_as_empty_csv_cells_not_placeholder_text(self):
         v = _clean_variant()
         v["interpretation_result"] = {"error": "boom"}
-        v["clinical_report"] = None
+        v["candidate_interpretation"] = None
         del v["case_prioritization"]
         doc = _base_document([v])
         with tempfile.TemporaryDirectory() as tmp:

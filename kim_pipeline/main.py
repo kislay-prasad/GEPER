@@ -55,6 +55,7 @@ logger = logging.getLogger("geper.main")
 
 # ─── Config loading ───────────────────────────────────────────────────────────
 
+
 def _load_config(config_path: Optional[str] = None) -> Dict:
     """Load YAML config from path, env var, or default.yaml (in that order)."""
     resolved = (
@@ -109,8 +110,10 @@ def _print_startup_validation(args: argparse.Namespace, cfg: Dict) -> None:
     py_ok = sys.version_info[:2] >= (3, 10)
     print(f"Python     : {sys.version.split()[0]} {'OK' if py_ok else 'UNSUPPORTED (<3.10)'}")
 
-    print(f"Config     : {'loaded' if cfg else 'empty/default'}"
-          f" ({args.config or os.environ.get('GEPER_CONFIG') or 'config/default.yaml'})")
+    print(
+        f"Config     : {'loaded' if cfg else 'empty/default'}"
+        f" ({args.config or os.environ.get('GEPER_CONFIG') or 'config/default.yaml'})"
+    )
 
     ref_ok = bool(args.ref) and Path(args.ref).exists()
     print(f"Reference  : {args.ref} — {'found' if ref_ok else 'NOT FOUND'}")
@@ -130,8 +133,14 @@ def _print_startup_validation(args: argparse.Namespace, cfg: Dict) -> None:
         require_minimap2=require_minimap2,
         require_vep=require_vep,
     )
-    display_names = {"bwa": "BWA", "minimap2": "minimap2", "samtools": "samtools",
-                      "freebayes": "FreeBayes", "bcftools": "bcftools", "vep": "VEP"}
+    display_names = {
+        "bwa": "BWA",
+        "minimap2": "minimap2",
+        "samtools": "samtools",
+        "freebayes": "FreeBayes",
+        "bcftools": "bcftools",
+        "vep": "VEP",
+    }
     for tool_name in ("bwa", "minimap2", "samtools", "freebayes", "bcftools", "vep"):
         match = next((r for r in report.results if r.name == tool_name), None)
         if match is None:
@@ -195,7 +204,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         logger.info("Persistent BWA index directory (CLI override): %s", args.bwa_index_dir)
     if getattr(args, "ref_cache_dir", None):
         cfg.setdefault("reference", {})["local_cache_dir"] = args.ref_cache_dir
-        logger.info("Reference decompression cache directory (CLI override): %s", args.ref_cache_dir)
+        logger.info(
+            "Reference decompression cache directory (CLI override): %s", args.ref_cache_dir
+        )
 
     runner = PipelineRunner(cfg=cfg, resume=not args.no_resume)
     try:
@@ -232,6 +243,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
 # ─── Subcommand: vcf ─────────────────────────────────────────────────────────
 
+
 def cmd_vcf(args: argparse.Namespace) -> int:
     """Run the complete VCF→Report workflow on an existing VCF:
     VEP -> Annotation -> ClinVar -> gnomAD -> ACMG -> Evidence Aggregation
@@ -262,10 +274,11 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     # GEPER's bundled PGx/gnomAD resources are GRCh38-only; warn loudly
     # rather than silently mis-mapping coordinates for GRCh37/hg19 input.
     from pipeline.utils.genome_build import warn_if_unsupported_build, SUPPORTED_BUILD
+
     build_detection = warn_if_unsupported_build(str(vcf_path), sample_id=sample_id)
     if build_detection.build and build_detection.build != SUPPORTED_BUILD:
         print(
-            f"  ⚠ Detected genome build {build_detection.build}, but GEPER only "
+            f"  [WARN] Detected genome build {build_detection.build}, but GEPER only "
             f"supports {SUPPORTED_BUILD}. ClinVar/gnomAD/PGx results will be "
             f"coordinate-mismatched. Liftover to {SUPPORTED_BUILD} first.",
             file=sys.stderr,
@@ -280,13 +293,14 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     vep_cfg = cfg.get("vep", {}) or {}
     vep_enabled = bool(vep_cfg.get("enabled", True))
     if not vep_enabled:
-        msg = "  ⚠ VEP annotation SKIPPED: vep.enabled is false in config."
+        msg = "  [WARN] VEP annotation SKIPPED: vep.enabled is false in config."
         print(msg, file=sys.stderr)
         logger.warning("[%s] VEP annotation skipped — vep.enabled is false", sample_id)
         stages_skipped.append("vep_annotation")
     else:
         try:
             from pipeline.vep.stage import VEPAnnotationStage
+
             vep_stage = VEPAnnotationStage(cfg)
             vep_result = vep_stage.run(
                 filtered_vcf_path=current_vcf,
@@ -296,14 +310,14 @@ def cmd_vcf(args: argparse.Namespace) -> int:
             if vep_result.annotated_vcf_path and vep_result.annotated_vcf_path != current_vcf:
                 current_vcf = vep_result.annotated_vcf_path
             stages_completed.append("vep_annotation")
-            print(f"  ✓ VEP annotation: {vep_result.variant_count} variants")
+            print(f"  [OK] VEP annotation: {vep_result.variant_count} variants")
         except Exception as vep_exc:
             # FIX (Issue 3): a skipped VEP stage must never be silent — print
             # a clear, user-facing warning in addition to the log message,
             # since gene-dependent ACMG criteria (PM1, PM5, PP2, BP1, ...)
             # depend on VEP's CSQ-embedded gene/transcript annotations.
             msg = (
-                f"  ⚠ VEP annotation SKIPPED (non-fatal): {vep_exc}\n"
+                f"  [WARN] VEP annotation SKIPPED (non-fatal): {vep_exc}\n"
                 f"    Gene-dependent ACMG criteria (PM1, PM5, PP2, BP1, etc.) "
                 f"may be unavailable without VEP annotation."
             )
@@ -313,6 +327,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
 
     # ── Stage 2: Annotation (gene/transcript/HGVS; gracefully degrades) ────
     from pipeline.annotation.stage import AnnotationStage
+
     ann_stage = AnnotationStage(cfg=cfg)
     ann_result = ann_stage.run(
         filtered_vcf_path=current_vcf,
@@ -321,14 +336,14 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     )
     stages_completed.append("annotation")
     ann_variants = [
-        (v.to_dict() if hasattr(v, "to_dict") else dict(v))
-        for v in ann_result.variants
+        (v.to_dict() if hasattr(v, "to_dict") else dict(v)) for v in ann_result.variants
     ]
-    print(f"  ✓ Annotation: {len(ann_variants)} variants")
+    print(f"  [OK] Annotation: {len(ann_variants)} variants")
 
     # ── Stage 3: ClinVar + gnomAD + ACMG + Evidence + AI ────────────────────
     # Shared with `analyze` mode — see pipeline/orchestration/shared.py.
     from pipeline.orchestration.shared import run_acmg_evidence_batch
+
     acmg_results = []
     try:
         acmg_results = run_acmg_evidence_batch(
@@ -340,17 +355,20 @@ def cmd_vcf(args: argparse.Namespace) -> int:
         stages_completed.append("gnomad")
         stages_completed.append("acmg_evidence")
         n_errors = sum(1 for r in acmg_results if "error" in r)
-        print(f"  ✓ ClinVar + gnomAD + ACMG + Evidence: {len(acmg_results)} variants "
-              f"classified ({n_errors} errors)")
+        print(
+            f"  [OK] ClinVar + gnomAD + ACMG + Evidence: {len(acmg_results)} variants "
+            f"classified ({n_errors} errors)"
+        )
     except Exception as exc:
         logger.error("ACMG/Evidence stage setup failed: %s", exc, exc_info=True)
         stages_skipped.extend(["clinvar", "gnomad", "acmg_evidence"])
-        print(f"  ✗ ClinVar/gnomAD/ACMG stage failed: {exc}", file=sys.stderr)
+        print(f"  [FAIL] ClinVar/gnomAD/ACMG stage failed: {exc}", file=sys.stderr)
 
     # ── Stage 4: Pharmacogenomics (PGx) ─────────────────────────────────────
     pgx_result = None
     try:
         from pipeline.pgx.stage import PGxStage
+
         pgx_stage = PGxStage(cfg=cfg)
         pgx_result = pgx_stage.run(
             vcf_path=current_vcf,
@@ -358,7 +376,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
             sample_id=sample_id,
         )
         stages_completed.append("pgx")
-        print(f"  ✓ PGx: {len(pgx_result.annotations)} gene(s) annotated")
+        print(f"  [OK] PGx: {len(pgx_result.annotations)} gene(s) annotated")
     except Exception as exc:
         logger.warning("PGx stage failed (non-fatal): %s", exc)
         stages_skipped.append("pgx")
@@ -369,6 +387,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     # silent no-op otherwise, matching `analyze` mode behavior).
     try:
         import pipeline.ai.engine  # noqa: F401
+
         stages_completed.append("ai")
     except Exception:
         stages_skipped.append("ai")
@@ -376,6 +395,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     # ── Stage 5: Final report ───────────────────────────────────────────────
     try:
         from pipeline.reporting.stage import ReportingStage
+
         report_stage = ReportingStage(cfg)
         report_result = report_stage.run(
             sample_id=sample_id,
@@ -386,7 +406,9 @@ def cmd_vcf(args: argparse.Namespace) -> int:
             pgx_result=pgx_result,
         )
         stages_completed.append("reporting")
-        print(f"  ✓ Report generated → {report_result.to_dict().get('report_json_path', out_dir / 'reporting')}")
+        print(
+            f"  [OK] Report generated -> {report_result.to_dict().get('report_json_path', out_dir / 'reporting')}"
+        )
     except Exception as exc:
         logger.warning("Report generation failed (non-fatal): %s", exc)
         stages_skipped.append("reporting")
@@ -395,7 +417,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     out_json = out_dir / "classified_variants.json"
     out_json.write_text(json.dumps(acmg_results, indent=2))
 
-    print(f"\n✓ {len(acmg_results)} variants classified → {out_json}")
+    print(f"\n[OK] {len(acmg_results)} variants classified -> {out_json}")
     print(f"  Stages completed: {', '.join(stages_completed) or '(none)'}")
     if stages_skipped:
         print(f"  Stages skipped:   {', '.join(stages_skipped)}")
@@ -403,6 +425,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
 
 
 # ─── Subcommand: classify ────────────────────────────────────────────────────
+
 
 def cmd_classify(args: argparse.Namespace) -> int:
     """Classify a single variant from CLI flags."""
@@ -427,7 +450,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
         is_missense=args.missense,
     )
 
-    acmg_clf   = AcmgClassifier(cfg=cfg)
+    acmg_clf = AcmgClassifier(cfg=cfg)
     aggregator = EvidenceAggregator(cfg=cfg)
 
     acmg_result = acmg_clf.classify(evidence)
@@ -442,7 +465,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
         computational_score=comp_score,
     )
 
-    print(f"\n{'─'*55}")
+    print(f"\n{'─' * 55}")
     print(f"  Variant   : {args.chrom}:{args.pos} {args.ref}>{args.alt}")
     if args.gene:
         print(f"  Gene      : {args.gene}")
@@ -450,22 +473,28 @@ def cmd_classify(args: argparse.Namespace) -> int:
     print(f"  ACMG score: {acmg_result.score:.4f}")
     print(f"  Criteria  : {', '.join(acmg_result.criteria_met) or 'none'}")
     print(f"  Evidence  : {ev_result.final_tier} (composite={ev_result.composite_score:.4f})")
-    print(f"{'─'*55}")
+    print(f"{'─' * 55}")
 
     if args.output_dir:
         out = Path(args.output_dir)
         out.mkdir(parents=True, exist_ok=True)
         tag = f"{args.chrom}_{args.pos}_{args.ref}_{args.alt}"
         out_file = out / f"classify_{tag}.json"
-        out_file.write_text(json.dumps({
-            "acmg": acmg_result.to_dict(),
-            "evidence": ev_result.to_dict(),
-        }, indent=2))
+        out_file.write_text(
+            json.dumps(
+                {
+                    "acmg": acmg_result.to_dict(),
+                    "evidence": ev_result.to_dict(),
+                },
+                indent=2,
+            )
+        )
         print(f"  Saved     : {out_file}")
     return 0
 
 
 # ─── Subcommand: serve ───────────────────────────────────────────────────────
+
 
 def cmd_serve(args: argparse.Namespace) -> int:
     """Start the GEPER FastAPI REST server."""
@@ -501,12 +530,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 # ─── Subcommand: validate ────────────────────────────────────────────────────
 
+
 def cmd_validate(args: argparse.Namespace) -> int:
     """Validate a GEPER config file without running anything."""
     _setup_logging(args.log_level)
     cfg = _load_config(args.config)
 
     from pipeline.config_validator import validate_config, ConfigValidationError
+
     try:
         validate_config(cfg)
         print(f"✓ Config is valid: {args.config or 'config/default.yaml'}")
@@ -537,6 +568,7 @@ def cmd_verify_environment(args: argparse.Namespace) -> int:
 
 # ─── Subcommand: test ────────────────────────────────────────────────────────
 
+
 def cmd_test(args: argparse.Namespace) -> int:
     """Run the GEPER test suite via pytest."""
     _setup_logging(args.log_level)
@@ -558,6 +590,7 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 # ─── Argument parsing ─────────────────────────────────────────────────────────
 
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="geper",
@@ -570,21 +603,35 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # ── shared flags ─────────────────────────────────────────────────────────
     def _common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--config", metavar="PATH", help="Path to YAML config (default: config/default.yaml)")
-        p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                       metavar="LEVEL", help="Logging level (default: INFO)")
+        p.add_argument(
+            "--config", metavar="PATH", help="Path to YAML config (default: config/default.yaml)"
+        )
+        p.add_argument(
+            "--log-level",
+            default="INFO",
+            choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+            metavar="LEVEL",
+            help="Logging level (default: INFO)",
+        )
 
     # ── analyze ──────────────────────────────────────────────────────────────
     p_analyze = sub.add_parser("analyze", help="Full FASTQ → Report pipeline")
     _common(p_analyze)
-    p_analyze.add_argument("--r1",  required=True, metavar="FASTQ",  help="Read 1 FASTQ (required)")
-    p_analyze.add_argument("--r2",  metavar="FASTQ",                 help="Read 2 FASTQ (paired-end)")
-    p_analyze.add_argument("--ref", required=True, metavar="FASTA",  help="Reference genome FASTA")
-    p_analyze.add_argument("--output-dir", metavar="DIR",            help="Output directory (or set GEPER_OUTPUT_DIR)")
-    p_analyze.add_argument("--sample-id", metavar="ID",              help="Sample identifier (default: R1 filename stem)")
-    p_analyze.add_argument("--no-resume", action="store_true",       help="Ignore checkpoint and re-run all stages")
+    p_analyze.add_argument("--r1", required=True, metavar="FASTQ", help="Read 1 FASTQ (required)")
+    p_analyze.add_argument("--r2", metavar="FASTQ", help="Read 2 FASTQ (paired-end)")
+    p_analyze.add_argument("--ref", required=True, metavar="FASTA", help="Reference genome FASTA")
     p_analyze.add_argument(
-        "--bwa-index-dir", metavar="DIR",
+        "--output-dir", metavar="DIR", help="Output directory (or set GEPER_OUTPUT_DIR)"
+    )
+    p_analyze.add_argument(
+        "--sample-id", metavar="ID", help="Sample identifier (default: R1 filename stem)"
+    )
+    p_analyze.add_argument(
+        "--no-resume", action="store_true", help="Ignore checkpoint and re-run all stages"
+    )
+    p_analyze.add_argument(
+        "--bwa-index-dir",
+        metavar="DIR",
         help=(
             "Persistent directory for the BWA FM-index (e.g. a Google Drive "
             "mount path). Builds the index once and never rebuilds it on "
@@ -593,18 +640,31 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_analyze.add_argument(
-        "--ref-cache-dir", metavar="DIR",
+        "--ref-cache-dir",
+        metavar="DIR",
         help=(
             "Directory to decompress a gzip-compressed --ref into (reused "
             "on later runs against an unchanged source file). Overrides "
             "config reference.local_cache_dir."
         ),
     )
-    p_analyze.add_argument("--cadd",    type=float, metavar="PHRED", help="Override ACMG PP3/BP4 CADD Phred threshold")
-    p_analyze.add_argument("--revel",   type=float, metavar="0-1",   help="Override ACMG PP3/BP4 REVEL score threshold")
-    p_analyze.add_argument("--spliceai", type=float, metavar="0-1",  help="Override ACMG PP3/BP4 SpliceAI score threshold")
     p_analyze.add_argument(
-        "--mode", default="full", choices=["full", "vcf_only"], metavar="MODE",
+        "--cadd", type=float, metavar="PHRED", help="Override ACMG PP3/BP4 CADD Phred threshold"
+    )
+    p_analyze.add_argument(
+        "--revel", type=float, metavar="0-1", help="Override ACMG PP3/BP4 REVEL score threshold"
+    )
+    p_analyze.add_argument(
+        "--spliceai",
+        type=float,
+        metavar="0-1",
+        help="Override ACMG PP3/BP4 SpliceAI score threshold",
+    )
+    p_analyze.add_argument(
+        "--mode",
+        default="full",
+        choices=["full", "vcf_only"],
+        metavar="MODE",
         help=(
             "'full' (default): FASTQ -> Report using Kim's own annotation/"
             "ACMG/PGx/ancestry/reporting stages. 'vcf_only': stop after "
@@ -614,7 +674,10 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_analyze.add_argument(
-        "--stop-after", default=None, choices=["variant_calling"], metavar="STAGE",
+        "--stop-after",
+        default=None,
+        choices=["variant_calling"],
+        metavar="STAGE",
         help="Explicit stage name to stop after (equivalent to --mode vcf_only).",
     )
     p_analyze.set_defaults(func=cmd_analyze)
@@ -622,36 +685,40 @@ def _build_parser() -> argparse.ArgumentParser:
     # ── vcf ──────────────────────────────────────────────────────────────────
     p_vcf = sub.add_parser("vcf", help="Annotate + classify an existing VCF")
     _common(p_vcf)
-    p_vcf.add_argument("--input",      required=True, metavar="VCF",  help="Input VCF file")
-    p_vcf.add_argument("--output-dir", required=True, metavar="DIR",  help="Output directory")
-    p_vcf.add_argument("--ref",        metavar="FASTA",               help="Reference genome FASTA (optional for annotation)")
-    p_vcf.add_argument("--sample-id",  metavar="ID",                  help="Sample ID (default: VCF filename stem)")
+    p_vcf.add_argument("--input", required=True, metavar="VCF", help="Input VCF file")
+    p_vcf.add_argument("--output-dir", required=True, metavar="DIR", help="Output directory")
+    p_vcf.add_argument(
+        "--ref", metavar="FASTA", help="Reference genome FASTA (optional for annotation)"
+    )
+    p_vcf.add_argument("--sample-id", metavar="ID", help="Sample ID (default: VCF filename stem)")
     p_vcf.set_defaults(func=cmd_vcf)
 
     # ── classify ─────────────────────────────────────────────────────────────
     p_clf = sub.add_parser("classify", help="Classify a single variant (ACMG + evidence score)")
     _common(p_clf)
-    p_clf.add_argument("--chrom",          required=True,              help="Chromosome (e.g. chr17)")
-    p_clf.add_argument("--pos",            required=True, type=int,    help="Position (1-based)")
-    p_clf.add_argument("--ref",            required=True,              help="Reference allele")
-    p_clf.add_argument("--alt",            required=True,              help="Alternate allele")
-    p_clf.add_argument("--gene",           metavar="SYMBOL",           help="Gene symbol (e.g. BRCA1)")
-    p_clf.add_argument("--cadd",           type=float, metavar="PHRED", help="CADD Phred score")
-    p_clf.add_argument("--revel",          type=float, metavar="0-1",  help="REVEL score [0-1]")
-    p_clf.add_argument("--spliceai",       type=float, metavar="0-1",  help="SpliceAI delta score [0-1]")
-    p_clf.add_argument("--gnomad-af",      type=float, metavar="AF",   help="gnomAD allele frequency")
-    p_clf.add_argument("--lof",            action="store_true",        help="Flag as loss-of-function variant")
-    p_clf.add_argument("--lof-intolerant", action="store_true",        help="Gene is LoF intolerant (pLI>0.9)")
-    p_clf.add_argument("--missense",       action="store_true",        help="Flag as missense variant")
-    p_clf.add_argument("--output-dir",     metavar="DIR",              help="Save JSON result here (optional)")
+    p_clf.add_argument("--chrom", required=True, help="Chromosome (e.g. chr17)")
+    p_clf.add_argument("--pos", required=True, type=int, help="Position (1-based)")
+    p_clf.add_argument("--ref", required=True, help="Reference allele")
+    p_clf.add_argument("--alt", required=True, help="Alternate allele")
+    p_clf.add_argument("--gene", metavar="SYMBOL", help="Gene symbol (e.g. BRCA1)")
+    p_clf.add_argument("--cadd", type=float, metavar="PHRED", help="CADD Phred score")
+    p_clf.add_argument("--revel", type=float, metavar="0-1", help="REVEL score [0-1]")
+    p_clf.add_argument("--spliceai", type=float, metavar="0-1", help="SpliceAI delta score [0-1]")
+    p_clf.add_argument("--gnomad-af", type=float, metavar="AF", help="gnomAD allele frequency")
+    p_clf.add_argument("--lof", action="store_true", help="Flag as loss-of-function variant")
+    p_clf.add_argument(
+        "--lof-intolerant", action="store_true", help="Gene is LoF intolerant (pLI>0.9)"
+    )
+    p_clf.add_argument("--missense", action="store_true", help="Flag as missense variant")
+    p_clf.add_argument("--output-dir", metavar="DIR", help="Save JSON result here (optional)")
     p_clf.set_defaults(func=cmd_classify)
 
     # ── serve ─────────────────────────────────────────────────────────────────
     p_serve = sub.add_parser("serve", help="Start the GEPER FastAPI REST server")
     _common(p_serve)
-    p_serve.add_argument("--host",   default="127.0.0.1",  help="Bind host (default: 127.0.0.1)")
-    p_serve.add_argument("--port",   default=8000, type=int, help="Bind port (default: 8000)")
-    p_serve.add_argument("--reload", action="store_true",  help="Enable auto-reload (dev mode)")
+    p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    p_serve.add_argument("--port", default=8000, type=int, help="Bind port (default: 8000)")
+    p_serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev mode)")
     p_serve.set_defaults(func=cmd_serve)
 
     # ── validate ─────────────────────────────────────────────────────────────
@@ -664,16 +731,20 @@ def _build_parser() -> argparse.ArgumentParser:
         "verify-environment",
         help="Check Python, RAM, CPU, CUDA/GPU, disk space, and required external tools",
     )
-    p_env.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        metavar="LEVEL", help="Logging level (default: INFO)")
+    p_env.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        metavar="LEVEL",
+        help="Logging level (default: INFO)",
+    )
     p_env.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     p_env.set_defaults(func=cmd_verify_environment)
-
 
     # ── test ─────────────────────────────────────────────────────────────────
     p_test = sub.add_parser("test", help="Run the GEPER test suite")
     _common(p_test)
-    p_test.add_argument("-k", metavar="EXPR",        help="pytest -k filter expression")
+    p_test.add_argument("-k", metavar="EXPR", help="pytest -k filter expression")
     p_test.add_argument("--cov", action="store_true", help="Run with coverage report")
     p_test.set_defaults(func=cmd_test)
 
@@ -681,6 +752,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
+
 
 def cli() -> None:
     """Main entry point for ``geper`` console script (pyproject.toml)."""

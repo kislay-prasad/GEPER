@@ -66,6 +66,7 @@ from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer_short
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from report.clinical_report_builder import (
+    candidate_interpretation_of,
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
     RESEARCH_USE_DISCLAIMER,
@@ -458,7 +459,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         ]
 
     variant = variant_result.get("variant", {})
-    clinical = variant_result.get("clinical_report")
+    clinical = candidate_interpretation_of(variant_result)
     gene = _variant_gene(variant_result)
     hgvs = _variant_hgvs(variant_result)
     heading = f"Finding {idx}: {esc(gene) + ' ' if gene else ''}{esc(hgvs)}"

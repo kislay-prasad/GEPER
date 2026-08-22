@@ -263,7 +263,7 @@ def _markdown_document(thousand_genomes_sas_result):
             {
                 "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
                 "interpretation": {},
-                "clinical_report": cr,
+                "candidate_interpretation": cr,
                 "ai_model_status": {},
                 "errors": [],
             }
@@ -345,7 +345,7 @@ def _pdf_document(thousand_genomes_sas_result):
             {
                 "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
                 "interpretation": {},
-                "clinical_report": cr,
+                "candidate_interpretation": cr,
                 "ai_model_status": {},
                 "errors": [],
             }
@@ -418,7 +418,7 @@ class TestPdfRendering(unittest.TestCase):
                 {
                     "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
                     "interpretation": {},
-                    "clinical_report": cr,
+                    "candidate_interpretation": cr,
                     "ai_model_status": {},
                     "errors": [],
                 }

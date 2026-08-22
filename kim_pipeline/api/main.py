@@ -29,7 +29,6 @@ Configuration via environment variables:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import shutil
@@ -40,7 +39,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 import yaml
 from fastapi import (
@@ -111,6 +110,7 @@ _PROCESS_GROUPS: Dict[str, int] = {}  # run_id → pgid
 
 # ─── API key authentication (GAP 2) ──────────────────────────────────────────
 
+
 def _load_api_keys() -> Optional[Set[str]]:
     """Load valid API keys from GEPER_API_KEYS env var.
 
@@ -149,7 +149,6 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
         )
 
 
-
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -157,7 +156,9 @@ app = FastAPI(
     description=(
         "Production API for the GEPER clinical genomics pipeline. "
         "Accepts FASTQ inputs and returns annotated variant reports. "
-        "DISCLAIMER: For research use only. Not a clinical diagnostic tool."
+        "DISCLAIMER: GEPER assists qualified clinicians and pathologists; it produces a draft "
+        "classification requiring qualified human review and final sign-off before any clinical "
+        "use, and does not independently provide final clinical interpretation."
     ),
     version="8.0.0",
     contact={"name": "GEPER Team"},
@@ -183,6 +184,7 @@ app.add_middleware(
 
 # ─── Exception handlers ───────────────────────────────────────────────────────
 
+
 @app.exception_handler(Exception)
 async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception on %s %s", request.method, request.url)
@@ -197,6 +199,7 @@ async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
 
 
 # ─── Pydantic models ──────────────────────────────────────────────────────────
+
 
 class PipelineStartRequest(BaseModel):
     """Request body for POST /api/v1/pipeline/start."""
@@ -249,6 +252,7 @@ _STAGE_PROGRESS = {
 
 
 # ─── Background worker ───────────────────────────────────────────────────────
+
 
 def _run_pipeline_sync(run_id: str, req: PipelineStartRequest) -> None:
     """Synchronous pipeline execution — runs in thread pool."""
@@ -330,8 +334,8 @@ def _run_pipeline_sync(run_id: str, req: PipelineStartRequest) -> None:
         _PROCESS_GROUPS.pop(run_id, None)
 
 
-
 # ─── Health endpoints ─────────────────────────────────────────────────────────
+
 
 @app.get("/health", tags=["health"], summary="Liveness probe")
 async def health() -> Dict:
@@ -355,6 +359,7 @@ async def ready() -> Dict:
 
 # ─── Config endpoint ──────────────────────────────────────────────────────────
 
+
 @app.get("/api/v1/config", tags=["config"], summary="Return active configuration")
 async def get_config(_auth: None = Depends(_require_api_key)) -> Dict:
     """Return the active pipeline configuration with sensitive keys redacted."""
@@ -363,9 +368,9 @@ async def get_config(_auth: None = Depends(_require_api_key)) -> Dict:
         if isinstance(v, dict):
             # Redact keys that look like secrets
             safe_cfg[k] = {
-                sk: "***REDACTED***" if any(
-                    word in sk.lower() for word in ("key", "token", "secret", "password")
-                ) else sv
+                sk: "***REDACTED***"
+                if any(word in sk.lower() for word in ("key", "token", "secret", "password"))
+                else sv
                 for sk, sv in v.items()
             }
         else:
@@ -379,6 +384,7 @@ async def get_config(_auth: None = Depends(_require_api_key)) -> Dict:
 
 
 # ─── Upload endpoints ─────────────────────────────────────────────────────────
+
 
 async def _save_upload(file: UploadFile, allowed_suffixes: tuple) -> str:
     """Save an uploaded file to _UPLOAD_DIR and return its path."""
@@ -456,6 +462,7 @@ async def upload_fasta(
 
 # ─── Pipeline control endpoints ───────────────────────────────────────────────
 
+
 @app.post(
     "/api/v1/pipeline/start",
     tags=["pipeline"],
@@ -481,10 +488,17 @@ async def start_pipeline(
     _validate_path_in_roots(req.reference_fasta_path, _UPLOAD_DIR, _OUTPUT_DIR)
 
     # FIX 8 — validate config_overrides against explicit allowlist
-    _ALLOWED_OVERRIDE_SECTIONS = frozenset({
-        "qc", "acmg_thresholds", "evidence_engine", "evidence_thresholds",
-        "blast", "pgx", "ancestry",
-    })
+    _ALLOWED_OVERRIDE_SECTIONS = frozenset(
+        {
+            "qc",
+            "acmg_thresholds",
+            "evidence_engine",
+            "evidence_thresholds",
+            "blast",
+            "pgx",
+            "ancestry",
+        }
+    )
     if req.config_overrides:
         rejected = [k for k in req.config_overrides if k not in _ALLOWED_OVERRIDE_SECTIONS]
         if rejected:
@@ -619,7 +633,9 @@ def _get_run(run_id: str) -> Dict:
     tags=["pipeline"],
     summary="Get full pipeline run status",
 )
-async def pipeline_status(run_id: str, _auth: None = Depends(_require_api_key)) -> RunStatusResponse:
+async def pipeline_status(
+    run_id: str, _auth: None = Depends(_require_api_key)
+) -> RunStatusResponse:
     """Return detailed status for a pipeline run."""
     run = _get_run(run_id)
 
@@ -725,12 +741,14 @@ async def delete_run(run_id: str, _auth: None = Depends(_require_api_key)) -> Di
                 os.killpg(pgid, signal.SIGTERM)
                 # Brief wait, then SIGKILL if still alive
                 import threading as _threading
+
                 def _sigkill_after():
                     time.sleep(5)
                     try:
                         os.killpg(pgid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
                 _threading.Thread(target=_sigkill_after, daemon=True).start()
             except ProcessLookupError:
                 pass
@@ -776,9 +794,11 @@ async def list_runs(_auth: None = Depends(_require_api_key)) -> Dict:
 
 # ─── Checkpoint-based progress refresh ───────────────────────────────────────
 
+
 def _refresh_progress_from_checkpoint(run_id: str, run: Dict) -> None:
     """Read checkpoint.json to update stage and progress_pct in the run record."""
     import json as _json
+
     sample_id = run["sample_id"]
     cp_path = _OUTPUT_DIR / sample_id / "checkpoint.json"
     if not cp_path.exists():

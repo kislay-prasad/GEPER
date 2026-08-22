@@ -190,6 +190,14 @@ hotspot:
 vep:
   enabled: true
   cache_dir: ""            # e.g. /data/vep_cache
+  dir_plugins: ""          # e.g. /opt/vep/Plugins (VEP's plugin .pm dir)
+  # CADD/REVEL/AlphaMissense are separate VEP plugins, each needing its own
+  # data-file download (see docs/INSTALL_DEPENDENCIES.md). Left unset here,
+  # that plugin is not requested and its score comes back absent rather than
+  # VEP failing to start -- do not set these to a plugin name with no path.
+  cadd_data: ""             # path to CADD's whole_genome_SNVs.tsv.gz
+  revel_data: ""            # path to REVEL's revel.tsv.gz
+  alphamissense_data: ""    # path to AlphaMissense_hg38.tsv.gz
   fasta: ""                # reference FASTA for HGVS
   extra_flags: ""          # any additional VEP flags
   timeout: 600

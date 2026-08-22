@@ -17,6 +17,7 @@ Usage::
         print(hit.significance, hit.review_stars)
     score = ClinVarLookup.sig_to_score("Pathogenic", 3)
 """
+
 from __future__ import annotations
 
 import csv
@@ -28,7 +29,6 @@ import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-import requests
 
 from pipeline.utils.http import _api_get
 
@@ -56,11 +56,29 @@ def _aa3to1(aa: str) -> str:
     if len(aa) == 1 and aa.upper() in "ACDEFGHIKLMNPQRSTVWY*X":
         return aa.upper()
     _TABLE = {
-        "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
-        "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
-        "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
-        "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
-        "Ter": "*", "Sec": "U", "Pyl": "O",
+        "Ala": "A",
+        "Arg": "R",
+        "Asn": "N",
+        "Asp": "D",
+        "Cys": "C",
+        "Gln": "Q",
+        "Glu": "E",
+        "Gly": "G",
+        "His": "H",
+        "Ile": "I",
+        "Leu": "L",
+        "Lys": "K",
+        "Met": "M",
+        "Phe": "F",
+        "Pro": "P",
+        "Ser": "S",
+        "Thr": "T",
+        "Trp": "W",
+        "Tyr": "Y",
+        "Val": "V",
+        "Ter": "*",
+        "Sec": "U",
+        "Pyl": "O",
     }
     return _TABLE.get(aa[:3].capitalize(), "")
 
@@ -72,9 +90,11 @@ def _review_stars(status: str) -> int:
 
 # ── Data structures ───────────────────────────────────────────────────────────
 
+
 @dataclass
 class ClinVarHit:
     """One ClinVar record matching a queried variant."""
+
     significance: str
     review_stars: int
     submitter_count: int
@@ -85,6 +105,7 @@ class ClinVarHit:
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
+
 
 class ClinVarLookup:
     """Look up ClinVar pathogenicity for a genomic variant.
@@ -100,7 +121,9 @@ class ClinVarLookup:
         # lookups; it should consistently return "not available" (None).
         self._enabled: bool = bool(cv_cfg.get("enabled", True))
         self._tsv_gz_path: Optional[str] = cv_cfg.get("tsv_gz_path") or None
-        self._ncbi_api_key: Optional[str] = cv_cfg.get("ncbi_api_key") or os.environ.get("NCBI_API_KEY")
+        self._ncbi_api_key: Optional[str] = cv_cfg.get("ncbi_api_key") or os.environ.get(
+            "NCBI_API_KEY"
+        )
         self._rate_limit_delay: float = 1.0 / (10.0 if self._ncbi_api_key else 3.0)
 
         # Primary index keyed by (chrom, pos, ref, alt)
@@ -132,7 +155,8 @@ class ClinVarLookup:
                 self._backend = "local"
                 logger.info(
                     "[ClinVar] Loaded local TSV: %s (%d entries)",
-                    self._tsv_gz_path, len(self._by_coord),
+                    self._tsv_gz_path,
+                    len(self._by_coord),
                 )
             except Exception as exc:
                 logger.warning("[ClinVar] Failed to load local TSV: %s — falling back to API", exc)
@@ -167,7 +191,8 @@ class ClinVarLookup:
                 hgvs_p: Optional[str] = None
                 if name_field:
                     import re as _re
-                    _m = _re.search(r'\(p\.([^)]+)\)', name_field)
+
+                    _m = _re.search(r"\(p\.([^)]+)\)", name_field)
                     if _m:
                         hgvs_p = "p." + _m.group(1)
 
@@ -219,7 +244,10 @@ class ClinVarLookup:
         if not self._enabled:
             logger.debug(
                 "[ClinVar] Skipped lookup for %s:%d %s>%s — clinvar.enabled is false",
-                chrom, pos, ref, alt,
+                chrom,
+                pos,
+                ref,
+                alt,
             )
             return None
 
@@ -305,8 +333,9 @@ class ClinVarLookup:
                 # FIX 2: PS1 — same amino-acid substitution in ClinVar.
                 if wildtype_aa and mutant_aa and hit.hgvs_p:
                     import re as _re2
+
                     _p_m = _re2.match(
-                        r'p\.([A-Za-z]{1,3})(\d+)([A-Za-z]{1,3})',
+                        r"p\.([A-Za-z]{1,3})(\d+)([A-Za-z]{1,3})",
                         hit.hgvs_p,
                     )
                     if _p_m:
@@ -315,7 +344,10 @@ class ClinVarLookup:
                         our_ref_aa = _aa3to1(wildtype_aa)
                         our_alt_aa = _aa3to1(mutant_aa)
                         if (
-                            cv_ref_aa and cv_alt_aa and our_ref_aa and our_alt_aa
+                            cv_ref_aa
+                            and cv_alt_aa
+                            and our_ref_aa
+                            and our_alt_aa
                             and cv_ref_aa == our_ref_aa
                             and cv_alt_aa == our_alt_aa
                         ):
@@ -325,10 +357,30 @@ class ClinVarLookup:
                 if wildtype_aa and mutant_aa:
                     novel_aa_plp = True
 
-        result = (
-            True if same_aa_plp else None,   # PS1
-            True if novel_aa_plp else None,  # PM5
-        )
+        # FIX (test-integrity dispatch, 2026-08-21): `same_aa_plp`/
+        # `novel_aa_plp` are real booleans by this point -- the scan
+        # above always ran against a populated local backend (the
+        # "could not search at all" cases already returned early, at
+        # the top of this method). `True if x else None` collapsed a
+        # genuine checked negative ("scanned the codon window, found no
+        # matching P/LP record") into the SAME value as "never scanned"
+        # -- `None` -- so PS1/PM5 in `pipeline/acmg/classifier.py` could
+        # never distinguish "we looked and there's nothing" from "we
+        # never looked", even though both criteria's own status logic
+        # was already written to treat a real `False` (STATUS_NOT_MET)
+        # differently from `None` (STATUS_NOT_EVALUATED) -- see
+        # `_ps1`'s/`_pm5`'s own comments, which already anticipated
+        # this and were simply never fed it.
+        #
+        # `wildtype_aa`/`mutant_aa` being absent is the one genuine
+        # "could not evaluate" case remaining at this point (the
+        # same_aa/novel_aa comparisons above are gated on both being
+        # present, so neither was ever meaningfully attempted) -- that
+        # legitimately stays `None`, not a fabricated `False`.
+        if wildtype_aa and mutant_aa:
+            result = (same_aa_plp, novel_aa_plp)
+        else:
+            result = (None, None)
         # FIX 14: cache the codon-scan result to avoid repeated O(N) scans
         with self._cache_lock:
             self._cache[("codon", norm_chrom, pos, ref_upper, alt_upper)] = result

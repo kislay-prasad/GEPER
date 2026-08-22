@@ -51,7 +51,7 @@ def _document(n_variants: int, gene_prefix: str = "GENE") -> dict:
             {
                 "variant": {"chrom": str(i + 1), "pos": 1000 + i, "ref": "C", "alt": "A"},
                 "interpretation_result": {"gene_symbol": f"{gene_prefix}{i + 1}"},
-                "clinical_report": _clinical(),
+                "candidate_interpretation": _clinical(),
             }
             for i in range(n_variants)
         ],

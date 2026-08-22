@@ -52,7 +52,7 @@ def _variant_result(idx, clinical=None):
     return {
         "variant": {"chrom": str(idx), "pos": 100 * idx, "ref": "A", "alt": "T"},
         "interpretation_result": {"gene_symbol": f"GENE{idx}"},
-        "clinical_report": _clinical() if clinical is None else clinical,
+        "candidate_interpretation": _clinical() if clinical is None else clinical,
     }
 
 
@@ -99,7 +99,7 @@ class TestFullReportCaption(unittest.TestCase):
         clinical = _clinical(pending=True)
         clinical["confidence"]["label"] = None
         document = _document(1)
-        document["variants"][0]["clinical_report"] = clinical
+        document["variants"][0]["candidate_interpretation"] = clinical
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "full.pdf")
             generate_pdf(document, out)
@@ -198,7 +198,7 @@ def _markdown_document(n_variants):
             {
                 "variant": variant,
                 "interpretation": {},
-                "clinical_report": cr,
+                "candidate_interpretation": cr,
                 "ai_model_status": {},
                 "errors": [],
             }
@@ -232,7 +232,7 @@ class TestMarkdownCaption(unittest.TestCase):
     def test_caption_present_even_when_confidence_pending(self):
         document = _markdown_document(1)
         variant = document["variants"][0]["variant"]
-        document["variants"][0]["clinical_report"] = build_clinical_report(
+        document["variants"][0]["candidate_interpretation"] = build_clinical_report(
             _ir(confidence_pending=True, confidence_score=None, confidence_label=None, variant=variant),
             variant_dict=variant,
         )

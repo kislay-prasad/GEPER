@@ -587,7 +587,7 @@ class TestPerFindingDisclaimer(unittest.TestCase):
         return self._variant_result(_MT_TL1_VARIANT, _MT_TL1_TRANSCRIPT_RESULT)
 
     def _nuclear_variant_result(self):
-        return {"variant": {"chrom": "17", "pos": 43106534, "ref": "C", "alt": "A"}, "clinical_report": {}}
+        return {"variant": {"chrom": "17", "pos": 43106534, "ref": "C", "alt": "A"}, "candidate_interpretation": {}}
 
     def test_markdown_shows_disclaimer_only_on_mt_finding(self):
         gen = report_generator_module.ReportGenerator()

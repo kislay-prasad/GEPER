@@ -6,6 +6,7 @@ PGxStage: pharmacogenomics annotation from a called VCF.
 Detects star-alleles for 10 core PGx genes, calls diplotypes,
 predicts phenotypes, and generates JSON + HTML reports.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pipeline.pgx.diplotypes import (
@@ -28,12 +28,28 @@ from pipeline.pgx.diplotypes import (
 
 logger = logging.getLogger("geper.pipeline.pgx")
 
+# Ships in every serialised PGx result (JSON and, via the HTML/PDF renderers'
+# own copies, rendered reports too) so a caller reading the raw JSON --
+# without ever opening an HTML/PDF report -- still gets it. Single source:
+# PGxResult.to_dict() injects this key rather than each renderer re-stating
+# its own copy, matching the pattern report/clinical_report_builder.py's
+# RESEARCH_USE_DISCLAIMER already established for geper/'s own renderers.
+PGX_VALIDATION_CAVEAT = (
+    "Star-allele/diplotype calls have not been validated against an independent "
+    "ground-truth dataset: no commercially-usable reference for this purpose "
+    "currently exists (PharmVar, the field's authoritative star-allele "
+    "nomenclature source, is CC BY-NC-ND -- see GROUND_TRUTH_DATASET_AUDIT.md). "
+    "Treat as informative, not confirmatory, pending validation."
+)
+
 
 # ─── Result dataclasses ───────────────────────────────────────────────────────
+
 
 @dataclass
 class PGxAnnotation:
     """Pharmacogenomic annotation for a single gene."""
+
     gene: str
     diplotype: str
     phenotype: str
@@ -48,6 +64,7 @@ class PGxAnnotation:
 @dataclass
 class PGxResult:
     """Complete PGx analysis result for a sample."""
+
     sample_id: str = ""
     vcf_path: str = ""
     annotations: List[PGxAnnotation] = field(default_factory=list)
@@ -57,6 +74,7 @@ class PGxResult:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        d["validation_caveat"] = PGX_VALIDATION_CAVEAT
         return d
 
     def is_json_serialisable(self) -> bool:
@@ -68,6 +86,7 @@ class PGxResult:
 
 
 # ─── VCF reader ──────────────────────────────────────────────────────────────
+
 
 def _parse_vcf_variants(
     vcf_path: str,
@@ -128,9 +147,7 @@ def _parse_vcf_variants(
                     if "GT" in format_keys:
                         gt_val = format_values[format_keys.index("GT")]
                     try:
-                        zy_result = ZygosityExtractor.extract(
-                            gt_val, format_keys, format_values
-                        )
+                        zy_result = ZygosityExtractor.extract(gt_val, format_keys, format_values)
                         zy = zy_result.zygosity
                     except Exception:
                         zy = "unknown"
@@ -159,9 +176,8 @@ def _parse_vcf_variants(
 
 # ─── Star-allele detection ────────────────────────────────────────────────────
 
-def _normalise_indel_key(
-    chrom: str, pos: int, ref: str, alt: str
-) -> Tuple[str, int, str, str]:
+
+def _normalise_indel_key(chrom: str, pos: int, ref: str, alt: str) -> Tuple[str, int, str, str]:
     """Left-normalise a simple insertion/deletion for VCF key matching.
 
     FIX 7: Star-allele definitions use left-normalised VCF representation.
@@ -217,7 +233,8 @@ def _detect_star_alleles(
     if cnv_alleles:
         logger.info(
             "[PGx] %s: allele(s) %s require CNV analysis — NOT assessed from SNV/indel VCF.",
-            gene, ", ".join(cnv_alleles),
+            gene,
+            ", ".join(cnv_alleles),
         )
 
     # Step 1: find all alleles whose defining variants are all present in the VCF
@@ -271,14 +288,12 @@ def _detect_star_alleles(
     for i, a in enumerate(sorted_alleles):
         if a in excluded:
             continue
-        for b in sorted_alleles[i + 1:]:
+        for b in sorted_alleles[i + 1 :]:
             if b in excluded:
                 continue
             if allele_varsets[b] and allele_varsets[b].issubset(allele_varsets[a]):
                 excluded.add(b)
-                logger.debug(
-                    "[PGx] %s: excluding %s (subset of %s)", gene, b, a
-                )
+                logger.debug("[PGx] %s: excluding %s (subset of %s)", gene, b, a)
 
     # Step 3: rebuild preserving homozygous duplicates, minus excluded
     detected: List[str] = [a for a in raw_detected if a not in excluded]
@@ -371,6 +386,7 @@ def _get_activity_score(gene: str, phenotype: str) -> Optional[float]:
 
 # ─── Report generators ────────────────────────────────────────────────────────
 
+
 def _write_json_report(result: PGxResult, output_dir: str) -> str:
     """Write PGx JSON report. Returns path."""
     path = os.path.join(output_dir, "pgx_report.json")
@@ -391,9 +407,9 @@ def _write_html_report(result: PGxResult, output_dir: str) -> str:
 
     rows = []
     for ann in result.annotations:
-        drug_list = "; ".join(
-            f"{d['drug']} ({d['implication']})" for d in ann.affected_drugs
-        ) or "None"
+        drug_list = (
+            "; ".join(f"{d['drug']} ({d['implication']})" for d in ann.affected_drugs) or "None"
+        )
         score = f"{ann.activity_score:.1f}" if ann.activity_score is not None else "N/A"
         rows.append(f"""
         <tr>
@@ -426,6 +442,7 @@ def _write_html_report(result: PGxResult, output_dir: str) -> str:
   <p><strong>Sample:</strong> {result.sample_id}</p>
   <p><strong>VCF:</strong> {result.vcf_path}</p>
   <p><strong>Analysis time:</strong> {result.elapsed_seconds:.2f}s</p>
+  <p style="color:#777;font-size:0.9em;"><em>{PGX_VALIDATION_CAVEAT}</em></p>
   <table>
     <thead>
       <tr>
@@ -439,7 +456,9 @@ def _write_html_report(result: PGxResult, output_dir: str) -> str:
   </table>
   <div class="footer">
     Guidelines: CPIC (cpicpgx.org), DPWG. Data embedded from PharmGKB (GRCh38).
-    This report is for research use only.
+    GEPER assists qualified clinicians and pathologists; this report requires qualified human
+    review before any clinical use, and does not independently provide final clinical
+    interpretation.
   </div>
 </body>
 </html>"""
@@ -449,6 +468,7 @@ def _write_html_report(result: PGxResult, output_dir: str) -> str:
 
 
 # ─── PGxStage ─────────────────────────────────────────────────────────────────
+
 
 class PGxStage:
     """Pharmacogenomics annotation stage.
@@ -518,14 +538,16 @@ class PGxStage:
             except Exception as exc:
                 logger.warning("[PGx] Gene %s annotation failed: %s", gene, exc)
                 # Add a safe default annotation so the gene is always present
-                annotations.append(PGxAnnotation(
-                    gene=gene,
-                    diplotype="*1/*1",
-                    phenotype=DEFAULT_PHENOTYPE.get(gene, "Normal Metabolizer"),
-                    activity_score=None,
-                    affected_drugs=[],
-                    evidence_level="1A",
-                ))
+                annotations.append(
+                    PGxAnnotation(
+                        gene=gene,
+                        diplotype="*1/*1",
+                        phenotype=DEFAULT_PHENOTYPE.get(gene, "Normal Metabolizer"),
+                        activity_score=None,
+                        affected_drugs=[],
+                        evidence_level="1A",
+                    )
+                )
 
         result.annotations = annotations
 

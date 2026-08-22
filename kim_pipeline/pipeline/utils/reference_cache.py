@@ -74,6 +74,7 @@ class ReferenceCacheError(RuntimeError):
 
 # ─── Decompression cache (correctness, not speed) ──────────────────────────
 
+
 def _fingerprint(path: Path) -> dict:
     st = path.stat()
     return {"name": path.name, "size": st.st_size, "mtime": int(st.st_mtime)}
@@ -151,7 +152,8 @@ def resolve_reference(reference_fasta: str, cache_dir: Optional[str] = None) -> 
             logger.info(
                 "Reference already decompressed and unchanged since last run "
                 "(%s) — reusing %s, not re-decompressing.",
-                ref.name, decompressed_path,
+                ref.name,
+                decompressed_path,
             )
             return str(decompressed_path)
 
@@ -161,7 +163,12 @@ def resolve_reference(reference_fasta: str, cache_dir: Optional[str] = None) -> 
     try:
         with gzip.open(ref, "rb") as src, open(tmp_out, "wb") as dst:
             shutil.copyfileobj(src, dst, length=64 * 1024 * 1024)
-        tmp_out.rename(decompressed_path)
+        # Path.rename() raises WinError 183 on Windows if decompressed_path
+        # already exists (from a prior decompression) -- POSIX rename()
+        # silently overwrites in that case, so this only crashed on Windows.
+        # Path.replace() is the POSIX-and-Windows-safe atomic overwrite for
+        # exactly this "replace whatever's there" case.
+        tmp_out.replace(decompressed_path)
     except Exception as exc:
         tmp_out.unlink(missing_ok=True)
         raise ReferenceCacheError(f"Failed to decompress {ref}: {exc}") from exc
@@ -169,13 +176,16 @@ def resolve_reference(reference_fasta: str, cache_dir: Optional[str] = None) -> 
     fp_path.write_text(json.dumps(current_fp))
     logger.info(
         "Decompression complete in %.1fs (%s -> %s, %.1f MB).",
-        time.time() - t0, ref.name, decompressed_path.name,
+        time.time() - t0,
+        ref.name,
+        decompressed_path.name,
         decompressed_path.stat().st_size / (1024 * 1024),
     )
     return str(decompressed_path)
 
 
 # ─── Persistent, atomically-published BWA index cache ──────────────────────
+
 
 def _index_files_valid(prefix: Path, expected_sizes: Optional[dict] = None) -> bool:
     for suf in _BWA_INDEX_SUFFIXES:
@@ -217,8 +227,11 @@ def _stream_subprocess_with_heartbeat(cmd: List[str], stage_label: str) -> None:
     """
     t0 = time.time()
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, bufsize=1,
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
     )
 
     stop_event = threading.Event()
@@ -228,7 +241,8 @@ def _stream_subprocess_with_heartbeat(cmd: List[str], stage_label: str) -> None:
             logger.info(
                 "[%s] still running — %.0fs elapsed (this is normal for large "
                 "genomes; BWA prints no output during BWT/SA construction)",
-                stage_label, time.time() - t0,
+                stage_label,
+                time.time() - t0,
             )
 
     hb_thread = threading.Thread(target=_heartbeat, daemon=True)
@@ -293,7 +307,9 @@ def ensure_bwa_index(
             return str(prefix)
         logger.info(
             "BWA index missing/incomplete for %s (no %s) — building with '%s index'",
-            reference_fasta, ", ".join(missing) or "size-0 files", binary,
+            reference_fasta,
+            ", ".join(missing) or "size-0 files",
+            binary,
         )
         _stream_subprocess_with_heartbeat([binary, "index", str(ref)], "bwa index")
         if not _index_files_valid(prefix):
@@ -317,7 +333,8 @@ def ensure_bwa_index(
         logger.info(
             "Reusing persistent BWA index for %s from %s (unchanged since last build) "
             "— skipping indexing entirely.",
-            ref.name, idx_root,
+            ref.name,
+            idx_root,
         )
         return str(final_prefix)
 
@@ -325,7 +342,9 @@ def ensure_bwa_index(
         logger.warning(
             "Persistent index at %s was built from a different reference "
             "(recorded=%s, current=%s) — rebuilding rather than reusing.",
-            idx_root, entry, current_fp,
+            idx_root,
+            entry,
+            current_fp,
         )
     elif final_prefix.exists() or any(
         Path(str(final_prefix) + s).exists() for s in _BWA_INDEX_SUFFIXES
@@ -345,10 +364,13 @@ def ensure_bwa_index(
         logger.info(
             "Building BWA index for %s into persistent directory %s "
             "(temporary build location: %s) ...",
-            ref.name, idx_root, build_dir,
+            ref.name,
+            idx_root,
+            build_dir,
         )
         _stream_subprocess_with_heartbeat(
-            [binary, "index", "-p", str(build_prefix), str(ref)], "bwa index",
+            [binary, "index", "-p", str(build_prefix), str(ref)],
+            "bwa index",
         )
         if not _index_files_valid(build_prefix):
             raise ReferenceCacheError(

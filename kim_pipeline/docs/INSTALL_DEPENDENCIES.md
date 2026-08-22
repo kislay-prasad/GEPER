@@ -166,6 +166,35 @@ cd ensembl-vep
 perl INSTALL.pl
 ```
 
+Installing the `vep` binary and a cache (`vep.cache_dir`) is enough to get
+consequence terms and HGVS notation. It is **not** enough to get
+CADD/REVEL/AlphaMissense scores (used for PP3/BP4 computational evidence)
+-- those are separate VEP plugins, and each needs its own data file
+downloaded independently. Leaving them unconfigured is fully supported:
+GEPER runs VEP without them and those scores simply come back absent
+(other PP3/BP4 evidence, and non-computational ACMG criteria, are
+unaffected). To enable them:
+
+1. Get the plugin `.pm` files (bundled with the VEP installer above, or
+   `perl INSTALL.pl --PLUGINS all`) into a directory, e.g. `~/.vep/Plugins`.
+2. Download each plugin's data file separately:
+   - **CADD**: https://cadd.gs.washington.edu/download (`whole_genome_SNVs.tsv.gz` + its `.tbi`, GRCh38)
+   - **REVEL**: https://sites.google.com/site/revelgenomics/downloads (pre-formatted VEP plugin release)
+   - **AlphaMissense**: https://console.cloud.google.com/storage/browser/dm_alphamissense (`AlphaMissense_hg38.tsv.gz`)
+3. Point GEPER at both in config:
+   ```yaml
+   vep:
+     dir_plugins: "/home/you/.vep/Plugins"
+     cadd_data: "/data/cadd/whole_genome_SNVs.tsv.gz"
+     revel_data: "/data/revel/revel.tsv.gz"
+     alphamissense_data: "/data/alphamissense/AlphaMissense_hg38.tsv.gz"
+   ```
+
+A bare plugin name with no data file is not a valid VEP invocation --
+GEPER only ever requests a plugin when its `*_data` config key is set, so
+partial setup (e.g. CADD configured, REVEL and AlphaMissense not) is safe
+and simply yields fewer computational scores, not a failure.
+
 ---
 
 ## Automated installer

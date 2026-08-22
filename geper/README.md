@@ -1,4 +1,4 @@
-# GEPER — Genetic Evaluation & Prediction Engine for Research
+# GEPER — Genetic Evaluation & Prediction Engine
 
 GEPER integrates five pretrained genomic/proteomic foundation models,
 AlphaMissense missense-pathogenicity scoring, MMSplice splice-effect
@@ -55,7 +55,7 @@ geper/
 │   ├── router.py                   # Chooses HyenaDNA / Evo 2 / AlphaMissense eligibility
 │   ├── rna_generator.py            # DNA -> RNA transcription
 │   ├── protein_translator.py       # RNA -> protein translation (standard codon table)
-│   ├── interpretation.py           # Merges all evidence into one unified interpretation
+│   ├── interpretation.py           # Merges all evidence into one candidate interpretation summary
 │   └── orchestrator.py             # GeperPipeline — runs every stage in order
 │
 ├── database/
@@ -88,7 +88,7 @@ VCF file
   -> MMSpliceService.predict()            -> MMSplice (splice-window-eligible variants only)
   -> ClinVarClient.query_variant()
   -> DbSNPClient.lookup_variant()
-  -> InterpretationEngine.interpret()     (merges everything)
+  -> InterpretationEngine.interpret()     (merges everything into a candidate summary for review)
   -> JSONResultBuilder -> geper_results.json
   -> ReportGenerator   -> geper_report.md
 ```
@@ -856,11 +856,13 @@ Set `GEPER_CONFIG_FILE=/path/to/other.yaml` to use a different path.
 
 ## 15. Clinical disclaimer
 
-GEPER is a research pipeline built on pretrained machine learning
-models and public database lookups. It is **not** a substitute for
-professional clinical genetic interpretation, diagnosis, or medical
-advice. All output must be reviewed by a qualified clinical geneticist
-or genetic counselor before informing any medical decision.
+GEPER is a variant prioritisation system built on pretrained machine
+learning models and public database lookups. It assists qualified
+clinicians and pathologists by producing a draft classification;
+qualified human review and final sign-off are required before any
+clinical use, and GEPER does not independently provide final clinical
+interpretation. It is **not** a substitute for professional clinical
+genetic interpretation, diagnosis, or medical advice.
 
 ## 16. gnomAD
 
@@ -1540,8 +1542,8 @@ non-empty `physician` field (see
 `"DRAFT -- NOT FOR PATIENT USE. Awaiting clinical review."`; present →
 `"...reviewed by {physician}. This is not a standalone diagnosis."`
 `physician` is deliberately independent of `patient_name` (see
-`_parse_patient_meta`'s docstring) so a de-identified/research
-run — GEPER's stated default — can still be reviewed and signed off
+`_parse_patient_meta`'s docstring) so a de-identified run — no patient
+name is required by default — can still be reviewed and signed off
 by a named clinician without a patient name ever being attached.
 `approve` below works entirely by writing that one field and
 **re-invoking `generate_pdf`/`generate_short_pdf`** — the same

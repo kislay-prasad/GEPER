@@ -462,9 +462,19 @@ class ConfidenceEngine:
             and alphafold_result.get("found")
         ):
             sources.append("AlphaFold DB")
-            band = (
-                alphafold_result.get("affected_residue_band") or alphafold_result.get("mean_plddt_band") or ""
-            ).lower()
+            # No fallback to `mean_plddt_band` (the whole-protein average)
+            # when `affected_residue_band` is absent -- same defect, same
+            # fix, as `conflict_resolution_engine.py::_structural_conflict`'s
+            # docstring already condemned in writing: treating the
+            # whole-protein average as this variant's own residue
+            # confidence fabricates a claim AlphaFold was never asked
+            # about. `raw_band is not None` (not truthiness) decides
+            # presence, so a genuinely-absent band stays `None` rather
+            # than collapsing to `""` -- an empty string here would put
+            # "present but empty" and "absent" back on one observable,
+            # one layer inside the fix meant to remove that ambiguity.
+            raw_band = alphafold_result.get("affected_residue_band")
+            band = raw_band.lower() if raw_band is not None else None
             # Bug fix (found during Phase 6 prep): AlphaFold DB's real
             # confidence_band() values are "very_high"/"confident"/"low"/
             # "very_low" (underscored -- see pipeline/alphafold/models.py),
@@ -474,7 +484,9 @@ class ConfidenceEngine:
             # cases. Fixed to match the actual provider output.
             quality_map = {"very_high": 1.0, "confident": 0.75, "low": 0.4, "very_low": 0.2}
             quality = quality_map.get(band, 0.5)
-            notes.append(f"AlphaFold DB structure available (confidence band: '{band or 'n/a'}').")
+            notes.append(
+                f"AlphaFold DB structure available (confidence band: '{band if band is not None else 'n/a'}')."
+            )
             return CategoryScore(
                 "Structural Biology", weight, 1.0, quality, weight * 1.0 * quality, " ".join(notes), sources
             )

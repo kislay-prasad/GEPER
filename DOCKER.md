@@ -2,7 +2,7 @@
 
 Containerizes the whole combined pipeline described in
 [README_INTEGRATION.md](README_INTEGRATION.md): Kim (FASTQ → VCF),
-GEPER (VCF → clinical report), and the `bridge/` glue that chains them.
+GEPER (VCF → draft clinical report), and the `bridge/` glue that chains them.
 
 **Why this exists:** every fresh Colab runtime this session required
 manually reinstalling `bwa`/`samtools`/`bcftools`/`freebayes`/`tabix`
@@ -52,8 +52,9 @@ docker compose run --rm geper \
 
 Results land in `./data/out/` on your host either way (bind mount) —
 `geper_results.json`, `geper_report.md`, `geper_report_full.pdf` (the
-detailed clinical report), and `geper_report_short.pdf` (its one-page-style
-summary companion).
+detailed report — a draft until a qualified clinician reviews and signs
+off, see `geper/review/signoff.py`), and `geper_report_short.pdf` (its
+one-page-style summary companion).
 
 ---
 
@@ -231,7 +232,7 @@ docker run --rm -it \
     --output-dir /data/work --sample-id sample01 --mode vcf_only
 ```
 
-### 3. Combined (FASTQ → clinical report, one command)
+### 3. Combined (FASTQ → draft report for clinician review, one command)
 
 ```bash
 docker run --rm -it \

@@ -116,6 +116,17 @@ class TestRenderClinicalPdf:
         # The footer intentionally truncates a long disclaimer to fit one
         # line — check the start of the default disclaimer, which is
         # guaranteed to survive truncation.
+        #
+        # UPDATED 2026-08-22 (EJ-01): pipeline/reporting/pdf_report.py's
+        # default `lab_disclaimer` text was rewritten that day to the
+        # ratified assisted-clinical-use wording, superseding the
+        # research/orthogonal-testing framing it previously asserted (see
+        # that module's own comment). This specific assertion needed no
+        # change: "in-development bioinformatics pipeline" was
+        # deliberately kept, verbatim, as the new text's own opening
+        # clause, so it still survives the 150-character footer
+        # truncation unchanged. Noted here rather than left silent, so
+        # this unchanged assertion doesn't read as having been missed.
         assert "in-development bioinformatics pipeline" in text
 
     def test_custom_disclaimer_used_when_provided(self, tmp_path):

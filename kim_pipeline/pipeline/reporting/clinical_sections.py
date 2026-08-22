@@ -14,6 +14,7 @@ testable and so stage.py's diff for this feature stays reviewable.
 Nothing here touches alignment, variant calling, annotation, or ACMG
 classification logic — it only reads already-computed dicts.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -120,7 +121,9 @@ def qc_status_summary(
         },
         {
             "label": "Q30 Bases",
-            "value": f"{q30_fraction * 100:.1f}%" if isinstance(q30_fraction, (int, float)) else "N/A",
+            "value": f"{q30_fraction * 100:.1f}%"
+            if isinstance(q30_fraction, (int, float))
+            else "N/A",
             "status": _status_for(q30_fraction, th["q30_fraction"]),
         },
     ]
@@ -130,8 +133,11 @@ def qc_status_summary(
 # ─── Variant summary dashboard ──────────────────────────────────────────────────
 
 _CLASSIFICATION_LABELS = [
-    "Pathogenic", "Likely_Pathogenic", "Uncertain_Significance",
-    "Likely_Benign", "Benign",
+    "Pathogenic",
+    "Likely_Pathogenic",
+    "Uncertain_Significance",
+    "Likely_Benign",
+    "Benign",
 ]
 
 
@@ -175,6 +181,7 @@ def variant_dashboard(
 
 # ─── Clinical interpretation ────────────────────────────────────────────────────
 
+
 def clinical_interpretation(dashboard: Dict[str, Any]) -> Dict[str, str]:
     """Plain-language summary + recommended follow-up, derived purely
     from the dashboard counts already computed above — this restates
@@ -206,7 +213,10 @@ def clinical_interpretation(dashboard: Dict[str, Any]) -> Dict[str, str]:
         )
 
     if pgx:
-        summary += f" {pgx} pharmacogenomic finding(s) were also identified — see PGx section."
+        summary += (
+            f" {pgx} pharmacogenomic finding(s) were also identified — see PGx section "
+            f"(diplotype calls are not yet validated against ground truth)."
+        )
 
     if actionable > 0:
         follow_up = (
@@ -232,6 +242,7 @@ def clinical_interpretation(dashboard: Dict[str, Any]) -> Dict[str, str]:
 
 
 # ─── Variant + ACMG merge ───────────────────────────────────────────────────────
+
 
 def _variant_key(chrom: Any, pos: Any, ref: Any, alt: Any) -> str:
     return f"{str(chrom).lstrip('chr').upper()}:{pos}:{str(ref).upper()}:{str(alt).upper()}"
@@ -274,10 +285,15 @@ def merge_variants_with_acmg(
     # skipped for that variant) still need to be visible in the report.
     for key, a in acmg_by_key.items():
         if key not in seen_keys:
-            merged.append({
-                "chrom": a.get("chrom"), "pos": a.get("pos"),
-                "ref": a.get("ref"), "alt": a.get("alt"),
-                "gene_name": a.get("gene"), "acmg": a,
-            })
+            merged.append(
+                {
+                    "chrom": a.get("chrom"),
+                    "pos": a.get("pos"),
+                    "ref": a.get("ref"),
+                    "alt": a.get("alt"),
+                    "gene_name": a.get("gene"),
+                    "acmg": a,
+                }
+            )
 
     return merged

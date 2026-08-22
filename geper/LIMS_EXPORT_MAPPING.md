@@ -105,6 +105,25 @@ result is worse than an honest `null`.
 
 ## Per-finding fields
 
+> **Key rename, 2026-08-22 — action required before 2026-11-22.**
+> The per-variant object formerly published as `variants[i]["clinical_report"]`
+> is now `variants[i]["candidate_interpretation"]`. The old key is still
+> emitted, pointing at the **same object**, as a deprecated alias, and is
+> scheduled for removal after the next release (target 2026-11-22).
+>
+> The rename is not cosmetic: GEPER produces a draft classification for a
+> qualified human to review and sign off, and does not independently provide
+> a final clinical interpretation (EJ-01). A key named `clinical_report` tells
+> every downstream consumer the opposite.
+>
+> **Why you must act rather than wait for a failure.** Every consumer of this
+> document reads the key defensively — `.get("clinical_report") or {}` is the
+> shape used throughout GEPER's own code, and integrations tend to mirror it.
+> When the alias is removed, that pattern does not raise: it yields an empty
+> object and the integration carries on reporting nothing, silently. Migrate
+> on the date, not on the first error, because there will not be a first error.
+
+
 `findings[]` -- one entry per `document["variants"][i]`, in the same
 order. `finding_number` (1-based) is stable across export runs against
 the same file and matches the "Finding N" numbering GEPER's own PDF/
@@ -139,7 +158,7 @@ cross-reference this export against those reports directly.
 
 | Export field | CSV column | GEPER source | Notes |
 |---|---|---|---|
-| `classification.acmg_classification` | `acmg_classification` | `variants[i]["clinical_report"]["acmg_classification"]["classification"]` | Verbatim ACMG/AMP 2015 term: `"Pathogenic"` \| `"Likely Pathogenic"` \| `"Uncertain Significance"` \| `"Likely Benign"` \| `"Benign"` \| `null`. Never remapped to a different vocabulary here. |
+| `classification.acmg_classification` | `acmg_classification` | `variants[i]["candidate_interpretation"]["acmg_classification"]["classification"]` | Verbatim ACMG/AMP 2015 term: `"Pathogenic"` \| `"Likely Pathogenic"` \| `"Uncertain Significance"` \| `"Likely Benign"` \| `"Benign"` \| `null`. Never remapped to a different vocabulary here. |
 | `classification.triggered_criteria[].code` etc. | `triggered_acmg_criteria` (semicolon-joined codes) | `...["acmg_classification"]["triggered_criteria"]` | Each entry: ACMG criterion code (e.g. `"PS3"`), strength, direction. |
 | `classification.not_evaluated_criteria_count` | `not_evaluated_criteria_count` | `...["acmg_classification"]["not_evaluated_count"]` | How many of the 28 ACMG/AMP criteria couldn't be evaluated for this variant due to missing evidence (e.g. no functional-evidence source available) -- see `pipeline/acmg_rules.py` for per-criterion reasons (not carried into this export; see `geper_results.json` itself for the full detail this summarizes). |
 
@@ -147,8 +166,8 @@ cross-reference this export against those reports directly.
 
 | Export field | CSV column | GEPER source | Notes |
 |---|---|---|---|
-| `confidence.pending` / `.score` / `.label` | `confidence_pending` / `confidence_score` / `confidence_label` | `variants[i]["clinical_report"]["confidence"]` | `pending=true` means confidence scoring did not complete for this variant -- `score`/`label` stay `null` in that case, never a fabricated default. |
-| `priority.pending` / `.score` / `.category` / `.rank` | `priority_pending` / `priority_score` / `priority_category` / `priority_rank` | `variants[i]["clinical_report"]["priority"]` | `rank` is 1-indexed, batch-relative (`pipeline/prioritization_engine.py::rank_batch`) -- `null` until every variant in the run has been scored. |
+| `confidence.pending` / `.score` / `.label` | `confidence_pending` / `confidence_score` / `confidence_label` | `variants[i]["candidate_interpretation"]["confidence"]` | `pending=true` means confidence scoring did not complete for this variant -- `score`/`label` stay `null` in that case, never a fabricated default. |
+| `priority.pending` / `.score` / `.category` / `.rank` | `priority_pending` / `priority_score` / `priority_category` / `priority_rank` | `variants[i]["candidate_interpretation"]["priority"]` | `rank` is 1-indexed, batch-relative (`pipeline/prioritization_engine.py::rank_batch`) -- `null` until every variant in the run has been scored. |
 
 ### Case-level phenotype-driven ranking (`pipeline/case_prioritization.py`)
 
@@ -183,7 +202,7 @@ cross-reference this export against those reports directly.
 
 | Export field | CSV column | GEPER source | Notes |
 |---|---|---|---|
-| `supporting_evidence[]` | -- | `variants[i]["clinical_report"]["supporting_evidence"]` | Free-text evidence statements, already deduplicated by Phase 2 (`pipeline/interpretation_result.py`). |
+| `supporting_evidence[]` | -- | `variants[i]["candidate_interpretation"]["supporting_evidence"]` | Free-text evidence statements, already deduplicated by Phase 2 (`pipeline/interpretation_result.py`). |
 | `conflicting_evidence[]` | -- | `...["conflicting_evidence"]` | |
 | `recommendations[]` | -- | `...["recommendations"]` | |
 | `evidence_sources[]` | `evidence_sources` (semicolon-joined) | `...["evidence_sources"]` | Which external sources actually contributed evidence to this variant's classification (e.g. `["ClinVar", "dbSNP", "ClinGen"]`). |
@@ -195,7 +214,7 @@ cross-reference this export against those reports directly.
 Three fields exist in `geper_results.json` and reach every other renderer
 -- the full PDF, the short PDF, and the Markdown report -- but are
 intentionally out of scope for this export today: run-level QC metrics,
-patient consent, and per-variant `clinical_report` limitations. Verified
+patient consent, and per-variant `candidate_interpretation` limitations. Verified
 field-by-field against real generated output (render-and-diff, not
 schema inspection alone): none of the three appears anywhere in either
 the LIMS JSON or the flattened CSV.
@@ -234,14 +253,15 @@ Documented here with that caveat attached rather than closed flat.
 
 ### Per-variant limitations
 
-`clinical_report["limitations"]` -- which leads with
+`candidate_interpretation["limitations"]` -- which leads with
 `RESEARCH_USE_DISCLAIMER`, the same constant `run.caveats` above
 carries -- is fully present in `geper_results.json`'s per-variant
 record, but `LIMSFinding` has no `limitations` field. **This is the
 mildest of the three, and the export is not left unqualified by its
-absence**: the research-use qualification a LIMS most needs already
-reaches it at run level, via `run.caveats` above (shipped in
-`457dd5b`; verified present in both LIMS formats). What's missing is
+absence**: the draft-classification/mandatory-review qualification a
+LIMS most needs already reaches it at run level, via `run.caveats`
+above (shipped in `457dd5b`; verified present in both LIMS formats).
+What's missing is
 the per-variant *restatement* of that qualification, plus any
 variant-specific limitation text -- not the qualification itself. Read
 "limitations missing" here as "not duplicated per finding," not as

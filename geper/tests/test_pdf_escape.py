@@ -101,7 +101,7 @@ def _override_variant_result(reason: str, new_classification: str = "Likely Path
     return {
         "variant": {"chrom": "17", "pos": 100, "ref": "A", "alt": "T"},
         "interpretation_result": {"gene_symbol": "BRCA1"},
-        "clinical_report": {
+        "candidate_interpretation": {
             "executive_summary": "Variant 17:100 A>T in BRCA1 was classified as **Pathogenic**.",
             "acmg_classification": {
                 "classification": "Pathogenic",

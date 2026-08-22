@@ -26,6 +26,7 @@ from pipeline.provenance import (
     compute_file_sha256,
     get_geper_code_version,
     get_model_checkpoint_identifiers,
+    get_runtime_environment_provenance,
     local_file_provenance,
     read_dataset_provenance_sidecar,
     write_dataset_provenance_sidecar,
@@ -181,6 +182,52 @@ class TestCodeVersionAndModelCheckpoints(unittest.TestCase):
         self.assertIn("esm2", checkpoints)
         self.assertIn("rna_fm", checkpoints)
         self.assertIn("evo2_variant", checkpoints)
+
+
+class TestRuntimeEnvironmentProvenance(unittest.TestCase):
+    """[[provenance-captures-no-os-hardware-or-thread-count]]"""
+
+    def test_never_raises_and_returns_a_dict(self):
+        result = get_runtime_environment_provenance()
+        self.assertIsInstance(result, dict)
+
+    def test_os_machine_and_cpu_count_are_always_populated(self):
+        # These are plain stdlib calls (platform.platform(), os.cpu_count())
+        # that cannot meaningfully fail on a real process -- always present,
+        # never None, unlike the torch-dependent field below.
+        result = get_runtime_environment_provenance()
+        self.assertIsInstance(result["os"], str)
+        self.assertGreater(len(result["os"]), 0)
+        self.assertIsInstance(result["logical_cpu_count"], int)
+        self.assertGreater(result["logical_cpu_count"], 0)
+
+    def test_torch_thread_count_present_when_torch_importable(self):
+        # This process has real torch installed (see VENV_BUILD_RECIPE.md) --
+        # asserts the honest-capture path, not the fallback.
+        result = get_runtime_environment_provenance()
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("torch not importable in this environment")
+        self.assertIsInstance(result["torch_thread_count"], int)
+        self.assertIsNone(result["torch_thread_count_unavailable_reason"])
+
+    def test_torch_thread_count_honestly_absent_when_torch_missing(self):
+        # Forcing `import torch` to fail must produce None + a stated
+        # reason, never a fabricated thread count and never a raised
+        # exception out of this best-effort capture function.
+        import sys
+
+        real_torch = sys.modules.pop("torch", None)
+        sys.modules["torch"] = None
+        try:
+            result = get_runtime_environment_provenance()
+        finally:
+            sys.modules.pop("torch", None)
+            if real_torch is not None:
+                sys.modules["torch"] = real_torch
+        self.assertIsNone(result["torch_thread_count"])
+        self.assertIsNotNone(result["torch_thread_count_unavailable_reason"])
 
 
 class TestEnsembleAndBlastCaptureHelpers(unittest.TestCase):

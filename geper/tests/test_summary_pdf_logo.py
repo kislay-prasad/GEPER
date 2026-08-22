@@ -16,6 +16,7 @@ from report.summary import _build_report_header, _resolve_logo_path, generate_pd
 
 try:
     from pypdf import PdfReader
+
     _PYPDF_AVAILABLE = True
 except ImportError:
     _PYPDF_AVAILABLE = False
@@ -33,7 +34,7 @@ _MINIMAL_DOCUMENT = {
     "variants": [
         {
             "variant": {"chrom": "17", "pos": 43106534, "ref": "C", "alt": "A"},
-            "clinical_report": {
+            "candidate_interpretation": {
                 "executive_summary": "Test executive summary for logo smoke test.",
                 "acmg_classification": {"classification": "Pathogenic", "triggered_criteria": []},
                 "confidence": {"pending": False, "label": "High"},
@@ -50,7 +51,7 @@ def _make_multi_page_document(n_variants: int) -> dict:
     doc["variants"] = [
         {
             "variant": {"chrom": "17", "pos": 43106534 + i, "ref": "C", "alt": "A"},
-            "clinical_report": {
+            "candidate_interpretation": {
                 "executive_summary": "Padding finding " + str(i) + " " + ("lorem ipsum dolor sit amet. " * 20),
                 "acmg_classification": {"classification": "Uncertain significance", "triggered_criteria": []},
                 "confidence": {"pending": False, "label": "Low"},
@@ -191,11 +192,14 @@ class TestGeneratePdfEndToEnd(unittest.TestCase):
             self.assertIn("GEPER Clinical Genomic Analysis Report", content)
 
             from reportlab.lib.pagesizes import A4
+
             styles = summary_module._build_stylesheet()
             table = _build_report_header(_REAL_LOGO, styles)[0]
             logo, _title = table._cellvalues[0]
             page_height_pt = A4[1]
-            self.assertLess(logo.drawHeight, page_height_pt * 0.05, "logo height should be a small fraction of the page")
+            self.assertLess(
+                logo.drawHeight, page_height_pt * 0.05, "logo height should be a small fraction of the page"
+            )
 
     def test_logo_height_matches_title_height(self):
         # The actual bug report this was written to fix: the logo

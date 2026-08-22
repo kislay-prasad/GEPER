@@ -74,14 +74,6 @@ DOSAGE_SCORE_LABELS: Dict[int, str] = {
     40: "Dosage sensitivity unlikely",
 }
 
-# Scores that count as "sufficient evidence" for PVS1-style reasoning
-# -- i.e. loss-of-function is an established disease mechanism for
-# this gene. Kept as an explicit, named constant (rather than a
-# magic "== 3") so the ACMG-integration code that reads it is
-# self-documenting.
-DOSAGE_SUFFICIENT_EVIDENCE_SCORE = 3
-DOSAGE_UNLIKELY_SCORE = 40
-
 
 @dataclass
 class GeneDiseaseValidity:

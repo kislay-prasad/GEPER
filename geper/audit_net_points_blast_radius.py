@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+from report.clinical_report_builder import candidate_interpretation_of
 from typing import Any, Dict, List, Tuple
 
 _TRACE_RE = re.compile(r"Pathogenic points = ([\d.]+), benign points = ([\d.]+), net = (-?[\d.]+)\.")
@@ -79,7 +80,7 @@ def _iter_variant_records(document: Dict[str, Any]):
         locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
         gene = (rec.get("interpretation_result") or {}).get("gene_symbol")
         label = f"{locus} ({gene})" if gene else locus
-        clinical = rec.get("clinical_report") or {}
+        clinical = candidate_interpretation_of(rec) or {}
         acmg = clinical.get("acmg_classification") or {}
         yield label, acmg
 

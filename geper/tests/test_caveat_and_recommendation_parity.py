@@ -74,7 +74,7 @@ def _variant(i: int, **ir_overrides) -> dict:
     return {
         "variant": variant_dict,
         "interpretation_result": {"gene_symbol": gene},
-        "clinical_report": build_clinical_report(ir, variant_dict=variant_dict),
+        "candidate_interpretation": build_clinical_report(ir, variant_dict=variant_dict),
     }
 
 
@@ -148,7 +148,7 @@ class TestPerVariantLimitationsUnmodifiedInMarkdown(unittest.TestCase):
             # masquerade as a true one.
             ReportGenerator().generate(_document([variant], patient_consent={"clinical_reporting": True}))
 
-        limitations = variant["clinical_report"]["limitations"]
+        limitations = variant["candidate_interpretation"]["limitations"]
         joined = _normalize(" ".join(limitations))
         self.assertNotIn("unreachable during this analysis run", joined)
         self.assertNotIn("Conflicting evidence (Major)", joined)

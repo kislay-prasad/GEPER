@@ -77,21 +77,28 @@ class ServiceRecord:
     success_count: int = 0
     skipped_count: int = 0
     _skip_logged: bool = False
-    # Retained so a latched service can be re-probed later. Today only
-    # `measure_latched_services()` uses it, and only to observe -- the
-    # bounded-reprobe feature (card health-probe-bounded-reprobe) is NOT
-    # implemented and this does not implement it.
+    # Retained so a latched service can be re-probed later. Two
+    # consumers, both inside this class: the bounded re-probe
+    # (`_maybe_reprobe`) during the run, and `measure_latched_services()`
+    # at the end of it, which clears this field when it is done.
     #
-    # Underscored, and cleared the moment it has been used, to keep the
-    # surface narrow: this is not a general-purpose "re-probe this
-    # service" handle for arbitrary callers. That does not stop anyone
-    # determined -- nothing here does -- but a field that is gone after
-    # use is harder to reach for than one sitting in the record looking
-    # available.
+    # Underscored to keep the surface narrow: this is not a
+    # general-purpose "re-probe this service" handle for arbitrary
+    # callers. That does not stop anyone determined -- nothing here does
+    # -- but the re-probe policy lives in one place, and a client
+    # reaching in to call this directly would bypass the attempt cap
+    # that keeps a hard-down service from being polled all run.
     _probe: Optional[Callable[[], ProbeResult]] = None
     # `time.monotonic()` at the moment this service latched OFFLINE, so
     # the end-of-run measurement can report how long the latch stood.
     latched_at: Optional[float] = None
+    # Bounded-reprobe bookkeeping. `skips_since_reprobe` resets on every
+    # attempt so the skip trigger measures "skips since we last looked",
+    # not "skips ever"; `last_reprobe_at` starts at the latch instant so
+    # the first time-triggered attempt is measured from the latch.
+    skips_since_reprobe: int = 0
+    reprobe_attempts: int = 0
+    last_reprobe_at: Optional[float] = None
 
 
 @dataclass
@@ -291,6 +298,7 @@ class ServiceHealthRegistry:
                 # callable does not make anything re-probe on its own.
                 record._probe = check.probe
                 record.latched_at = time.monotonic() if status == ServiceStatus.OFFLINE else None
+                record.last_reprobe_at = record.latched_at
 
         with ThreadPoolExecutor(max_workers=max(len(checks), 1)) as pool:
             list(pool.map(_run_one, checks))
@@ -333,7 +341,81 @@ class ServiceHealthRegistry:
     # -- runtime -------------------------------------------------------
 
     def is_offline(self, name: str) -> bool:
-        return self._get(name).startup_status == ServiceStatus.OFFLINE
+        """
+        True while `name` is latched offline for this run.
+
+        This is also where the bounded re-probe fires. It is a query, so
+        putting a network call behind it needs justifying: the
+        alternative was to make `note_success()`/`note_failure()`
+        load-bearing and recover on client traffic, which would silently
+        disable recovery for any client that forgot to call one -- a new
+        silent-failure mode in a module whose whole purpose is to stop
+        one. Every caller that would benefit from recovery already calls
+        `is_offline()` before skipping, so this is the one place the
+        check is guaranteed to be reached without adding a call site.
+        The cost is bounded by `REPROBE_MAX_ATTEMPTS` for the whole run.
+        """
+        record = self._get(name)
+        if record.startup_status != ServiceStatus.OFFLINE:
+            return False
+        self._maybe_reprobe(record)
+        return record.startup_status == ServiceStatus.OFFLINE
+
+    def _maybe_reprobe(self, record: ServiceRecord) -> None:
+        """
+        Re-run a latched service's own startup probe, at most
+        `REPROBE_MAX_ATTEMPTS` times per run, once either enough skips
+        have accumulated or enough time has passed since the last
+        attempt.
+
+        The probe is called OUTSIDE the lock. Holding it across a
+        network call would block every other service's `is_offline()`
+        for the probe's full timeout, which is the opposite of what a
+        module that exists to avoid waiting on dead services should do.
+        The decision to attempt, and the application of the result, are
+        both taken under the lock; only the call itself is outside it.
+        """
+        cfg = CONFIG.health_check
+        now = time.monotonic()
+        with self._lock:
+            if record._probe is None or record.reprobe_attempts >= cfg.REPROBE_MAX_ATTEMPTS:
+                return
+            since = now - record.last_reprobe_at if record.last_reprobe_at is not None else 0.0
+            due = record.skips_since_reprobe >= cfg.REPROBE_AFTER_SKIPS or since >= cfg.REPROBE_AFTER_SECS
+            if not due:
+                return
+            # Claim the attempt before releasing the lock, so two
+            # threads arriving together cannot both spend one.
+            record.reprobe_attempts += 1
+            record.skips_since_reprobe = 0
+            record.last_reprobe_at = now
+            probe = record._probe
+            attempt = record.reprobe_attempts
+
+        try:
+            status, detail = probe()
+        except Exception as exc:  # a probe that raises is a probe that failed
+            status, detail = ServiceStatus.OFFLINE, f"{type(exc).__name__}: {exc}"
+
+        with self._lock:
+            if status != ServiceStatus.OFFLINE:
+                record.startup_status = status
+                record.startup_detail = detail
+                record.latched_at = None
+                # Deliberately keep `_probe`: nothing says a recovered
+                # service cannot go down again, and the attempt counter
+                # still bounds how often we look.
+                logger.info(
+                    f"{record.name} recovered: re-probe {attempt} of {cfg.REPROBE_MAX_ATTEMPTS} succeeded "
+                    f"after {record.skipped_count} skipped call(s); this service is no longer being skipped."
+                )
+                return
+            remaining = cfg.REPROBE_MAX_ATTEMPTS - attempt
+            if remaining == 0:
+                logger.info(
+                    f"{record.name} is still offline after {attempt} re-probe(s); no further re-probes will "
+                    "be attempted for this run."
+                )
 
     def offline_services(self) -> List[str]:
         """
@@ -359,6 +441,7 @@ class ServiceHealthRegistry:
         record = self._get(name)
         with self._lock:
             record.skipped_count += 1
+            record.skips_since_reprobe += 1
             should_log = not record._skip_logged
             record._skip_logged = True
         if should_log:

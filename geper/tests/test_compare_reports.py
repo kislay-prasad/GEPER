@@ -23,11 +23,13 @@ from compare_reports import diff_reports, load_document, render_markdown  # noqa
 def _variant(chrom, pos, ref, alt, classification=None, confidence_label=None, evidence_sources=None, pending=False):
     return {
         "variant": {"chrom": chrom, "pos": pos, "ref": ref, "alt": alt},
-        "clinical_report": {
+        "candidate_interpretation": {
             "acmg_classification": {"classification": classification},
             "confidence": {"pending": pending, "label": confidence_label, "score": 80},
             "evidence_sources": evidence_sources or [],
-        } if classification is not None or evidence_sources is not None else None,
+        }
+        if classification is not None or evidence_sources is not None
+        else None,
     }
 
 
@@ -80,11 +82,13 @@ class TestUnexplainedChanges(unittest.TestCase):
         prov = [{"source": "ClinVar", "status": "unknown", "version": None, "release_date": None, "content_hash": None}]
         doc_a = _document(
             [_variant("17", 100, "A", "T", "Likely benign", "Moderate", ["ClinVar"])],
-            provenance=prov, code_version="same",
+            provenance=prov,
+            code_version="same",
         )
         doc_b = _document(
             [_variant("17", 100, "A", "T", "Pathogenic", "High", ["ClinVar"])],
-            provenance=prov, code_version="same",
+            provenance=prov,
+            code_version="same",
         )
         diff = diff_reports(doc_a, doc_b)
         self.assertEqual(len(diff["unexplained_changes"]), 1)
@@ -109,11 +113,13 @@ class TestUnexplainedChanges(unittest.TestCase):
         prov = [{"source": "ClinVar", "status": "unknown"}]
         doc_a = _document(
             [_variant("17", 100, "A", "T", "Likely benign", "Moderate", ["ClinVar"])],
-            provenance=prov, code_version="v1",
+            provenance=prov,
+            code_version="v1",
         )
         doc_b = _document(
             [_variant("17", 100, "A", "T", "Pathogenic", "High", ["ClinVar"])],
-            provenance=prov, code_version="v2",
+            provenance=prov,
+            code_version="v2",
         )
         diff = diff_reports(doc_a, doc_b)
         self.assertEqual(len(diff["classification_changes"]), 1)
@@ -184,8 +190,12 @@ class TestAddedRemovedVariants(unittest.TestCase):
 
 class TestProvenanceDiffs(unittest.TestCase):
     def test_detects_version_difference(self):
-        doc_a = _document([], provenance=[{"source": "ClinGen (gene validity)", "status": "hash_only", "content_hash": "AAA"}])
-        doc_b = _document([], provenance=[{"source": "ClinGen (gene validity)", "status": "hash_only", "content_hash": "BBB"}])
+        doc_a = _document(
+            [], provenance=[{"source": "ClinGen (gene validity)", "status": "hash_only", "content_hash": "AAA"}]
+        )
+        doc_b = _document(
+            [], provenance=[{"source": "ClinGen (gene validity)", "status": "hash_only", "content_hash": "BBB"}]
+        )
         diff = diff_reports(doc_a, doc_b)
         self.assertEqual(len(diff["provenance_diffs"]), 1)
         self.assertEqual(diff["provenance_diffs"][0]["source"], "ClinGen (gene validity)")
@@ -263,7 +273,9 @@ class TestLoadDocumentAndCli(unittest.TestCase):
             out_path = os.path.join(tmp, "diff.md")
             result = subprocess.run(
                 [sys.executable, script, dir_a, dir_b, "--output", out_path],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             self.assertTrue(os.path.exists(out_path))
@@ -277,7 +289,9 @@ class TestLoadDocumentAndCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             result = subprocess.run(
                 [sys.executable, script, os.path.join(tmp, "does_not_exist_a"), os.path.join(tmp, "does_not_exist_b")],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("geper_results.json", result.stderr)

@@ -25,6 +25,10 @@ import importlib.machinery
 import sys
 import types
 
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 def _stub_module(name: str) -> types.ModuleType:
     """
@@ -65,6 +69,7 @@ def install() -> None:
 def _install_torch_stub() -> None:
     try:
         import torch  # noqa: F401
+
         return  # real torch already available -- nothing to stub
     except Exception:
         # A partially-broken local install (e.g. missing shared
@@ -74,6 +79,18 @@ def _install_torch_stub() -> None:
         for name in list(sys.modules):
             if name == "torch" or name.startswith("torch."):
                 del sys.modules[name]
+
+    # [[conftest-silently-substitutes-fake-heavy-deps-with-no-signal]]:
+    # this used to be silent -- a stub activating and real torch loading
+    # produced identical output, so nothing in a test run's own log
+    # would tell anyone this session is exercising fake tensor math
+    # rather than the real library.
+    logger.warning(
+        "Real 'torch' is not importable in this environment -- installing the "
+        "fake torch stub (_fake_heavy_deps.py). Any test relying on real "
+        "tensor computation, not just module presence, is NOT exercising "
+        "real behavior in this run."
+    )
 
     torch_mod = _stub_module("torch")
     torch_mod.__version__ = "0.0.0-fake-stub"
@@ -146,11 +163,21 @@ def _install_transformers_stub() -> None:
     """Stub only what GEPER's model modules import at module level."""
     try:
         import transformers  # noqa: F401
+
         return  # real transformers already available -- nothing to stub
     except Exception:
         for name in list(sys.modules):
             if name == "transformers" or name.startswith("transformers."):
                 del sys.modules[name]
+
+    # See _install_torch_stub's identical comment --
+    # [[conftest-silently-substitutes-fake-heavy-deps-with-no-signal]].
+    logger.warning(
+        "Real 'transformers' is not importable in this environment -- "
+        "installing the fake transformers stub (_fake_heavy_deps.py). Any "
+        "test relying on real model loading, not just module presence, is "
+        "NOT exercising real behavior in this run."
+    )
 
     transformers_mod = _stub_module("transformers")
     transformers_mod.__version__ = "0.0.0-fake-stub"

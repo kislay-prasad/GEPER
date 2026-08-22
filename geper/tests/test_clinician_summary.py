@@ -23,6 +23,7 @@ from report.summary import (
 
 try:
     from pypdf import PdfReader
+
     _PYPDF_AVAILABLE = True
 except ImportError:
     _PYPDF_AVAILABLE = False
@@ -53,7 +54,7 @@ def _variant_result(chrom="17", pos=100, ref="A", alt="T", gene=None, clinical=N
     if gene is not None:
         result["interpretation_result"] = {"gene_symbol": gene}
     if clinical is not None:
-        result["clinical_report"] = clinical
+        result["candidate_interpretation"] = clinical
     if clingen is not None:
         result["clingen"] = clingen
     if transcript is not None:
@@ -181,6 +182,7 @@ class TestBuildClinicianSummaryTable(unittest.TestCase):
 class TestBuildClinicianSummaryFlowables(unittest.TestCase):
     def test_ends_with_a_page_break(self):
         from reportlab.platypus import PageBreak
+
         document = {"provenance": []}
         variants = [_variant_result(clinical=_clinical())]
         flow = _build_clinician_summary_flowables(document, variants, "SAMPLE01", "RUN01", "GRCh38", _STYLES)
@@ -223,7 +225,7 @@ _DOCUMENT_WITH_FLAGS = {
             "variant": {"chrom": "17", "pos": 100, "ref": "A", "alt": "T"},
             "interpretation_result": {"gene_symbol": "BRCA1"},
             "clingen": {"gene_resolution_status": "ambiguous"},
-            "clinical_report": _clinical(
+            "candidate_interpretation": _clinical(
                 classification="Uncertain significance",
                 confidence_label="Moderate",
                 supporting_evidence=["PM1: hotspot region"],
@@ -234,7 +236,7 @@ _DOCUMENT_WITH_FLAGS = {
         {
             "variant": {"chrom": "20", "pos": 200, "ref": "C", "alt": "G"},
             "interpretation_result": {"gene_symbol": "PRNP"},
-            "clinical_report": _clinical(evidence_sources=["gnomAD"]),
+            "candidate_interpretation": _clinical(evidence_sources=["gnomAD"]),
         },
     ],
 }

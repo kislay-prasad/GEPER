@@ -2107,6 +2107,34 @@ class HealthCheckConfig:
     # times inside the same instant.
     PROBE_BACKOFF_SECS: float = float(os.environ.get("GEPER_HEALTH_CHECK_BACKOFF", "0.5"))
 
+    # -- bounded re-probe after a latch (card health-probe-bounded-reprobe) --
+    #
+    # A latch is a whole-run verdict, so a service that comes back up
+    # stays skipped for the rest of the run unless something re-checks
+    # it. These three bound that re-check: it fires when EITHER enough
+    # skips have accumulated OR enough time has passed since the last
+    # attempt, and never more than MAX_ATTEMPTS times per service per
+    # run.
+    #
+    # UNLIKE the ClinGen dosage constants, these are genuinely
+    # deployer-tunable: they are counts and seconds on continuous
+    # scales, where moving the boundary is a real trade-off between
+    # recovery latency and probe traffic, not a category error.
+    #
+    # THE DEFAULTS ARE REASONED, NOT MEASURED, AND THAT IS RECORDED
+    # RATHER THAN HIDDEN. No recovery has ever been observed in the
+    # logs, because nothing re-probed until this feature existed -- the
+    # data that would size these can only be produced by the feature
+    # they size. 20 skips is roughly one re-probe per 20 variants on a
+    # skipping service; 120s is short enough to recover inside a
+    # typical run and long enough that a hard-down service is not
+    # polled tightly; 3 attempts bounds worst-case added probe traffic
+    # to 3 x TIMEOUT_SECS per service per run. Revisit once
+    # `measure_latched_services()` has produced real recovery samples.
+    REPROBE_AFTER_SKIPS: int = int(os.environ.get("GEPER_HEALTH_REPROBE_AFTER_SKIPS", "20"))
+    REPROBE_AFTER_SECS: float = float(os.environ.get("GEPER_HEALTH_REPROBE_AFTER_SECS", "120"))
+    REPROBE_MAX_ATTEMPTS: int = int(os.environ.get("GEPER_HEALTH_REPROBE_MAX_ATTEMPTS", "3"))
+
     # Timeout for the FINAL attempt only -- the one that actually decides
     # to latch. Set to a full client budget (matching the 30s
     # REQUEST_TIMEOUT_SECS referenced above) on purpose: it is not

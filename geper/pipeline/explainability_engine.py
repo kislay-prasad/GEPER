@@ -115,17 +115,34 @@ class ExplainabilityEngine:
         evidence_sources: List[str],
         raw_evidence: Dict[str, Any],
     ) -> ExplainabilityResult:
-        locus = f"{variant_dict.get('chrom')}:{variant_dict.get('pos')} {variant_dict.get('ref')}>{variant_dict.get('alt')}"
+        locus = (
+            f"{variant_dict.get('chrom')}:{variant_dict.get('pos')} {variant_dict.get('ref')}>{variant_dict.get('alt')}"
+        )
 
         decision_summary = self._decision_summary(
-            locus, gene_symbol, acmg_classification, confidence_label, confidence_pending,
-            priority_category, priority_pending, conflict_severity,
+            locus,
+            gene_symbol,
+            acmg_classification,
+            confidence_label,
+            confidence_pending,
+            priority_category,
+            priority_pending,
+            conflict_severity,
         )
         reasoning_chain = self._reasoning_chain(
-            locus, triggered_rules, not_evaluated_rules, combining_rule_trace, acmg_classification,
-            confidence_score, confidence_label, confidence_pending,
-            priority_score, priority_category, priority_pending,
-            conflict_list, conflict_severity,
+            locus,
+            triggered_rules,
+            not_evaluated_rules,
+            combining_rule_trace,
+            acmg_classification,
+            confidence_score,
+            confidence_label,
+            confidence_pending,
+            priority_score,
+            priority_category,
+            priority_pending,
+            conflict_list,
+            conflict_severity,
         )
         evidence_contributed = list(evidence_sources)
         evidence_not_contributed = self._evidence_not_contributed(evidence_sources, raw_evidence)
@@ -134,11 +151,18 @@ class ExplainabilityEngine:
         highest_weight = self._highest_weight_evidence(confidence_breakdown, priority_breakdown)
         real_conflicts = [c for c in (conflict_list or []) if c.get("severity") in ("Minor", "Moderate", "Major")]
         remaining_uncertainties = self._remaining_uncertainties(
-            not_evaluated_rules, confidence_pending, priority_pending, conflict_list,
+            not_evaluated_rules,
+            confidence_pending,
+            priority_pending,
+            conflict_list,
         )
         limitations = self._limitations(not_evaluated_rules, confidence_pending, priority_pending)
-        confidence_rationale = self._confidence_rationale(confidence_score, confidence_label, confidence_pending, confidence_breakdown)
-        priority_rationale = self._priority_rationale(priority_score, priority_category, priority_pending, priority_explanation)
+        confidence_rationale = self._confidence_rationale(
+            confidence_score, confidence_label, confidence_pending, confidence_breakdown
+        )
+        priority_rationale = self._priority_rationale(
+            priority_score, priority_category, priority_pending, priority_explanation
+        )
         evidence_trace = self._evidence_trace(triggered_rules, not_triggered_rules, not_evaluated_rules)
 
         return ExplainabilityResult(
@@ -162,11 +186,15 @@ class ExplainabilityEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _decision_summary(locus, gene_symbol, classification, conf_label, conf_pending, pri_cat, pri_pending, conflict_severity) -> str:
+    def _decision_summary(
+        locus, gene_symbol, classification, conf_label, conf_pending, pri_cat, pri_pending, conflict_severity
+    ) -> str:
         gene_clause = f" in {gene_symbol}" if gene_symbol else ""
         conf_clause = f"confidence {conf_label}" if not conf_pending and conf_label else "confidence not yet scored"
         pri_clause = f"priority {pri_cat}" if not pri_pending and pri_cat else "priority not yet scored"
-        conflict_clause = f", conflict severity {conflict_severity}" if conflict_severity and conflict_severity != "None" else ""
+        conflict_clause = (
+            f", conflict severity {conflict_severity}" if conflict_severity and conflict_severity != "None" else ""
+        )
         return (
             f"GEPER classified {locus}{gene_clause} as '{classification or 'not classified'}' "
             f"({conf_clause}; {pri_clause}{conflict_clause})."
@@ -174,10 +202,19 @@ class ExplainabilityEngine:
 
     @staticmethod
     def _reasoning_chain(
-        locus, triggered_rules, not_evaluated_rules, combining_rule_trace, classification,
-        confidence_score, confidence_label, confidence_pending,
-        priority_score, priority_category, priority_pending,
-        conflict_list, conflict_severity,
+        locus,
+        triggered_rules,
+        not_evaluated_rules,
+        combining_rule_trace,
+        classification,
+        confidence_score,
+        confidence_label,
+        confidence_pending,
+        priority_score,
+        priority_category,
+        priority_pending,
+        conflict_list,
+        conflict_severity,
     ) -> List[str]:
         steps = [f"1. Variant identified: {locus}."]
         if triggered_rules:
@@ -186,21 +223,29 @@ class ExplainabilityEngine:
         else:
             steps.append("2. ACMG rule engine evaluated all 28 criteria; none triggered.")
         if not_evaluated_rules:
-            steps.append(f"   {len(not_evaluated_rules)} criteria could not be evaluated due to missing evidence sources (see remaining_uncertainties).")
+            steps.append(
+                f"   {len(not_evaluated_rules)} criteria could not be evaluated due to missing evidence sources (see remaining_uncertainties)."
+            )
         if combining_rule_trace:
             steps.append(f"3. Combining rules applied: {' '.join(combining_rule_trace)}")
         steps.append(f"4. Resulting ACMG classification: '{classification or 'not classified'}'.")
         if confidence_pending:
             steps.append("5. Confidence scoring did not complete for this variant.")
         else:
-            steps.append(f"5. Confidence scored independently of classification: {confidence_score:.1f}% ('{confidence_label}'), based on evidence completeness/quality across 7 categories (see confidence_rationale).")
+            steps.append(
+                f"5. Confidence scored independently of classification: {confidence_score:.1f}% ('{confidence_label}'), based on evidence completeness/quality across 7 categories (see confidence_rationale)."
+            )
         if priority_pending:
             steps.append("6. Priority scoring did not complete for this variant.")
         else:
-            steps.append(f"6. Priority scored using the classification and confidence above as two of its inputs: {priority_score:.1f} ('{priority_category}') (see priority_rationale).")
+            steps.append(
+                f"6. Priority scored using the classification and confidence above as two of its inputs: {priority_score:.1f} ('{priority_category}') (see priority_rationale)."
+            )
         real_conflicts = [c for c in (conflict_list or []) if c.get("severity") in ("Minor", "Moderate", "Major")]
         if real_conflicts:
-            steps.append(f"7. Conflict resolution engine detected {len(real_conflicts)} conflict(s), overall severity '{conflict_severity}'; classification was not altered (see conflicts_resolved).")
+            steps.append(
+                f"7. Conflict resolution engine detected {len(real_conflicts)} conflict(s), overall severity '{conflict_severity}'; classification was not altered (see conflicts_resolved)."
+            )
         else:
             steps.append("7. Conflict resolution engine detected no significant conflicts.")
         return steps
@@ -231,11 +276,19 @@ class ExplainabilityEngine:
         cats = (confidence_breakdown or {}).get("category_breakdown") or []
         if cats:
             top = max(cats, key=lambda c: c.get("contribution", 0))
-            result["confidence"] = {"category": top["category"], "contribution": top["contribution"], "rationale": top["rationale"]}
+            result["confidence"] = {
+                "category": top["category"],
+                "contribution": top["contribution"],
+                "rationale": top["rationale"],
+            }
         factors = (priority_breakdown or {}).get("factor_breakdown") or []
         if factors:
             top = max(factors, key=lambda f: f.get("contribution", 0))
-            result["priority"] = {"factor": top["factor"], "contribution": top["contribution"], "rationale": top["rationale"]}
+            result["priority"] = {
+                "factor": top["factor"],
+                "contribution": top["contribution"],
+                "rationale": top["rationale"],
+            }
         return result
 
     @staticmethod
@@ -243,7 +296,9 @@ class ExplainabilityEngine:
         items = []
         if not_evaluated_rules:
             codes = ", ".join(r.get("code", "?") for r in not_evaluated_rules)
-            items.append(f"{len(not_evaluated_rules)} ACMG criteria not evaluated due to missing evidence sources: {codes}.")
+            items.append(
+                f"{len(not_evaluated_rules)} ACMG criteria not evaluated due to missing evidence sources: {codes}."
+            )
         if confidence_pending:
             items.append("Confidence score not yet available for this variant.")
         if priority_pending:
@@ -261,8 +316,9 @@ class ExplainabilityEngine:
         # into the pipeline layer, which would invert this codebase's
         # existing pipeline -> report dependency direction.
         items = [
-            "This is an automated research pipeline; findings should be reviewed by a qualified clinical "
-            "geneticist or genetic counselor before any medical decision is made.",
+            "GEPER is a variant prioritisation system that assists qualified clinicians and pathologists; "
+            "it produces a draft classification requiring qualified human review and final sign-off "
+            "before any clinical use, and does not independently provide final clinical interpretation.",
         ]
         if not_evaluated_rules:
             items.append(
@@ -282,7 +338,11 @@ class ExplainabilityEngine:
         cats = (breakdown or {}).get("category_breakdown") or []
         parts = [f"{c['category']}: {c['rationale']}" for c in cats]
         conflict_note = (breakdown or {}).get("conflict_explanation", "")
-        return f"Scored {score:.1f}% ('{label}') from " + " | ".join(parts) + (f" Conflict adjustment: {conflict_note}" if conflict_note else "")
+        return (
+            f"Scored {score:.1f}% ('{label}') from "
+            + " | ".join(parts)
+            + (f" Conflict adjustment: {conflict_note}" if conflict_note else "")
+        )
 
     @staticmethod
     def _priority_rationale(score, category, pending, explanation) -> str:
@@ -297,10 +357,31 @@ class ExplainabilityEngine:
     def _evidence_trace(triggered_rules, not_triggered_rules, not_evaluated_rules) -> List[Dict[str, Any]]:
         trace = []
         for r in triggered_rules:
-            trace.append({"code": r["code"], "status": "triggered", "rationale": r.get("rationale"), "evidence_sources": r.get("evidence_sources", [])})
+            trace.append(
+                {
+                    "code": r["code"],
+                    "status": "triggered",
+                    "rationale": r.get("rationale"),
+                    "evidence_sources": r.get("evidence_sources", []),
+                }
+            )
         for r in not_triggered_rules:
-            trace.append({"code": r["code"], "status": "not_triggered", "rationale": r.get("rationale"), "evidence_sources": r.get("evidence_sources", [])})
+            trace.append(
+                {
+                    "code": r["code"],
+                    "status": "not_triggered",
+                    "rationale": r.get("rationale"),
+                    "evidence_sources": r.get("evidence_sources", []),
+                }
+            )
         for r in not_evaluated_rules:
-            trace.append({"code": r["code"], "status": "not_evaluated", "rationale": r.get("rationale"), "evidence_sources": r.get("evidence_sources", [])})
+            trace.append(
+                {
+                    "code": r["code"],
+                    "status": "not_evaluated",
+                    "rationale": r.get("rationale"),
+                    "evidence_sources": r.get("evidence_sources", []),
+                }
+            )
         trace.sort(key=lambda x: x["code"])
         return trace

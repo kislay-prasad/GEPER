@@ -85,7 +85,7 @@ def _make_document():
             {
                 "variant": variant_dict,
                 "interpretation_result": {"gene_symbol": gene},
-                "clinical_report": clinical_report,
+                "candidate_interpretation": clinical_report,
                 "interpretation": {},
                 "errors": [],
             }
@@ -269,7 +269,8 @@ class TestOverride(unittest.TestCase):
                 document = json.load(fh)
             variant_result = s.find_variant(document, "2", 500, "G", "T")
             self.assertEqual(
-                variant_result["clinical_report"]["acmg_classification"]["classification"], "Uncertain significance"
+                variant_result["candidate_interpretation"]["acmg_classification"]["classification"],
+                "Uncertain significance",
             )
             self.assertEqual(len(variant_result["overrides"]), 1)
             record = variant_result["overrides"][0]
@@ -356,7 +357,7 @@ class TestOverride(unittest.TestCase):
             results_path = os.path.join(output_dir, s.RESULTS_FILENAME)
             with open(results_path, encoding="utf-8") as fh:
                 document = json.load(fh)
-            document["variants"][0]["clinical_report"] = None
+            document["variants"][0]["candidate_interpretation"] = None
             with open(results_path, "w", encoding="utf-8") as fh:
                 json.dump(document, fh)
             with self.assertRaises(SignoffError):
@@ -428,11 +429,136 @@ class TestListPending(unittest.TestCase):
             with open(results_path, encoding="utf-8") as fh:
                 document = json.load(fh)
             for vr in document["variants"]:
-                vr["clinical_report"]["conflict_resolution"]["severity"] = None
+                vr["candidate_interpretation"]["conflict_resolution"]["severity"] = None
             with open(results_path, "w", encoding="utf-8") as fh:
                 json.dump(document, fh)
             rows = s.list_pending(tmp)
             self.assertFalse(rows[0]["has_conflicting_evidence"])
+
+
+class TestRequireReviewed(unittest.TestCase):
+    """A-2 option 2: the LIMS gate generalized into signoff.py so any
+    future automated consumer can call it, not just export_lims.py."""
+
+    def test_raises_when_not_reviewed(self):
+        with self.assertRaises(SignoffError) as ctx:
+            s.require_reviewed({"review_status": "draft"})
+        self.assertIn("draft", str(ctx.exception))
+        self.assertIn("reviewed", str(ctx.exception))
+
+    def test_raises_when_overridden(self):
+        # "overridden" must not be good enough -- same rule export_lims.py
+        # already enforced, now shared rather than duplicated.
+        with self.assertRaises(SignoffError):
+            s.require_reviewed({"review_status": "overridden"})
+
+    def test_raises_when_key_missing(self):
+        with self.assertRaises(SignoffError):
+            s.require_reviewed({})
+
+    def test_passes_when_reviewed(self):
+        s.require_reviewed({"review_status": "reviewed"})  # must not raise
+
+    def test_consumer_name_appears_in_message(self):
+        with self.assertRaises(SignoffError) as ctx:
+            s.require_reviewed({"review_status": "draft"}, consumer="Some Future Consumer")
+        self.assertIn("Some Future Consumer", str(ctx.exception))
+
+
+class TestWithdraw(unittest.TestCase):
+    """A-2 option 3: an explicit erasure of a standing sign-off."""
+
+    def test_withdraw_removes_manifest_and_resets_to_draft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            self.assertTrue(os.path.exists(s._manifest_path(output_dir)))
+
+            result = s.withdraw(output_dir, "Signed off in error", "rajesh.sharma@aiims.edu")
+
+            self.assertFalse(os.path.exists(s._manifest_path(output_dir)))
+            self.assertEqual(result["previous_review_status"], "reviewed")
+            with open(os.path.join(output_dir, s.RESULTS_FILENAME), encoding="utf-8") as fh:
+                document = json.load(fh)
+            self.assertEqual(document["review_status"], "draft")
+
+    def test_withdraw_fixes_list_pending_after_a_hypothetical_stale_manifest(self):
+        # Regression pin for B2 (review-status-two-sources-of-truth):
+        # withdraw() must make list_pending() agree with review_status
+        # again, the same disagreement override() now prevents from ever
+        # occurring in the first place (see TestOverride below).
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            self.assertEqual(s.list_pending(tmp, show_all=True)[0]["status"], "REVIEWED")
+
+            s.withdraw(output_dir, "Signed off in error", "rajesh.sharma@aiims.edu")
+
+            self.assertEqual(s.list_pending(tmp)[0]["status"], "DRAFT")
+
+    def test_withdraw_raises_when_no_manifest_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)  # never approved
+            with self.assertRaises(SignoffError):
+                s.withdraw(output_dir, "reason", "actor")
+
+    def test_withdraw_raises_when_no_results_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(SignoffError):
+                s.withdraw(tmp, "reason", "actor")
+
+    def test_withdraw_appends_audit_log_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            s.withdraw(output_dir, "Signed off in error", "rajesh.sharma@aiims.edu")
+            with open(s._audit_log_path(output_dir), encoding="utf-8") as fh:
+                lines = [json.loads(line) for line in fh if line.strip()]
+            actions = [line["action"] for line in lines]
+            self.assertIn("withdrawn", actions)
+            withdrawn_entry = next(line for line in lines if line["action"] == "withdrawn")
+            self.assertEqual(withdrawn_entry["previous_review_status"], "reviewed")
+            self.assertEqual(withdrawn_entry["reason"], "Signed off in error")
+
+
+class TestOverrideAutoWithdrawsStaleManifest(unittest.TestCase):
+    """A-2 option 3's stated side effect: override() no longer leaves
+    list_pending() disagreeing with review_status (card
+    review-status-two-sources-of-truth's B2 case)."""
+
+    def test_override_after_approve_removes_the_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            self.assertTrue(os.path.exists(s._manifest_path(output_dir)))
+
+            s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
+
+            self.assertFalse(os.path.exists(s._manifest_path(output_dir)))
+
+    def test_override_after_approve_list_pending_agrees_with_review_status(self):
+        # The exact B2 scenario: before this fix, list_pending() kept
+        # reporting REVIEWED here because it only checked manifest
+        # presence, disagreeing with review_status == "overridden".
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
+
+            rows = s.list_pending(tmp, show_all=True)
+            self.assertEqual(rows[0]["status"], "DRAFT")
+
+            with open(os.path.join(output_dir, s.RESULTS_FILENAME), encoding="utf-8") as fh:
+                document = json.load(fh)
+            self.assertEqual(document["review_status"], "overridden")
+
+    def test_override_without_prior_approve_is_unaffected(self):
+        # No manifest ever existed -- _withdraw_manifest must be a
+        # harmless no-op, not an error, when there's nothing to remove.
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.override(output_dir, "2:500:G>T", "Likely Pathogenic", "Family history", "rajesh.sharma@aiims.edu")
+            self.assertFalse(os.path.exists(s._manifest_path(output_dir)))
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +615,23 @@ class TestCli(unittest.TestCase):
         args = parser.parse_args(["list-pending", "--search-root", "/tmp"])
         self.assertFalse(args.show_all)
 
+    def test_withdraw_parses_expected_arguments(self):
+        parser = build_arg_parser()
+        args = parser.parse_args(
+            [
+                "withdraw",
+                "--output-dir",
+                "/tmp/out",
+                "--reason",
+                "Signed off in error",
+                "--actor",
+                "rajesh.sharma@aiims.edu",
+            ]
+        )
+        self.assertEqual(args.command, "withdraw")
+        self.assertEqual(args.reason, "Signed off in error")
+        self.assertEqual(args.actor, "rajesh.sharma@aiims.edu")
+
     def test_main_approve_returns_zero_on_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _write_run(tmp)
@@ -530,6 +673,52 @@ class TestCli(unittest.TestCase):
             _write_run(tmp)
             rc = cli_main(["list-pending", "--search-root", tmp])
             self.assertEqual(rc, 0)
+
+    def test_main_withdraw_returns_zero_on_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            cli_main(
+                [
+                    "approve",
+                    "--output-dir",
+                    output_dir,
+                    "--clinician-name",
+                    "Dr. Rajesh Sharma",
+                    "--reg-number",
+                    "MCI-12345",
+                    "--hospital",
+                    "AIIMS Delhi",
+                ]
+            )
+            rc = cli_main(
+                [
+                    "withdraw",
+                    "--output-dir",
+                    output_dir,
+                    "--reason",
+                    "Signed off in error",
+                    "--actor",
+                    "rajesh.sharma@aiims.edu",
+                ]
+            )
+            self.assertEqual(rc, 0)
+            self.assertFalse(os.path.exists(s._manifest_path(output_dir)))
+
+    def test_main_withdraw_returns_nonzero_when_nothing_to_withdraw(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)  # never approved
+            rc = cli_main(
+                [
+                    "withdraw",
+                    "--output-dir",
+                    output_dir,
+                    "--reason",
+                    "reason",
+                    "--actor",
+                    "actor",
+                ]
+            )
+            self.assertEqual(rc, 1)
 
 
 if __name__ == "__main__":

@@ -60,8 +60,10 @@ from pipeline.models.status import USED as _STATUS_USED
 from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
 from pipeline.stage_schemas import StageStatus as _StageStatus
 from report.clinical_report_builder import (
+    candidate_interpretation_of,
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
+    DOCUMENT_POSITIONING_STATEMENT,
     RESEARCH_USE_DISCLAIMER,
     # Moved out of this module on 2026-08-21 so the Markdown renderer and
     # the JSON run-level block could reach them without importing from a
@@ -638,6 +640,25 @@ def _build_stylesheet() -> Dict[str, ParagraphStyle]:
     return {
         "ReportTitle": ParagraphStyle(
             "GeperReportTitle", parent=base["Title"], fontSize=16, textColor=navy, spaceAfter=2
+        ),
+        # Page-1 positioning banner. Sized and boxed to be read, not
+        # skimmed past: the claim it carries was previously in 6.5pt
+        # footer text, which is present-but-unread. Larger than body
+        # text, bold, tinted, and boxed -- the most prominent thing on
+        # the page before the findings table.
+        "PositioningBanner": ParagraphStyle(
+            "GeperPositioningBanner",
+            parent=base["BodyText"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            leading=13.5,
+            textColor=navy,
+            backColor=colors.HexColor("#eef3f8"),
+            borderColor=navy,
+            borderWidth=0.9,
+            borderPadding=6,
+            spaceBefore=2,
+            spaceAfter=4,
         ),
         "SectionHeading": ParagraphStyle(
             "GeperSectionHeading", parent=base["Heading2"], fontSize=12, textColor=navy, spaceBefore=6, spaceAfter=3
@@ -1289,7 +1310,7 @@ def _provenance_gap_sources(document: Dict[str, Any], variants: List[Dict[str, A
     """
     cited: set = set()
     for variant_result in variants:
-        clinical = variant_result.get("clinical_report") or {}
+        clinical = candidate_interpretation_of(variant_result) or {}
         cited.update(clinical.get("evidence_sources") or [])
     if not cited:
         return []
@@ -1374,7 +1395,7 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
             rows.append(row)
             continue
 
-        clinical = variant_result.get("clinical_report")
+        clinical = candidate_interpretation_of(variant_result)
         gene = (variant_result.get("interpretation_result") or {}).get("gene_symbol")
         gene_line = f"{locus}<br/><b>{esc(gene)}</b>" if gene else locus
 
@@ -1649,7 +1670,7 @@ def _build_clinician_summary_flowables(
 
     attention_lines: List[str] = []
     for idx, variant_result in enumerate(variants, start=1):
-        clinical = variant_result.get("clinical_report")
+        clinical = candidate_interpretation_of(variant_result)
         flags = _variant_reviewer_flags(variant_result, clinical)
         if flags:
             variant = variant_result.get("variant", {})
@@ -1806,7 +1827,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     """Renders one variant's already-computed `clinical_report` dict (see report/clinical_report_builder.py) -- no evidence is re-derived here."""
     variant = variant_result.get("variant", {})
     locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
-    clinical = variant_result.get("clinical_report")
+    clinical = candidate_interpretation_of(variant_result)
 
     flow: List[Any] = [
         # `_Bookmark`'s title is a raw PDF outline string (`Canvas.
@@ -2309,6 +2330,16 @@ def generate_pdf(
     )
 
     story: List[Any] = list(_build_report_header(logo_path, styles))
+    story.append(Spacer(1, 4 * mm))
+    # What this document IS, before it says what it found. Placement,
+    # not emphasis: this claim was already in the page footer at 6.5pt,
+    # so making it bigger down there would have changed how it looks
+    # without changing when it is read. The Markdown report puts its
+    # banner on line 3 and this is the PDF's equivalent position --
+    # above the findings table whose first column is "Classification".
+    # See `DOCUMENT_POSITIONING_STATEMENT` in clinical_report_builder.py
+    # for why it is that constant and not a copy of it.
+    story.append(Paragraph(DOCUMENT_POSITIONING_STATEMENT, styles["PositioningBanner"]))
     story.append(Spacer(1, 4 * mm))
     # Report-header-level methodology disclosure (C0, report review
     # round 2): stated once, up front, before any classification is

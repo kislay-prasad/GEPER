@@ -40,6 +40,7 @@ logger = logging.getLogger("geper.pipeline.annotation.stage")
 # NotImplementedError for SNVs.  Indel frame-shift and splice detection do
 # NOT need this provider and are fully implemented below.
 
+
 class CodonContextProvider(ABC):
     """Abstract provider: given a variant position, return codon-level context."""
 
@@ -83,6 +84,7 @@ class NoCdsCodonContextProvider(CodonContextProvider):
 
 
 # ─── Consequence mapping ──────────────────────────────────────────────────────
+
 
 def _map_consequence(
     region: str,
@@ -139,9 +141,7 @@ def _map_consequence(
     # Exonic SNV — try codon context provider
     if is_snv and codon_provider is not None:
         try:
-            codon_change = codon_provider.get_codon_change(
-                chrom, pos, ref, alt, transcript_id
-            )
+            codon_change = codon_provider.get_codon_change(chrom, pos, ref, alt, transcript_id)
             if codon_change == "missense":
                 return "missense_variant"
             if codon_change == "synonymous":
@@ -166,6 +166,7 @@ def _map_consequence(
 
 
 # ─── Zygosity helpers (Task 5) — preserved for backward-compat exports ────────
+
 
 def _parse_zygosity(gt: str) -> str:
     """Convert a VCF GT string to a human-readable zygosity label.
@@ -225,8 +226,18 @@ def _extract_genotype(format_str: str, sample_str: str) -> Dict[str, Optional[st
 
 # ─── HGVS notation ───────────────────────────────────────────────────────────
 
-_COMPLEMENT = {"A": "T", "T": "A", "G": "C", "C": "G", "N": "N",
-               "a": "t", "t": "a", "g": "c", "c": "g", "n": "n"}
+_COMPLEMENT = {
+    "A": "T",
+    "T": "A",
+    "G": "C",
+    "C": "G",
+    "N": "N",
+    "a": "t",
+    "t": "a",
+    "g": "c",
+    "c": "g",
+    "n": "n",
+}
 
 
 def _revcomp(seq: str) -> str:
@@ -273,10 +284,7 @@ def _build_hgvs(
     use_transcript_coords = (
         transcript_id is not None
         and cds_pos is not None
-        and (
-            is_snv
-            or (not minus and (is_insertion or end_cds_pos is not None))
-        )
+        and (is_snv or (not minus and (is_insertion or end_cds_pos is not None)))
     )
 
     if use_transcript_coords:
@@ -315,9 +323,11 @@ def _build_hgvs(
 
 # ─── Annotated variant record ─────────────────────────────────────────────────
 
+
 @dataclass
 class AnnotatedVariant:
     """A single annotated variant from the filtered VCF."""
+
     chrom: str = ""
     pos: int = 0
     ref: str = ""
@@ -346,18 +356,18 @@ class AnnotatedVariant:
     info: str = ""
     # FIX 13: VEP HGVS — propagated from VEP annotation when available.
     # These take precedence over the locally-generated hgvs field.
-    vep_hgvs_c: str = ""   # VEP HGVSc (e.g. NM_000059.4:c.5266dup)
-    vep_hgvs_p: str = ""   # VEP HGVSp (e.g. NP_000050.3:p.Gln1756fs)
+    vep_hgvs_c: str = ""  # VEP HGVSc (e.g. NM_000059.4:c.5266dup)
+    vep_hgvs_p: str = ""  # VEP HGVSp (e.g. NP_000050.3:p.Gln1756fs)
     # Annotation scores — populated from INFO field when present
     cadd_phred: Optional[float] = None
     revel_score: Optional[float] = None
     spliceai_score: Optional[float] = None
     alphamissense_score: Optional[float] = None
     # AI engine inputs — populated by codon provider when possible
-    ref_sequence: Optional[str] = None    # DNA context window (ref allele centred)
-    alt_sequence: Optional[str] = None    # DNA context window (alt allele centred)
-    wildtype_aa: Optional[str] = None     # Wild-type amino-acid sequence
-    mutant_aa: Optional[str] = None       # Mutant amino-acid sequence
+    ref_sequence: Optional[str] = None  # DNA context window (ref allele centred)
+    alt_sequence: Optional[str] = None  # DNA context window (alt allele centred)
+    wildtype_aa: Optional[str] = None  # Wild-type amino-acid sequence
+    mutant_aa: Optional[str] = None  # Mutant amino-acid sequence
     # PS1/PM5 codon-level ClinVar evidence — populated in orchestration stage 4b
     same_aa_pathogenic: Optional[bool] = None
     novel_aa_at_known_pathogenic_codon: Optional[bool] = None
@@ -369,6 +379,7 @@ class AnnotatedVariant:
 
 
 # ─── LoF / in-frame indel helpers ─────────────────────────────────────────────
+
 
 def _compute_is_inframe_indel(ref: str, alt: str, is_lof: bool = False) -> bool:
     """Determine whether a variant is an in-frame insertion/deletion.
@@ -388,6 +399,7 @@ def _compute_is_inframe_indel(ref: str, alt: str, is_lof: bool = False) -> bool:
 
 # ─── Consequence → is_inframe_indel re-derivation ────────────────────────────
 
+
 def _consequence_to_is_inframe_indel(consequence: str) -> bool:
     """Re-derive is_inframe_indel from a resolved consequence SO term.
 
@@ -399,6 +411,7 @@ def _consequence_to_is_inframe_indel(consequence: str) -> bool:
 
 # ─── VCF parser ───────────────────────────────────────────────────────────────
 
+
 def _parse_csq_header(line: str) -> List[str]:
     """Extract CSQ field names from a VEP ##INFO=<ID=CSQ,...> header line.
 
@@ -406,6 +419,7 @@ def _parse_csq_header(line: str) -> List[str]:
     This function parses the Format descriptor so they can be extracted.
     """
     import re as _re
+
     m = _re.search(r'Format:\s*([^"]+)', line)
     if not m:
         return []
@@ -419,11 +433,18 @@ def _extract_csq_scores(
 ) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
     """Extract (cadd_phred, revel, spliceai_max, am_pathogenicity) from VEP CSQ INFO.
 
+    The `spliceai_max` position always returns `None` now (2026-08-22):
+    SpliceAI parsing was removed for licence reasons (Illumina's
+    pretrained models are CC BY-NC 4.0, the plugin is no longer
+    requested -- see `pipeline/vep/stage.py`). The tuple shape is kept
+    unchanged so callers don't need to change their unpacking.
+
     FIX 1: Parses the CSQ tag to retrieve pre-computed scores that VEP
     embeds inside the structured CSQ annotation rather than as plain INFO keys.
     Uses the most-severe consequence entry (lowest severity rank).
     Returns (None, None, None, None) when CSQ is absent or has no scores.
     """
+
     def _f(v: str) -> Optional[float]:
         try:
             return float(v) if v and v not in (".", "") else None
@@ -460,36 +481,54 @@ def _extract_csq_scores(
             best_rank = rank
             best_cadd = _f(entry.get("CADD_PHRED", ""))
             best_revel = _f(entry.get("REVEL", ""))
-            # SpliceAI: pipe-delimited delta scores inside the field value
-            sa_raw = entry.get("SpliceAI_pred", "") or entry.get("SpliceAI", "")
-            if sa_raw and sa_raw != ".":
-                sa_parts = sa_raw.split("|") if "|" in sa_raw else [sa_raw]
-                sa_scores = [_f(p) for p in sa_parts if _f(p) is not None]
-                best_spliceai = max(sa_scores) if sa_scores else None
-            else:
-                best_spliceai = None
-            best_am = _f(
-                entry.get("AM_PATHOGENICITY", "") or entry.get("am_pathogenicity", "")
-            )
+            # SpliceAI parsing REMOVED (licence, same class as OMIM --
+            # Illumina's plugin is no longer requested by
+            # pipeline/vep/stage.py, so this field is never present in
+            # VEP's CSQ output). best_spliceai stays None; kept in the
+            # return tuple's shape so callers don't need to change their
+            # unpacking.
+            best_am = _f(entry.get("AM_PATHOGENICITY", "") or entry.get("am_pathogenicity", ""))
 
     return best_cadd, best_revel, best_spliceai, best_am
 
 
 # Severity ranking needed by _extract_csq_scores above — import from top level
 _SEVERITY_ORDER = [
-    "transcript_ablation", "splice_acceptor_variant", "splice_donor_variant",
-    "stop_gained", "frameshift_variant", "stop_lost", "start_lost",
-    "transcript_amplification", "inframe_insertion", "inframe_deletion",
-    "missense_variant", "protein_altering_variant", "splice_region_variant",
-    "incomplete_terminal_codon_variant", "start_retained_variant",
-    "stop_retained_variant", "synonymous_variant", "coding_sequence_variant",
-    "mature_miRNA_variant", "5_prime_UTR_variant", "3_prime_UTR_variant",
-    "non_coding_transcript_exon_variant", "intron_variant",
-    "NMD_transcript_variant", "non_coding_transcript_variant",
-    "upstream_gene_variant", "downstream_gene_variant", "TFBS_ablation",
-    "TFBS_amplification", "TF_binding_site_variant",
-    "regulatory_region_ablation", "regulatory_region_amplification",
-    "feature_elongation", "regulatory_region_variant", "feature_truncation",
+    "transcript_ablation",
+    "splice_acceptor_variant",
+    "splice_donor_variant",
+    "stop_gained",
+    "frameshift_variant",
+    "stop_lost",
+    "start_lost",
+    "transcript_amplification",
+    "inframe_insertion",
+    "inframe_deletion",
+    "missense_variant",
+    "protein_altering_variant",
+    "splice_region_variant",
+    "incomplete_terminal_codon_variant",
+    "start_retained_variant",
+    "stop_retained_variant",
+    "synonymous_variant",
+    "coding_sequence_variant",
+    "mature_miRNA_variant",
+    "5_prime_UTR_variant",
+    "3_prime_UTR_variant",
+    "non_coding_transcript_exon_variant",
+    "intron_variant",
+    "NMD_transcript_variant",
+    "non_coding_transcript_variant",
+    "upstream_gene_variant",
+    "downstream_gene_variant",
+    "TFBS_ablation",
+    "TFBS_amplification",
+    "TF_binding_site_variant",
+    "regulatory_region_ablation",
+    "regulatory_region_amplification",
+    "feature_elongation",
+    "regulatory_region_variant",
+    "feature_truncation",
     "intergenic_variant",
 ]
 _SEVERITY_RANK = {c: i for i, c in enumerate(_SEVERITY_ORDER)}
@@ -520,8 +559,7 @@ def _extract_csq_hgvs(
     for entry_str in csq_raw.split(","):
         values = entry_str.split("|")
         entry: Dict[str, str] = {
-            csq_fields[i]: values[i]
-            for i in range(min(len(csq_fields), len(values)))
+            csq_fields[i]: values[i] for i in range(min(len(csq_fields), len(values)))
         }
         consequences = entry.get("Consequence", "").split("&")
         rank = min(
@@ -533,8 +571,10 @@ def _extract_csq_hgvs(
             hc = entry.get("HGVSc", "") or ""
             hp = entry.get("HGVSp", "") or ""
             # Filter out invalid g. notations on transcript IDs
-            if hc and ":g." in hc and any(
-                hc.upper().startswith(p) for p in ("NM_", "XM_", "NR_", "XR_", "ENST")
+            if (
+                hc
+                and ":g." in hc
+                and any(hc.upper().startswith(p) for p in ("NM_", "XM_", "NR_", "XR_", "ENST"))
             ):
                 hc = ""  # invalid — VEP should not emit NM_:g. but guard anyway
             best_hgvs_c = hc
@@ -571,6 +611,7 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
         raise FileNotFoundError(f"VCF not found: {vcf_path!r}")
 
     import gzip as _gzip
+
     open_fn = _gzip.open if vcf_path.endswith(".gz") else open
 
     csq_fields: List[str] = []  # FIX 1: populated from ##INFO=<ID=CSQ header
@@ -618,9 +659,7 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                 _extract_csq_scores(info, csq_fields) if csq_fields else (None, None, None, None)
             )
             # FIX 13: extract VEP HGVSc and HGVSp from CSQ tag
-            vep_hgvs_c, vep_hgvs_p = (
-                _extract_csq_hgvs(info, csq_fields) if csq_fields else ("", "")
-            )
+            vep_hgvs_c, vep_hgvs_p = _extract_csq_hgvs(info, csq_fields) if csq_fields else ("", "")
 
             for allele_idx, alt in enumerate(alt_alleles):
                 alt = alt.strip()
@@ -637,34 +676,46 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                         "Skipped symbolic spanning-deletion placeholder "
                         "(ALT=*) at %s:%s — not a classifiable variant; "
                         "the real deletion is reported at an earlier VCF record.",
-                        chrom, pos_s,
+                        chrom,
+                        pos_s,
                     )
                     if skipped is not None:
-                        skipped.append({
-                            "chrom": chrom,
-                            "pos": pos,
-                            "ref": ref,
-                            "alt": alt,
-                            "reason": (
-                                "Symbolic VCF placeholder (ALT=*) — spanning "
-                                "deletion overlap marker, not a classifiable variant"
-                            ),
-                        })
+                        skipped.append(
+                            {
+                                "chrom": chrom,
+                                "pos": pos,
+                                "ref": ref,
+                                "alt": alt,
+                                "reason": (
+                                    "Symbolic VCF placeholder (ALT=*) — spanning "
+                                    "deletion overlap marker, not a classifiable variant"
+                                ),
+                            }
+                        )
                     continue
 
                 is_inframe_indel = _compute_is_inframe_indel(ref, alt)
 
                 var = AnnotatedVariant(
-                    chrom=chrom, pos=pos, ref=ref, alt=alt,
-                    qual=qual, filter_field=filt, info=info,
+                    chrom=chrom,
+                    pos=pos,
+                    ref=ref,
+                    alt=alt,
+                    qual=qual,
+                    filter_field=filt,
+                    info=info,
                     is_inframe_indel=is_inframe_indel,
                     vep_hgvs_c=vep_hgvs_c,
                     vep_hgvs_p=vep_hgvs_p,
                 )
 
                 # FIX 1: populate scores from CSQ (prefer CSQ over plain INFO)
-                var.cadd_phred = csq_cadd if csq_cadd is not None else _parse_info_float(info, "CADD_PHRED")
-                var.revel_score = csq_revel if csq_revel is not None else _parse_info_float(info, "REVEL")
+                var.cadd_phred = (
+                    csq_cadd if csq_cadd is not None else _parse_info_float(info, "CADD_PHRED")
+                )
+                var.revel_score = (
+                    csq_revel if csq_revel is not None else _parse_info_float(info, "REVEL")
+                )
                 var.spliceai_score = csq_spliceai
                 if var.spliceai_score is None:
                     val = _parse_info_float(info, "SpliceAI")
@@ -676,7 +727,9 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                         sc = [x for x in [ds_ag, ds_al, ds_dg, ds_dl] if x is not None]
                         val = max(sc) if sc else None
                     var.spliceai_score = val
-                var.alphamissense_score = csq_am if csq_am is not None else _parse_info_float(info, "AM_PATHOGENICITY")
+                var.alphamissense_score = (
+                    csq_am if csq_am is not None else _parse_info_float(info, "AM_PATHOGENICITY")
+                )
 
                 if format_s and sample_s:
                     fmt_keys = format_s.split(":")
@@ -685,7 +738,9 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
 
                     # FIX 1.3: Use ZygosityExtractor for richer extraction
                     try:
-                        zy_result = ZygosityExtractor.extract(gt_raw, fmt_keys, fmt_vals, alt_index=allele_idx + 1)
+                        zy_result = ZygosityExtractor.extract(
+                            gt_raw, fmt_keys, fmt_vals, alt_index=allele_idx + 1
+                        )
                         _zy_map = {
                             "heterozygous": "Heterozygous",
                             "homozygous_alt": "Homozygous_alt",
@@ -698,7 +753,8 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                         var.gt = zy_result.gt
                         var.ad = (
                             ",".join(str(x) for x in zy_result.ad)
-                            if zy_result.ad is not None else None
+                            if zy_result.ad is not None
+                            else None
                         )
                         var.dp = str(zy_result.dp) if zy_result.dp is not None else None
                         var.genotype = zy_result.gt
@@ -706,11 +762,13 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                         var.gq = zy_result.gq
                         var.ab = zy_result.ab
                         var.phase_set = zy_result.phase_set
-                        var.hemizygous = (zy_result.zygosity == "hemizygous")
+                        var.hemizygous = zy_result.zygosity == "hemizygous"
                     except Exception as exc:
                         logger.warning(
                             "ZygosityExtractor failed for %s:%s: %s — falling back",
-                            chrom, pos_s, exc,
+                            chrom,
+                            pos_s,
+                            exc,
                         )
                         geno = _extract_genotype(format_s, sample_s)
                         var.gt = geno["GT"]
@@ -751,6 +809,7 @@ def _parse_info_float(info: str, key: str) -> Optional[float]:
 
 # ─── Stage result ─────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AnnotationResult:
     sample_id: str = ""
@@ -784,6 +843,7 @@ class AnnotationResult:
 
 
 # ─── Stage ────────────────────────────────────────────────────────────────────
+
 
 def _write_annotation_json_streaming(path: str, result: "AnnotationResult") -> None:
     """Write annotation.json incrementally (FIX: large-VCF scalability).
@@ -841,9 +901,7 @@ class AnnotationStage:
         rna_cfg = (cfg or {}).get("rna_analysis", {}) or {}
         self._raw_cfg = cfg or {}
         self._gff_path: Optional[str] = (
-            self._cfg.get("refseq_gff")
-            or rna_cfg.get("refseq_gff")
-            or None
+            self._cfg.get("refseq_gff") or rna_cfg.get("refseq_gff") or None
         )
         # Provenance of `self._gff_path`: "configured" if the caller set
         # rna_analysis.refseq_gff / annotation.refseq_gff explicitly;
@@ -860,6 +918,7 @@ class AnnotationStage:
         # otherwise fall back to NoCdsCodonContextProvider (no-op placeholder).
         try:
             from pipeline.annotation.codon_provider import make_codon_provider_from_cfg
+
             self._codon_provider: CodonContextProvider = make_codon_provider_from_cfg(cfg)
         except Exception as _cp_exc:
             logger.debug("CodonContextProvider init failed, using placeholder: %s", _cp_exc)
@@ -917,7 +976,7 @@ class AnnotationStage:
 
     @property
     def gff_provenance(self) -> str:
-        """"configured" | "mt_bootstrap" | "unavailable" | "unresolved" (before first use)."""
+        """ "configured" | "mt_bootstrap" | "unavailable" | "unresolved" (before first use)."""
         return self._gff_provenance
 
     def _get_rna_analyser(self):
@@ -928,6 +987,7 @@ class AnnotationStage:
             return None
         try:
             from pipeline.rna.transcript import RnaTranscriptAnalyser
+
             # RnaTranscriptAnalyser reads cfg["rna_analysis"]["refseq_gff"]
             rna_cfg = {"rna_analysis": {"refseq_gff": self._gff_path}}
             self._rna_analyser = RnaTranscriptAnalyser(cfg=rna_cfg)
@@ -956,7 +1016,9 @@ class AnnotationStage:
 
         logger.info(
             "[%s] AnnotationStage: vcf=%s gff=%s",
-            sample_id, filtered_vcf_path, self._gff_path or "<none>",
+            sample_id,
+            filtered_vcf_path,
+            self._gff_path or "<none>",
         )
 
         # FIX (Issue 5): collects symbolic ALT=* records filtered by _iter_vcf
@@ -991,24 +1053,33 @@ class AnnotationStage:
                     tid_upper = transcript.upper()
                     if tid_upper.startswith(("NR_", "XR_")):
                         cds_pos = rna_analyser.genomic_to_transcript_pos(
-                            var.chrom, var.pos, transcript)
+                            var.chrom, var.pos, transcript
+                        )
                         if len(var.ref) > 1:
                             end_cds_pos = rna_analyser.genomic_to_transcript_pos(
-                                var.chrom, var.pos + len(var.ref) - 1, transcript)
+                                var.chrom, var.pos + len(var.ref) - 1, transcript
+                            )
                     else:
-                        cds_pos = rna_analyser.genomic_to_cds_pos(
-                            var.chrom, var.pos, transcript)
+                        cds_pos = rna_analyser.genomic_to_cds_pos(var.chrom, var.pos, transcript)
                         if len(var.ref) > 1:
                             end_cds_pos = rna_analyser.genomic_to_cds_pos(
-                                var.chrom, var.pos + len(var.ref) - 1, transcript)
+                                var.chrom, var.pos + len(var.ref) - 1, transcript
+                            )
                 var.hgvs = _build_hgvs(
-                    var.chrom, var.pos, var.ref, var.alt, transcript,
-                    cds_pos=cds_pos, end_cds_pos=end_cds_pos, strand=tx_strand,
+                    var.chrom,
+                    var.pos,
+                    var.ref,
+                    var.alt,
+                    transcript,
+                    cds_pos=cds_pos,
+                    end_cds_pos=end_cds_pos,
+                    strand=tx_strand,
                 )
 
             # FIX 1.1: Determine functional consequence
             tx_known_to_rna_analyser = (
-                rna_analyser is not None and transcript
+                rna_analyser is not None
+                and transcript
                 and rna_analyser.get_transcript(transcript) is not None
             )
             if tx_known_to_rna_analyser:
@@ -1077,8 +1148,10 @@ class AnnotationStage:
                 and var.transcript_id
             ):
                 try:
-                    consequence, ref_codon, alt_codon, ref_aa, alt_aa = self._codon_provider.get_codon_and_aa(
-                        var.chrom, var.pos, var.ref, var.alt, var.transcript_id
+                    consequence, ref_codon, alt_codon, ref_aa, alt_aa = (
+                        self._codon_provider.get_codon_and_aa(
+                            var.chrom, var.pos, var.ref, var.alt, var.transcript_id
+                        )
                     )
                     if ref_aa and alt_aa:
                         var.wildtype_aa = ref_aa
@@ -1102,7 +1175,7 @@ class AnnotationStage:
                         # Replace centre base with alt to build alt context
                         centre = var.pos - start  # 0-based index in the fetched string
                         if 0 <= centre < len(ref_ctx):
-                            alt_ctx = ref_ctx[:centre] + var.alt + ref_ctx[centre + len(var.ref):]
+                            alt_ctx = ref_ctx[:centre] + var.alt + ref_ctx[centre + len(var.ref) :]
                             var.ref_sequence = ref_ctx
                             var.alt_sequence = alt_ctx
                 except Exception:
@@ -1127,7 +1200,10 @@ class AnnotationStage:
         logger.info(
             "[%s] Annotation complete: %d/%d variants gene-resolved in %.2fs "
             "(%d symbolic ALT=* record(s) skipped)",
-            sample_id, annotated, len(variants), result.elapsed_seconds,
+            sample_id,
+            annotated,
+            len(variants),
+            result.elapsed_seconds,
             len(skipped_symbolic),
         )
         return result

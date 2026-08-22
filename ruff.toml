@@ -26,3 +26,31 @@ extend-exclude = [
 # an unrelated style migration. Revisit/expand once the codebase has
 # had a chance to clear a first, narrow pass.
 select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# These are PRE-EXISTING patterns, present at HEAD before the commit that
+# first staged these files -- surfaced by the "each file normalizes the
+# first time it's next touched" behaviour described above, not introduced
+# by the change that exposed them.
+#
+# E402 (module import not at top of file): each of these modules MUST
+# import after executing setup code -- `sys.path.insert` to make a sibling
+# package importable, or `_fake_heavy_deps.install()` to register stub
+# modules before the real imports resolve against them. *** MOVING THESE
+# IMPORTS TO THE TOP OF THE FILE WOULD BREAK THE MODULE AT IMPORT TIME. ***
+# The ignore is the correct resolution here, not a deferral of one.
+#
+# *** ONLY geper/ PATHS BELONG IN THIS BLOCK. *** Ruff resolves the
+# NEAREST config to each file, so everything under kim_pipeline/ is
+# governed by kim_pipeline/pyproject.toml's own [tool.ruff.lint] block --
+# which says so itself -- and NOT by this file. kim_pipeline entries
+# listed here would be silently inert: they would read as coverage that
+# does not exist. Its E402 ignores live in that pyproject.toml, beside
+# the `select` list they have to stay in sync with.
+"geper/verify_report_fixes_e2e.py" = ["E402"]
+# F841 (local assigned but never used): the assignment documents that
+# generate_pdf returns a value, in a test whose assertions are about the
+# file it writes rather than its return. Unlike the E402s above this one
+# is a genuine tidy candidate -- it is ignored to keep an unrelated commit
+# from making unreviewed edits to a reviewed file, not because it is right.
+"geper/tests/test_summary_pdf_logo.py" = ["F841"]

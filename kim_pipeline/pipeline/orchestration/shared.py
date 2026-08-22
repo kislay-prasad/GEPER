@@ -392,9 +392,25 @@ def run_acmg_evidence_batch(
             in_trans_or_cis_with_pathogenic_unexpected=_in_trans_or_cis,
             alternate_molecular_basis_found=_alternate_molecular,
             inheritance_pattern=_inheritance,
+            # Fixed 2026-08-22, found while removing SpliceAI (licence):
+            # `(x or 0.0)` treated an ABSENT spliceai_score identically to
+            # a CONFIRMED "no splice impact" score of 0.0, so BP7
+            # (`pipeline/acmg/classifier.py::_bp7`) would fire on this
+            # signal alone for every synonymous/intronic variant once
+            # SpliceAI's plugin is removed upstream and spliceai_score is
+            # always absent. Requiring the score to actually be present
+            # matches the fail-safe direction every other "missing
+            # evidence" check in this codebase already uses (see PP3/BP4's
+            # own STATUS_NOT_EVALUATED-on-no-votes) -- absence must not
+            # read as a confirmed favorable result. Net effect once
+            # SpliceAI is fully removed: this condition is always False,
+            # so synonymous_or_intronic no longer fires on splice-safety
+            # grounds at all (a real, disclosed behaviour change, not
+            # silently absorbed -- see the SpliceAI-removal report).
             synonymous_or_intronic=(
                 consequence in {"synonymous_variant", "intron_variant"}
-                and (variant.get("spliceai_score") or 0.0) < 0.2
+                and variant.get("spliceai_score") is not None
+                and variant.get("spliceai_score") < 0.2
             ),
             bp1_reputable_source_benign=(
                 clinvar_significance is not None

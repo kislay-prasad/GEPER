@@ -2,11 +2,19 @@
 pipeline/pgx/diplotypes.py
 ──────────────────────────
 Hardcoded star-allele definition tables and diplotype→phenotype mappings
-for the 10 core PGx genes covered by GEPER.
+for the 10 core PGx genes GEPER annotates.
 
 Data derived from PharmGKB / CPIC guidelines (positions are GRCh38).
 No file downloads required — all data is embedded in code.
+
+Diplotype-calling accuracy from these tables has not been validated against
+an independent ground-truth dataset: no commercially-usable reference for
+this purpose currently exists (PharmVar, the field's authoritative
+star-allele nomenclature source, is CC BY-NC-ND -- see
+GROUND_TRUTH_DATASET_AUDIT.md). "Covered" above describes what genes this
+module annotates, not a validated accuracy claim.
 """
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
@@ -18,78 +26,78 @@ from typing import Dict, List, Optional, Tuple
 
 STAR_ALLELE_VARIANTS: Dict[str, Dict[str, List[Tuple[str, int, str, str]]]] = {
     "CYP2D6": {
-        "*2":  [("22", 42128945, "C", "T")],        # rs16947
+        "*2": [("22", 42128945, "C", "T")],  # rs16947
         # FIX 7: *3 rs35742686 is a single-base A deletion.
         # GRCh38 VCF representation (left-normalised): REF=CA, ALT=C at pos 42126610
-        "*3":  [("22", 42126610, "CA", "C")],       # rs35742686 (frameshift, del A)
-        "*4":  [("22", 42128175, "C", "T")],        # rs3892097
+        "*3": [("22", 42126610, "CA", "C")],  # rs35742686 (frameshift, del A)
+        "*4": [("22", 42128175, "C", "T")],  # rs3892097
         # *5 is a whole-gene deletion — requires CNV analysis (not detectable from SNV VCF)
-        "*5":  [],  # CNV — see note below
+        "*5": [],  # CNV — see note below
         # FIX 7: *6 rs5030655 is a single-base T deletion.
         # VCF: REF=AT, ALT=A at pos 42126563
-        "*6":  [("22", 42126563, "AT", "A")],       # rs5030655 (del T)
-        "*9":  [("22", 42130692, "C", "T")],        # rs5030656
+        "*6": [("22", 42126563, "AT", "A")],  # rs5030655 (del T)
+        "*9": [("22", 42130692, "C", "T")],  # rs5030656
         "*10": [("22", 42130692, "C", "T"), ("22", 42128945, "C", "T")],
-        "*17": [("22", 42127941, "C", "T")],        # rs28371706
+        "*17": [("22", 42127941, "C", "T")],  # rs28371706
         "*29": [("22", 42128945, "C", "T"), ("22", 42126611, "A", "G")],
-        "*41": [("22", 42128203, "T", "C")],        # rs28371725
+        "*41": [("22", 42128203, "T", "C")],  # rs28371725
     },
     "CYP2C19": {
-        "*2":  [("10", 94781858, "G", "A")],        # rs4244285
-        "*3":  [("10", 94773863, "G", "A")],        # rs4986893
-        "*4":  [("10", 94780653, "A", "G")],        # rs28399504
-        "*5":  [("10", 94781944, "C", "T")],        # rs56337013
-        "*17": [("10", 94762706, "C", "T")],        # rs12248560
+        "*2": [("10", 94781858, "G", "A")],  # rs4244285
+        "*3": [("10", 94773863, "G", "A")],  # rs4986893
+        "*4": [("10", 94780653, "A", "G")],  # rs28399504
+        "*5": [("10", 94781944, "C", "T")],  # rs56337013
+        "*17": [("10", 94762706, "C", "T")],  # rs12248560
     },
     "CYP2C9": {
-        "*2":  [("10", 94942290, "C", "T")],        # rs1799853
-        "*3":  [("10", 94981296, "A", "C")],        # rs1057910
-        "*5":  [("10", 94981230, "C", "G")],        # rs28371686
+        "*2": [("10", 94942290, "C", "T")],  # rs1799853
+        "*3": [("10", 94981296, "A", "C")],  # rs1057910
+        "*5": [("10", 94981230, "C", "G")],  # rs28371686
         # FIX 7: *6 rs9332131 is a single-base A deletion.
         # VCF: REF=GA, ALT=G at pos 94949280
-        "*6":  [("10", 94949280, "GA", "G")],       # rs9332131 (del A)
-        "*8":  [("10", 94942255, "G", "A")],        # rs7900194
-        "*11": [("10", 94980459, "C", "T")],        # rs28371685
+        "*6": [("10", 94949280, "GA", "G")],  # rs9332131 (del A)
+        "*8": [("10", 94942255, "G", "A")],  # rs7900194
+        "*11": [("10", 94980459, "C", "T")],  # rs28371685
     },
     "TPMT": {
-        "*2":  [("6", 18143955, "G", "C")],         # rs1800462
+        "*2": [("6", 18143955, "G", "C")],  # rs1800462
         "*3A": [("6", 18131984, "A", "G"), ("6", 18143955, "G", "A")],
-        "*3B": [("6", 18143955, "G", "A")],         # rs1800460
-        "*3C": [("6", 18131984, "A", "G")],         # rs1142345
-        "*4":  [("6", 18130918, "G", "A")],         # rs1800584
+        "*3B": [("6", 18143955, "G", "A")],  # rs1800460
+        "*3C": [("6", 18131984, "A", "G")],  # rs1142345
+        "*4": [("6", 18130918, "G", "A")],  # rs1800584
     },
     "DPYD": {
-        "*2A": [("1", 97915614, "G", "A")],         # rs3918290 (IVS14+1G>A)
-        "*13": [("1", 97981395, "T", "G")],         # rs55886062
+        "*2A": [("1", 97915614, "G", "A")],  # rs3918290 (IVS14+1G>A)
+        "*13": [("1", 97981395, "T", "G")],  # rs55886062
         "c.2846A>T": [("1", 97547947, "A", "T")],  # rs67376798
         "c.1236G>A": [("1", 98039419, "C", "T")],  # rs56038477
     },
     "SLCO1B1": {
-        "*5":  [("12", 21175421, "T", "C")],        # rs4149056 (Val174Ala)
+        "*5": [("12", 21175421, "T", "C")],  # rs4149056 (Val174Ala)
         "*15": [("12", 21176804, "A", "G"), ("12", 21175421, "T", "C")],
-        "*17": [("12", 21176804, "A", "G")],        # rs2306283
+        "*17": [("12", 21176804, "A", "G")],  # rs2306283
     },
     "VKORC1": {
         "-1639G>A": [("16", 31096368, "G", "A")],  # rs9923231
-        "1173C>T":  [("16", 31093557, "C", "T")],  # rs9934438
+        "1173C>T": [("16", 31093557, "C", "T")],  # rs9934438
     },
     "G6PD": {
-        "G202A": [("X", 154535388, "G", "A")],     # rs1050828 (African A-)
-        "A376G": [("X", 154532082, "A", "G")],     # rs1050829
+        "G202A": [("X", 154535388, "G", "A")],  # rs1050828 (African A-)
+        "A376G": [("X", 154532082, "A", "G")],  # rs1050829
         "Mediterranean": [("X", 154536002, "C", "T")],  # rs5030868
     },
     "CYP3A5": {
-        "*3":  [("7", 99672916, "G", "A")],         # rs776746
-        "*6":  [("7", 99672916, "G", "T")],         # rare
+        "*3": [("7", 99672916, "G", "A")],  # rs776746
+        "*6": [("7", 99672916, "G", "T")],  # rare
         # FIX 7: *7 rs41303343 is a single-base insertion (dup A).
         # VCF left-normalised: REF=A, ALT=AA at pos 99673316
-        "*7":  [("7", 99673316, "A", "AA")],        # rs41303343 (ins A → frameshift)
+        "*7": [("7", 99673316, "A", "AA")],  # rs41303343 (ins A → frameshift)
     },
     "UGT1A1": {
-        "*6":  [("2", 233757013, "G", "A")],        # rs4148323
-        "*28": [("2", 233760498, "TA", "TAA")],     # rs8175347 (7/6 TA repeat)
-        "*36": [("2", 233760498, "TA", "T")],       # 5 TA repeats
-        "*37": [("2", 233760498, "TA", "TAAA")],    # 8 TA repeats
+        "*6": [("2", 233757013, "G", "A")],  # rs4148323
+        "*28": [("2", 233760498, "TA", "TAA")],  # rs8175347 (7/6 TA repeat)
+        "*36": [("2", 233760498, "TA", "T")],  # 5 TA repeats
+        "*37": [("2", 233760498, "TA", "TAAA")],  # 8 TA repeats
     },
 }
 
@@ -238,131 +246,323 @@ DIPLOTYPE_PHENOTYPES: Dict[str, Dict[Tuple[str, str], str]] = {
 DRUG_IMPLICATIONS: Dict[str, Dict[str, List[Dict[str, str]]]] = {
     "CYP2D6": {
         "Poor Metabolizer": [
-            {"drug": "codeine", "implication": "Avoid — risk of toxicity (ultra-low conversion to morphine)", "guideline": "CPIC"},
-            {"drug": "tramadol", "implication": "Avoid — use alternative opioid", "guideline": "CPIC"},
-            {"drug": "amitriptyline", "implication": "Reduce dose by 50% or choose alternative", "guideline": "CPIC"},
+            {
+                "drug": "codeine",
+                "implication": "Avoid — risk of toxicity (ultra-low conversion to morphine)",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "tramadol",
+                "implication": "Avoid — use alternative opioid",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "amitriptyline",
+                "implication": "Reduce dose by 50% or choose alternative",
+                "guideline": "CPIC",
+            },
             {"drug": "nortriptyline", "implication": "Reduce dose by 50%", "guideline": "CPIC"},
-            {"drug": "fluoxetine", "implication": "Initiate with lowest available dose", "guideline": "DPWG"},
+            {
+                "drug": "fluoxetine",
+                "implication": "Initiate with lowest available dose",
+                "guideline": "DPWG",
+            },
         ],
         "Intermediate Metabolizer": [
-            {"drug": "codeine", "implication": "Use with caution — monitor for side effects", "guideline": "CPIC"},
+            {
+                "drug": "codeine",
+                "implication": "Use with caution — monitor for side effects",
+                "guideline": "CPIC",
+            },
             {"drug": "amitriptyline", "implication": "Reduce dose by 25%", "guideline": "CPIC"},
-            {"drug": "atomoxetine", "implication": "Initiate at 25% of normal dose", "guideline": "CPIC"},
+            {
+                "drug": "atomoxetine",
+                "implication": "Initiate at 25% of normal dose",
+                "guideline": "CPIC",
+            },
         ],
         "Ultrarapid Metabolizer": [
-            {"drug": "codeine", "implication": "Avoid — risk of toxicity (excess morphine)", "guideline": "CPIC"},
-            {"drug": "tramadol", "implication": "Avoid — excessive opioid effect", "guideline": "CPIC"},
-            {"drug": "antidepressants (TCA)", "implication": "May need higher doses — monitor", "guideline": "CPIC"},
+            {
+                "drug": "codeine",
+                "implication": "Avoid — risk of toxicity (excess morphine)",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "tramadol",
+                "implication": "Avoid — excessive opioid effect",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "antidepressants (TCA)",
+                "implication": "May need higher doses — monitor",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [],
     },
     "CYP2C19": {
         "Poor Metabolizer": [
-            {"drug": "clopidogrel", "implication": "Avoid — use alternative antiplatelet agent (prasugrel/ticagrelor)", "guideline": "CPIC"},
-            {"drug": "voriconazole", "implication": "Reduce dose — monitor plasma levels", "guideline": "CPIC"},
-            {"drug": "omeprazole", "implication": "Standard dose likely sufficient (increased drug exposure)", "guideline": "CPIC"},
+            {
+                "drug": "clopidogrel",
+                "implication": "Avoid — use alternative antiplatelet agent (prasugrel/ticagrelor)",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "voriconazole",
+                "implication": "Reduce dose — monitor plasma levels",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "omeprazole",
+                "implication": "Standard dose likely sufficient (increased drug exposure)",
+                "guideline": "CPIC",
+            },
             {"drug": "escitalopram", "implication": "Reduce dose by 50%", "guideline": "CPIC"},
             {"drug": "amitriptyline", "implication": "Reduce dose by 50%", "guideline": "CPIC"},
         ],
         "Intermediate Metabolizer": [
-            {"drug": "clopidogrel", "implication": "Consider alternative antiplatelet agent", "guideline": "CPIC"},
-            {"drug": "voriconazole", "implication": "Monitor therapeutic drug levels", "guideline": "CPIC"},
+            {
+                "drug": "clopidogrel",
+                "implication": "Consider alternative antiplatelet agent",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "voriconazole",
+                "implication": "Monitor therapeutic drug levels",
+                "guideline": "CPIC",
+            },
         ],
         "Ultrarapid Metabolizer": [
-            {"drug": "clopidogrel", "implication": "Standard dosing appropriate", "guideline": "CPIC"},
-            {"drug": "voriconazole", "implication": "May need increased dose — monitor levels", "guideline": "CPIC"},
-            {"drug": "PPIs (omeprazole)", "implication": "Reduced efficacy — consider higher dose", "guideline": "CPIC"},
+            {
+                "drug": "clopidogrel",
+                "implication": "Standard dosing appropriate",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "voriconazole",
+                "implication": "May need increased dose — monitor levels",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "PPIs (omeprazole)",
+                "implication": "Reduced efficacy — consider higher dose",
+                "guideline": "CPIC",
+            },
         ],
         "Rapid Metabolizer": [
-            {"drug": "PPIs (omeprazole)", "implication": "Slightly reduced efficacy — may need dose adjustment", "guideline": "CPIC"},
+            {
+                "drug": "PPIs (omeprazole)",
+                "implication": "Slightly reduced efficacy — may need dose adjustment",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [],
     },
     "CYP2C9": {
         "Poor Metabolizer": [
-            {"drug": "warfarin", "implication": "Reduce dose 50-75%; risk of bleeding", "guideline": "CPIC"},
-            {"drug": "phenytoin", "implication": "Reduce initial dose; monitor levels closely", "guideline": "CPIC"},
-            {"drug": "NSAIDs (celecoxib)", "implication": "Reduce dose by 50% or use alternative", "guideline": "CPIC"},
-            {"drug": "fluvastatin", "implication": "Reduce dose; increased exposure", "guideline": "DPWG"},
+            {
+                "drug": "warfarin",
+                "implication": "Reduce dose 50-75%; risk of bleeding",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "phenytoin",
+                "implication": "Reduce initial dose; monitor levels closely",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "NSAIDs (celecoxib)",
+                "implication": "Reduce dose by 50% or use alternative",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "fluvastatin",
+                "implication": "Reduce dose; increased exposure",
+                "guideline": "DPWG",
+            },
         ],
         "Intermediate Metabolizer": [
-            {"drug": "warfarin", "implication": "Reduce initial dose; careful INR monitoring", "guideline": "CPIC"},
-            {"drug": "phenytoin", "implication": "Reduce initial dose by 25%; monitor levels", "guideline": "CPIC"},
-            {"drug": "NSAIDs (celecoxib)", "implication": "Use lowest effective dose", "guideline": "CPIC"},
+            {
+                "drug": "warfarin",
+                "implication": "Reduce initial dose; careful INR monitoring",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "phenytoin",
+                "implication": "Reduce initial dose by 25%; monitor levels",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "NSAIDs (celecoxib)",
+                "implication": "Use lowest effective dose",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [],
     },
     "TPMT": {
         "Poor Metabolizer": [
-            {"drug": "azathioprine", "implication": "Extreme risk of myelosuppression — reduce dose 10-fold or use alternative", "guideline": "CPIC"},
-            {"drug": "6-mercaptopurine", "implication": "Reduce dose to 10% of normal; monitor blood counts", "guideline": "CPIC"},
-            {"drug": "thioguanine", "implication": "Reduce dose substantially; alternative recommended", "guideline": "CPIC"},
+            {
+                "drug": "azathioprine",
+                "implication": "Extreme risk of myelosuppression — reduce dose 10-fold or use alternative",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "6-mercaptopurine",
+                "implication": "Reduce dose to 10% of normal; monitor blood counts",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "thioguanine",
+                "implication": "Reduce dose substantially; alternative recommended",
+                "guideline": "CPIC",
+            },
         ],
         "Intermediate Metabolizer": [
-            {"drug": "azathioprine", "implication": "Reduce dose by 30-70%; monitor blood counts", "guideline": "CPIC"},
-            {"drug": "6-mercaptopurine", "implication": "Reduce dose by 30-50%", "guideline": "CPIC"},
+            {
+                "drug": "azathioprine",
+                "implication": "Reduce dose by 30-70%; monitor blood counts",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "6-mercaptopurine",
+                "implication": "Reduce dose by 30-50%",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [],
     },
     "DPYD": {
         "Poor Metabolizer": [
-            {"drug": "fluorouracil (5-FU)", "implication": "Avoid — risk of severe/fatal toxicity", "guideline": "CPIC"},
-            {"drug": "capecitabine", "implication": "Avoid — risk of severe/fatal toxicity", "guideline": "CPIC"},
+            {
+                "drug": "fluorouracil (5-FU)",
+                "implication": "Avoid — risk of severe/fatal toxicity",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "capecitabine",
+                "implication": "Avoid — risk of severe/fatal toxicity",
+                "guideline": "CPIC",
+            },
             {"drug": "tegafur", "implication": "Avoid", "guideline": "DPWG"},
         ],
         "Intermediate Metabolizer": [
-            {"drug": "fluorouracil (5-FU)", "implication": "Reduce dose by 25-50%; monitor for toxicity", "guideline": "CPIC"},
+            {
+                "drug": "fluorouracil (5-FU)",
+                "implication": "Reduce dose by 25-50%; monitor for toxicity",
+                "guideline": "CPIC",
+            },
             {"drug": "capecitabine", "implication": "Reduce dose by 25-50%", "guideline": "CPIC"},
         ],
         "Normal Metabolizer": [],
     },
     "SLCO1B1": {
         "Poor Function": [
-            {"drug": "simvastatin", "implication": "Avoid or use lowest dose — increased risk of myopathy", "guideline": "CPIC"},
+            {
+                "drug": "simvastatin",
+                "implication": "Avoid or use lowest dose — increased risk of myopathy",
+                "guideline": "CPIC",
+            },
             {"drug": "lovastatin", "implication": "Use alternative statin", "guideline": "CPIC"},
-            {"drug": "atorvastatin", "implication": "Use lower dose; monitor for myopathy", "guideline": "CPIC"},
+            {
+                "drug": "atorvastatin",
+                "implication": "Use lower dose; monitor for myopathy",
+                "guideline": "CPIC",
+            },
         ],
         "Decreased Function": [
-            {"drug": "simvastatin", "implication": "Use lowest available dose; consider alternative statin", "guideline": "CPIC"},
+            {
+                "drug": "simvastatin",
+                "implication": "Use lowest available dose; consider alternative statin",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Function": [],
     },
     "VKORC1": {
         "High Sensitivity": [
-            {"drug": "warfarin", "implication": "Lower initial dose required; careful INR monitoring", "guideline": "CPIC"},
+            {
+                "drug": "warfarin",
+                "implication": "Lower initial dose required; careful INR monitoring",
+                "guideline": "CPIC",
+            },
         ],
         "Intermediate Sensitivity": [
-            {"drug": "warfarin", "implication": "Slightly lower initial dose; monitor INR", "guideline": "CPIC"},
+            {
+                "drug": "warfarin",
+                "implication": "Slightly lower initial dose; monitor INR",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Sensitivity": [],
     },
     "G6PD": {
         "Deficient": [
-            {"drug": "rasburicase", "implication": "Contraindicated — risk of severe hemolysis", "guideline": "CPIC"},
-            {"drug": "primaquine", "implication": "Contraindicated — risk of severe hemolysis", "guideline": "CPIC"},
-            {"drug": "dapsone", "implication": "Avoid — high risk of hemolytic anemia", "guideline": "CPIC"},
-            {"drug": "nitrofurantoin", "implication": "Avoid — risk of hemolytic anemia", "guideline": "CPIC"},
+            {
+                "drug": "rasburicase",
+                "implication": "Contraindicated — risk of severe hemolysis",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "primaquine",
+                "implication": "Contraindicated — risk of severe hemolysis",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "dapsone",
+                "implication": "Avoid — high risk of hemolytic anemia",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "nitrofurantoin",
+                "implication": "Avoid — risk of hemolytic anemia",
+                "guideline": "CPIC",
+            },
         ],
         "Normal": [],
     },
     "CYP3A5": {
         "Poor Metabolizer": [
-            {"drug": "tacrolimus", "implication": "Reduce initial dose; monitor trough levels", "guideline": "CPIC"},
+            {
+                "drug": "tacrolimus",
+                "implication": "Reduce initial dose; monitor trough levels",
+                "guideline": "CPIC",
+            },
         ],
         "Intermediate Metabolizer": [
-            {"drug": "tacrolimus", "implication": "Higher dose may be required; monitor closely", "guideline": "CPIC"},
+            {
+                "drug": "tacrolimus",
+                "implication": "Higher dose may be required; monitor closely",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [
-            {"drug": "tacrolimus", "implication": "Standard dosing; monitor trough levels", "guideline": "CPIC"},
+            {
+                "drug": "tacrolimus",
+                "implication": "Standard dosing; monitor trough levels",
+                "guideline": "CPIC",
+            },
         ],
     },
     "UGT1A1": {
         "Poor Metabolizer": [
-            {"drug": "irinotecan", "implication": "Reduce dose by at least 1 level; risk of severe neutropenia", "guideline": "CPIC"},
-            {"drug": "atazanavir", "implication": "Increased bilirubin expected; not dose-limiting", "guideline": "CPIC"},
+            {
+                "drug": "irinotecan",
+                "implication": "Reduce dose by at least 1 level; risk of severe neutropenia",
+                "guideline": "CPIC",
+            },
+            {
+                "drug": "atazanavir",
+                "implication": "Increased bilirubin expected; not dose-limiting",
+                "guideline": "CPIC",
+            },
         ],
         "Intermediate Metabolizer": [
-            {"drug": "irinotecan", "implication": "Use with caution at higher doses", "guideline": "CPIC"},
+            {
+                "drug": "irinotecan",
+                "implication": "Use with caution at higher doses",
+                "guideline": "CPIC",
+            },
         ],
         "Normal Metabolizer": [],
         "Ultrarapid Metabolizer": [],
@@ -433,31 +633,31 @@ ACTIVITY_SCORES: Dict[str, Dict[str, Optional[float]]] = {
 # ─── Default phenotype for *1/*1 (no defining variants detected) ──────────────
 
 DEFAULT_PHENOTYPE: Dict[str, str] = {
-    "CYP2D6":  "Normal Metabolizer",
+    "CYP2D6": "Normal Metabolizer",
     "CYP2C19": "Normal Metabolizer",
-    "CYP2C9":  "Normal Metabolizer",
-    "TPMT":    "Normal Metabolizer",
-    "DPYD":    "Normal Metabolizer",
+    "CYP2C9": "Normal Metabolizer",
+    "TPMT": "Normal Metabolizer",
+    "DPYD": "Normal Metabolizer",
     "SLCO1B1": "Normal Function",
-    "VKORC1":  "Normal Sensitivity",
-    "G6PD":    "Normal",
-    "CYP3A5":  "Poor Metabolizer",   # *3/*3 is actually majority phenotype
-    "UGT1A1":  "Normal Metabolizer",
+    "VKORC1": "Normal Sensitivity",
+    "G6PD": "Normal",
+    "CYP3A5": "Poor Metabolizer",  # *3/*3 is actually majority phenotype
+    "UGT1A1": "Normal Metabolizer",
 }
 
 # ─── Evidence levels ──────────────────────────────────────────────────────────
 
 EVIDENCE_LEVELS: Dict[str, str] = {
-    "CYP2D6":  "1A",
+    "CYP2D6": "1A",
     "CYP2C19": "1A",
-    "CYP2C9":  "1A",
-    "TPMT":    "1A",
-    "DPYD":    "1A",
+    "CYP2C9": "1A",
+    "TPMT": "1A",
+    "DPYD": "1A",
     "SLCO1B1": "1A",
-    "VKORC1":  "1A",
-    "G6PD":    "1A",
-    "CYP3A5":  "1A",
-    "UGT1A1":  "1A",
+    "VKORC1": "1A",
+    "G6PD": "1A",
+    "CYP3A5": "1A",
+    "UGT1A1": "1A",
 }
 
 # All covered genes

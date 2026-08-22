@@ -81,7 +81,7 @@ def _variant_result(chrom="17", pos=100, ref="A", alt="T", gene="BRCA1", clinica
     result = {
         "variant": {"chrom": chrom, "pos": pos, "ref": ref, "alt": alt},
         "interpretation_result": {"gene_symbol": gene},
-        "clinical_report": _clinical() if clinical is None else clinical,
+        "candidate_interpretation": _clinical() if clinical is None else clinical,
     }
     result.update(extra)
     return result

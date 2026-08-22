@@ -227,7 +227,7 @@ class TestRealEvidenceDrivesRealReports(unittest.TestCase):
         label = next(lbl for lbl, e in _FIXTURE.items() if e["expected"]["acmg_classification"] == "Pathogenic")
         _, variant_result = _run_real(label)
         gen = report_generator_module.ReportGenerator()
-        lines = gen._render_clinical_report(variant_result["clinical_report"], {})
+        lines = gen._render_clinical_report(variant_result["candidate_interpretation"], {})
         text = "\n".join(lines)
         self.assertIn("Net points", text)
         net_points = _FIXTURE[label]["expected"]["acmg_net_points"]
@@ -256,7 +256,7 @@ class TestRealEvidenceDrivesRealReports(unittest.TestCase):
         label = next(lbl for lbl, e in _FIXTURE.items() if e["expected"]["acmg_classification"] == "Likely Benign")
         _, variant_result = _run_real(label)
         net_points = _FIXTURE[label]["expected"]["acmg_net_points"]
-        text = summary_short_module._classification_text(variant_result["clinical_report"])
+        text = summary_short_module._classification_text(variant_result["candidate_interpretation"])
         self.assertIn("Likely Benign", text)
         self.assertIn(f"net {int(net_points)}", text)
 

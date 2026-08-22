@@ -312,6 +312,19 @@ def build_variant_result(
         variant_ref=_variant_ref, **{f"{k}_result": v for k, v in raw_evidence_for_report.items()}
     )
     validate_interpretation_result_for_report(resolved_interpretation_result, variant_ref=_variant_ref)
+
+    # Built ONCE and emitted under two keys below. Calling
+    # `build_clinical_report()` twice would double the work and, worse,
+    # let the two copies drift apart -- the alias has to be the same
+    # object, not a second rendering of the same inputs.
+    _candidate_interpretation = build_clinical_report(
+        resolved_interpretation_result,
+        variant_dict,
+        raw_evidence=raw_evidence_for_report,
+        indigenomes_result=indigenomes_result,
+        thousand_genomes_sas_result=thousand_genomes_sas_result,
+    )
+
     result = {
         "variant": variant_dict,
         "sequence_context": sequence_context,
@@ -443,20 +456,38 @@ def build_variant_result(
         # explicitly, so orchestrator call sites don't have to thread it
         # through twice.
         "interpretation_result": resolved_interpretation_result,
-        # New, additive key (Phase 5: Clinical Report Upgrade). Built
-        # entirely from `resolved_interpretation_result` above (the same
-        # canonical InterpretationResult dict Phase 2-4 already
-        # produced) -- reuses that logic rather than re-deriving
-        # anything from the raw provider dicts a second time. `None`
-        # when interpretation_result itself is missing/errored, never
+        # Built entirely from `resolved_interpretation_result` above (the
+        # same canonical InterpretationResult dict Phase 2-4 already
+        # produced) -- reuses that logic rather than re-deriving anything
+        # from the raw provider dicts a second time. `None` when
+        # interpretation_result itself is missing/errored, never
         # fabricated.
-        "clinical_report": build_clinical_report(
-            resolved_interpretation_result,
-            variant_dict,
-            raw_evidence=raw_evidence_for_report,
-            indigenomes_result=indigenomes_result,
-            thousand_genomes_sas_result=thousand_genomes_sas_result,
-        ),
+        #
+        # Named `candidate_interpretation`, not `clinical_report`: GEPER
+        # produces a draft classification for a qualified human to review
+        # and sign off, and does not independently provide a final
+        # clinical interpretation (EJ-01). A key called "clinical_report"
+        # states the opposite to every consumer that reads it.
+        "candidate_interpretation": _candidate_interpretation,
+        # *** DEPRECATED ALIAS. Emitted 2026-08-22. REMOVE AFTER THE NEXT
+        # RELEASE -- target removal date 2026-11-22. ***
+        #
+        # The same object as `candidate_interpretation` above, never a
+        # second copy. It exists because this key is a CONSUMED
+        # INTERFACE, not a label: `LIMS_EXPORT_MAPPING.md` publishes
+        # `variants[i]["clinical_report"][...]` as the source path for
+        # hospital LIMS integration, and every in-repo consumer reads it
+        # as `.get("clinical_report") or {}` -- so dropping the key would
+        # not raise anywhere. It would hand each of them an empty dict
+        # and let them carry on, including in the sign-off path. That is
+        # a silent degradation, which is precisely the defect class this
+        # codebase keeps finding.
+        #
+        # THE REMOVAL DATE IS THE POINT. An alias without one is not a
+        # deprecation, it is just two names for one thing, and the
+        # migration never happens. When it goes, `review/signoff.py` must
+        # already read the new key.
+        "clinical_report": _candidate_interpretation,
         # New, additive key (Objective 6: AI model status reporting).
         # Unlike `ai_splicing_ensemble` below, this key is ALWAYS
         # present -- never conditionally omitted -- because the whole

@@ -126,7 +126,7 @@ def _document(clinical_report):
                 "variant": _VARIANT_DICT,
                 "gene_symbol": "TESTGENE",
                 "interpretation": {},
-                "clinical_report": clinical_report,
+                "candidate_interpretation": clinical_report,
                 "ai_model_status": {},
                 "errors": [],
             }

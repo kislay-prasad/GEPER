@@ -11,6 +11,7 @@ Regression tests for:
             user-visible warning, even when `vep.enabled: true`.
   Issue 4 — pyproject.toml used an invalid/legacy build backend.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -24,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ─── Issue 1: ClinVar offline mode ────────────────────────────────────────────
+
 
 class TestClinVarOfflineMode:
     def test_disabled_lookup_returns_none_without_network(self):
@@ -62,6 +64,7 @@ class TestClinVarOfflineMode:
 
 
 # ─── Issue 1: gnomAD offline mode ─────────────────────────────────────────────
+
 
 class TestGnomadOfflineMode:
     def test_disabled_lookup_returns_unavailable_without_network(self):
@@ -126,8 +129,19 @@ def test_cli_offline_mode_makes_no_outbound_network_calls(tmp_path):
     out_dir = tmp_path / "out"
 
     proc = subprocess.run(
-        [sys.executable, "main.py", "vcf", "--input", str(vcf),
-         "--output-dir", str(out_dir), "--config", str(cfg), "--log-level", "INFO"],
+        [
+            sys.executable,
+            "main.py",
+            "vcf",
+            "--input",
+            str(vcf),
+            "--output-dir",
+            str(out_dir),
+            "--config",
+            str(cfg),
+            "--log-level",
+            "INFO",
+        ],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -145,6 +159,7 @@ def test_cli_offline_mode_makes_no_outbound_network_calls(tmp_path):
 
 # ─── Issue 3: VEP wiring from `python main.py vcf` ───────────────────────────
 
+
 class TestVepWiringFromVcfCommand:
     def test_vep_stage_invoked_when_enabled(self, tmp_path, monkeypatch):
         """VEPAnnotationStage.run() must actually be called by cmd_vcf
@@ -153,6 +168,7 @@ class TestVepWiringFromVcfCommand:
         sys.path.insert(0, str(REPO_ROOT))
         import importlib
         import main as main_mod
+
         importlib.reload(main_mod)
 
         vcf = tmp_path / "sample.vcf"
@@ -168,6 +184,7 @@ class TestVepWiringFromVcfCommand:
             def run(self, filtered_vcf_path, output_dir, sample_id="SAMPLE"):
                 calls["ran"] = True
                 from pipeline.vep.stage import VEPAnnotationResult
+
                 return VEPAnnotationResult(
                     annotated_vcf_path=filtered_vcf_path,
                     variants=[],
@@ -175,15 +192,23 @@ class TestVepWiringFromVcfCommand:
                 )
 
         with patch("pipeline.vep.stage.VEPAnnotationStage", _FakeVepStage):
-            args = main_mod.parser.parse_args(
-                ["vcf", "--input", str(vcf), "--output-dir", str(out_dir)]
-            ) if hasattr(main_mod, "parser") else None
+            args = (
+                main_mod.parser.parse_args(
+                    ["vcf", "--input", str(vcf), "--output-dir", str(out_dir)]
+                )
+                if hasattr(main_mod, "parser")
+                else None
+            )
             if args is None:
                 # Fall back to calling cmd_vcf directly via argparse Namespace
                 import argparse
+
                 args = argparse.Namespace(
-                    input=str(vcf), output_dir=str(out_dir), sample_id=None,
-                    config=None, log_level="INFO",
+                    input=str(vcf),
+                    output_dir=str(out_dir),
+                    sample_id=None,
+                    config=None,
+                    log_level="INFO",
                 )
             rc = main_mod.cmd_vcf(args)
 
@@ -200,8 +225,17 @@ class TestVepWiringFromVcfCommand:
         out_dir = tmp_path / "out"
 
         proc = subprocess.run(
-            [sys.executable, "main.py", "vcf", "--input", str(vcf),
-             "--output-dir", str(out_dir), "--config", str(cfg)],
+            [
+                sys.executable,
+                "main.py",
+                "vcf",
+                "--input",
+                str(vcf),
+                "--output-dir",
+                str(out_dir),
+                "--config",
+                str(cfg),
+            ],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -221,8 +255,7 @@ class TestVepWiringFromVcfCommand:
         out_dir = tmp_path / "out"
 
         proc = subprocess.run(
-            [sys.executable, "main.py", "vcf", "--input", str(vcf),
-             "--output-dir", str(out_dir)],
+            [sys.executable, "main.py", "vcf", "--input", str(vcf), "--output-dir", str(out_dir)],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -235,7 +268,81 @@ class TestVepWiringFromVcfCommand:
         assert ("VEP annotation:" in combined) or ("VEP annotation SKIPPED" in combined)
 
 
+# ─── Issue 5: VEP plugin data must be configured, not assumed present ────────
+
+
+class TestVepPluginDataGating:
+    """A literal-docs operator who follows INSTALL_DEPENDENCIES.md installs
+    the `vep` binary and a cache dir, but is never told to fetch CADD/REVEL/
+    AlphaMissense plugin data files -- and there was previously no config
+    knob to supply them even if they did. `_build_vep_cmd` requested
+    `--plugin CADD` / `--plugin REVEL` / `--plugin AlphaMissense` bare (no
+    data-file argument) unconditionally, which VEP rejects immediately
+    (these three plugins require a data file argument), turning first run
+    into a hard failure regardless of cache/binary setup. Plugins must be
+    requested only when their data file is configured, and omitted
+    otherwise -- mirroring the graceful degradation VEP-as-a-whole already
+    documents and the ACMG classifier already tolerates (cadd_phred /
+    revel_score / am_pathogenicity are `Optional[float]`, checked
+    `is not None` before voting)."""
+
+    def _cmd(self, vep_cfg):
+        from pipeline.vep.stage import VEPAnnotationStage
+
+        stage = VEPAnnotationStage(cfg={"vep": vep_cfg})
+        return stage._build_vep_cmd("vep", "in.vcf", "out.vcf")
+
+    def test_no_bare_plugin_flags_by_default(self):
+        """With no plugin data configured (the out-of-the-box default),
+        CADD/REVEL/AlphaMissense must not be requested at all -- a bare
+        `--plugin CADD` with no data file is a guaranteed VEP failure."""
+        cmd = self._cmd({})
+        plugin_args = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--plugin"]
+        assert plugin_args == [], (
+            f"plugin requested without data file, which VEP rejects: {plugin_args}"
+        )
+
+    def test_cadd_plugin_requested_with_data_path_when_configured(self):
+        cmd = self._cmd({"cadd_data": "/data/cadd/whole_genome_SNVs.tsv.gz"})
+        assert cmd[cmd.index("--plugin") : cmd.index("--plugin") + 2] == (
+            ["--plugin", "CADD,/data/cadd/whole_genome_SNVs.tsv.gz"]
+        )
+
+    def test_revel_plugin_requested_with_data_path_when_configured(self):
+        cmd = self._cmd({"revel_data": "/data/revel/revel.tsv.gz"})
+        assert cmd[cmd.index("--plugin") : cmd.index("--plugin") + 2] == (
+            ["--plugin", "REVEL,/data/revel/revel.tsv.gz"]
+        )
+
+    def test_alphamissense_plugin_requested_with_data_path_when_configured(self):
+        cmd = self._cmd({"alphamissense_data": "/data/am/AlphaMissense_hg38.tsv.gz"})
+        assert cmd[cmd.index("--plugin") : cmd.index("--plugin") + 2] == (
+            ["--plugin", "AlphaMissense,file=/data/am/AlphaMissense_hg38.tsv.gz"]
+        )
+
+    def test_dir_plugins_passed_through_when_configured(self):
+        cmd = self._cmd({"dir_plugins": "/opt/vep/Plugins"})
+        assert "--dir_plugins" in cmd
+        assert cmd[cmd.index("--dir_plugins") + 1] == "/opt/vep/Plugins"
+
+    def test_all_three_configured_together(self):
+        cmd = self._cmd(
+            {
+                "cadd_data": "/data/cadd.tsv.gz",
+                "revel_data": "/data/revel.tsv.gz",
+                "alphamissense_data": "/data/am.tsv.gz",
+            }
+        )
+        plugin_args = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--plugin"]
+        assert plugin_args == [
+            "CADD,/data/cadd.tsv.gz",
+            "REVEL,/data/revel.tsv.gz",
+            "AlphaMissense,file=/data/am.tsv.gz",
+        ]
+
+
 # ─── Issue 2 / Issue 4: dependency & build-backend hygiene ───────────────────
+
 
 class TestDependencyAndBuildBackend:
     def test_python_multipart_in_pyproject_dependencies(self):
@@ -249,10 +356,11 @@ class TestDependencyAndBuildBackend:
                 # Fall back to raw-text scan with a pattern that is not
                 # confused by inner brackets such as uvicorn[standard].
                 import re
+
                 content = (REPO_ROOT / "pyproject.toml").read_text()
                 # Capture the full dependencies = [ ... ] block
                 m = re.search(
-                    r'^dependencies\s*=\s*\[(.*?)\]',
+                    r"^dependencies\s*=\s*\[(.*?)\]",
                     content,
                     re.DOTALL | re.MULTILINE,
                 )
@@ -280,12 +388,12 @@ class TestDependencyAndBuildBackend:
         """`python -m build --no-isolation --wheel` (or sdist) must succeed
         with the corrected build backend."""
         import importlib.util
+
         if importlib.util.find_spec("build") is None:
             pytest.skip("`build` package not installed in this environment")
 
         proc = subprocess.run(
-            [sys.executable, "-m", "build", "--no-isolation", "--wheel",
-             "--outdir", str(tmp_path)],
+            [sys.executable, "-m", "build", "--no-isolation", "--wheel", "--outdir", str(tmp_path)],
             cwd=str(REPO_ROOT),
             capture_output=True,
             text=True,
@@ -297,9 +405,11 @@ class TestDependencyAndBuildBackend:
 
 # ─── Upload endpoints work end-to-end (Issue 2 regression) ───────────────────
 
+
 def test_api_module_imports_with_multipart_available():
     """api/main.py wires UploadFile-based endpoints; importing it must not
     raise `python-multipart is not installed` errors."""
     import importlib
+
     api_main = importlib.import_module("api.main")
     assert hasattr(api_main, "app")

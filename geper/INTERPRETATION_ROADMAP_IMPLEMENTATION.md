@@ -1,7 +1,8 @@
 # GEPER Interpretation Roadmap -- Implementation & Validation Report
 
-This document covers the seven-phase clinical interpretation upgrade
-built on top of GEPER's existing biological evidence layer (DNA/RNA/
+This document covers the seven-phase upgrade to GEPER's
+clinician-assisting interpretation support, built on top of GEPER's
+existing biological evidence layer (DNA/RNA/
 protein models, ClinVar/dbSNP/BLAST/Ensembl/gnomAD, ClinGen, UniProt/
 InterPro/Pfam, AlphaFold DB). It does **not** re-document those
 pre-existing integrations -- see `VALIDATION_REPORT.md`,
@@ -17,8 +18,10 @@ Seven engines, wired together in `pipeline/interpretation.py`'s
    all 28 ACMG/AMP 2015 criteria individually from existing provider
    evidence. Each criterion reports `triggered` / `not_triggered` /
    `not_evaluated`, with rationale, supporting/conflicting evidence,
-   sources, and confidence. Combines into a classification via the
-   standard Richards et al. point-based rules.
+   sources, and confidence. Combines into a candidate ACMG
+   classification via the standard Richards et al. point-based rules,
+   for a qualified human reviewer to confirm -- GEPER does not
+   finalize the classification.
 2. **`pipeline/interpretation_result.py` -- `InterpretationResult` /
    `build_interpretation_result()`** (Phase 2): the single canonical
    object every downstream engine and report builder consumes. Carries

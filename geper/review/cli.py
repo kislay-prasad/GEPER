@@ -15,14 +15,17 @@ invocation convention -- see that module's docstring):
 
     python review/cli.py list-pending --search-root ./geper_output
 
+    python review/cli.py withdraw --output-dir ./geper_output \\
+        --reason "Signed off in error" --actor "rajesh.sharma@aiims.edu"
+
 This codebase has no installed `geper` console script and does not use
 Click anywhere (confirmed: plain `argparse` throughout, see
 `main.py::build_arg_parser`) -- this module follows that same plain-
 argparse, `build_arg_parser()` + `main() -> int` +
 `sys.exit(main())` shape, with one `ArgumentParser` per subcommand
-(`approve`/`override`/`list-pending`) rather than three separate
-scripts, since they share `--output-dir` and operate on the same
-review workflow.
+(`approve`/`override`/`list-pending`/`withdraw`) rather than four
+separate scripts, since they share `--output-dir` and operate on the
+same review workflow.
 
 All the actual logic lives in `review/signoff.py`; this module is a
 thin argument-parsing and error-reporting layer over it, matching how
@@ -36,6 +39,7 @@ from typing import Any, Dict, List, Optional
 from review.signoff import approve as _approve
 from review.signoff import list_pending as _list_pending
 from review.signoff import override as _override
+from review.signoff import withdraw as _withdraw
 from utils.exceptions import SignoffError
 from utils.logger import get_logger
 
@@ -45,7 +49,7 @@ logger = get_logger(__name__)
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="geper-signoff",
-        description="GEPER clinician review workflow -- approve a run, override a classification, or list runs awaiting review.",
+        description="GEPER clinician review workflow -- approve a run, override a classification, list runs awaiting review, or withdraw a standing sign-off.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -86,6 +90,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     list_parser.add_argument(
         "--all", action="store_true", dest="show_all", help="Also list REVIEWED runs (default: DRAFT only)."
+    )
+
+    withdraw_parser = subparsers.add_parser(
+        "withdraw",
+        help="Retract a standing sign-off: removes the signed manifest and resets review_status to DRAFT if it was REVIEWED, then regenerates all three report formats.",
+    )
+    withdraw_parser.add_argument("--output-dir", required=True, help="An existing GEPER --output-dir.")
+    withdraw_parser.add_argument("--reason", required=True, help="Free-text reason the sign-off is being withdrawn.")
+    withdraw_parser.add_argument(
+        "--actor", required=True, help="Identifies who is withdrawing the sign-off, e.g. an email address."
     )
 
     return parser
@@ -129,6 +143,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "list-pending":
             rows = _list_pending(search_root=args.search_root, show_all=args.show_all)
             _print_pending_table(rows)
+        elif args.command == "withdraw":
+            result = _withdraw(output_dir=args.output_dir, reason=args.reason, actor=args.actor)
+            print(f"Withdrawn: {result}")
         else:  # pragma: no cover - argparse's `required=True` on the subparsers already prevents this
             parser.error(f"Unknown command '{args.command}'.")
     except SignoffError as exc:

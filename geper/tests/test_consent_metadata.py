@@ -145,7 +145,7 @@ def _minimal_document():
             {
                 "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
                 "interpretation_result": {"gene_symbol": "BRCA1"},
-                "clinical_report": {
+                "candidate_interpretation": {
                     "executive_summary": "Test summary.",
                     "acmg_classification": {"classification": "Uncertain significance", "triggered_criteria": []},
                     "confidence": {"pending": True},

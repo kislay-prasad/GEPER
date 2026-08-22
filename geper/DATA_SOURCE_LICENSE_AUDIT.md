@@ -1,5 +1,16 @@
 # GEPER Data Source License Audit (2026-08-08)
 
+GEPER is developed for commercial clinical deployment, validated to NABL/ICMR requirements.
+This has been the project's operating assumption since before this record, and is stated here
+once so that it is not re-inferred from individual decisions. It is recorded as of 2026-08-22
+on the authority of the project owner. Decisions that already reasoned from it -- including the
+OMIM retirement on commercial-licensing grounds and the commercial-use verdicts throughout
+DATA_SOURCE_LICENSE_AUDIT.md and GROUND_TRUTH_DATASET_AUDIT.md -- were correct when made and are
+not re-dated by this statement.
+
+This states INTENT, not attainment: GEPER is not accredited, and this record makes no claim that
+it is. GEPER's own outbound licence remains deliberately unset (see the licensing hold, 2026-08-22).
+
 **Why a separate file from `LICENSE_AUDIT.md`:** that file audits AI/ML
 *model weights and code* (things GEPER downloads once, loads into a
 process, and runs a forward pass against). This file audits *external

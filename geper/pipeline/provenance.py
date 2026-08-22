@@ -382,6 +382,52 @@ def get_geper_code_version() -> str:
         return f"unknown (git invocation failed: {exc})"
 
 
+def get_runtime_environment_provenance() -> Dict[str, Any]:
+    """
+    OS, hardware, and thread-count facts for this run.
+
+    [[provenance-captures-no-os-hardware-or-thread-count]]: `get_geper_code_version`
+    (above) and `RunProvenanceCollector` capture the CODE and DATA halves of
+    reproducibility, but nothing previously captured the HARDWARE half. Two
+    runs with identical code_version and identical data-source versions can
+    still have executed on different machines with different core/thread
+    counts -- both legitimate sources of numerical non-determinism in CPU
+    model inference (see REPRODUCIBILITY_PROTOCOL.md S2a) -- and without this,
+    the provenance record could not distinguish "reproduced on the same
+    machine" from "reproduced on a different one".
+
+    Every field is captured honestly, matching this module's own convention
+    elsewhere (`get_geper_code_version`): stdlib-only and best-effort, never
+    raises, and a field this process cannot determine is reported as `None`
+    with the reason, not silently omitted or guessed.
+    """
+    import platform
+
+    result: Dict[str, Any] = {
+        "os": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor() or None,
+        "logical_cpu_count": os.cpu_count(),
+        "python_version": platform.python_version(),
+        "torch_thread_count": None,
+        "torch_thread_count_unavailable_reason": None,
+    }
+
+    # Best-effort: torch's own default CPU thread count is itself a source
+    # of the reduction-order non-determinism this record exists to let a
+    # later reproducibility comparison attribute correctly. Only meaningful
+    # if torch is actually importable in this process -- absence is
+    # reported honestly, not treated as an error.
+    try:
+        import torch
+
+        result["torch_thread_count"] = torch.get_num_threads()
+    except Exception as exc:  # noqa: BLE001 -- best-effort provenance capture, never fatal.
+        result["torch_thread_count_unavailable_reason"] = str(exc)
+
+    return result
+
+
 def get_model_checkpoint_identifiers() -> Dict[str, str]:
     """
     The AI model checkpoint identifiers GEPER's own config already

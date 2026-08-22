@@ -84,8 +84,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from report.clinical_report_builder import candidate_interpretation_of
 from report.summary import _derive_run_id, _derive_sample_id
-from utils.exceptions import LIMSExportBlockedError
+from review.signoff import require_reviewed as _require_reviewed_general
+from utils.exceptions import LIMSExportBlockedError, SignoffError
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -125,19 +127,25 @@ def _require_reviewed(document: Dict[str, Any]) -> None:
     `override()`'s docstring in that module for why this is the
     correct, intended re-block, not an oversight.
 
+    Delegates to `review/signoff.py::require_reviewed` (2026-08-22) --
+    the general form of this exact check, extracted so any future
+    automated consumer besides this one has it too. Catches that
+    function's `SignoffError` and re-raises `LIMSExportBlockedError`
+    with the same message, preserving this module's existing public
+    exception contract (`tests/test_export_lims.py` and
+    `tests/test_review_status_governance.py` both catch
+    `LIMSExportBlockedError` specifically).
+
     Raises `LIMSExportBlockedError` (never returns a value) -- callers
     with a directory to log to should catch this, write an audit entry
     via `_append_export_audit_log`, then re-raise (see
     `export_lims_json`/`export_lims_csv` below), so a blocked attempt
     is never silently swallowed.
     """
-    status = document.get("review_status")
-    if status != "reviewed":
-        raise LIMSExportBlockedError(
-            f"LIMS export refused: review_status is {status!r}, not 'reviewed'. Clinical export requires "
-            "completed review and sign-off (review/signoff.py::approve()) before this run's data may reach "
-            "a downstream LIMS."
-        )
+    try:
+        _require_reviewed_general(document, consumer="LIMS export")
+    except SignoffError as exc:
+        raise LIMSExportBlockedError(str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +430,7 @@ def _clinical_database(variant_result: Dict[str, Any]) -> LIMSClinicalDatabase:
 
 def _build_finding(finding_number: int, variant_result: Dict[str, Any]) -> LIMSFinding:
     ir = variant_result.get("interpretation_result")
-    clinical = variant_result.get("clinical_report")
+    clinical = candidate_interpretation_of(variant_result)
     interpretation_available = isinstance(ir, dict) and "error" not in ir and clinical is not None
 
     if not interpretation_available:

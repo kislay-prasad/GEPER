@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
 from report.clinical_report_builder import (
+    candidate_interpretation_of,
     _QC_METRIC_LABELS,
     _QC_METRIC_ORDER,
     _QC_METRIC_UNITS,
@@ -338,7 +339,7 @@ class ReportGenerator:
         lines = ["## Reviewer Attention", ""]
         attention: List[str] = []
         for idx, variant_result in enumerate(json_document.get("variants", []), start=1):
-            flags = _variant_reviewer_flags(variant_result, variant_result.get("clinical_report"))
+            flags = _variant_reviewer_flags(variant_result, candidate_interpretation_of(variant_result))
             if flags:
                 v = variant_result.get("variant") or {}
                 locus = f"{v.get('chrom')}:{v.get('pos')} {v.get('ref')}>{v.get('alt')}"
@@ -473,7 +474,7 @@ class ReportGenerator:
         Deliberately NOT titled/framed as ACMG or clinical evidence:
         this table is a reviewer-triage aid only (which variant to
         read first), never a classification signal -- the explicit
-        callout below says so, and `## Clinical Interpretation Report`
+        callout below says so, and `## Candidate Interpretation`
         (per-variant, further down) is completely unaffected by
         anything here.
         """
@@ -497,7 +498,7 @@ class ReportGenerator:
             "phenotype profile matches the patient's observed symptoms, combined with each "
             "variant's existing priority score. This is a SEPARATE, additive signal: it never "
             "influences ACMG classification, PP4, confidence, or priority score below -- see "
-            'each variant\'s own "Clinical Interpretation Report" section for those.*'
+            'each variant\'s own "Candidate Interpretation" section for those.*'
         )
         lines.append("")
         lines.append("| Case Rank | Finding | Variant / Gene | Case Score | Phenotype Match | Why |")
@@ -592,7 +593,9 @@ class ReportGenerator:
 
         lines.extend(self._render_ai_model_status(result.get("ai_model_status", {})))
 
-        lines.extend(self._render_clinical_report(result.get("clinical_report"), result.get("interpretation", {})))
+        lines.extend(
+            self._render_clinical_report(candidate_interpretation_of(result), result.get("interpretation", {}))
+        )
 
         lines.append("### Annotation Detail (Audit Trail)")
         lines.append("")
@@ -641,14 +644,14 @@ class ReportGenerator:
         """
         if not clinical_report:
             return [
-                "## Clinical Interpretation Report",
+                "## Candidate Interpretation (requires clinician review)",
                 "",
-                "*Clinical report unavailable for this variant (interpretation aggregation did not "
+                "*Candidate interpretation unavailable for this variant (interpretation aggregation did not "
                 "complete). See Annotation Detail below for whatever raw stage output is available.*",
                 "",
             ]
 
-        lines = ["## Clinical Interpretation Report", ""]
+        lines = ["## Candidate Interpretation (requires clinician review)", ""]
 
         lines.append("### 1. Executive Summary")
         lines.append("")

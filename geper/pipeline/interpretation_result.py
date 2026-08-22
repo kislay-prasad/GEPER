@@ -26,6 +26,7 @@ optional kwarg (default `None`, matching the existing pattern used for
 `gnomad_result`/`clingen_result`/etc.) so old callers are unaffected.
 """
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -214,11 +215,121 @@ class InterpretationResult:
         }
 
 
-# Generic, non-diagnostic next-step language keyed off the ACMG
-# classification. This is standard clinical-genetics workflow guidance
-# (e.g. "confirm with an orthogonal method"), not a patient-specific
-# recommendation, and is not a substitute for clinician judgment -- callers
-# surface it as-is.
+# Verbs that open an instruction to the clinician. A WHITELIST, and it
+# must stay one: a list of rejected phrasings would pass every test we
+# could write today and admit the next conclusion-shaped entry
+# unchallenged, which is exactly how the two entries this gate removed
+# got in.
+#
+# Extending this list is expected and fine. Extending it to admit a
+# particular sentence that will not otherwise pass is not -- that is the
+# gate being edited to fit the entry rather than the entry being written
+# to fit the gate.
+_CLINICIAN_ACTION_OPENERS = frozenset(
+    {
+        "arrange",
+        "avoid",
+        "confirm",
+        "consider",
+        "correlate",
+        "discuss",
+        "do",
+        "document",
+        "monitor",
+        "obtain",
+        "order",
+        "reanalyse",
+        "reanalyze",
+        "reclassify",
+        "refer",
+        "repeat",
+        "request",
+        "review",
+        "schedule",
+        "seek",
+        "verify",
+    }
+)
+
+# Clause boundaries: a semicolon, or a sentence break. The sentence rule
+# requires two letters before the period so "(e.g. Sanger sequencing)"
+# is not treated as the end of a clause.
+# A clause boundary is a semicolon, or a full stop that ends a real word
+# (two lowercase letters before it, so "e.g. Sanger" is not a boundary)
+# followed by any further text.
+#
+# THE LOOKAHEAD IS `\S`, NOT `[A-Z]`, AND THE DIFFERENCE IS A FIXED BUG:
+# requiring a capital meant "Discuss with the lab. the result is benign."
+# was never split, so the second half was never inspected as a clause and
+# its content was never checked at all. The gate returned True. That is
+# the silent direction -- it reported "this is an action" about text
+# carrying a conclusion.
+#
+# *** WHAT THIS SPLITTER STILL DOES NOT CATCH, STATED BECAUSE AN UNSTATED
+# ASSUMPTION IS THE THING THAT ROTS: A COMMA IS NOT A BOUNDARY, AND
+# NEITHER IS "and". "Refer to a specialist, the evidence favors
+# pathogenicity." PASSES THIS GATE. That is not an oversight left to be
+# tidied later -- adding "," rejects two entries shipping today
+# ("(segregation, functional studies)" and "population, functional, or
+# segregation data"), so closing it needs a splitter that understands
+# parentheses and lists. The hole is pinned by two deliberately
+# wrong-looking tests in test_recommendation_gate.py named
+# test_KNOWN_LIMIT_*, so it is checked rather than merely written down. ***
+_CLAUSE_BOUNDARY = re.compile(r";|(?<=[a-z]{2})\.\s+(?=\S)")
+
+
+def is_clinician_action(text: str) -> bool:
+    """
+    True if `text` reads as a next step the clinician takes, rather than
+    a statement about what the evidence means.
+
+    EVERY clause must open with an imperative from
+    `_CLINICIAN_ACTION_OPENERS`. All of them, not one: a single
+    directive clause does not license a conclusion sitting beside it,
+    and "Evidence favors X; reclassification should follow" is a
+    conclusion whichever half you read.
+
+    HONEST LIMIT, stated so nobody mistakes this for more than it is:
+    this is a STRUCTURAL proxy for a semantic distinction. "Consider
+    that this variant is benign" opens with an accepted imperative and
+    would pass while smuggling a conclusion. So does "Refer to a
+    specialist, the evidence favors pathogenicity." -- a comma is not a
+    clause boundary here, and that one is the stronger bypass, because
+    the smuggled half need not open with anything at all. See the
+    `_CLAUSE_BOUNDARY` comment for why it is not simply closed, and
+    `test_KNOWN_LIMIT_*` for where it is pinned. The gate makes the defect
+    require deliberate circumvention instead of being what you get by
+    default -- it does not make it impossible. A reviewer still reads
+    the entry.
+    """
+    clauses = [c.strip() for c in _CLAUSE_BOUNDARY.split(text or "") if c.strip()]
+    if not clauses:
+        return False
+    for clause in clauses:
+        first = clause.split()[0].strip("\"'(),.:").lower() if clause.split() else ""
+        if first not in _CLINICIAN_ACTION_OPENERS:
+            return False
+    return True
+
+
+# Next-step language keyed off the ACMG classification, surfaced to the
+# clinician as-is by every renderer.
+#
+# EVERY ENTRY IS A STEP THE CLINICIAN TAKES, NEVER A STATEMENT ABOUT
+# WHAT THE EVIDENCE MEANS. That distinction is not merely asserted here
+# -- `_assert_entries_are_clinician_actions()` below enforces it at
+# import time, so an entry that fails cannot enter the map at all. The
+# previous version of this comment asserted the same property while two
+# of its five entries lacked it, which is why the property is now
+# checked rather than claimed.
+#
+# "Benign" carries no entry deliberately. Its previous entry
+# ("Population frequency ... is inconsistent with a rare-disease-causing
+# role for this variant") named no step at all -- it was a conclusion
+# end to end, so nothing survived the gate. Writing replacement clinical
+# guidance is not an engineering decision, so none was invented. The
+# Markdown renderer prints an explicit "No specific recommendations
+# generated." line, so this is a visible empty state, not a silent one.
 _RECOMMENDATIONS_BY_CLASSIFICATION = {
     "Pathogenic": [
         "Confirm the variant call with an orthogonal method (e.g. Sanger sequencing) before clinical reporting.",
@@ -229,16 +340,44 @@ _RECOMMENDATIONS_BY_CLASSIFICATION = {
         "Consider additional evidence (segregation, functional studies) to strengthen classification if clinically actionable.",
     ],
     "Uncertain Significance": [
-        "Insufficient evidence for a definitive classification; do not use for clinical decision-making without additional evidence.",
+        # Was "Insufficient evidence for a definitive classification; do
+        # not use ...". The leading clause stated a conclusion about the
+        # evidence and did not survive the gate; the instruction it was
+        # attached to is unchanged.
+        "Do not use for clinical decision-making without additional evidence.",
         "Consider reanalysis as new population, functional, or segregation data becomes available.",
     ],
     "Likely Benign": [
-        "Evidence favors a benign interpretation; reclassification should follow if new conflicting evidence emerges.",
+        # Was "Evidence favors a benign interpretation; reclassification
+        # should follow if new conflicting evidence emerges." The first
+        # clause was a conclusion. The second is the same instruction,
+        # re-expressed as the action it always described -- no new
+        # clinical advice is added here.
+        "Reclassify if new conflicting evidence emerges.",
     ],
-    "Benign": [
-        "Population frequency and/or other evidence is inconsistent with a rare-disease-causing role for this variant.",
-    ],
+    "Benign": [],
 }
+
+
+def _assert_entries_are_clinician_actions() -> None:
+    """
+    Import-time gate. Raises rather than warning: a conclusion stated in
+    GEPER's own voice reaches a clinician through every renderer, and
+    this codebase's recurring defect is a bad state that reads exactly
+    like a good one. Failing at import is loud, immediate, impossible to
+    misread, and happens long before anything renders.
+    """
+    for classification, entries in _RECOMMENDATIONS_BY_CLASSIFICATION.items():
+        for entry in entries:
+            if not is_clinician_action(entry):
+                raise ValueError(
+                    f"_RECOMMENDATIONS_BY_CLASSIFICATION[{classification!r}] contains an entry that is not a "
+                    f"step the clinician takes: {entry!r}. Recommendations state next steps; they never state "
+                    f"what the evidence means about the variant."
+                )
+
+
+_assert_entries_are_clinician_actions()
 
 
 def _dedupe(items: List[str]) -> List[str]:

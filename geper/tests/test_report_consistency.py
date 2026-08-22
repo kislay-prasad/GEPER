@@ -124,7 +124,7 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
         }
         vr = _build_variant_result_with_serialized_interpretation(uniprot_result=uniprot_result)
 
-        prot = vr["clinical_report"]["protein_knowledge"]
+        prot = vr["candidate_interpretation"]["protein_knowledge"]
         self.assertTrue(prot["uniprot_available"])
         self.assertEqual(prot["uniprot"]["accession"], "A0A3G1DJQ2")
         self.assertEqual(prot["uniprot"]["protein_name"], "Small humanin-like peptide 3")
@@ -137,7 +137,7 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
         not-found result still renders as not-found."""
         uniprot_result = {"found": False, "skipped": False, "error": None, "reason": "no reviewed entry"}
         vr = _build_variant_result_with_serialized_interpretation(uniprot_result=uniprot_result)
-        prot = vr["clinical_report"]["protein_knowledge"]
+        prot = vr["candidate_interpretation"]["protein_knowledge"]
         self.assertFalse(prot["uniprot_available"])
         self.assertIsNone(prot["uniprot_error"])
 
@@ -166,7 +166,7 @@ class TestClinicalReportNeverContradictsRawStageOutput(unittest.TestCase):
             clingen_result=clingen_result,
             alphafold_result=alphafold_result,
         )
-        cr = vr["clinical_report"]
+        cr = vr["candidate_interpretation"]
 
         self.assertTrue(cr["population_evidence"]["gnomad"]["found"])
         self.assertEqual(cr["population_evidence"]["gnomad"]["global_af"], 0.0001)
@@ -212,7 +212,7 @@ class TestErrorStateNeverConflatedWithNotFound(unittest.TestCase):
     def test_interpro_error_is_distinct_from_no_domains(self):
         interpro_error_result = {"found": False, "error": "InterPro REST API request failed after 3 attempts: boom"}
         vr = _build_variant_result_with_serialized_interpretation(interpro_result=interpro_error_result)
-        prot = vr["clinical_report"]["protein_knowledge"]
+        prot = vr["candidate_interpretation"]["protein_knowledge"]
         self.assertFalse(prot["interpro_available"])
         self.assertIn("boom", prot["interpro_error"])
 
@@ -224,7 +224,7 @@ class TestErrorStateNeverConflatedWithNotFound(unittest.TestCase):
     def test_uniprot_error_is_distinct_from_no_entry(self):
         uniprot_error_result = {"found": False, "error": "UniProt REST API request failed after 3 attempts: boom"}
         vr = _build_variant_result_with_serialized_interpretation(uniprot_result=uniprot_error_result)
-        prot = vr["clinical_report"]["protein_knowledge"]
+        prot = vr["candidate_interpretation"]["protein_knowledge"]
         self.assertFalse(prot["uniprot_available"])
         self.assertIsNotNone(prot["uniprot_error"])
 
@@ -239,14 +239,14 @@ class TestErrorStateNeverConflatedWithNotFound(unittest.TestCase):
         vr = _build_variant_result_with_serialized_interpretation(
             clinvar_result=clinvar_error, clingen_result=clingen_error
         )
-        clin = vr["clinical_report"]["clinical_evidence"]
+        clin = vr["candidate_interpretation"]["clinical_evidence"]
         self.assertIsNotNone(clin["clinvar_error"])
         self.assertIsNotNone(clin["clingen_error"])
 
     def test_alphafold_error_is_distinct_from_no_structure(self):
         alphafold_error = {"found": False, "error": "AlphaFold DB request failed"}
         vr = _build_variant_result_with_serialized_interpretation(alphafold_result=alphafold_error)
-        struct = vr["clinical_report"]["structural_knowledge"]
+        struct = vr["candidate_interpretation"]["structural_knowledge"]
         self.assertFalse(struct["available"])
         self.assertIsNotNone(struct["error"])
 
@@ -282,7 +282,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
             "error": "BLAST server unreachable: boom",
         }
         vr = _build_variant_result_with_serialized_interpretation(blast_result=blast_error)
-        seq = vr["clinical_report"]["sequence_context"]
+        seq = vr["candidate_interpretation"]["sequence_context"]
         self.assertEqual(seq["blast"]["error"], "BLAST server unreachable: boom")
 
         doc = {"generated_at": "now", "input_vcf": "x.vcf", "variant_count": 1, "variants": [vr]}
@@ -296,7 +296,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
     def test_genuine_no_blast_hits_is_unaffected(self):
         blast_no_hits = {"hits": [], "hit_count": 0, "skipped": False}
         vr = _build_variant_result_with_serialized_interpretation(blast_result=blast_no_hits)
-        seq = vr["clinical_report"]["sequence_context"]
+        seq = vr["candidate_interpretation"]["sequence_context"]
         self.assertIsNone(seq["blast"]["error"])
 
     def test_mmsplice_error_is_distinct_from_ineligible(self):
@@ -308,7 +308,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
             "error": "Keras inference crashed",
         }
         vr = _build_variant_result_with_serialized_interpretation(mmsplice_result=mmsplice_error)
-        ai = vr["clinical_report"]["ai_consensus"]
+        ai = vr["candidate_interpretation"]["ai_consensus"]
         self.assertEqual(len(ai["model_errors"]), 1)
         self.assertEqual(ai["model_errors"][0]["source"], "MMSplice")
         self.assertEqual(ai["model_errors"][0]["error"], "Keras inference crashed")
@@ -322,7 +322,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
     def test_alphamissense_error_is_distinct_from_ineligible(self):
         am_error = {"skipped": True, "reason": "tabix crashed", "error": "tabix crashed"}
         vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_error)
-        ai = vr["clinical_report"]["ai_consensus"]
+        ai = vr["candidate_interpretation"]["ai_consensus"]
         self.assertEqual(len(ai["model_errors"]), 1)
         self.assertEqual(ai["model_errors"][0]["source"], "AlphaMissense")
 
@@ -343,7 +343,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
         vr = _build_variant_result_with_serialized_interpretation(
             alphamissense_result=am_error, mmsplice_result=mmsplice_ok
         )
-        ai = vr["clinical_report"]["ai_consensus"]
+        ai = vr["candidate_interpretation"]["ai_consensus"]
         self.assertEqual(len(ai["classifying_models"]), 1)
         self.assertEqual(ai["classifying_models"][0]["source"], "MMSplice")
         self.assertEqual(len(ai["model_errors"]), 1)
@@ -354,7 +354,7 @@ class TestErrorVsSkipNeverConflatedForBlastMmspliceAlphaMissense(unittest.TestCa
         legitimate ineligibility skip still produces no error entry."""
         am_ineligible = {"skipped": True, "reason": "variant is not an eligible missense substitution"}
         vr = _build_variant_result_with_serialized_interpretation(alphamissense_result=am_ineligible)
-        ai = vr["clinical_report"]["ai_consensus"]
+        ai = vr["candidate_interpretation"]["ai_consensus"]
         self.assertEqual(ai["model_errors"], [])
 
 

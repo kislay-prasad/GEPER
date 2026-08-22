@@ -33,6 +33,52 @@ failing hook blocks the commit until fixed (ruff auto-fixes what it
 can, ruff-format rewrites the file in place, and both simply need to be
 re-staged and re-committed).
 
+### Your test run does not bind to the committed tree -- re-verify after a hook rewrites a file
+
+**A hook that fails on its first pass and rewrites the file means whatever
+you tested a moment ago is not what you are about to commit.** `ruff
+check --fix` and `ruff format` run *after* you've already run tests and
+decided the change is correct, but *before* the commit is final -- and
+their edits are never re-tested automatically. "I ran the tests, they
+passed, then I committed" does not mean the tree that actually reached
+`origin/master` still passes; it means the tree you tested did, and
+that tree may not be the one git recorded.
+
+This has bitten this project more than once with the same shape:
+lint autofix silently stripping a deliberate re-export (flagged as an
+unused import, `F401`, when it wasn't), and formatting rewrites large
+enough that a reviewer skimming the diff could plausibly miss a
+semantic change hiding among hundreds of mechanical ones. Two commits
+in this history (`cfba75e`, `751b910`) hit the "hook rewrites the whole
+file, not just the lines you touched" version of this directly -- ruff
+reformatted files wholesale on their first commit under the hook,
+because nothing had normalized them before.
+
+**The fix is not to skip the hooks (`--no-verify` defeats the point of
+having them) -- it's to re-verify after they run, not just before:**
+
+1. Stage your change, run your tests, confirm they pass -- as normal.
+2. `git commit`. If a hook rewrites a file, the commit is blocked (as
+   documented above) and the working tree now differs from what you
+   just tested.
+3. **Before re-staging and re-committing, read the diff the hook
+   produced** (`git diff`) and confirm it's mechanical (formatting,
+   an import genuinely unused) rather than a change that could alter
+   behavior. If it's non-trivial, re-run the tests against the
+   post-hook tree before committing again -- don't assume a passing
+   run from step 1 still applies.
+4. Re-stage, commit again. It should now succeed with no further
+   hook-reported changes, since the tree is already in the shape the
+   hooks want.
+
+The one thing this doesn't solve: there is no CI in this repository
+(no `.github/workflows`) to catch a case where step 3 was skipped, so
+this discipline is presently enforced by habit, not by tooling. A
+`pre-commit run --files <changed files>` invoked manually *before* your
+first `git commit` attempt (rather than discovering the mutation via a
+blocked commit) surfaces the same rewrite earlier and is worth doing
+for any change you're not prepared to re-verify twice.
+
 To run all hooks against the whole repo on demand (not just staged
 files) -- useful right after first installing, or before a large PR:
 

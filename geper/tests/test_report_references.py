@@ -116,7 +116,7 @@ def _document(evidence_sources):
             {
                 "variant": {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"},
                 "interpretation": {},
-                "clinical_report": cr,
+                "candidate_interpretation": cr,
                 "ai_model_status": {},
                 "errors": [],
             }

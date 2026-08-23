@@ -185,6 +185,14 @@ pyyaml>=6.0
 # with anything else in this file.
 pydantic>=2.0,<3.0
 
+# --- Structures API (api/main.py) -------------------------------------------
+# geper's first HTTP surface (2026-08-23, ruled Option A): the AlphaFold
+# structure-annotation endpoint the 3D viewer calls. Version constraints
+# match kim_pipeline/requirements.txt's own fastapi/uvicorn pins for
+# consistency across the two trees.
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
 # --- Clinical PDF report generation (report/summary.py) --------------------
 # BSD-licensed (License :: OSI Approved :: BSD License, verified against
 # PyPI's own package metadata) -- no commercial-use restriction, unlike

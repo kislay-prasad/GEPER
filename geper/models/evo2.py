@@ -67,7 +67,7 @@ import torch
 
 from config import CONFIG
 from models.base_model import BaseGenomicModel
-from utils.auto_install import ensure_pip_package_available
+from utils.auto_install import PackageCheckStatus, check_pip_package_availability, ensure_pip_package_available
 from utils.device_utils import get_cuda_compute_capability
 from utils.exceptions import ModelLoadError
 
@@ -127,12 +127,17 @@ class Evo2Model(BaseGenomicModel):
     @classmethod
     def unavailability_reason(cls) -> str:
         if not torch.cuda.is_available():
-            return (
-                "no CUDA GPU detected (Evo 2 has no practical CPU path)"
-            )
+            return "no CUDA GPU detected (Evo 2 has no practical CPU path)"
         gpu_reason = cls._unsupported_gpu_reason()
         if gpu_reason is not None:
             return gpu_reason
+        # Consult the tri-state rather than assuming: "not installed" is
+        # a claim about a check that may never have run.
+        status = check_pip_package_availability("evo2")
+        if status is PackageCheckStatus.NOT_CHECKED:
+            return "availability not checked (auto-install disabled under pytest)"
+        if status is PackageCheckStatus.ABSENT:
+            return "not installed ('pip install evo2' did not succeed)"
         return "not installed"
 
     def _load_impl(self):
@@ -154,7 +159,17 @@ class Evo2Model(BaseGenomicModel):
                 "via is_available(); this error should only be reachable "
                 "if loading was forced explicitly."
             )
-        if not ensure_pip_package_available("evo2"):
+        evo2_status = check_pip_package_availability("evo2")
+        if evo2_status is PackageCheckStatus.NOT_CHECKED:
+            raise ModelLoadError(
+                "Evo 2 requires the official 'evo2' pip package, whose "
+                "availability was not checked in this environment "
+                "(auto-install is disabled under pytest) -- it is not "
+                "confirmed missing, it was never looked for. See "
+                "https://github.com/ArcInstitute/evo2 for manual install "
+                "instructions."
+            )
+        if evo2_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError(
                 "Evo 2 requires the official 'evo2' pip package, and "
                 "automatic installation did not succeed in this "
@@ -224,14 +239,10 @@ class Evo2Model(BaseGenomicModel):
             sequence = sequence[:max_len]
             truncated = True
 
-        input_ids = torch.tensor(
-            self.tokenizer.tokenize(sequence), dtype=torch.int
-        ).unsqueeze(0).to(self.device)
+        input_ids = torch.tensor(self.tokenizer.tokenize(sequence), dtype=torch.int).unsqueeze(0).to(self.device)
 
         layer_name = CONFIG.models.EVO2_EMBEDDING_LAYER
-        _, embeddings = self._evo2(
-            input_ids, return_embeddings=True, layer_names=[layer_name]
-        )
+        _, embeddings = self._evo2(input_ids, return_embeddings=True, layer_names=[layer_name])
         layer_embedding = embeddings[layer_name].float()
         pooled = layer_embedding.mean(dim=1)
 

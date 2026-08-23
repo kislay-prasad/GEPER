@@ -74,7 +74,7 @@ from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
 from pipeline.models.spliceformer import loader as spliceformer_loader
-from utils.auto_install import ensure_pip_package_available
+from utils.auto_install import PackageCheckStatus, check_pip_package_availability, ensure_pip_package_available
 
 # Total input window length the official checkpoints were trained
 # with: SL (5,000, the number of central positions scored per
@@ -193,7 +193,15 @@ class SpliceFormerPlugin(PluginModel):
         self._weight_cache = WeightCache()
 
     def _load_impl(self) -> None:
-        if not ensure_pip_package_available("einops", import_name="einops"):
+        einops_status = check_pip_package_availability("einops", import_name="einops")
+        if einops_status is PackageCheckStatus.NOT_CHECKED:
+            raise RuntimeError(
+                "'einops' availability was not checked in this environment "
+                "(auto-install is disabled under pytest) -- it is not confirmed "
+                "missing, it was never looked for. Install it yourself, or run "
+                "outside the test harness, to find out."
+            )
+        if einops_status is PackageCheckStatus.ABSENT:
             raise RuntimeError(
                 "Automatic installation of 'einops' did not succeed in this "
                 "environment (check network access to pypi.org, or install "

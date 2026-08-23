@@ -101,7 +101,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
-from utils.auto_install import ensure_pip_package_available
+from utils.auto_install import PackageCheckStatus, check_pip_package_availability, ensure_pip_package_available
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 
@@ -412,15 +412,27 @@ class BLASTClient:
                 # letting every search() call fail with a raised
                 # exception later (requirement: "graceful skip if both
                 # unavailable").
-                if not ensure_pip_package_available("biopython", import_name="Bio"):
-                    logger.warning(
-                        "BLAST mode 'auto': no usable local blastn/database "
-                        "found, and Biopython (required for remote NCBI "
-                        "BLAST) could not be imported or installed in this "
-                        "environment. BLAST will be skipped gracefully for "
-                        "this pipeline instance -- interpretation continues "
-                        "without BLAST evidence."
-                    )
+                biopython = check_pip_package_availability("biopython", import_name="Bio")
+                if biopython is not PackageCheckStatus.PRESENT:
+                    if biopython is PackageCheckStatus.NOT_CHECKED:
+                        logger.warning(
+                            "BLAST mode 'auto': no usable local blastn/database "
+                            "found, and Biopython's availability was not checked "
+                            "in this environment (auto-install is disabled under "
+                            "pytest), so whether remote BLAST could run here is "
+                            "unknown rather than ruled out. BLAST will be skipped "
+                            "gracefully for this pipeline instance -- "
+                            "interpretation continues without BLAST evidence."
+                        )
+                    else:
+                        logger.warning(
+                            "BLAST mode 'auto': no usable local blastn/database "
+                            "found, and Biopython (required for remote NCBI "
+                            "BLAST) could not be imported or installed in this "
+                            "environment. BLAST will be skipped gracefully for "
+                            "this pipeline instance -- interpretation continues "
+                            "without BLAST evidence."
+                        )
                     mode = "skip"
             logger.info(
                 f"BLAST mode 'auto' resolved to '{mode}' "
@@ -625,7 +637,16 @@ class BLASTClient:
     # Remote (NCBI-hosted) BLAST via Biopython
     # ------------------------------------------------------------------
     def _search_remote(self, sequence: str, program: str, database: str, max_hits: int) -> Dict[str, Any]:
-        if not ensure_pip_package_available("biopython", import_name="Bio"):
+        biopython = check_pip_package_availability("biopython", import_name="Bio")
+        if biopython is PackageCheckStatus.NOT_CHECKED:
+            raise ExternalAPIError(
+                "Remote BLAST requires Biopython, whose availability was not "
+                "checked in this environment (auto-install is disabled under "
+                "pytest). It is not confirmed missing -- it was never looked "
+                "for. Install it with `pip install biopython`, or run outside "
+                "the test harness, to find out."
+            )
+        if biopython is PackageCheckStatus.ABSENT:
             raise ExternalAPIError(
                 "Remote BLAST requires Biopython, and automatic "
                 "installation ('pip install biopython') did not succeed "

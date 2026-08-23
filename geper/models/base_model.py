@@ -85,6 +85,11 @@ class BaseGenomicModel(abc.ABC):
         unavailable for a different, more specific reason (e.g. Evo 2
         being present-but-unsupported on a given GPU architecture) so
         the person running the pipeline sees *why*, not just *that*.
+
+        A model whose unavailability can mean "we never checked" must
+        override this: the default cannot distinguish a package that was
+        checked and found missing from one nothing ever looked for. See
+        `utils/auto_install.py::PackageCheckStatus`.
         """
         return "not installed"
 

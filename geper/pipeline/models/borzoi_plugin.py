@@ -53,7 +53,7 @@ from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
-from utils.auto_install import ensure_pip_package_available
+from utils.auto_install import PackageCheckStatus, check_pip_package_availability, ensure_pip_package_available
 
 # Borzoi's official fixed input length: 524,288 bp ("524kb input
 # sequences" -- github.com/calico/borzoi's own README). Not guessed.
@@ -214,7 +214,15 @@ class BorzoiPlugin(PluginModel):
         # status.py::_ensemble_model_status` reports it with a stated
         # reason, and `report_generator.py`'s "AI Models" table renders
         # unconditionally.
-        if not ensure_pip_package_available("borzoi-pytorch", import_name="borzoi_pytorch"):
+        borzoi_pytorch_status = check_pip_package_availability("borzoi-pytorch", import_name="borzoi_pytorch")
+        if borzoi_pytorch_status is PackageCheckStatus.NOT_CHECKED:
+            raise RuntimeError(
+                "'borzoi-pytorch' availability was not checked in this environment "
+                "(auto-install is disabled under pytest) -- it is not confirmed "
+                "missing, it was never looked for. Install it yourself, or run "
+                "outside the test harness, to find out."
+            )
+        if borzoi_pytorch_status is PackageCheckStatus.ABSENT:
             raise RuntimeError(
                 "Automatic installation of 'borzoi-pytorch' did not succeed "
                 "in this environment (check network access to pypi.org, or "

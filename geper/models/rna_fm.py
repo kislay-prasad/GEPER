@@ -86,7 +86,12 @@ import torch
 
 from config import CONFIG
 from models.base_model import BaseGenomicModel
-from utils.auto_install import ensure_pip_package_available, is_pip_package_installed
+from utils.auto_install import (
+    PackageCheckStatus,
+    check_pip_package_availability,
+    ensure_pip_package_available,
+    is_pip_package_installed,
+)
 from utils.exceptions import ModelLoadError
 
 # Download filenames `fm.pretrained` itself hardcodes per variant (see
@@ -139,8 +144,22 @@ def is_rna_fm_installed() -> bool:
 def ensure_rna_fm_available() -> bool:
     """Auto-installs the official `rna-fm` PyPI package exactly once per
     process if missing. Import name is `fm`, distinct from the pip
-    package name `rna-fm` -- see utils.auto_install.ensure_pip_package_available."""
+    package name `rna-fm` -- see utils.auto_install.ensure_pip_package_available.
+
+    Bool surface, for callers indifferent to WHY it is unavailable. If
+    you are about to write a reason string on the False branch, call
+    `check_rna_fm_availability()` below instead."""
     return ensure_pip_package_available("rna-fm", import_name="fm")
+
+
+def check_rna_fm_availability() -> PackageCheckStatus:
+    """Tri-state sibling of `ensure_rna_fm_available()`, for callers that
+    must distinguish "checked and absent" from "never checked".
+
+    Exists so the `rna-fm`/`fm` pip-name-vs-import-name mapping stays
+    encapsulated here -- the reason the bool wrapper existed at all --
+    rather than leaking to every call site that needs the tri-state."""
+    return check_pip_package_availability("rna-fm", import_name="fm")
 
 
 def _torch_hub_checkpoint_path(filename: str) -> Path:
@@ -314,8 +333,30 @@ class RNAFMModel(BaseGenomicModel):
         # setup, not before it.
         return ensure_rna_fm_available()
 
+    @classmethod
+    def unavailability_reason(cls) -> str:
+        """Overrides `BaseGenomicModel`'s generic "not installed", which
+        cannot tell a package that was checked and found missing from one
+        whose availability was never checked at all."""
+        status = check_rna_fm_availability()
+        if status is PackageCheckStatus.NOT_CHECKED:
+            return "availability not checked (auto-install disabled under pytest)"
+        if status is PackageCheckStatus.ABSENT:
+            return "not installed ('pip install rna-fm' did not succeed)"
+        return "not installed"
+
     def _load_impl(self):
-        if not ensure_rna_fm_available():
+        rna_fm_status = check_rna_fm_availability()
+        if rna_fm_status is PackageCheckStatus.NOT_CHECKED:
+            raise ModelLoadError(
+                "RNA-FM requires the official 'rna-fm' package, whose "
+                "availability was not checked in this environment "
+                "(auto-install is disabled under pytest) -- it is not "
+                "confirmed missing, it was never looked for. Install it "
+                "with `pip install rna-fm`, or run outside the test "
+                "harness, to find out."
+            )
+        if rna_fm_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError(
                 "RNA-FM requires the official 'rna-fm' package, and automatic "
                 "installation ('pip install rna-fm') did not "
@@ -357,8 +398,7 @@ class RNAFMModel(BaseGenomicModel):
         cached_path = _cached_weights_path(model_variant)
         if cached_path is not None:
             self.logger.info(
-                f"Using cached RNA-FM weights for '{model_variant}' at "
-                f"'{cached_path}' -- skipping network download."
+                f"Using cached RNA-FM weights for '{model_variant}' at '{cached_path}' -- skipping network download."
             )
             try:
                 return _load_local_checkpoint(loader, str(cached_path), self.logger)
@@ -478,9 +518,7 @@ class RNAFMModel(BaseGenomicModel):
         # context is transcribed 1:1 from the DNA window, which can be
         # multi-kb for structural-variant-scale windows -- never let
         # that overflow RNA-FM's trained context and risk a CUDA error.
-        max_length = kwargs.get("max_length") or self._resolve_safe_max_length(
-            CONFIG.models.RNA_FM_MAX_SAFE_TOKENS
-        )
+        max_length = kwargs.get("max_length") or self._resolve_safe_max_length(CONFIG.models.RNA_FM_MAX_SAFE_TOKENS)
         # The official `fm` API has no HF-tokenizer-style `truncation=`
         # kwarg -- truncate the raw sequence ourselves, leaving room for
         # the BOS/EOS special tokens the alphabet's batch_converter adds,

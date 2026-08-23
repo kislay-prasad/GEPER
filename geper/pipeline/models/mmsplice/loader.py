@@ -47,7 +47,12 @@ from config import CONFIG
 from models.base_model import BaseGenomicModel
 from pipeline.models.mmsplice.models import MODEL_FILENAMES, MODULE_NAMES, ModularScores
 from pipeline.models.mmsplice.utils import SeqSplitter, encode_batch
-from utils.auto_install import ensure_pip_package_available, is_pip_package_installed
+from utils.auto_install import (
+    PackageCheckStatus,
+    check_pip_package_availability,
+    ensure_pip_package_available,
+    is_pip_package_installed,
+)
 from utils.exceptions import ModelInferenceError, ModelLoadError
 from utils.logger import get_logger
 
@@ -162,7 +167,13 @@ class MMSpliceModel(BaseGenomicModel):
     def unavailability_reason(cls) -> str:
         if not CONFIG.mmsplice.ENABLED:
             return "disabled via configuration (GEPER_ENABLE_MMSPLICE=false)"
-        if not is_pip_package_installed("tensorflow"):
+        # Was reading `is_pip_package_installed` directly and hardcoding a
+        # reason it cannot support: that function answers "is it importable
+        # right now", never "was an install attempted". Consult the seam.
+        tensorflow = check_pip_package_availability("tensorflow")
+        if tensorflow is PackageCheckStatus.NOT_CHECKED:
+            return "tensorflow availability not checked (auto-install disabled under pytest)"
+        if tensorflow is PackageCheckStatus.ABSENT:
             return "tensorflow could not be installed automatically"
         return "mmsplice package files could not be installed automatically (--no-deps)"
 
@@ -186,7 +197,14 @@ class MMSpliceModel(BaseGenomicModel):
     def _load_impl(self):
         if not CONFIG.mmsplice.ENABLED:
             raise ModelLoadError("MMSplice is disabled via configuration (GEPER_ENABLE_MMSPLICE=false).")
-        if not ensure_pip_package_available("tensorflow"):
+        tensorflow_status = check_pip_package_availability("tensorflow")
+        if tensorflow_status is PackageCheckStatus.NOT_CHECKED:
+            raise ModelLoadError(
+                "MMSplice requires 'tensorflow', whose availability was not "
+                "checked in this environment (auto-install is disabled under "
+                "pytest) -- it is not confirmed missing, it was never looked for."
+            )
+        if tensorflow_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError("MMSplice requires 'tensorflow', which could not be installed automatically.")
         if not _ensure_mmsplice_package_files_available():
             raise ModelLoadError(

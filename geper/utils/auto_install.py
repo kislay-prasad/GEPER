@@ -18,6 +18,7 @@ Also provides the same shape for small, common *system* CLI tools
 -- see `ensure_system_binary_available` below.
 """
 
+import enum
 import importlib
 import importlib.util
 import os
@@ -53,11 +54,68 @@ _REQUIREMENTS_CONSTRAINT_PATH = os.path.join(
 # broken, etc) fails fast on every subsequent call instead of
 # re-attempting a doomed `pip install` every time it's needed (e.g.
 # once per variant that hits the stage requiring it).
+# INVARIANT: this cache never holds a NOT_CHECKED outcome. It memoizes
+# only DETERMINED results -- a package that was really checked and
+# really found present or absent. A check that was deliberately skipped
+# (the pytest branch below) is not a result and is recomputed fresh on
+# every call; see `check_pip_package_availability`. Caching "I did not
+# look" as if it were "I looked and it was missing" is the exact
+# conflation PackageCheckStatus exists to prevent, and it would also
+# poison any later test that forces the real path for the same package.
 _INSTALL_RESULTS: Dict[str, bool] = {}
 
 # Same idea, separate namespace, for apt-installed system binaries
 # (see ensure_system_binary_available).
 _SYSTEM_BINARY_INSTALL_RESULTS: Dict[str, bool] = {}
+
+
+class PackageCheckStatus(str, enum.Enum):
+    """
+    `check_pip_package_availability`'s return, per
+    CI-geper-suite-live-installs-unpinned-packages-mid-run-results-depend-on-order
+    / RULED-codebase-gets-an-explicit-not-checked-state-distinct-from-checked-and-absent.
+
+    NOT_CHECKED and ABSENT are deliberately two different states, not
+    one -- the same reason `StageStatus`, `VersionStatus` and
+    `ClinVarMatchStatus` each keep "didn't check" distinct from
+    "checked, found nothing". Conflating them is the bug this type
+    exists to prevent, and conflating a flag-plus-optional-string
+    version of the same distinction already caused a real one in this
+    codebase (`pipeline/gnomad/models.py`'s `error` field, commit
+    9e2a3ee: ten consumers read `error` for truthiness instead of
+    presence, so an exception with an empty message passed every guard
+    as a confirmed absence). Checked here structurally rather than by
+    convention.
+
+    JSON-SAFE BY CONSTRUCTION, NOT BY CONVENTION -- READ BEFORE
+    CHANGING THE BASE CLASSES. `json.dumps(PackageCheckStatus.X)` emits
+    the member's plain string value, with no caller ever needing to
+    write `.value`: json's encoder special-cases `isinstance(o, str)`
+    before it consults any custom encoder, `__str__`, or `__bool__`,
+    and every member genuinely IS a `str` instance because of the `str`
+    mixin below. That also means the `__bool__` raise below and JSON
+    safety travel on different protocols and can never conflict. This
+    is a DIRECT, FRAGILE consequence of that one base class: changing
+    it -- to a plain `enum.Enum`, an `IntEnum`, a dataclass, anything
+    that drops the `str` base -- silently breaks every provenance or
+    report export that serializes this value with no special handling,
+    and nothing announces the break until a live `json.dumps()` raises
+    `TypeError: Object of type PackageCheckStatus is not JSON
+    serializable` in production rather than in review. Re-audit every
+    serialization boundary this value crosses before changing them.
+    """
+
+    NOT_CHECKED = "not_checked"  # auto-install intentionally skipped (e.g. under pytest); real availability unknown
+    ABSENT = "absent"  # genuinely checked: not importable, and a real install attempt failed
+    PRESENT = "present"  # importable, whether pre-existing or freshly installed
+
+    def __bool__(self):
+        raise TypeError(
+            "PackageCheckStatus has no truth value -- `if x:`/`if not x:` would "
+            "silently misread NOT_CHECKED as either PRESENT or ABSENT depending on "
+            "encoding, which is exactly the bug this type exists to prevent. "
+            "Compare explicitly, e.g. `x == PackageCheckStatus.PRESENT`."
+        )
 
 
 def is_pip_package_installed(import_name: str) -> bool:
@@ -92,7 +150,7 @@ def _auto_install_disabled_for_tests() -> bool:
     return "pytest" in sys.modules
 
 
-def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = None) -> bool:
+def check_pip_package_availability(pip_name: str, import_name: Optional[str] = None) -> PackageCheckStatus:
     """
     Idempotent, automatic setup: if `import_name` (defaults to
     `pip_name`) isn't already importable, installs it via
@@ -112,15 +170,25 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
     refuses the install outright instead, which the existing
     non-zero-exit handling below already reports as a normal failure.
 
-    Returns whether `import_name` is importable after the attempt.
+    Returns a `PackageCheckStatus`, NOT a bool: PRESENT if importable
+    after the attempt, ABSENT if a real attempt was made and it is
+    still not importable, and NOT_CHECKED if no attempt was made at all
+    because auto-install is disabled under pytest. The third state is
+    the point -- a caller that reports "could not be installed" for a
+    check that never ran is stating something false, which is what this
+    function's bool predecessor made unavoidable.
+
+    Callers indifferent to WHY should keep using
+    `ensure_pip_package_available` below.
     """
     import_name = import_name or pip_name
 
     if is_pip_package_installed(import_name):
-        return True
+        return PackageCheckStatus.PRESENT
 
+    # Only ever holds a DETERMINED outcome -- see _INSTALL_RESULTS above.
     if pip_name in _INSTALL_RESULTS:
-        return _INSTALL_RESULTS[pip_name]
+        return PackageCheckStatus.PRESENT if _INSTALL_RESULTS[pip_name] else PackageCheckStatus.ABSENT
 
     if _auto_install_disabled_for_tests():
         logger.info(
@@ -131,8 +199,12 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
             "mid-run-results-depend-on-order). Real, non-test runs are "
             "unaffected."
         )
-        _INSTALL_RESULTS[pip_name] = False
-        return False
+        # Deliberately NOT written to _INSTALL_RESULTS: a skipped check
+        # is not a result. The memo exists only to avoid re-running the
+        # subprocess, and this branch never reaches the subprocess, so
+        # caching buys nothing here -- while a cached "False" would be
+        # read back as a confirmed ABSENT by the lookup above.
+        return PackageCheckStatus.NOT_CHECKED
 
     logger.info(
         f"'{import_name}' is not yet installed; installing it "
@@ -160,7 +232,7 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
             f"{result.returncode}): {(result.stderr or '').strip()[-500:]}"
         )
         _INSTALL_RESULTS[pip_name] = False
-        return False
+        return PackageCheckStatus.ABSENT
 
     importlib.invalidate_caches()
     ok = is_pip_package_installed(import_name)
@@ -170,7 +242,28 @@ def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = Non
             f"'pip install {pip_name}' completed but '{import_name}' still "
             "isn't importable; check the install output above."
         )
-    return ok
+    # `ok` is a plain bool from is_pip_package_installed, deliberately
+    # not a PackageCheckStatus -- `if not ok` above would raise if it
+    # were one.
+    return PackageCheckStatus.PRESENT if ok else PackageCheckStatus.ABSENT
+
+
+def ensure_pip_package_available(pip_name: str, import_name: Optional[str] = None) -> bool:
+    """
+    Back-compat bool surface for callers that only ever want "can I use
+    it or not" and are indifferent to WHY -- returns True iff PRESENT,
+    and False for both NOT_CHECKED and ABSENT.
+
+    Byte-identical in behaviour to this function's pre-tri-state
+    contract, because the callers that still use it never distinguished
+    the two False reasons to begin with. If you are about to write a
+    reason string, a log line or an exception message on the False
+    branch, this is the WRONG function: call
+    `check_pip_package_availability` and branch on the three states,
+    or you will tell the user a package "could not be installed" when
+    nothing was ever attempted.
+    """
+    return check_pip_package_availability(pip_name, import_name) == PackageCheckStatus.PRESENT
 
 
 def is_system_binary_available(binary_name: str) -> bool:

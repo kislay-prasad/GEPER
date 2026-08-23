@@ -117,7 +117,7 @@ python main.py serve --config config/production.yaml --port 8080
 
 # Production (gunicorn + uvicorn workers)
 pip install gunicorn
-gunicorn geper.api.app:create_app -k uvicorn.workers.UvicornWorker \
+gunicorn api.main:app -k uvicorn.workers.UvicornWorker \
   --workers 4 --bind 0.0.0.0:8000
 
 # Docker

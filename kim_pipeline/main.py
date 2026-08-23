@@ -505,11 +505,27 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("ERROR: uvicorn not installed. Run: pip install uvicorn[standard]", file=sys.stderr)
         return 1
 
-    # FastAPI app is in geper/api/app.py — check it exists
-    api_module = Path(__file__).parent / "geper" / "api" / "app.py"
+    # FastAPI app is in api/main.py (app = FastAPI(...)) — check it exists.
+    #
+    # CORRECTED: this used to check for geper/api/app.py with a create_app()
+    # factory, which has never existed -- kim_pipeline/geper/ has no api/
+    # submodule at all (it's a local package holding kim_pipeline/geper/
+    # pipeline/ only). The path that actually works, and that
+    # serve_api.py already launches successfully, is api/main.py's
+    # plain `app = FastAPI(...)` instance. Deliberately NOT
+    # "geper.api...": kim_pipeline's own local `geper` subpackage and the
+    # top-level `geper/` package at the repo root share that name, so an
+    # import string built on it is ambiguous depending on what else is on
+    # sys.path when this runs (e.g. the combined bridge workflow, which
+    # needs the top-level `geper` package importable too) -- using
+    # "api.main:app" instead sidesteps that collision entirely rather than
+    # picking a winner between kim_pipeline's local geper/ and the
+    # top-level geper/ (the latter now also growing its own api/main.py
+    # for an unrelated endpoint -- see that module for its own scope).
+    api_module = Path(__file__).parent / "api" / "main.py"
     if not api_module.exists():
         print(
-            "ERROR: API app not found at geper/api/app.py\n"
+            "ERROR: API app not found at api/main.py\n"
             "The REST API module is not yet implemented. "
             "Run 'python main.py analyze' for the CLI pipeline.",
             file=sys.stderr,
@@ -518,11 +534,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     print(f"Starting Bij AI API server on {args.host}:{args.port} …")
     uvicorn.run(
-        "geper.api.app:create_app",
+        "api.main:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
-        factory=True,
         log_level=args.log_level.lower(),
     )
     return 0

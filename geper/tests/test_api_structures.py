@@ -33,7 +33,28 @@ _ROOT = _HERE.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from api.main import EntryStatus, MappingStatus, _map_to_response  # noqa: E402
+# `api.main` imports `fastapi` at ITS OWN module level (`from fastapi import
+# Depends, FastAPI`) -- this file's own module-level import of `api.main` was
+# therefore unguarded too, and on a machine lacking fastapi that raised
+# ModuleNotFoundError during COLLECTION of this file, which (this repo's
+# pytest invocations carry no `--continue-on-collection-errors`, confirmed
+# against both pytest.ini and kim_pipeline/pyproject.toml) aborts collection
+# of the whole suite run alongside it. Guarded the same way this repo already
+# guards other optional-dependency test modules (b01ae0a,
+# test_enformer_plugin.py/test_borzoi_plugin.py): a module-level try/except
+# flag plus a class-level `unittest.skipUnless`, not a different mechanism.
+try:
+    from api.main import EntryStatus, MappingStatus, _map_to_response
+
+    _HAS_FASTAPI = True
+except ImportError:
+    _HAS_FASTAPI = False
+
+_FASTAPI_SKIP_REASON = (
+    "fastapi is not installed in this environment -- api/main.py requires it "
+    "at module scope; fastapi/uvicorn are newly-added, optional-until-you-"
+    "run-the-API dependencies (see requirements.txt), not a broken environment."
+)
 
 
 # ─── Fixtures: real shapes AlphaFoldLookup.query_variant actually returns ─────
@@ -189,6 +210,7 @@ def _found_not_mapped_out_of_range(accession: str = "P04637", position: int = 50
     }
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseNotRun(unittest.TestCase):
     def test_config_disabled_is_not_run_with_reason_and_no_accession(self):
         resp = _map_to_response(_skipped_disabled())
@@ -207,6 +229,7 @@ class TestMapToResponseNotRun(unittest.TestCase):
         self.assertIsNone(resp.accession)
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseError(unittest.TestCase):
     def test_lookup_failure_is_error_not_not_found(self):
         resp = _map_to_response(_lookup_error())
@@ -217,6 +240,7 @@ class TestMapToResponseError(unittest.TestCase):
         self.assertIsNone(resp.mapping_status)
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseNotFound(unittest.TestCase):
     def test_clean_404_is_not_found_no_reason_needed(self):
         resp = _map_to_response(_clean_not_found())
@@ -235,6 +259,7 @@ class TestMapToResponseNotFound(unittest.TestCase):
         self.assertNotEqual(not_found.entry_status, error.entry_status)
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseFoundMapped(unittest.TestCase):
     def test_mapped_populates_all_five_ratified_fields(self):
         resp = _map_to_response(_found_mapped())
@@ -260,6 +285,7 @@ class TestMapToResponseFoundMapped(unittest.TestCase):
         self.assertEqual(resp.mapping_confidence_band, "very_low")
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseFoundNotMapped(unittest.TestCase):
     """The collapsed, currently-implemented state. Both underlying causes
     (no position ever resolved, and a real position rejected by the gate)
@@ -297,6 +323,7 @@ class TestMapToResponseFoundNotMapped(unittest.TestCase):
         self.assertIsNone(resp.mapped_residue)  # but the response must not
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestMapToResponseNeverRaises(unittest.TestCase):
     def test_missing_optional_keys_do_not_raise(self):
         """`_map_to_response` must tolerate a minimal found=True dict
@@ -320,6 +347,7 @@ class _FakeLookup:
         return dict(self.fixed_result)
 
 
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
 class TestStructureEndpointRoute(unittest.TestCase):
     def _client(self, fake_lookup: "_FakeLookup"):
         from fastapi.testclient import TestClient

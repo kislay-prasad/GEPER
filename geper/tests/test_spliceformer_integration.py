@@ -29,6 +29,7 @@ from pipeline.models.pending_plugins import (
     SpliceFormerPlugin,
     build_default_registry,
 )
+from utils.auto_install import PackageCheckStatus
 
 try:
     import enformer_pytorch  # noqa: F401
@@ -221,10 +222,21 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
 
         with (
             mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("enformer_pytorch.from_pretrained", return_value=_FakeEnformerModel()),
             mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel()),
             mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch(
                 "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
                 return_value=fake_spliceformer,
@@ -256,8 +268,16 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
 
         with (
             mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("enformer_pytorch.from_pretrained", return_value=_FakeEnformerModel()),
             mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch(
                 "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
                 return_value=_FakeSpliceFormerModel(0.0, 0.6),

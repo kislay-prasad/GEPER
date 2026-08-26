@@ -26,6 +26,7 @@ from pipeline.models.spliceformer_plugin import (
     SpliceFormerPlugin,
 )
 from utils.exceptions import ModelLoadError
+from utils.auto_install import PackageCheckStatus
 
 
 class _FakeSpliceFormerModel:
@@ -192,15 +193,17 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
 
     def test_successful_load_downloads_checkpoint_and_calls_to_and_eval(self):
         fake_model = _FakeSpliceFormerModel(ref_value=0.0, alt_value=1.0)
-        with mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint"
-        ) as mock_download, mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"
-        ) as mock_load_state:
+        with (
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
+            mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model),
+            mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint") as mock_download,
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"
+            ) as mock_load_state,
+        ):
             self.instance._load_impl()
 
         mock_download.assert_called_once()
@@ -214,29 +217,36 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
         cached_path = mock.Mock(is_file=mock.Mock(return_value=True))
         self.instance._weight_cache.ensure_dir.return_value.__truediv__ = lambda self_, name: cached_path
 
-        with mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint"
-        ) as mock_download, mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"
-        ) as mock_load_state:
+        with (
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
+            mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model),
+            mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint") as mock_download,
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"
+            ) as mock_load_state,
+        ):
             self.instance._load_impl()
 
         mock_download.assert_not_called()
         mock_load_state.assert_called_once_with(fake_model, cached_path, "cpu")
 
     def test_network_failure_is_sanitized(self):
-        with mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
-            return_value=_FakeSpliceFormerModel(0.0, 1.0),
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint",
-            side_effect=ConnectionError("could not reach raw.githubusercontent.com"),
+        with (
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
+                return_value=_FakeSpliceFormerModel(0.0, 1.0),
+            ),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint",
+                side_effect=ConnectionError("could not reach raw.githubusercontent.com"),
+            ),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -246,7 +256,7 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
 
     def test_missing_einops_raises_clear_error(self):
         with mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=False
+            "pipeline.models.spliceformer_plugin.check_pip_package_availability", return_value=PackageCheckStatus.ABSENT
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -255,14 +265,19 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):
         # Exercise through PluginModel.load() (not _load_impl directly)
         # to confirm the base class's own wrapping still applies.
-        with mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
-            return_value=_FakeSpliceFormerModel(0.0, 1.0),
-        ), mock.patch(
-            "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint",
-            side_effect=OSError("network unreachable"),
+        with (
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
+                return_value=_FakeSpliceFormerModel(0.0, 1.0),
+            ),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint",
+                side_effect=OSError("network unreachable"),
+            ),
         ):
             with self.assertRaises(ModelLoadError):
                 self.instance.load()
@@ -282,15 +297,17 @@ class TestSpliceFormerMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_SPLICEFORMER", SpliceFormerPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_einops_installed(self):
-        with mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
+        with (
+            mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True),
         ):
             mock_config.splicing.ENABLE_SPLICEFORMER = True
             self.assertTrue(SpliceFormerPlugin.is_available())
 
     def test_unavailable_when_flag_on_but_einops_missing(self):
-        with mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=False
+        with (
+            mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=False),
         ):
             mock_config.splicing.ENABLE_SPLICEFORMER = True
             self.assertFalse(SpliceFormerPlugin.is_available())

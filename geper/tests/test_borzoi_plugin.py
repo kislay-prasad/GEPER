@@ -22,6 +22,7 @@ from pipeline.models.borzoi_plugin import (
 from pipeline.models.manager import ModelManager, PluginUnavailableError
 from pipeline.models.registry import ModelRegistry
 from utils.exceptions import ModelLoadError
+from utils.auto_install import PackageCheckStatus
 
 try:
     import borzoi_pytorch  # noqa: F401
@@ -162,7 +163,9 @@ class TestBorzoiLoadImpl(unittest.TestCase):
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeBorzoiModel(value=1.0)
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
         ):
             self.instance._load_impl()
@@ -174,7 +177,9 @@ class TestBorzoiLoadImpl(unittest.TestCase):
     @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_network_failure_is_sanitized(self):
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch(
                 "borzoi_pytorch.Borzoi.from_pretrained",
                 side_effect=ConnectionError("could not reach huggingface.co"),
@@ -186,7 +191,9 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         self.assertNotIn("huggingface.co", str(ctx.exception))
 
     def test_missing_package_raises_clear_error(self):
-        with mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=False):
+        with mock.patch(
+            "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.ABSENT
+        ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("borzoi-pytorch", str(ctx.exception))
@@ -205,7 +212,10 @@ class TestBorzoiLoadImpl(unittest.TestCase):
         with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
             mock_config.splicing.BORZOI_HF_REPO = "johahi/borzoi-replicate-2"
             with (
-                mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+                mock.patch(
+                    "pipeline.models.borzoi_plugin.check_pip_package_availability",
+                    return_value=PackageCheckStatus.PRESENT,
+                ),
                 mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
             ):
                 self.instance._load_impl()
@@ -289,7 +299,9 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
         instance = self._make_instance()
         fake_model = _FakeBorzoiModel(value=1.0)
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
         ):
             instance._load_impl()
@@ -310,7 +322,9 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
         instance = self._make_instance()
         fake_model = _FakeBorzoiModel(value=1.0)
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
         ):
             instance._load_impl()
@@ -325,7 +339,9 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
         # resetting it.
         instance1 = self._make_instance()
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=1.0)),
         ):
             instance1._load_impl()
@@ -333,7 +349,9 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
 
         instance2 = self._make_instance()
         with (
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=2.0)),
         ):
             instance2._load_impl()

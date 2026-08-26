@@ -22,6 +22,7 @@ from pipeline.models.borzoi_plugin import BorzoiPlugin
 from pipeline.models.enformer_plugin import EnformerPlugin
 from pipeline.models.manager import ModelManager
 from pipeline.models.pending_plugins import build_default_registry
+from utils.auto_install import PackageCheckStatus
 
 try:
     import enformer_pytorch  # noqa: F401
@@ -165,8 +166,15 @@ class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
 
         with (
             mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("enformer_pytorch.from_pretrained", return_value=fake_enformer),
             mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi),
         ):
             enformer_result = self.manager.predict("enformer", "A" * 10, "T" * 10)
@@ -185,8 +193,15 @@ class TestEnformerAndBorzoiEnabledTogetherThroughManager(unittest.TestCase):
 
         with (
             mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("enformer_pytorch.from_pretrained", side_effect=ConnectionError("unreachable")),
             mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
+            ),
             mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_borzoi),
         ):
             enformer_result = self.manager.predict("enformer", "A" * 10, "T" * 10)

@@ -25,6 +25,7 @@ from models.rna_fm import (
     _torch_hub_checkpoint_path,
 )
 from utils.exceptions import ModelLoadError
+from utils.auto_install import PackageCheckStatus
 
 
 def _fake_alphabet():
@@ -112,17 +113,18 @@ class TestOfficialHFMirror(unittest.TestCase):
 
     def test_successful_fetch_copies_file_to_torch_hub_cache_location(self):
         logger = mock.Mock()
-        with tempfile.TemporaryDirectory() as hub_dir, \
-             tempfile.TemporaryDirectory() as hf_cache_dir:
+        with tempfile.TemporaryDirectory() as hub_dir, tempfile.TemporaryDirectory() as hf_cache_dir:
             source_file = Path(hf_cache_dir) / "downloaded.pth"
             source_file.write_bytes(b"real-weights")
 
             fake_hf_hub = types.ModuleType("huggingface_hub")
             fake_hf_hub.hf_hub_download = mock.Mock(return_value=str(source_file))
 
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm.ensure_pip_package_available", return_value=True), \
-                 mock.patch.dict(sys.modules, {"huggingface_hub": fake_hf_hub}):
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm.ensure_pip_package_available", return_value=True),
+                mock.patch.dict(sys.modules, {"huggingface_hub": fake_hf_hub}),
+            ):
                 result = _fetch_from_official_hf_mirror("rna_fm_t12", logger)
 
             expected_dest = Path(hub_dir) / "checkpoints" / "RNA-FM_pretrained.pth"
@@ -141,9 +143,11 @@ class TestOfficialHFMirror(unittest.TestCase):
         fake_hf_hub.hf_hub_download = mock.Mock(side_effect=OSError("network unreachable"))
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm.ensure_pip_package_available", return_value=True), \
-                 mock.patch.dict(sys.modules, {"huggingface_hub": fake_hf_hub}):
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm.ensure_pip_package_available", return_value=True),
+                mock.patch.dict(sys.modules, {"huggingface_hub": fake_hf_hub}),
+            ):
                 result = _fetch_from_official_hf_mirror("rna_fm_t12", logger)
 
         self.assertIsNone(result)
@@ -161,11 +165,13 @@ class TestOfficialHFMirror(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as hub_dir:
             mirror_path = Path(hub_dir) / "checkpoints" / "RNA-FM_pretrained.pth"
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch(
-                     "models.rna_fm._fetch_from_official_hf_mirror",
-                     return_value=mirror_path,
-                 ):
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch(
+                    "models.rna_fm._fetch_from_official_hf_mirror",
+                    return_value=mirror_path,
+                ),
+            ):
                 result = instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
         self.assertEqual(result, good_result)
@@ -185,11 +191,13 @@ class TestOfficialHFMirror(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as hub_dir:
             mirror_path = Path(hub_dir) / "checkpoints" / "RNA-FM_pretrained.pth"
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch(
-                     "models.rna_fm._fetch_from_official_hf_mirror",
-                     return_value=mirror_path,
-                 ):
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch(
+                    "models.rna_fm._fetch_from_official_hf_mirror",
+                    return_value=mirror_path,
+                ),
+            ):
                 result = instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
         self.assertEqual(result, good_result)
@@ -245,9 +253,11 @@ class TestRNAFMLoadFallback(unittest.TestCase):
         loader = mock.Mock(side_effect=http_403)
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None), \
-                 mock.patch("time.sleep") as mock_sleep:
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+                mock.patch("time.sleep") as mock_sleep,
+            ):
                 with self.assertRaises(ModelLoadError) as ctx:
                     self.instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
@@ -265,9 +275,11 @@ class TestRNAFMLoadFallback(unittest.TestCase):
         loader = mock.Mock(side_effect=transient)
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None), \
-                 mock.patch("time.sleep") as mock_sleep:
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+                mock.patch("time.sleep") as mock_sleep,
+            ):
                 with self.assertRaises(ModelLoadError) as ctx:
                     self.instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
@@ -281,9 +293,11 @@ class TestRNAFMLoadFallback(unittest.TestCase):
         loader = mock.Mock(side_effect=[transient, good_result])
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None), \
-                 mock.patch("time.sleep") as mock_sleep:
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+                mock.patch("time.sleep") as mock_sleep,
+            ):
                 result = self.instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
         self.assertEqual(result, good_result)
@@ -294,9 +308,11 @@ class TestRNAFMLoadFallback(unittest.TestCase):
         loader = mock.Mock(side_effect=RuntimeError("Error(s) in loading state_dict"))
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None), \
-                 mock.patch("time.sleep") as mock_sleep:
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+                mock.patch("time.sleep") as mock_sleep,
+            ):
                 with self.assertRaises(ModelLoadError) as ctx:
                     self.instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
 
@@ -335,10 +351,12 @@ class TestRNAFMLoadImplIntegration(unittest.TestCase):
         instance.device = "cpu"
 
         with tempfile.TemporaryDirectory() as hub_dir:
-            with mock.patch("torch.hub.get_dir", return_value=hub_dir), \
-                 mock.patch("models.rna_fm.ensure_rna_fm_available", return_value=True), \
-                 mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None), \
-                 mock.patch("time.sleep"):
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm.check_rna_fm_availability", return_value=PackageCheckStatus.PRESENT),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+                mock.patch("time.sleep"),
+            ):
                 with self.assertRaises(ModelLoadError) as ctx:
                     instance._load_impl()
 

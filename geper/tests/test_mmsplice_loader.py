@@ -37,6 +37,7 @@ from unittest import mock
 
 from pipeline.models.mmsplice.loader import MMSpliceModel
 from utils.exceptions import ModelLoadError
+from utils.auto_install import PackageCheckStatus
 
 
 class TestMMSpliceLoadImplSanitization(unittest.TestCase):
@@ -49,7 +50,10 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
     def test_unresolved_package_dir_does_not_leak_the_resolved_value(self):
         instance = self._instance()
         with (
-            mock.patch("pipeline.models.mmsplice.loader.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.mmsplice.loader.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True),
             mock.patch(
                 "pipeline.models.mmsplice.loader._resolve_mmsplice_package_dir",
@@ -70,7 +74,10 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
     def test_none_package_dir_does_not_leak_repr_of_none(self):
         instance = self._instance()
         with (
-            mock.patch("pipeline.models.mmsplice.loader.ensure_pip_package_available", return_value=True),
+            mock.patch(
+                "pipeline.models.mmsplice.loader.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True),
             mock.patch("pipeline.models.mmsplice.loader._resolve_mmsplice_package_dir", return_value=None),
         ):
@@ -90,7 +97,10 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             # `tmp` deliberately has no layers.py inside it.
             with (
-                mock.patch("pipeline.models.mmsplice.loader.ensure_pip_package_available", return_value=True),
+                mock.patch(
+                    "pipeline.models.mmsplice.loader.check_pip_package_availability",
+                    return_value=PackageCheckStatus.PRESENT,
+                ),
                 mock.patch(
                     "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True
                 ),

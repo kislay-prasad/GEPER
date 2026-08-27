@@ -76,6 +76,15 @@ _AUTO_INSTALL_RESULT = None
 # than the one this integration was tested against.
 _HYENADNA_REPO_COMMIT = "d553021b483b82980aa4b868b37ec2d4332e198a"
 
+# Pinned HuggingFace revision (commit SHA) for each supported
+# HYENADNA_MODEL_NAME's checkpoint repo (huggingface.co/LongSafari/
+# {model_name}), verified live via `git ls-remote <repo-url> HEAD`,
+# 2026-08-27. See `_load_hyenadna_checkpoint` below for why this is
+# keyed by model_name rather than a single constant.
+_HYENADNA_CHECKPOINT_REVISIONS = {
+    "hyenadna-medium-450k-seqlen": "820fe013ec58c0f87f8caba21af0c48fdc8d0ddd",
+}
+
 
 def ensure_hyenadna_available(checkpoint_dir: str = None) -> bool:
     """
@@ -259,15 +268,35 @@ def _load_hyenadna_checkpoint(path: str, model_name: str, device: str):
     if not os.path.isdir(pretrained_dir):
         hf_url = f"https://huggingface.co/LongSafari/{model_name}"
         os.makedirs(path, exist_ok=True)
-        logger.info(f"Downloading HyenaDNA checkpoint '{model_name}' from {hf_url}...")
+        # Pinned by model_name, not a single global constant: the
+        # checkpoint lives in a model-name-specific HF repo
+        # (huggingface.co/LongSafari/{model_name}), so a commit verified
+        # against one variant's history has no meaning against another's.
+        # CONFIG.models.HYENADNA_MODEL_NAME is a plain class attribute
+        # today (not env-configurable, unlike HYENADNA_CHECKPOINT_DIR
+        # right above it in config.py) -- but the moment it becomes one,
+        # an unmapped variant should fail loudly here, not silently fall
+        # back to an unpinned clone and defeat the point of pinning.
+        revision = _HYENADNA_CHECKPOINT_REVISIONS.get(model_name)
+        if revision is None:
+            raise ModelLoadError(
+                f"No pinned HuggingFace revision is recorded for HyenaDNA "
+                f"checkpoint '{model_name}'. Verify the exact commit to use "
+                f"(e.g. `git ls-remote {hf_url} HEAD`), add it to "
+                "_HYENADNA_CHECKPOINT_REVISIONS in models/hyenadna.py, and "
+                "retry -- refusing to download an unpinned checkpoint."
+            )
+        logger.info(f"Downloading HyenaDNA checkpoint '{model_name}' @ {revision} from {hf_url}...")
         try:
             subprocess.run(["git", "lfs", "install"], check=True, cwd=path)
             subprocess.run(["git", "clone", hf_url], check=True, cwd=path)
+            subprocess.run(["git", "-C", pretrained_dir, "checkout", "--quiet", revision], check=True)
         except (subprocess.CalledProcessError, FileNotFoundError) as exc:
             raise ModelLoadError(
-                f"Failed to download HyenaDNA checkpoint '{model_name}' via "
-                f"git-lfs clone from {hf_url}: {exc}. git-lfs must be "
-                "installed (apt-get install git-lfs) for this download."
+                f"Failed to download HyenaDNA checkpoint '{model_name}' @ "
+                f"{revision} via git-lfs clone from {hf_url}: {exc}. "
+                "git-lfs must be installed (apt-get install git-lfs) for "
+                "this download."
             ) from exc
 
     config_path = os.path.join(pretrained_dir, "config.json")

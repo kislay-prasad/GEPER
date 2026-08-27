@@ -1723,6 +1723,24 @@ class GeperPipeline:
                         VersionStatus.UNKNOWN,
                         notes=f"Most recent query failed: {alphafold_result['error']}",
                     )
+                else:
+                    # The query SUCCEEDED but carried no version. Without
+                    # this branch nothing was recorded, and because the
+                    # collector pre-seeds every known source at
+                    # NOT_CONSULTED, the table did not merely omit
+                    # AlphaFold -- it asserted "never queried this run"
+                    # about a source that answered and contributed data.
+                    # UNKNOWN is defined for exactly this: queried, but
+                    # nothing beyond a timestamp obtainable.
+                    self.provenance.record(
+                        "AlphaFold DB",
+                        VersionStatus.UNKNOWN,
+                        notes=(
+                            "Queried successfully; the response carried no model version."
+                            if alphafold_result.get("found")
+                            else "Queried successfully; no predicted structure available for this accession."
+                        ),
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"AlphaFold DB provenance capture failed: {exc}")
 

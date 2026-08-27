@@ -1932,18 +1932,41 @@ class ACMGRuleEngine:
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             sources.append("AlphaMissense")
+            # Disclosed inline, ahead of the score -- same placement and
+            # reasoning as the SpliceFormer/SpliceBERT caveat in _bp7
+            # below. AlphaMissense's own README (github.com/
+            # google-deepmind/alphamissense) states plainly that it is
+            # "not approved for clinical use", "not intended to be a
+            # substitute for professional medical advice", and that
+            # "predictions have varying levels of confidence" -- the
+            # same class of limitation _bp7 already discloses for the
+            # splice models, and nothing about AlphaMissense's own
+            # documentation exempts it. (Note this is a distinct claim
+            # from "uncalibrated": AlphaMissense's score is reported as
+            # calibrated against a curated benchmark in Cheng et al.
+            # 2023 -- the caveat here is about clinical-use approval
+            # status, not about calibration, so it is worded
+            # differently from _bp7's "uncalibrated" phrasing rather
+            # than copied verbatim.) Bound to the model name ahead of
+            # the score, not trailing, so a reader sees the limitation
+            # before the number and PDF line-wrapping cannot split it
+            # across a break.
+            qualified = "AlphaMissense (not clinically validated; not approved for clinical use)"
+            caveat = " This is a raw model score, not a validated clinical pathogenicity measure."
             if am_class == "likely_pathogenic":
                 damaging.append(
                     (
                         "AlphaMissense",
-                        f"AlphaMissense predicts 'likely_pathogenic' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).",
+                        f"{qualified} predicts 'likely_pathogenic' (am_pathogenicity="
+                        f"{alphamissense_result.get('am_pathogenicity')})." + caveat,
                     )
                 )
             elif am_class == "likely_benign":
                 benign.append(
                     (
                         "AlphaMissense",
-                        f"AlphaMissense predicts 'likely_benign' (am_pathogenicity={alphamissense_result.get('am_pathogenicity')}).",
+                        f"{qualified} predicts 'likely_benign' (am_pathogenicity="
+                        f"{alphamissense_result.get('am_pathogenicity')})." + caveat,
                     )
                 )
 

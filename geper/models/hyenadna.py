@@ -65,6 +65,17 @@ def is_hyenadna_installed() -> bool:
 # here). None = not attempted yet; True/False = outcome of that attempt.
 _AUTO_INSTALL_RESULT = None
 
+# Pinned commit for HazyResearch/hyena-dna (the SOURCE repo, cloned for
+# `standalone_hyenadna.py`/the character tokenizer -- see
+# `install_hyenadna_colab` below). No tags or releases exist upstream
+# (verified live via `git ls-remote --tags`, empty, 2026-08-27), so this
+# pins to the exact commit that was `main`'s tip at verification time --
+# the closest reproducibility guarantee available without one. An
+# unpinned `--depth 1` clone of a moving branch means every fresh
+# environment can silently get a different `standalone_hyenadna.py`
+# than the one this integration was tested against.
+_HYENADNA_REPO_COMMIT = "d553021b483b82980aa4b868b37ec2d4332e198a"
+
 
 def ensure_hyenadna_available(checkpoint_dir: str = None) -> bool:
     """
@@ -127,14 +138,19 @@ def install_hyenadna_colab(checkpoint_dir: str = None) -> bool:
                 # so just make the existing checkout importable
                 # instead of re-cloning it.
                 logger.info(
-                    f"Found existing '{repo_dir}' from a previous run; "
-                    "adding it to sys.path instead of re-cloning."
+                    f"Found existing '{repo_dir}' from a previous run; adding it to sys.path instead of re-cloning."
                 )
             else:
-                logger.info("Cloning HazyResearch/hyena-dna for HyenaDNA support...")
+                logger.info(f"Cloning HazyResearch/hyena-dna @ {_HYENADNA_REPO_COMMIT} for HyenaDNA support...")
+                # Full clone, not --depth 1: checking out a specific
+                # historical commit (there are no tags to shallow-clone
+                # by) needs the commit's history to be present locally.
                 subprocess.run(
-                    ["git", "clone", "--quiet", "--depth", "1",
-                     "https://github.com/HazyResearch/hyena-dna.git", repo_dir],
+                    ["git", "clone", "--quiet", "https://github.com/HazyResearch/hyena-dna.git", repo_dir],
+                    check=True,
+                )
+                subprocess.run(
+                    ["git", "-C", repo_dir, "checkout", "--quiet", _HYENADNA_REPO_COMMIT],
                     check=True,
                 )
             if repo_dir not in sys.path:
@@ -183,13 +199,17 @@ def _build_character_tokenizer(model_max_length: int):
     from transformers.tokenization_utils import AddedToken, PreTrainedTokenizer
 
     class _PatchedCharacterTokenizer(CharacterTokenizer):
-        def __init__(self, characters: Sequence[str], model_max_length: int,
-                     padding_side: str = "left", **kwargs):
+        def __init__(self, characters: Sequence[str], model_max_length: int, padding_side: str = "left", **kwargs):
             self.characters = characters
             self.model_max_length = model_max_length
             self._vocab_str_to_int = {
-                "[CLS]": 0, "[SEP]": 1, "[BOS]": 2, "[MASK]": 3,
-                "[PAD]": 4, "[RESERVED]": 5, "[UNK]": 6,
+                "[CLS]": 0,
+                "[SEP]": 1,
+                "[BOS]": 2,
+                "[MASK]": 3,
+                "[PAD]": 4,
+                "[RESERVED]": 5,
+                "[UNK]": 6,
                 **{ch: i + 7 for i, ch in enumerate(characters)},
             }
             self._vocab_int_to_str = {v: k for k, v in self._vocab_str_to_int.items()}
@@ -202,10 +222,18 @@ def _build_character_tokenizer(model_max_length: int):
             mask_token = AddedToken("[MASK]", lstrip=True, rstrip=False)
 
             PreTrainedTokenizer.__init__(
-                self, bos_token=bos_token, eos_token=sep_token, sep_token=sep_token,
-                cls_token=cls_token, pad_token=pad_token, mask_token=mask_token,
-                unk_token=unk_token, add_prefix_space=False,
-                model_max_length=model_max_length, padding_side=padding_side, **kwargs,
+                self,
+                bos_token=bos_token,
+                eos_token=sep_token,
+                sep_token=sep_token,
+                cls_token=cls_token,
+                pad_token=pad_token,
+                mask_token=mask_token,
+                unk_token=unk_token,
+                add_prefix_space=False,
+                model_max_length=model_max_length,
+                padding_side=padding_side,
+                **kwargs,
             )
 
         def get_vocab(self):
@@ -336,8 +364,7 @@ class HyenaDNAModel(BaseGenomicModel):
         max_len = CONFIG.models.HYENADNA_MAX_LENGTH
         if len(sequence) > max_len:
             self.logger.warning(
-                f"Sequence length {len(sequence)} exceeds HyenaDNA max "
-                f"{max_len}; truncating to model limit."
+                f"Sequence length {len(sequence)} exceeds HyenaDNA max {max_len}; truncating to model limit."
             )
             sequence = sequence[:max_len]
 

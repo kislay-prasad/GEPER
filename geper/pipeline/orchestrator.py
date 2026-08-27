@@ -2486,7 +2486,7 @@ class GeperPipeline:
         try:
             with self._timer("indigenomes"):
                 result = self.indigenomes_client.query_variant(variant, assembly=assembly)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"IndiGenomes stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2518,7 +2518,7 @@ class GeperPipeline:
         try:
             with self._timer("thousand_genomes_sas"):
                 result = self.thousand_genomes_sas_client.query_variant(variant, assembly=assembly, rsid_hint=rsid_hint)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"1000 Genomes SAS stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2541,7 +2541,7 @@ class GeperPipeline:
         try:
             with self._timer("conservation"):
                 result = self.conservation_client.query_variant(variant, assembly=assembly)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"Conservation stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2563,7 +2563,7 @@ class GeperPipeline:
         try:
             with self._timer("clingen"):
                 result = self.clingen_client.query_variant(variant, assembly=assembly)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"ClinGen stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2588,7 +2588,7 @@ class GeperPipeline:
         try:
             with self._timer("hpo"):
                 result = self.hpo_client.query_variant(gene_symbol)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"HPO stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2712,7 +2712,7 @@ class GeperPipeline:
         try:
             with self._timer("orphanet"):
                 result = self.orphanet_client.query_variant(gene_symbol)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"Orphanet stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2743,7 +2743,7 @@ class GeperPipeline:
         try:
             with self._timer("transcript_structure"):
                 result = self.transcript_client.query_variant(variant, assembly=assembly, gene_symbol=gene_symbol)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"Transcript-structure stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2790,7 +2790,7 @@ class GeperPipeline:
         try:
             with self._timer("clinvar_codon"):
                 result = self.clinvar_codon_client.query_codon(transcript, codon_number, assembly=assembly)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"PS1/PM5 ClinVar codon stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2837,7 +2837,7 @@ class GeperPipeline:
                     hgvs_g=hgvs_g,
                     hgvs_c=hgvs_c,
                 )
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"Functional-evidence (PS3/BS3) stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2867,7 +2867,7 @@ class GeperPipeline:
         try:
             with self._timer("uniprot"):
                 result = self.uniprot_client.query_variant(variant, assembly=assembly, gene_symbol_hint=gene_hint)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"UniProt stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2888,7 +2888,7 @@ class GeperPipeline:
         try:
             with self._timer("interpro"):
                 result = self.interpro_client.query_variant(uniprot_result, protein_position=protein_position)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"InterPro stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
@@ -2910,7 +2910,7 @@ class GeperPipeline:
         try:
             with self._timer("alphafold"):
                 result = self.alphafold_client.query_variant(uniprot_result, protein_position=protein_position)
-            if result.get("error"):
+            if result.get("error") is not None:
                 errors.append(f"AlphaFold stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth

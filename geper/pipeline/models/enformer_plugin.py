@@ -144,7 +144,10 @@ class EnformerPlugin(PluginModel):
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_ENFORMER:
             return "disabled via CONFIG.splicing.ENABLE_ENFORMER (set GEPER_ENABLE_ENFORMER=true to enable)"
-        return "the 'enformer-pytorch' package is not installed and automatic installation has not been attempted yet"
+        status = check_pip_package_availability("enformer-pytorch", import_name="enformer_pytorch")
+        if status is PackageCheckStatus.NOT_CHECKED:
+            return "'enformer-pytorch' availability was not checked (auto-install is disabled under pytest)"
+        return "the 'enformer-pytorch' package could not be installed automatically"
 
     def __init__(self):
         super().__init__()

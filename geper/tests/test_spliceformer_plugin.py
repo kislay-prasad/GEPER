@@ -308,10 +308,45 @@ class TestSpliceFormerMetadataAndAvailability(unittest.TestCase):
         with (
             mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
             mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=False),
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.ABSENT,
+            ),
         ):
             mock_config.splicing.ENABLE_SPLICEFORMER = True
             self.assertFalse(SpliceFormerPlugin.is_available())
             self.assertIn("einops", SpliceFormerPlugin.unavailability_reason())
+
+    def test_unavailability_reason_under_absent_does_not_claim_no_attempt(self):
+        """The dangerous case (Commit 2): once a real install attempt has
+        happened and failed (ABSENT), the reason text must not say
+        installation "has not been attempted" -- that specific false
+        claim, made under the opposite state, is the defect this
+        migration exists to close. See design v2 section 6."""
+        with (
+            mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.ABSENT,
+            ),
+        ):
+            mock_config.splicing.ENABLE_SPLICEFORMER = True
+            reason = SpliceFormerPlugin.unavailability_reason()
+        self.assertIn("einops", reason)
+        self.assertNotIn("has not been attempted", reason)
+
+    def test_unavailability_reason_under_not_checked_says_not_checked(self):
+        with (
+            mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
+            mock.patch(
+                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.NOT_CHECKED,
+            ),
+        ):
+            mock_config.splicing.ENABLE_SPLICEFORMER = True
+            reason = SpliceFormerPlugin.unavailability_reason()
+        self.assertIn("einops", reason)
+        self.assertIn("not checked", reason)
 
 
 class TestSpliceFormerThroughModelManager(unittest.TestCase):

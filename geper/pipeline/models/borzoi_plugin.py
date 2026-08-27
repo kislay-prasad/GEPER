@@ -151,7 +151,10 @@ class BorzoiPlugin(PluginModel):
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_BORZOI:
             return "disabled via CONFIG.splicing.ENABLE_BORZOI (set GEPER_ENABLE_BORZOI=true to enable)"
-        return "the 'borzoi-pytorch' package is not installed and automatic installation has not been attempted yet"
+        status = check_pip_package_availability("borzoi-pytorch", import_name="borzoi_pytorch")
+        if status is PackageCheckStatus.NOT_CHECKED:
+            return "'borzoi-pytorch' availability was not checked (auto-install is disabled under pytest)"
+        return "the 'borzoi-pytorch' package could not be installed automatically"
 
     def __init__(self):
         super().__init__()

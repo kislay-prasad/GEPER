@@ -299,6 +299,37 @@ class TestEnformerMetadataAndAvailability(unittest.TestCase):
             mock_config.splicing.ENABLE_ENFORMER = True
             self.assertTrue(EnformerPlugin.is_available())
 
+    def test_unavailability_reason_under_absent_does_not_claim_no_attempt(self):
+        """The dangerous case (Commit 2): once a real install attempt has
+        happened and failed (ABSENT), the reason text must not say
+        installation "has not been attempted" -- that specific false
+        claim, made under the opposite state, is the defect this
+        migration exists to close. See design v2 section 6."""
+        with (
+            mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config,
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.ABSENT,
+            ),
+        ):
+            mock_config.splicing.ENABLE_ENFORMER = True
+            reason = EnformerPlugin.unavailability_reason()
+        self.assertIn("enformer-pytorch", reason)
+        self.assertNotIn("has not been attempted", reason)
+
+    def test_unavailability_reason_under_not_checked_says_not_checked(self):
+        with (
+            mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config,
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.NOT_CHECKED,
+            ),
+        ):
+            mock_config.splicing.ENABLE_ENFORMER = True
+            reason = EnformerPlugin.unavailability_reason()
+        self.assertIn("enformer-pytorch", reason)
+        self.assertIn("not checked", reason)
+
 
 class TestEnformerThroughModelManager(unittest.TestCase):
     """Confirms the plugin behaves correctly when driven through

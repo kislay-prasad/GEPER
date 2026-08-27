@@ -186,7 +186,10 @@ class SpliceFormerPlugin(PluginModel):
     def unavailability_reason(cls) -> str:
         if not CONFIG.splicing.ENABLE_SPLICEFORMER:
             return "disabled via CONFIG.splicing.ENABLE_SPLICEFORMER (set GEPER_ENABLE_SPLICEFORMER=true to enable)"
-        return "the 'einops' package is not installed and automatic installation has not been attempted yet"
+        status = check_pip_package_availability("einops", import_name="einops")
+        if status is PackageCheckStatus.NOT_CHECKED:
+            return "'einops' availability was not checked (auto-install is disabled under pytest)"
+        return "the 'einops' package could not be installed automatically"
 
     def __init__(self):
         super().__init__()

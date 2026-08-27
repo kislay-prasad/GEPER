@@ -300,24 +300,33 @@ class AlphaMissenseConfig:
     catalogue -- via the `tabix` CLI, matched by (chrom, pos, ref, alt)
     -- rather than as a loaded neural network. See models/alphamissense.py.
 
-    LICENSING -- read before commercial deployment:
+    LICENSING:
     The AlphaMissense *code* is Apache-2.0. The *predictions catalogue*
-    itself has been distributed under different terms at different
-    times/venues: the current official repository (github.com/
-    google-deepmind/alphamissense, archived 2025-05-16) states the
-    predictions are licensed CC BY 4.0 (attribution only, commercial
-    use permitted). However, the Google Cloud Storage download page,
-    the Ensembl VEP plugin docs, the EBI announcement, and the
-    HuggingFace dataset mirror all instead describe the predictions as
-    "CC BY-NC-SA 4.0 -- non-commercial research use only", and note
-    that use of the GCS-hosted files is additionally subject to the
-    Google Cloud Platform Terms of Service. These sources disagree and
-    this is a genuine, unresolved discrepancy -- GEPER does not know
-    which currently governs the specific file your deployment
-    downloads. Before relying on AlphaMissense output in a commercial
-    product, confirm the license terms that apply to the exact file
-    you download directly with Google DeepMind (alphamissense@google.com)
-    or counsel; do not assume CC BY 4.0 from this comment alone.
+    -- the file this config's HG38_URL/HG19_URL point at -- is CC BY 4.0
+    (attribution required, commercial use permitted). This is confirmed
+    directly from the primary source, not inferred: the GCS bucket's own
+    README.pdf at the exact URL below (`timeCreated` 2024-03-13, the day
+    of DeepMind's public relicense) states verbatim: "Copyright (2023)
+    DeepMind Technologies Limited. All materials are licensed under the
+    Creative Commons Attribution 4.0 International License (CC-BY)."
+    (https://storage.googleapis.com/dm_alphamissense/README.pdf)
+
+    This resolves what used to be flagged here as a genuine discrepancy
+    between sources -- kept explicit rather than silently deleted, since
+    it explains WHY the NC-SA claim keeps resurfacing elsewhere: the
+    Ensembl VEP plugin's current `main` branch agrees (CC BY 4.0), but
+    its old `release/110` tag still reads CC BY-NC-SA 4.0 (predates the
+    relicense), and the unofficial `huggingface.co/datasets/katielink/
+    dm_alphamissense` mirror still reads CC BY-NC-SA 4.0 (never updated
+    after it). GEPER reads none of those three -- only the GCS bucket
+    above, which is unambiguous and dated after the relicense.
+
+    NOTE WHAT THIS DOES NOT SETTLE: confirming CC BY 4.0 governs is a
+    different question from whether its attribution condition is
+    actually TRIGGERED by GEPER's use -- an indexed tabix lookup that
+    extracts one row's score from a ~71M-row catalogue into a clinical
+    report, not a redistribution of the catalogue itself. That question
+    remains open and is not resolved by this comment.
     """
 
     ENABLED: bool = os.environ.get("GEPER_ENABLE_ALPHAMISSENSE", "true").strip().lower() not in (

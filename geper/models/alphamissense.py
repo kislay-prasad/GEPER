@@ -45,10 +45,15 @@ pinned to CPU and `_report_precision()` is overridden to say so
 plainly in the startup validation table, rather than reporting a
 torch dtype that doesn't apply.
 
-LICENSING: see the long comment on config.py::AlphaMissenseConfig
-before relying on this stage's output in a commercial deployment --
-sources disagree on whether the predictions catalogue is CC BY 4.0
-(commercial use OK) or CC BY-NC-SA 4.0 (non-commercial research only).
+LICENSING: see the long comment on config.py::AlphaMissenseConfig for
+the full picture (including what CC BY 4.0 does NOT settle). Short
+version: the predictions catalogue this module downloads from is
+CC BY 4.0, confirmed directly against the GCS bucket's own README.pdf
+at the exact URL this module downloads from (config.py's HG38_URL/
+HG19_URL) -- not inferred from a third-party mirror or an old VEP
+plugin tag. This does NOT by itself resolve whether CC BY 4.0's
+attribution condition is triggered by extracting a single row from
+the ~71M-row catalogue -- that stays a separate, still-open question.
 """
 
 import os
@@ -105,6 +110,7 @@ def ensure_tabix_available() -> bool:
         return shutil.which(binary) is not None
     return ensure_system_binary_available(binary, apt_package=_TABIX_APT_PACKAGE)
 
+
 # Per-build (hg19/hg38) cache of the resolved *local* catalogue path, so
 # concurrent/repeated queries for the same build within one process
 # don't re-check-or-re-download; keyed and guarded the same "cheap
@@ -113,7 +119,9 @@ _RESOLVED_LOCAL_PATH: Dict[str, str] = {}
 _DOWNLOAD_LOCK = threading.Lock()
 
 
-_EXPECTED_MIN_COLUMNS = 10  # CHROM POS REF ALT genome uniprot_id transcript_id protein_variant am_pathogenicity am_class
+_EXPECTED_MIN_COLUMNS = (
+    10  # CHROM POS REF ALT genome uniprot_id transcript_id protein_variant am_pathogenicity am_class
+)
 
 
 def _normalize_chrom_for_catalogue(chrom: str) -> str:
@@ -200,8 +208,7 @@ def _download_catalogue(url: str, dest_path: str) -> None:
                     if total_bytes and downloaded >= next_log_at:
                         pct = 100 * downloaded / total_bytes
                         logger.info(
-                            f"Downloading '{url}': {downloaded / 1e9:.2f}GB / "
-                            f"{total_bytes / 1e9:.2f}GB ({pct:.0f}%)."
+                            f"Downloading '{url}': {downloaded / 1e9:.2f}GB / {total_bytes / 1e9:.2f}GB ({pct:.0f}%)."
                         )
                         next_log_at = downloaded + max(total_bytes // 20, 200 * 1024 * 1024)
         os.replace(part_path, dest_path)
@@ -213,7 +220,9 @@ def _download_catalogue(url: str, dest_path: str) -> None:
         # file ourselves, which would add real, avoidable cost on every
         # (re)download for no extra confidence.
         write_dataset_provenance_sidecar(
-            dest_path, url, response_headers=headers,
+            dest_path,
+            url,
+            response_headers=headers,
             content_hash=(headers.get("ETag") or "").strip('"') or None,
             hash_algorithm="gcs-etag-md5" if headers.get("ETag") else None,
             compute_hash_from_file=False,
@@ -222,8 +231,7 @@ def _download_catalogue(url: str, dest_path: str) -> None:
         if os.path.exists(part_path):
             os.remove(part_path)
         raise ModelInferenceError(
-            f"Downloading the AlphaMissense catalogue from '{url}' to "
-            f"'{dest_path}' failed: {exc}"
+            f"Downloading the AlphaMissense catalogue from '{url}' to '{dest_path}' failed: {exc}"
         ) from exc
 
 
@@ -249,10 +257,7 @@ def _ensure_local_catalogue(configured_source: str, build: str, tabix_binary: st
         # but fail with a clear, actionable message rather than a
         # confusing tabix error if it isn't.
         if not os.path.exists(configured_source):
-            raise ModelInferenceError(
-                f"Configured local AlphaMissense catalogue "
-                f"'{configured_source}' does not exist."
-            )
+            raise ModelInferenceError(f"Configured local AlphaMissense catalogue '{configured_source}' does not exist.")
         if not os.path.exists(configured_source + ".tbi"):
             raise ModelInferenceError(
                 f"Configured local AlphaMissense catalogue "
@@ -363,8 +368,7 @@ class _AlphaMissenseCatalogue:
             )
         except FileNotFoundError as exc:
             raise ModelInferenceError(
-                f"'{self.tabix_binary}' is not available on PATH (it was "
-                "present at load time but is missing now)."
+                f"'{self.tabix_binary}' is not available on PATH (it was present at load time but is missing now)."
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise ModelInferenceError(
@@ -387,8 +391,18 @@ class _AlphaMissenseCatalogue:
             fields = line.split("\t")
             if len(fields) < _EXPECTED_MIN_COLUMNS:
                 continue
-            (f_chrom, f_pos, f_ref, f_alt, f_genome, f_uniprot,
-             f_transcript, f_protein_variant, f_am_path, f_am_class) = fields[:_EXPECTED_MIN_COLUMNS]
+            (
+                f_chrom,
+                f_pos,
+                f_ref,
+                f_alt,
+                f_genome,
+                f_uniprot,
+                f_transcript,
+                f_protein_variant,
+                f_am_path,
+                f_am_class,
+            ) = fields[:_EXPECTED_MIN_COLUMNS]
             if f_ref.upper() == ref.upper() and f_alt.upper() == alt.upper():
                 try:
                     pathogenicity = float(f_am_path)
@@ -460,10 +474,7 @@ class AlphaMissenseModel(BaseGenomicModel):
             # Reachable if _load_impl is ever called directly, bypassing
             # is_available() -- keep the failure mode explicit rather
             # than silently proceeding.
-            raise ModelLoadError(
-                "AlphaMissense is disabled via configuration "
-                "(GEPER_ENABLE_ALPHAMISSENSE=false)."
-            )
+            raise ModelLoadError("AlphaMissense is disabled via configuration (GEPER_ENABLE_ALPHAMISSENSE=false).")
 
         tabix_binary = CONFIG.alphamissense.TABIX_BINARY
         if not ensure_tabix_available():
@@ -518,18 +529,12 @@ class AlphaMissenseModel(BaseGenomicModel):
         """
         parts = sequence.split(":")
         if len(parts) != 4:
-            raise ModelInferenceError(
-                f"AlphaMissense expected a 'chrom:pos:ref:alt' lookup key, "
-                f"got '{sequence}'."
-            )
+            raise ModelInferenceError(f"AlphaMissense expected a 'chrom:pos:ref:alt' lookup key, got '{sequence}'.")
         chrom, pos_str, ref, alt = parts
         try:
             pos = int(pos_str)
         except ValueError as exc:
-            raise ModelInferenceError(
-                f"AlphaMissense lookup key '{sequence}' has a non-integer "
-                f"position."
-            ) from exc
+            raise ModelInferenceError(f"AlphaMissense lookup key '{sequence}' has a non-integer position.") from exc
 
         genome_label = resolve_genome_label(kwargs.get("assembly"))
         match = self.model.query(chrom, pos, ref, alt, genome_label)

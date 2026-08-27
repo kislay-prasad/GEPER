@@ -204,7 +204,36 @@ _REFERENCES = {
     "ClinGen": "ClinGen -- https://clinicalgenome.org/",
     "UniProt": "UniProt -- https://www.uniprot.org/",
     "InterPro": "InterPro/Pfam -- https://www.ebi.ac.uk/interpro/",
-    "AlphaMissense": "AlphaMissense -- Cheng et al. 2023, Science (DeepMind/AlphaMissense)",
+    # Brought up to `_ALPHAFOLD_REFERENCE`'s form below (citation +
+    # licensor + licence + link) -- AlphaMissense and AlphaFold DB are
+    # the same licensor under the same licence (CC-BY-4.0, primary-
+    # source-confirmed in LICENSE_AUDIT.md's AlphaMissense entry), so an
+    # entry that carries neither is indefensible next to one that
+    # carries both. This is NOT a resolution of AM-04 (whether CC-BY-4.0
+    # attribution is legally owed for a single extracted row) -- that
+    # stays human-gated; this change is made purely because the
+    # inconsistency between the two entries, on its own terms, has no
+    # defense.
+    #
+    # The copyright notice below is VERIFIED, not copied by analogy from
+    # `_ALPHAFOLD_REFERENCE`'s form: the GCS bucket's own README.pdf, at
+    # the exact URL config.py:342-349 downloads from (`timeCreated`
+    # 2024-03-13, the day of DeepMind's public relicense -- same source
+    # models/alphamissense.py's module docstring and
+    # config.py::AlphaMissenseConfig's docstring now cite), states
+    # verbatim: "Copyright (2023) DeepMind Technologies Limited. All
+    # materials are licensed under the Creative Commons Attribution 4.0
+    # International License (CC-BY)." Confirming CC-BY-4.0 governs, and
+    # now this copyright notice, still does NOT resolve whether CC-BY-4.0's
+    # attribution condition is actually triggered by extracting one row
+    # from a ~71M-row catalogue into a report -- that stays the separate,
+    # human-gated AM-04 question.
+    "AlphaMissense": (
+        "AlphaMissense -- Cheng et al. 2023, Science. Predictions data Copyright (2023) DeepMind "
+        "Technologies Limited, available under CC-BY-4.0 "
+        "(https://storage.googleapis.com/dm_alphamissense/README.pdf, "
+        "https://creativecommons.org/licenses/by/4.0/)"
+    ),
     "MMSplice": "MMSplice -- Cheng et al. 2019, Genome Biology",
     "BLAST": "NCBI BLAST -- https://blast.ncbi.nlm.nih.gov/",
     "HPO": "Human Phenotype Ontology (HPO) -- Gargano et al. 2024, Nucleic Acids Research",

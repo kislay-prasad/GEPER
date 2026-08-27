@@ -52,15 +52,21 @@ wrappers, because upstream itself does not offer one.
 
 Ensemble/evidence-aggregation note: unlike Enformer/Borzoi, this
 plugin is deliberately NOT added to
-`pipeline/models/ensemble.py::_ENSEMBLE_MODEL_KEYS`, and its result is
-not passed to `InterpretationEngine`/ACMG PP3-PP4 evaluation or to
-`report/*` -- see this module's own callers (or rather, the deliberate
-absence of any) for confirmation. It is reachable via `ModelManager`
+`pipeline/models/ensemble.py::_ENSEMBLE_MODEL_KEYS` (that ensemble
+feeds PP3/BP4 specifically), and its result is not passed to ACMG
+PP3/BP4 evaluation. It IS otherwise wired into a live per-variant run:
+invoked from `pipeline/orchestrator.py::
+_run_standalone_splice_plugin_stage` (called at
+`pipeline/orchestrator.py:1465-1466`), listed in the "AI Models"
+status table (`pipeline/models/status.py:306-310`), and consumed
+directly by BP7 (`pipeline/acmg_rules.py::ACMGRuleEngine._bp7`) --
+whose rationale text (caveated here as "uncalibrated; not clinically
+validated") reaches `report/*` through the same
+`supporting_evidence`/`conflicting_evidence` mechanism every other
+criterion's evidence uses. It is also reachable via `ModelManager`
 (through `pipeline.models.pending_plugins.build_default_registry()`)
 for direct/programmatic use, tests, and the benchmark script
-(`benchmark_spliceformer.py`), exactly like every other plugin here,
-without altering any existing evidence-aggregation or report-rendering
-behavior.
+(`benchmark_spliceformer.py`).
 --------------------------------------------------------------------
 """
 

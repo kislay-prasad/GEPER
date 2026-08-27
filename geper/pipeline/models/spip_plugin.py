@@ -73,14 +73,16 @@ are unused. Callers must instead pass `chrom=`, `pos=`, `ref=`,
 writes into a minimal one-variant VCF and hands to SPiP exactly the
 way its own VCF input mode works.
 
-Ensemble/evidence-aggregation note: like SpliceFormer/SpliceBERT,
-this plugin is deliberately NOT added to `pipeline/models/ensemble.py`'s
-Enformer+Borzoi consensus, not passed to `InterpretationEngine`/ACMG
-PP3-PP4 evaluation, not added to `pipeline/models/status.py`'s "AI
-Models" display table, and not wired into
-`pipeline/orchestrator.py`'s per-variant stages -- see
-`spliceformer_plugin.py`'s own module docstring for the identical
-reasoning. It is reachable via `ModelManager` (through
+Ensemble/evidence-aggregation note: like SpliceFormer/SpliceBERT, this
+plugin is deliberately NOT added to `pipeline/models/ensemble.py`'s
+Enformer+Borzoi consensus. UNLIKE SpliceFormer/SpliceBERT, SPiP is not
+otherwise wired in either: not passed to `InterpretationEngine`/ACMG
+evaluation of any criterion (not just PP3/BP4), not added to
+`pipeline/models/status.py`'s "AI Models" display table, and not
+called from any per-variant stage in `pipeline/orchestrator.py` -- see
+`pipeline/models/pending_plugins.py`'s module docstring for how
+SpliceFormer/SpliceBERT differ from SPiP on this point. It is
+reachable via `ModelManager` (through
 `pipeline.models.pending_plugins.build_default_registry()`) for
 direct/programmatic use and tests, exactly like SpliceFormer/SpliceBERT.
 --------------------------------------------------------------------

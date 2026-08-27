@@ -81,13 +81,18 @@ uses, so callers do not need to special-case it.
 
 Ensemble/evidence-aggregation note: like SpliceFormer, this plugin is
 deliberately NOT added to `pipeline/models/ensemble.py`'s
-Enformer+Borzoi consensus, not passed to
-`InterpretationEngine`/ACMG PP3-PP4 evaluation, not added to
-`pipeline/models/status.py`'s "AI Models" display table, and not
-wired into `pipeline/orchestrator.py`'s per-variant stages -- see
-`spliceformer_plugin.py`'s own module docstring for the identical
-reasoning (an unvalidated zero-shot score should not silently become
-clinical evidence). It is reachable via `ModelManager` (through
+Enformer+Borzoi consensus (that ensemble feeds PP3/BP4 specifically),
+and not passed to ACMG PP3/BP4 evaluation. It IS otherwise wired into
+a live per-variant run, the same way SpliceFormer is: invoked from
+`pipeline/orchestrator.py::_run_standalone_splice_plugin_stage`
+(called at `pipeline/orchestrator.py:1465-1466`), listed in the "AI
+Models" status table (`pipeline/models/status.py:306-310`), and
+consumed directly by BP7 (`pipeline/acmg_rules.py::
+ACMGRuleEngine._bp7`) -- whose rationale text (caveated here as
+"uncalibrated; not clinically validated") reaches `report/*` through
+the same `supporting_evidence`/`conflicting_evidence` mechanism every
+other criterion's evidence uses. It is also reachable via
+`ModelManager` (through
 `pipeline.models.pending_plugins.build_default_registry()`) for
 direct/programmatic use and tests, exactly like SpliceFormer.
 --------------------------------------------------------------------

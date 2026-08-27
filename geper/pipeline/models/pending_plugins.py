@@ -15,13 +15,26 @@ full "new models" set from one place.
 
 SpliceFormer, SpliceBERT, and SPiP are registered here but are
 deliberately NOT added to `pipeline/models/ensemble.py`'s
-Enformer+Borzoi consensus, and their results are never passed to ACMG
-evaluation (`pipeline/interpretation.py`/`pipeline/acmg_rules.py`) or
-to report generation (`report/*`) -- see
-`pipeline/models/spliceformer_plugin.py`/
-`pipeline/models/splicebert_plugin.py`/`pipeline/models/spip_plugin.py`'s
-own module docstrings. All three are reachable through `ModelManager`
-(e.g. for direct/programmatic use, tests, or `benchmark_spliceformer.py`)
+Enformer+Borzoi consensus (that ensemble feeds PP3/BP4 specifically --
+see `pipeline/models/ensemble.py`'s own docstring). That exclusion is
+the only thing all three have in common.
+
+SpliceFormer and SpliceBERT ARE otherwise wired into a live per-variant
+run: both are invoked from `pipeline/orchestrator.py::
+_run_standalone_splice_plugin_stage` (called at
+`pipeline/orchestrator.py:1465-1466`), both appear in the "AI Models"
+status table (`pipeline/models/status.py:306-310`), and both feed BP7
+directly (`pipeline/acmg_rules.py::ACMGRuleEngine._bp7`) -- whose
+rationale text, caveated for these two, reaches `report/*` through the
+same `supporting_evidence`/`conflicting_evidence` mechanism every
+other criterion's evidence uses. SPiP alone is genuinely unwired: not
+called from any per-variant orchestrator stage, absent from the status
+table, and its result never reaches
+`InterpretationEngine`/`acmg_rules.py`/`report/*` in any form -- see
+`pipeline/models/spip_plugin.py`'s own module docstring.
+
+All three are reachable through `ModelManager` (e.g. for
+direct/programmatic use, tests, or `benchmark_spliceformer.py`)
 exactly like every other plugin registered here, without altering any
 existing evidence-aggregation or report-rendering behavior. SPiP is
 additionally architecturally distinct from the other five plugins

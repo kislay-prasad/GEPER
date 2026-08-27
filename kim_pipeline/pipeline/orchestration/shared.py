@@ -58,8 +58,34 @@ def _availability_fields(
     if not gnomad_enabled:
         gnomad_status, gnomad_reason = "disabled", "gnomAD lookup skipped (disabled)"
     elif gnomad_af is None and gnomad_af_popmax is None:
-        if gnomad_af_absent:
+        # `gnomad_af_absent` is `bool | None` and carries THREE states, so it
+        # is compared explicitly rather than tested for truth: `if
+        # gnomad_af_absent:` reads False (checked, variant IS present) and
+        # None (never checked) as the same answer, and they are not.
+        if gnomad_af_absent is True:
             gnomad_status, gnomad_reason = "absent", "Confirmed absent from gnomAD"
+        elif gnomad_af_absent is False:
+            # THIS BRANCH BECAME REACHABLE ONLY WITH THE gnomad/lookup.py
+            # CHANGE THAT LANDED ALONGSIDE IT. Before that, a PRESENT hit
+            # always carried a number (an absent/unparseable AF was coerced
+            # to 0.0), so it could never reach this `elif` at all and the
+            # False/None collapse above was latent.
+            #
+            # test_gnomad_lookup_failure_not_absent.py's own CORRECTION note
+            # predicted this in as many words: the safety "depended entirely
+            # on PM2's own unrelated af-is-None guard holding forever. A
+            # future criterion that reads the flag directly, without that
+            # guard in front of it, would inherit the wrong answer." The
+            # thing that read it directly turned out to be a fix. THE SHIELD
+            # IS GONE -- this branch is what replaces it.
+            #
+            # Reporting "unavailable (network/tabix error)" here would send a
+            # reader to debug a network that is fine, for a lookup that
+            # succeeded and found the variant.
+            gnomad_status, gnomad_reason = (
+                "found_no_frequency",
+                "Found in gnomAD; no allele frequency reported for this variant",
+            )
         else:
             gnomad_status, gnomad_reason = (
                 "unavailable",

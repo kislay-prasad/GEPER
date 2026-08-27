@@ -6,7 +6,8 @@ Regression tests for GEPER v12 defect fixes (Defects 1–15).
 Coverage matrix
 ───────────────
 D1  – 5-tuple unpack from get_codon_and_aa()
-D2  – bcftools norm integration (smoke test — tool may not be installed)
+D2  – bcftools norm integration (real command captured via subprocess interception;
+      test_bcftools_available is the one real-binary smoke test, tool may not be installed)
 D3  – HGVS generation: c./n./g. prefix correctness
 D4  – GFF3 phase handling in codon frame calculation
 D5  – Allele balance uses correct ALT index for multiallelic VCFs
@@ -1017,44 +1018,81 @@ class TestCodonProviderTuple:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# D2 – bcftools norm smoke test
+# D2 – bcftools norm integration
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 class TestBcftoolsNormIntegration:
-    """Defect 2: bcftools norm must be invoked with --fasta-ref."""
+    """Defect 2: bcftools norm must be invoked with --fasta-ref.
 
-    def test_norm_command_includes_fasta_ref(self):
-        """Verify the norm command list contains --fasta-ref."""
-        # This tests the command construction logic, not actual execution
+    Before this rewrite: both tests below hand-built a `norm_cmd` list
+    literal and asserted it contained what had just been typed into it --
+    a tautology that never called `VariantCallingStage.run()` at all, so
+    it stayed green even with the real command's `--fasta-ref` deleted
+    entirely (confirmed by probe, see this class's own docstring history
+    on the card). The real command is built INLINE inside `run()`
+    (pipeline/variant_calling/stage.py:121-156), behind two real
+    subprocess calls (a `bcftools --version` probe, then the norm call
+    itself) -- there was no separately-callable function to import.
+
+    Fix: drive `run()` for real, with every external dependency it
+    touches intercepted -- `freebayes_runner.is_available`/`run_freebayes`
+    mocked so no real FreeBayes is needed, `subprocess.run` replaced with
+    a fake that recognises the `--version` probe and the real `norm`
+    call (capturing its exact argv) and returns success for both, and
+    `apply_pass_filter` mocked so the test never needs the intercepted
+    norm call to have actually produced a parseable VCF. The captured
+    argv IS the command production actually built -- not a copy of it.
+    """
+
+    def _run_stage_and_capture_norm_cmd(self, tmp_path, reference_fasta="/path/to/hg38.fa"):
+        """Drives VariantCallingStage.run() for real and returns the exact
+        argv list passed to the real `bcftools norm` subprocess call."""
+        from pipeline.variant_calling.filtering import FilterSummary
+        from pipeline.variant_calling.stage import VariantCallingStage
+
+        captured: Dict = {}
+
+        def _fake_subprocess_run(cmd, *args, **kwargs):
+            if cmd[:2] == ["bcftools", "--version"]:
+                return MagicMock(returncode=0)
+            if cmd[:2] == ["bcftools", "norm"]:
+                captured["cmd"] = cmd
+                return MagicMock(returncode=0, stdout="", stderr="")
+            raise AssertionError(f"unexpected subprocess.run call in this probe: {cmd!r}")
+
+        with (
+            patch(
+                "pipeline.variant_calling.stage.freebayes_runner.is_available", return_value=True
+            ),
+            patch("pipeline.variant_calling.stage.freebayes_runner.run_freebayes"),
+            patch("subprocess.run", side_effect=_fake_subprocess_run),
+            patch("pipeline.variant_calling.stage.apply_pass_filter", return_value=FilterSummary()),
+        ):
+            stage = VariantCallingStage({"variant_calling": {"threads": 1}})
+            stage.run(
+                bam_path="fake.bam",
+                reference_fasta=reference_fasta,
+                output_dir=str(tmp_path),
+                sample_id="TESTSAMPLE",
+            )
+
+        assert "cmd" in captured, (
+            "bcftools norm was never invoked -- the --version probe must have failed"
+        )
+        return captured["cmd"]
+
+    def test_norm_command_includes_fasta_ref(self, tmp_path):
+        """Verify the REAL norm command (captured from VariantCallingStage.run(), not
+        a hand-typed copy) contains --fasta-ref pointing at the real reference passed in."""
         reference_fasta = "/path/to/hg38.fa"
-        raw_vcf = "/path/to/variants.raw.vcf"
-        norm_cmd = [
-            "bcftools",
-            "norm",
-            "--fasta-ref",
-            reference_fasta,
-            "--multiallelics",
-            "-",
-            "--output-type",
-            "v",
-            "--output",
-            "/path/to/variants.norm.vcf",
-            raw_vcf,
-        ]
+        norm_cmd = self._run_stage_and_capture_norm_cmd(tmp_path, reference_fasta)
         assert "--fasta-ref" in norm_cmd
         idx = norm_cmd.index("--fasta-ref")
         assert norm_cmd[idx + 1] == reference_fasta
 
-    def test_norm_command_splits_multiallelics(self):
-        norm_cmd = [
-            "bcftools",
-            "norm",
-            "--fasta-ref",
-            "/ref.fa",
-            "--multiallelics",
-            "-",
-        ]
+    def test_norm_command_splits_multiallelics(self, tmp_path):
+        norm_cmd = self._run_stage_and_capture_norm_cmd(tmp_path)
         assert "--multiallelics" in norm_cmd
         idx = norm_cmd.index("--multiallelics")
         assert norm_cmd[idx + 1] == "-"  # "-" means split

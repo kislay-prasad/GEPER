@@ -2730,9 +2730,15 @@ class ACMGRuleEngine:
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             if am_class == "likely_pathogenic":
+                # Same caveat wording _pp3_bp4 established above (report
+                # review round: two differently-worded AlphaMissense
+                # sentences reaching the same reader without it is a
+                # visible contradiction, not just a missing disclosure).
                 am_pathogenic_reason = (
-                    "AlphaMissense predicts 'likely_pathogenic' "
-                    f"(am_pathogenicity={alphamissense_result.get('am_pathogenicity')}) for this substitution."
+                    "AlphaMissense (not clinically validated; not approved for clinical use) predicts "
+                    "'likely_pathogenic' (am_pathogenicity="
+                    f"{alphamissense_result.get('am_pathogenicity')}) for this substitution. This is a raw "
+                    "model score, not a validated clinical pathogenicity measure."
                 )
             elif am_class == "likely_benign":
                 am_benign_present = True

@@ -183,10 +183,22 @@ class InterpretationEngine:
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             am_score = alphamissense_result.get("am_pathogenicity")
             am_score_str = f"{am_score:.3f}" if isinstance(am_score, (int, float)) else "n/a"
+            # Same caveat wording `acmg_rules.py::_pp3_bp4` established:
+            # this legacy pre-ACMG evidence line and PP3/BP4's own
+            # evidence line can both land in the same variant's
+            # `supporting_evidence` (this engine's `evidence` list feeds
+            # `InterpretationResult.supporting_evidence` unfiltered for
+            # AlphaMissense text -- see interpretation_result.py), worded
+            # differently enough that exact-string dedup never merges
+            # them. Before this fix that meant a caveated and an
+            # uncaveated claim about the same tool, side by side, in
+            # every report format -- a visible contradiction, not merely
+            # a missing disclosure.
             evidence.append(
-                f"AlphaMissense predicts '{am_class or 'unclassified'}' "
-                f"(am_pathogenicity={am_score_str}) for "
-                f"{alphamissense_result.get('protein_variant', 'this substitution')}."
+                f"AlphaMissense (not clinically validated; not approved for clinical use) predicts "
+                f"'{am_class or 'unclassified'}' (am_pathogenicity={am_score_str}) for "
+                f"{alphamissense_result.get('protein_variant', 'this substitution')}. This is a raw model "
+                f"score, not a validated clinical pathogenicity measure."
             )
             if am_class == "likely_pathogenic":
                 significance_score += 1

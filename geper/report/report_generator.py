@@ -848,7 +848,20 @@ class ReportGenerator:
         model_errors = ai.get("model_errors") or []
         if votes:
             for v in votes:
-                lines.append(f"- **{v.get('source')}:** {v.get('prediction')} (score={v.get('score')})")
+                source = v.get("source")
+                line = f"- **{source}:** {v.get('prediction')} (score={v.get('score')})"
+                # Same caveat wording `acmg_rules.py::_pp3_bp4` established,
+                # appended to this vote's own bullet rather than a separate
+                # line -- each bullet here is a self-contained per-model
+                # claim (MMSplice's bullet needs no AlphaMissense caveat),
+                # so the caveat has to travel with the specific bullet it
+                # qualifies, not sit once at the section level.
+                if source == "AlphaMissense":
+                    line += (
+                        " -- not clinically validated; not approved for clinical use. This is a raw model "
+                        "score, not a validated clinical pathogenicity measure."
+                    )
+                lines.append(line)
         elif not model_errors:
             lines.append("*No classifying AI model (AlphaMissense/MMSplice) produced a result.*")
         # `model_errors` is reported alongside `votes`, not only in its
@@ -1391,6 +1404,17 @@ class ReportGenerator:
         lines.append(f"- **Transcript:** {am_result.get('transcript_id', 'n/a')}")
         lines.append(f"- **UniProt ID:** {am_result.get('uniprot_id', 'n/a')}")
         lines.append(f"- **Genome build:** {am_result.get('genome', 'n/a')}")
+        lines.append("")
+        # Same caveat wording `acmg_rules.py::_pp3_bp4` established, as a
+        # trailing italic note rather than a bullet -- this block renders
+        # the raw stage result directly (not an ACMG evidence sentence),
+        # so there is no existing sentence to fold the caveat into; a
+        # standalone note matches this method's own convention for
+        # meta-commentary (see the Failed/Skipped/No-entry branches above).
+        lines.append(
+            "_AlphaMissense is not clinically validated and not approved for clinical use. This is a raw "
+            "model score, not a validated clinical pathogenicity measure._"
+        )
         lines.append("")
         return lines
 

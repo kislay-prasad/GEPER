@@ -578,7 +578,20 @@ class ConflictResolutionEngine:
         distinct = set(directions.values())
         if len(distinct) <= 1:
             return None
-        am = next((f"AlphaMissense: {d}" for s, d in directions.items() if s == "AlphaMissense"), None)
+        # Same caveat wording `acmg_rules.py::_pp3_bp4` established,
+        # shortened to fit this statement's shape: `directions` carries
+        # only a direction ("likely_pathogenic"/"likely_benign"), never
+        # `am_pathogenicity`, so there is no score for the "raw model
+        # score" sentence to attach to -- the clinical-use-status clause
+        # alone is what's factually available to disclose here.
+        am = next(
+            (
+                f"AlphaMissense: {d} (not clinically validated; not approved for clinical use)"
+                for s, d in directions.items()
+                if s == "AlphaMissense"
+            ),
+            None,
+        )
         mm = next((f"MMSplice: {d}" for s, d in directions.items() if s == "MMSplice"), None)
         return ConflictItem(
             conflict_type="AlphaMissense vs MMSplice direction disagreement (AI consensus discordant)",

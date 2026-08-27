@@ -19,9 +19,12 @@ suite stays green in a network-restricted environment.
 
 import unittest
 
+import pytest
 import requests
 
 from pipeline.orphanet.provider import LocalDatasetOrphanetProvider
+
+pytestmark = pytest.mark.live_network
 
 # Force a real fetch every run (bypass any TTL-cached copy from a
 # previous run of this test/the app) by pointing at a scratch path

@@ -28,9 +28,12 @@ suite stays green in a network-restricted environment.
 
 import unittest
 
+import pytest
 import requests
 
 from pipeline.alphafold.provider import LiveAPIAlphaFoldProvider
+
+pytestmark = pytest.mark.live_network
 
 
 def _skip_if_unreachable(test_case, fn):

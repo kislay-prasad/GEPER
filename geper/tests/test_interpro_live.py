@@ -19,9 +19,12 @@ silent no-op in CI.
 
 import unittest
 
+import pytest
 import requests
 
 from pipeline.interpro.provider import LiveAPIInterProProvider
+
+pytestmark = pytest.mark.live_network
 
 
 def _skip_if_unreachable(test_case, fn):

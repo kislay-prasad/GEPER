@@ -21,10 +21,13 @@ function in isolation. Skips gracefully if the live API is unreachable.
 
 import unittest
 
+import pytest
 import requests
 
 from pipeline.acmg_rules import ACMGRuleEngine
 from pipeline.interpro.lookup import InterProLookup
+
+pytestmark = pytest.mark.live_network
 
 
 def _skip_if_unreachable(test_case, fn):

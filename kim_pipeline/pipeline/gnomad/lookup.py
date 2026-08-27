@@ -16,6 +16,7 @@ Usage::
     if hit:
         print(hit.af, hit.af_popmax)
 """
+
 from __future__ import annotations
 
 import logging
@@ -64,6 +65,7 @@ class GnomadLookupOutcome(Enum):
     UNAVAILABLE — the database/API could not be reached (network error, tabix
               missing, corrupted file).  PM2 must NOT be awarded.
     """
+
     ABSENT = "absent"
     PRESENT = "present"
     UNAVAILABLE = "unavailable"
@@ -72,6 +74,7 @@ class GnomadLookupOutcome(Enum):
 @dataclass
 class GnomadHit:
     """Population frequency data for one variant from gnomAD."""
+
     af: float
     af_popmax: float
     ac: int
@@ -143,9 +146,9 @@ class GnomadLookup:
         else:
             self._backend = "api"
             logger.info(
-                "[gnomAD] Backend: GraphQL API (dataset=%s, max_concurrent=%d, "
-                "disk_cache=%s)",
-                self._dataset, self._max_concurrent,
+                "[gnomAD] Backend: GraphQL API (dataset=%s, max_concurrent=%d, disk_cache=%s)",
+                self._dataset,
+                self._max_concurrent,
                 self._disk_cache.path if self._disk_cache.available else "unavailable",
             )
 
@@ -192,14 +195,20 @@ class GnomadLookup:
             outcome=GnomadLookupOutcome.PRESENT,
         )
 
-    def _persist_result(self, cache_key: str, result: Union[GnomadHit, GnomadLookupOutcome]) -> None:
+    def _persist_result(
+        self, cache_key: str, result: Union[GnomadHit, GnomadLookupOutcome]
+    ) -> None:
         """Write PRESENT/ABSENT to the disk cache. UNAVAILABLE is
         intentionally never persisted — see cache.py's module docstring."""
         if isinstance(result, GnomadHit):
             self._disk_cache.put(
-                cache_key, "present",
-                af=result.af, af_popmax=result.af_popmax,
-                ac=result.ac, an=result.an, backend=result.backend_used,
+                cache_key,
+                "present",
+                af=result.af,
+                af_popmax=result.af_popmax,
+                ac=result.ac,
+                an=result.an,
+                backend=result.backend_used,
             )
         elif result == GnomadLookupOutcome.ABSENT:
             self._disk_cache.put(cache_key, "absent")
@@ -227,7 +236,10 @@ class GnomadLookup:
         if not self._enabled:
             logger.debug(
                 "[gnomAD] Skipped lookup for %s:%d %s>%s — gnomad.enabled is false",
-                chrom, pos, ref, alt,
+                chrom,
+                pos,
+                ref,
+                alt,
             )
             return GnomadLookupOutcome.UNAVAILABLE
 
@@ -323,9 +335,11 @@ class GnomadLookup:
             return results
 
         logger.info(
-            "[gnomAD] Batch prefetch: %d cached, %d to fetch via %s backend "
-            "(max_concurrent=%d)",
-            len(results), len(to_fetch), self._backend, workers,
+            "[gnomAD] Batch prefetch: %d cached, %d to fetch via %s backend (max_concurrent=%d)",
+            len(results),
+            len(to_fetch),
+            self._backend,
+            workers,
         )
 
         def _fetch_one(cache_key: str, variant: Tuple[str, int, str, str]):
@@ -337,7 +351,11 @@ class GnomadLookup:
             except Exception as exc:
                 logger.warning(
                     "[gnomAD] batch lookup failed for %s:%d %s>%s: %s",
-                    chrom, pos, ref, alt, exc,
+                    chrom,
+                    pos,
+                    ref,
+                    alt,
+                    exc,
                 )
                 return cache_key, GnomadLookupOutcome.UNAVAILABLE
 
@@ -372,7 +390,11 @@ class GnomadLookup:
         except FastqPipelineError as exc:
             logger.warning(
                 "[gnomAD] tabix not found — cannot perform local lookup for %s:%d %s>%s (%s)",
-                chrom, pos, ref, alt, exc,
+                chrom,
+                pos,
+                ref,
+                alt,
+                exc,
             )
             return GnomadLookupOutcome.UNAVAILABLE
 
@@ -398,7 +420,12 @@ class GnomadLookup:
             vcf_pos = int(parts[1])
             vcf_ref = parts[3].upper()
             vcf_alt = parts[4].upper()
-            if vcf_chrom != norm or vcf_pos != pos or vcf_ref != ref.upper() or vcf_alt != alt.upper():
+            if (
+                vcf_chrom != norm
+                or vcf_pos != pos
+                or vcf_ref != ref.upper()
+                or vcf_alt != alt.upper()
+            ):
                 continue
 
             info = parts[7]
@@ -450,6 +477,7 @@ class GnomadLookup:
             try:
                 from email.utils import parsedate_to_datetime
                 from datetime import datetime, timezone
+
                 target = parsedate_to_datetime(retry_after)
                 if target.tzinfo is None:
                     target = target.replace(tzinfo=timezone.utc)
@@ -490,7 +518,10 @@ class GnomadLookup:
                     sleep_for = self._retry_delay(resp, delay, max_sleep)
                     logger.warning(
                         "[gnomAD API] HTTP %d on attempt %d/%d — retrying in %.1fs",
-                        resp.status_code, attempt, max_retries, sleep_for,
+                        resp.status_code,
+                        attempt,
+                        max_retries,
+                        sleep_for,
                     )
                     time.sleep(sleep_for)
                     delay = min(delay * 2, max_sleep)
@@ -503,7 +534,11 @@ class GnomadLookup:
                     sleep_for = min(delay, max_sleep) + random.uniform(0, delay * 0.25)
                     logger.warning(
                         "[gnomAD API] %s on attempt %d/%d — retrying in %.1fs: %s",
-                        type(exc).__name__, attempt, max_retries, sleep_for, exc,
+                        type(exc).__name__,
+                        attempt,
+                        max_retries,
+                        sleep_for,
+                        exc,
                     )
                     time.sleep(sleep_for)
                     delay = min(delay * 2, max_sleep)

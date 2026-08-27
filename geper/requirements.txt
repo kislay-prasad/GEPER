@@ -68,7 +68,12 @@ einops==0.8.1
 # Migrated from the MultiMolecule reimplementation (AGPL-3.0-or-later,
 # incompatible with commercial/hospital deployment) to the official
 # package -- see MIGRATION_RNA_FM.md for the equivalence verification.
-rna-fm>=0.2.2
+# Pinned exactly rather than left as a floor: 0.2.2 is also PyPI's
+# current latest release (verified live via pypi.org/pypi/rna-fm/json,
+# 2026-08-27), so this changes nothing about what resolves today --
+# it only stops a future 0.2.3+ from silently changing behavior with
+# no GEPER-side signal that anything moved.
+rna-fm==0.2.2
 
 # --- Evo 2 (models/evo2.py) --------------------------------------------------
 # Arc Institute's DNA foundation model, replacing Nucleotide Transformer.

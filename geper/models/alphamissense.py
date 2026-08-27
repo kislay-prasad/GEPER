@@ -56,6 +56,7 @@ attribution condition is triggered by extracting a single row from
 the ~71M-row catalogue -- that stays a separate, still-open question.
 """
 
+import base64
 import os
 import shutil
 import subprocess
@@ -67,7 +68,7 @@ import torch
 
 from config import CONFIG
 from models.base_model import BaseGenomicModel
-from pipeline.provenance import write_dataset_provenance_sidecar
+from pipeline.provenance import read_dataset_provenance_sidecar, write_dataset_provenance_sidecar
 from utils.auto_install import ensure_system_binary_available
 from utils.exceptions import ModelInferenceError, ModelLoadError
 from utils.logger import get_logger
@@ -122,6 +123,33 @@ _DOWNLOAD_LOCK = threading.Lock()
 _EXPECTED_MIN_COLUMNS = (
     10  # CHROM POS REF ALT genome uniprot_id transcript_id protein_variant am_pathogenicity am_class
 )
+
+# Pin the exact GCS object generation + content-hash for each build,
+# verified live via the GCS JSON API (`storage.googleapis.com/storage/v1/
+# b/dm_alphamissense/o/AlphaMissense_<build>.tsv.gz`) on 2026-08-27. Same
+# principle as `models/hyenadna.py`'s `_HYENADNA_CHECKPOINT_REVISIONS`: a
+# pin that silently degrades to "whatever the bucket now serves" is not a
+# pin. `md5` is the GCS object's own MD5 (base64, matching the ETag/
+# x-goog-hash format `_download_catalogue` below already reads) -- not
+# recomputed by GEPER, taken directly from the JSON API response.
+_CATALOGUE_PINS: Dict[str, Dict[str, str]] = {
+    "hg38": {"generation": "1691073413649109", "md5": "n9Fnc18Wobh9pus+TCX8tQ=="},
+    "hg19": {"generation": "1691073495414540", "md5": "PxT7oIxgsJqQoq4Ut4AuTA=="},
+}
+
+# The pin only applies to GEPER's own default GCS URLs -- an env-var
+# override (GEPER_ALPHAMISSENSE_{HG38,HG19}_URL) is a deployer's explicit
+# choice to point at something else (a mirror, a different generation),
+# the same trust boundary GEPER_ALPHAMISSENSE_{HG38,HG19}_LOCAL already
+# is. Appending `?generation=` or checking a GCS-specific md5 against an
+# arbitrary non-GCS URL would be meaningless at best.
+_DEFAULT_URL_ENV_VARS = {"hg38": "GEPER_ALPHAMISSENSE_HG38_URL", "hg19": "GEPER_ALPHAMISSENSE_HG19_URL"}
+
+
+def _pin_for_build(build: str) -> Optional[Dict[str, str]]:
+    if os.environ.get(_DEFAULT_URL_ENV_VARS.get(build, ""), "").strip():
+        return None  # deployer overrode the URL -- pin does not apply
+    return _CATALOGUE_PINS.get(build)
 
 
 def _normalize_chrom_for_catalogue(chrom: str) -> str:
@@ -184,13 +212,45 @@ def catalogue_cache_path(build: str) -> str:
     return os.path.join(cache_dir, f"AlphaMissense_{build}.tsv.gz")
 
 
-def _download_catalogue(url: str, dest_path: str) -> None:
+def _extract_goog_md5(headers: Dict[str, str]) -> Optional[str]:
+    """GCS's `x-goog-hash` response header carries `md5=<base64>` (and
+    usually `crc32c=...`, comma-separated). Returns the base64 MD5, or
+    `None` if absent/unparseable. Deliberately NOT the `ETag` this module
+    already reads for provenance: ETag is hex-encoded, a different
+    encoding of the same digest, and `_CATALOGUE_PINS`'s values (taken
+    directly from the GCS JSON API's `md5Hash` field) are base64 -- using
+    `x-goog-hash` avoids a hex<->base64 conversion GEPER would otherwise
+    have to get right itself."""
+    raw = headers.get("x-goog-hash") or headers.get("X-Goog-Hash") or ""
+    for part in raw.split(","):
+        part = part.strip()
+        if part.startswith("md5="):
+            return part[len("md5=") :]
+    return None
+
+
+def _download_catalogue(url: str, dest_path: str, build: Optional[str] = None) -> None:
     """
     Stream-download the (~9GB) catalogue file to `dest_path`, via a
     `.part` temp file that's only renamed into place on full success --
     so a Colab disconnect or Ctrl-C mid-download leaves no file that a
     later run could mistake for a complete, valid catalogue.
+
+    When `build` is pin-eligible (`_pin_for_build` -- the default GCS
+    URL, not overridden), the request is pinned to the exact object
+    `?generation=` up front, AND the downloaded content's own
+    `x-goog-hash` MD5 is verified against the pin afterward -- belt and
+    suspenders against GCS serving a different generation than asked
+    (generation pin) or silently substituting different bytes under the
+    same generation number (content-hash check). Any mismatch removes
+    the downloaded file and raises loudly: a pin that falls back to
+    trusting whatever the bucket served is not a pin.
     """
+    pin = _pin_for_build(build) if build else None
+    if pin:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}generation={pin['generation']}"
+
     part_path = dest_path + ".part"
     try:
         with requests.get(url, stream=True, timeout=60) as response:
@@ -211,28 +271,44 @@ def _download_catalogue(url: str, dest_path: str) -> None:
                             f"Downloading '{url}': {downloaded / 1e9:.2f}GB / {total_bytes / 1e9:.2f}GB ({pct:.0f}%)."
                         )
                         next_log_at = downloaded + max(total_bytes // 20, 200 * 1024 * 1024)
-        os.replace(part_path, dest_path)
-        # Provenance sidecar (pipeline/provenance.py). The GCS-hosted
-        # catalogue's `ETag` is literally the object's own MD5 (verified
-        # live: a 32-hex-char value, same shape as `x-goog-hash`'s `md5=`
-        # component) -- a precise, server-authoritative content
-        # identifier used directly rather than sha256-hashing this ~9GB
-        # file ourselves, which would add real, avoidable cost on every
-        # (re)download for no extra confidence.
-        write_dataset_provenance_sidecar(
-            dest_path,
-            url,
-            response_headers=headers,
-            content_hash=(headers.get("ETag") or "").strip('"') or None,
-            hash_algorithm="gcs-etag-md5" if headers.get("ETag") else None,
-            compute_hash_from_file=False,
-        )
     except Exception as exc:
         if os.path.exists(part_path):
             os.remove(part_path)
         raise ModelInferenceError(
             f"Downloading the AlphaMissense catalogue from '{url}' to '{dest_path}' failed: {exc}"
         ) from exc
+
+    if pin:
+        actual_md5 = _extract_goog_md5(headers)
+        if actual_md5 != pin["md5"]:
+            os.remove(part_path)
+            raise ModelInferenceError(
+                f"AlphaMissense '{build}' catalogue pin mismatch: expected MD5 "
+                f"'{pin['md5']}' (pinned GCS generation {pin['generation']}), got "
+                f"'{actual_md5}' from '{url}'. Refusing to use unverified content. "
+                "Either this pin is stale (the bucket's content genuinely changed -- "
+                "update _CATALOGUE_PINS in models/alphamissense.py after confirming "
+                "the new content is expected) or something served content that does "
+                "not match what was verified. Set GEPER_ALPHAMISSENSE_"
+                f"{build.upper()}_URL to explicitly opt out of pinning."
+            )
+
+    os.replace(part_path, dest_path)
+    # Provenance sidecar (pipeline/provenance.py). The GCS-hosted
+    # catalogue's `ETag` is literally the object's own MD5 (verified
+    # live: a 32-hex-char value, same shape as `x-goog-hash`'s `md5=`
+    # component) -- a precise, server-authoritative content
+    # identifier used directly rather than sha256-hashing this ~9GB
+    # file ourselves, which would add real, avoidable cost on every
+    # (re)download for no extra confidence.
+    write_dataset_provenance_sidecar(
+        dest_path,
+        url,
+        response_headers=headers,
+        content_hash=(headers.get("ETag") or "").strip('"') or None,
+        hash_algorithm="gcs-etag-md5" if headers.get("ETag") else None,
+        compute_hash_from_file=False,
+    )
 
 
 def _ensure_local_catalogue(configured_source: str, build: str, tabix_binary: str) -> str:
@@ -295,6 +371,36 @@ def _ensure_local_catalogue(configured_source: str, build: str, tabix_binary: st
             return cached
 
         if os.path.exists(local_path) and os.path.exists(local_path + ".tbi"):
+            # AM-06: the pin must also cover indefinite cache reuse, not
+            # only a fresh download -- an existing file on disk is
+            # otherwise trusted forever with no remote re-check, which is
+            # exactly the "silently degrades to unpinned" failure mode.
+            # The provenance sidecar already records what was actually
+            # downloaded (`_download_catalogue` above writes it, from the
+            # GCS `ETag`, for every download this module has ever done --
+            # including before this pin existed), so this reads that back
+            # rather than re-deriving anything: a cache written under the
+            # pinned generation passes; a cache from before pinning
+            # existed, from a different generation, or with no sidecar at
+            # all (unverifiable) is refused, same as a fresh-download
+            # mismatch -- silently trusting an unverifiable file would be
+            # no pin at all.
+            pin = _pin_for_build(build)
+            if pin:
+                sidecar = read_dataset_provenance_sidecar(local_path)
+                cached_md5_hex = (sidecar or {}).get("content_hash")
+                expected_md5_hex = base64.b64decode(pin["md5"]).hex()
+                if cached_md5_hex != expected_md5_hex:
+                    raise ModelInferenceError(
+                        f"Cached AlphaMissense '{build}' catalogue at '{local_path}' does not match "
+                        f"the pinned content (provenance sidecar recorded "
+                        f"{cached_md5_hex or 'no sidecar / unverifiable'}, pin expects MD5 "
+                        f"'{expected_md5_hex}' for GCS generation {pin['generation']}). Refusing to "
+                        f"silently reuse unverified cached content. Delete '{local_path}' and "
+                        f"'{local_path}.tbi' to force a fresh, pin-verified download, or set "
+                        f"GEPER_ALPHAMISSENSE_{build.upper()}_LOCAL to explicitly vouch for this "
+                        "file instead."
+                    )
             logger.info(f"Found existing cached AlphaMissense catalogue at '{local_path}'.")
         else:
             logger.info(
@@ -303,7 +409,7 @@ def _ensure_local_catalogue(configured_source: str, build: str, tabix_binary: st
                 f"to '{local_path}' (~9GB; this is a one-time cost -- cached "
                 "under GEPER_CACHE_DIR for subsequent runs)."
             )
-            _download_catalogue(configured_source, local_path)
+            _download_catalogue(configured_source, local_path, build=build)
             logger.info(f"Download complete. Building local tabix index for '{local_path}'...")
             _run_tabix_index(tabix_binary, local_path)
             logger.info(f"AlphaMissense '{build}' catalogue ready at '{local_path}'.")

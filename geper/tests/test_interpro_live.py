@@ -56,7 +56,8 @@ class TestInterProLiveBRCA1(unittest.TestCase):
 
     def test_ring_finger_domain_boundaries(self):
         ring_matches = [
-            d for d in self.annotation.domains
+            d
+            for d in self.annotation.domains
             if d.name and "ring" in d.name.lower() and d.member_database == "interpro"
         ]
         self.assertTrue(ring_matches, "expected at least one InterPro-integrated RING finger entry")
@@ -70,7 +71,8 @@ class TestInterProLiveBRCA1(unittest.TestCase):
 
     def test_brct_domain_boundaries(self):
         brct_matches = [
-            d for d in self.annotation.domains
+            d
+            for d in self.annotation.domains
             if d.name and "brct" in d.name.lower() and d.member_database == "interpro"
         ]
         self.assertTrue(brct_matches, "expected at least one InterPro-integrated BRCT entry")
@@ -110,7 +112,8 @@ class TestInterProLiveTP53(unittest.TestCase):
     def test_dna_binding_domain_boundaries(self):
         self.assertTrue(self.annotation.found)
         dbd_matches = [
-            d for d in self.annotation.domains
+            d
+            for d in self.annotation.domains
             if d.name and "dna-binding" in d.name.lower() and d.member_database == "interpro"
         ]
         self.assertTrue(dbd_matches, "expected an InterPro-integrated p53 DNA-binding domain entry")
@@ -122,7 +125,8 @@ class TestInterProLiveTP53(unittest.TestCase):
 
     def test_tetramerization_domain_boundaries(self):
         tetra_matches = [
-            d for d in self.annotation.domains
+            d
+            for d in self.annotation.domains
             if d.name and "tetrameri" in d.name.lower() and d.member_database == "interpro"
         ]
         self.assertTrue(tetra_matches, "expected an InterPro-integrated p53 tetramerization domain entry")

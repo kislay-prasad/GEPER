@@ -54,8 +54,13 @@ class TestOrphanetLiveFetch(unittest.TestCase):
         """Cross-check opportunity: FBN1 is the same gene test_hpo.py verifies against real HPO Marfan (OMIM:154700) curation."""
         evidence = _skip_if_unreachable(self, lambda: self.provider.query("FBN1"))
         self.assertTrue(evidence.found)
-        marfan_matches = [a for a in evidence.disorder_associations if "marfan syndrome type 1" in a.disorder_name.lower()]
-        self.assertTrue(marfan_matches, f"expected a Marfan syndrome type 1 entry, got: {[a.disorder_name for a in evidence.disorder_associations]}")
+        marfan_matches = [
+            a for a in evidence.disorder_associations if "marfan syndrome type 1" in a.disorder_name.lower()
+        ]
+        self.assertTrue(
+            marfan_matches,
+            f"expected a Marfan syndrome type 1 entry, got: {[a.disorder_name for a in evidence.disorder_associations]}",
+        )
         self.assertEqual(marfan_matches[0].orpha_code, "284963")
 
     def test_cftr_real_cystic_fibrosis_association(self):

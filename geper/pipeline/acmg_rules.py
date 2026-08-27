@@ -272,6 +272,23 @@ def _mtdna_disclaimer_middle_from_breakdown(gene_class: Optional[str], breakdown
     )
 
 
+# The exact ACMG/AMP codes GEPER structurally never integrates a data
+# source for, regardless of variant/gene/compartment -- NotEvaluatedReason
+# .NOT_INTEGRATED's own case, see that enum's docstring below. Named here,
+# rather than the literal digit `mtdna_interpretation_disclaimer` used to
+# print, because that function's OWN docstring already records this exact
+# partition diverging once before (round 16, between this disclaimer's
+# middle clause and a separate report surface) -- the middle clause was
+# fixed to read from `not_evaluated_breakdown()`, but the outer "9" stayed
+# a hand-typed literal. This tuple is cross-checked against a real
+# `ACMGRuleEngine().evaluate()` run's actual NOT_INTEGRATED set in
+# tests/test_round16_not_evaluated_categories.py::
+# test_never_integrated_constant_matches_the_real_rule_set, so a rule
+# implementation change that adds/removes a NOT_INTEGRATED code fails that
+# test before this disclaimer's count can go stale silently.
+_NEVER_INTEGRATED_ACMG_CODES = ("PS2", "PM3", "PM6", "PP2", "PP5", "BS2", "BP2", "BP5", "PS4")
+
+
 def mtdna_interpretation_disclaimer(
     transcript_result: Optional[Dict[str, Any]] = None,
     not_evaluated_rules: Optional[List[Dict[str, Any]]] = None,
@@ -328,13 +345,13 @@ def mtdna_interpretation_disclaimer(
         )
     return (
         "Mitochondrial (mtDNA) compartment notice: this variant is on the mitochondrial genome. Of "
-        f"the 28 standard ACMG/AMP criteria, Bij AI never evaluates 9 for any variant (no data source "
-        f"integrated), and {middle} This evaluation does NOT incorporate heteroplasmy level, maternal "
-        "inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has a separate mitochondrial "
-        "DNA variant interpretation specification (McCormick et al. 2020) that this evaluation does "
-        "not fully implement. The classification below reflects only the criteria Bij AI actually "
-        "evaluated for this compartment -- it is not a complete, mtDNA-specification-compliant "
-        "interpretation."
+        f"the 28 standard ACMG/AMP criteria, Bij AI never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} "
+        f"for any variant (no data source integrated), and {middle} This evaluation does NOT incorporate "
+        "heteroplasmy level, maternal inheritance pattern, tissue distribution, or MITOMAP. ACMG/AMP has "
+        "a separate mitochondrial DNA variant interpretation specification (McCormick et al. 2020) that "
+        "this evaluation does not fully implement. The classification below reflects only the criteria "
+        "Bij AI actually evaluated for this compartment -- it is not a complete, mtDNA-specification-"
+        "compliant interpretation."
     )
 
 

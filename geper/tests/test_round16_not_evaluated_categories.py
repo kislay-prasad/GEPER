@@ -57,6 +57,7 @@ import unittest
 from pipeline.acmg_rules import (
     ACMGRuleEngine,
     NotEvaluatedReason,
+    _NEVER_INTEGRATED_ACMG_CODES,
     mtdna_alphamissense_skip_result,
     mtdna_ensemble_skip_result,
     mtdna_gnomad_skip_result,
@@ -146,6 +147,45 @@ class TestNotEvaluatedCategoryPartition(unittest.TestCase):
                 ps4 = result["all_criteria"]["PS4"]
                 self.assertEqual(ps4["status"], "not_evaluated")
                 self.assertEqual(ps4["category"], NotEvaluatedReason.NOT_INTEGRATED.value)
+
+    def test_never_integrated_constant_matches_the_real_rule_set(self):
+        # T4-F1: mtdna_interpretation_disclaimer() used to print the "9"
+        # in "Bij AI never evaluates 9 for any variant" as a hand-typed
+        # literal, disconnected from the actual rule implementations --
+        # the exact divergence shape round 16 already fixed once for this
+        # function's middle clause. The disclaimer now derives the count
+        # from _NEVER_INTEGRATED_ACMG_CODES instead of a literal digit;
+        # THIS test is what keeps that constant honest. If a rule
+        # implementation ever adds, removes, or reclassifies a
+        # NOT_INTEGRATED code, this fails here -- not silently, three
+        # tests up, leaving the disclaimer sentence to keep asserting a
+        # stale count to a clinical reader with zero red test elsewhere.
+        # Checked against three independent contexts (mt-tRNA,
+        # mt-protein-coding, nuclear) since NOT_INTEGRATED is defined as
+        # "never evaluated for ANY variant" -- a constant that only
+        # matched one context wouldn't actually prove that claim.
+        for variant_dict, transcript_result in (
+            (_MT_TL1_VARIANT, _MT_TL1_TRANSCRIPT_RESULT),
+            (_MT_ATP6_VARIANT, _MT_ATP6_TRANSCRIPT_RESULT),
+            (_NUCLEAR_VARIANT, _NUCLEAR_TRANSCRIPT_RESULT),
+        ):
+            with self.subTest(gene=transcript_result.get("gene_symbol")):
+                result = _evaluate(variant_dict, transcript_result)
+                breakdown = not_evaluated_breakdown(result["not_evaluated_criteria"])
+                actual = set(breakdown[NotEvaluatedReason.NOT_INTEGRATED.value])
+                self.assertEqual(actual, set(_NEVER_INTEGRATED_ACMG_CODES))
+
+    def test_disclaimer_never_evaluates_count_is_derived_not_hardcoded(self):
+        # Proves the fix at the point a clinical reader actually sees it:
+        # the disclaimer string's count must equal the constant's length,
+        # for both the data-driven path (not_evaluated_rules supplied)
+        # and the gene-class-only fallback path (older callers).
+        expected = f"Bij AI never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} for any variant"
+        result = _evaluate(_NUCLEAR_VARIANT, _NUCLEAR_TRANSCRIPT_RESULT)
+        data_driven_text = mtdna_interpretation_disclaimer(_NUCLEAR_TRANSCRIPT_RESULT, result["not_evaluated_criteria"])
+        fallback_text = mtdna_interpretation_disclaimer(_NUCLEAR_TRANSCRIPT_RESULT)
+        self.assertIn(expected, data_driven_text)
+        self.assertIn(expected, fallback_text)
 
 
 class TestNotEvaluatedBreakdownPureFunction(unittest.TestCase):

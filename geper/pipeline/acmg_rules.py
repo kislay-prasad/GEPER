@@ -3215,7 +3215,32 @@ class ACMGRuleEngine:
         gene_terms = {t["hpo_id"] for t in (hpo_result.get("distinct_phenotype_terms") or [])}
         overlap = patient_terms & gene_terms
         overlap_ratio = len(overlap) / len(patient_terms)
-        distinct_diseases = hpo_result.get("distinct_disease_ids") or []
+        # Presence, not truthiness. `or []` made a MISSING disease list
+        # indistinguishable from an empty one, and because the test below
+        # is `len(...) <= threshold`, "we do not know how many diseases
+        # this gene is curated against" satisfied the single-etiology half
+        # of PP4 outright -- resolving absent data into the affirmative
+        # condition a pathogenic-supporting rule needs.
+        #
+        # An empty list that is actually PRESENT keeps its current meaning
+        # (HPO was consulted; this gene has no curated disease entries).
+        # Whether that should count as "a single genetic etiology" is a
+        # question about the rule rather than about this idiom, and it is
+        # deliberately left alone here.
+        #
+        # Note the sibling line above uses the same `or []` and fails SAFE:
+        # no phenotype terms drives overlap_ratio to 0 and PP4 cannot
+        # fire. Same idiom, one line apart, opposite failure directions --
+        # which is why this one needed changing and that one did not.
+        raw_disease_ids = hpo_result.get("distinct_disease_ids")
+        if raw_disease_ids is None:
+            return _not_evaluated(
+                "PP4",
+                f"HPO gene-phenotype annotation for {gene} carried no curated disease list, so "
+                "whether this gene has a single genetic etiology could not be determined; PP4 "
+                "requires that judgement and is not awarded on an unknown.",
+            )
+        distinct_diseases = raw_disease_ids
 
         cfg = CONFIG.hpo
         specific_enough = overlap_ratio >= cfg.PP4_OVERLAP_THRESHOLD

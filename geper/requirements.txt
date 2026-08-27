@@ -91,7 +91,12 @@ rna-fm==0.2.2
 # whatever CUDA toolkit matches the already-installed torch build, which a
 # plain `pip install -r requirements.txt` in a fresh/CPU environment cannot
 # do safely or quickly. Install it manually per the commands above, then:
-evo2>=0.6.0
+# Pinned exactly rather than left as a floor: 0.6.0 is also PyPI's
+# current latest release (verified live via pypi.org/pypi/evo2/json,
+# 2026-08-27), so this changes nothing about what resolves today -- it
+# only stops a future release from silently changing behavior with no
+# GEPER-side signal that anything moved.
+evo2==0.6.0
 # IMPORTANT -- checkpoint choice: use GEPER_EVO2_VARIANT=evo2_7b_base (the
 # default), NOT plain 'evo2_7b'. Verified against
 # https://github.com/ArcInstitute/evo2/issues/208 (open, 2026-03-13): plain

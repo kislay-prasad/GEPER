@@ -13,12 +13,12 @@ Two layers, deliberately kept separate:
     prove the wiring (route registration, query-param handling, response
     serialization) independently of the mapping logic already covered above.
 
-ONE STATE IS DELIBERATELY NOT SPLIT: `mapping_status` for a "found, not
-mapped" result is a single collapsed `NOT_MAPPED` value here, not the
-`NO_POSITION`/`NOT_MAPPABLE` split the design called for. That split is a
-carded open item (blocked on a human decision, per the 2026-08-23 hive
-report) -- these tests pin the honest, currently-implemented behavior,
-not the eventual one.
+`mapping_status` for a "found, not mapped" result splits into `NO_POSITION`
+(no protein position was ever resolved) vs. `NOT_MAPPABLE` (a real position
+existed but the gate rejected it on the merits), derived from `raw`'s own
+`protein_position` field -- see api/main.py's module docstring for why that
+field is a reliable signal (route (c), ruled 2026-08-26, verified by
+execution before implementation).
 """
 
 from __future__ import annotations
@@ -286,15 +286,14 @@ class TestMapToResponseFoundMapped(unittest.TestCase):
 
 
 @unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
-class TestMapToResponseFoundNotMapped(unittest.TestCase):
-    """The collapsed, currently-implemented state. Both underlying causes
-    (no position ever resolved, and a real position rejected by the gate)
-    map to the same NOT_MAPPED value today -- see module docstring."""
+class TestMapToResponseFoundNoPosition(unittest.TestCase):
+    """No protein position was ever resolved upstream -- distinguished from
+    NOT_MAPPABLE by `raw["protein_position"] is None`."""
 
-    def test_no_position_case_is_not_mapped_absent_never_guessed(self):
+    def test_no_position_case_is_no_position_absent_never_guessed(self):
         resp = _map_to_response(_found_not_mapped_no_position())
         self.assertEqual(resp.entry_status, EntryStatus.FOUND)
-        self.assertEqual(resp.mapping_status, MappingStatus.NOT_MAPPED)
+        self.assertEqual(resp.mapping_status, MappingStatus.NO_POSITION)
         self.assertIsNone(resp.mapped_residue)
         self.assertIsNone(resp.mapping_confidence_band)
         self.assertEqual(resp.mapping_unavailable_reason, "no protein position was resolved for this variant")
@@ -303,10 +302,19 @@ class TestMapToResponseFoundNotMapped(unittest.TestCase):
         self.assertIsNotNone(resp.pdb_url)
         self.assertIsNotNone(resp.model_version)
 
-    def test_out_of_range_case_is_also_not_mapped_same_collapsed_state(self):
+
+@unittest.skipUnless(_HAS_FASTAPI, _FASTAPI_SKIP_REASON)
+class TestMapToResponseFoundNotMappable(unittest.TestCase):
+    """A real protein position existed but the mapping gate rejected it on
+    the merits -- distinguished from NO_POSITION by `raw["protein_position"]`
+    being non-None (the rejected position, echoed unconditionally by
+    provider.py::_build_annotation regardless of the gate's verdict)."""
+
+    def test_out_of_range_case_is_not_mappable_distinct_from_no_position(self):
         resp = _map_to_response(_found_not_mapped_out_of_range())
         self.assertEqual(resp.entry_status, EntryStatus.FOUND)
-        self.assertEqual(resp.mapping_status, MappingStatus.NOT_MAPPED)
+        self.assertEqual(resp.mapping_status, MappingStatus.NOT_MAPPABLE)
+        self.assertNotEqual(MappingStatus.NOT_MAPPABLE, MappingStatus.NO_POSITION)
         self.assertIsNone(resp.mapped_residue)
         self.assertIsNone(resp.mapping_confidence_band)
         self.assertIn("lies outside", resp.mapping_unavailable_reason)
@@ -316,10 +324,12 @@ class TestMapToResponseFoundNotMapped(unittest.TestCase):
         be ABSENT, not a best-effort guess, whenever the gate did not
         approve it -- even though the raw dict's own `protein_position`
         field IS populated in the out-of-range case (the position that was
-        rejected), it must never leak into `mapped_residue`."""
+        rejected, and the very field NOT_MAPPABLE is derived from), it must
+        never leak into `mapped_residue`."""
         raw = _found_not_mapped_out_of_range(position=5000)
         self.assertEqual(raw["protein_position"], 5000)  # sanity: the raw dict does carry it
         resp = _map_to_response(raw)
+        self.assertEqual(resp.mapping_status, MappingStatus.NOT_MAPPABLE)
         self.assertIsNone(resp.mapped_residue)  # but the response must not
 
 
@@ -381,7 +391,7 @@ class TestStructureEndpointRoute(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(fake.calls, [({"accession": "P04637"}, None)])
         body = resp.json()
-        self.assertEqual(body["mapping_status"], "not_mapped")
+        self.assertEqual(body["mapping_status"], "no_position")
         self.assertIsNone(body["mapped_residue"])
 
     def test_not_found_returns_200_with_status_field_not_an_http_error(self):

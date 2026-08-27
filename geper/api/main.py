@@ -24,23 +24,27 @@ not exist, or geper persisting structural data for kim_pipeline to read,
 which is what today's pass-through design avoids. This endpoint lives next
 to the data, the mapping gate, and the provenance that produce it.
 
-KNOWN GAP, carded and NOT resolved here: `mapping_status` collapses two
+RESOLVED (2026-08-26, human ruling, route c): `mapping_status` splits two
 distinct causes of "found, but no residue-level confidence" --
-(a) no protein position was ever resolved for this variant, and
-(b) a real position existed but the mapping gate rejected it on the merits
-(out of span / not modelled / fragment-numbering mismatch) --
-into a single `NOT_MAPPED` value. The split this app's design called for
-(NO_POSITION vs. NOT_MAPPABLE) is a carded open item pending a human
-decision between: (a) pattern-matching `mapping_gate.py`'s reason string
-(rejected -- turns a human-readable sentence into business logic a future
-copy-edit could silently break), (b) extending `mapping_gate.py`'s own
-contract to return a reason CODE alongside the prose (a real change to a
-different module), or a third option surfaced during implementation --
-deriving the split from whether THIS endpoint's own `protein_position`
-query parameter was supplied at all, which needs no gate change and no
-string-matching, since the raw result's own `protein_position` field is
-just an echo of what this endpoint passed in. See the implementation
-report for the full reasoning; this file deliberately does not decide it.
+`NO_POSITION` (no protein position was ever resolved for this variant) vs.
+`NOT_MAPPABLE` (a real position existed but the mapping gate rejected it on
+the merits: out of span / not modelled / fragment-numbering mismatch) --
+using the raw result's own `protein_position` field: `None` means
+NO_POSITION, non-None means NOT_MAPPABLE. This needed no `mapping_gate.py`
+change and no reason-string pattern-matching, because `protein_position` is
+echoed unconditionally by `provider.py::_build_annotation` regardless of the
+gate's verdict -- the only two constructors reached along the `found=True`
+path (`LocalDatasetAlphaFoldProvider.query`, `LiveAPIAlphaFoldProvider.query`)
+both pass it through. The two non-echoing constructors,
+`AlphaFoldAnnotation.not_found`/`.from_error`, never reach this branch at
+all: they set `found=False`, which is handled above and mapped to
+`EntryStatus.NOT_FOUND`/`ERROR` before `mapping_status` is ever considered.
+Confirmed by execution, not by reading alone, before this was implemented
+(constructed the case: a non-None `protein_position` the gate rejects for a
+non-NO_POSITION reason, e.g. out-of-span -- the raw dict's `protein_position`
+stayed the non-None value, never collapsed to `None`). See
+`tests/test_api_structures.py`'s `TestMapToResponseFoundNoPosition`/
+`TestMapToResponseFoundNotMappable` for the pinned fixtures.
 """
 
 from __future__ import annotations
@@ -75,13 +79,14 @@ class EntryStatus(str, enum.Enum):
 class MappingStatus(str, enum.Enum):
     """
     Only meaningful when `entry_status == FOUND` -- there is no residue to
-    map onto a protein that was never found. `NOT_MAPPED` is a deliberately
-    collapsed placeholder for two distinct causes; see this module's own
-    docstring for why the split is not implemented yet.
+    map onto a protein that was never found. `NO_POSITION` and
+    `NOT_MAPPABLE` split "found, not mapped" by cause; see this module's own
+    docstring for how the split is derived.
     """
 
     MAPPED = "mapped"
-    NOT_MAPPED = "not_mapped"
+    NO_POSITION = "no_position"
+    NOT_MAPPABLE = "not_mappable"
 
 
 class StructureAnnotationResponse(BaseModel):
@@ -190,17 +195,22 @@ def _map_to_response(raw: Dict[str, Any]) -> StructureAnnotationResponse:
             mapping_confidence_band=raw.get("affected_residue_band"),
         )
 
-    # Found, but the gate did not approve a residue-level value (for
-    # either reason this module's docstring names). mapped_residue and
-    # mapping_confidence_band stay None -- never populated from
-    # `protein_position` here, even when it's present in `raw` (the
-    # position that was REJECTED, not one that may be reported).
+    # Found, but the gate did not approve a residue-level value. Split by
+    # cause using `raw`'s own `protein_position`: it is echoed
+    # unconditionally by provider.py::_build_annotation regardless of the
+    # gate's verdict (see this module's docstring), so None here means no
+    # position was ever resolved, and non-None means a real position was
+    # rejected on the merits. mapped_residue and mapping_confidence_band
+    # stay None either way -- never populated from `protein_position` here,
+    # even when it's present in `raw` (the position that was REJECTED, not
+    # one that may be reported).
+    mapping_status = MappingStatus.NO_POSITION if raw.get("protein_position") is None else MappingStatus.NOT_MAPPABLE
     return StructureAnnotationResponse(
         entry_status=EntryStatus.FOUND,
         accession=accession,
         pdb_url=pdb_url,
         model_version=model_version,
-        mapping_status=MappingStatus.NOT_MAPPED,
+        mapping_status=mapping_status,
         mapping_unavailable_reason=raw.get("mapping_unavailable_reason"),
     )
 
@@ -219,8 +229,8 @@ def get_structure_annotation(
     """
     `protein_position` is optional: omitting it is a valid request (the
     viewer wants the whole structure with no residue highlight) and is not
-    an error -- it produces `mapping_status: not_mapped` with a reason
-    naming exactly that, same as any other unmapped case.
+    an error -- it produces `mapping_status: no_position` with a reason
+    naming exactly that.
     """
     raw = lookup.query_variant({"accession": accession}, protein_position=protein_position)
     return _map_to_response(raw)

@@ -149,6 +149,14 @@ class VersionStatus(str, enum.Enum):
     HASH_ONLY = "hash_only"  # no release version, but a content hash of the actual bytes used is known
     VERSION_KNOWN = "version_known"  # a real, source-published version/release/build identifier is known
 
+    def __bool__(self):
+        raise TypeError(
+            "VersionStatus has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:`/`if not x:` silently collapses NOT_CONSULTED (never queried) and UNKNOWN (queried, nothing obtainable) "
+            "into one answer, which is exactly the distinction this type exists to "
+            "keep. Compare explicitly, e.g. `x is VersionStatus.VERSION_KNOWN`."
+        )
+
 
 _STATUS_PRIORITY = {
     VersionStatus.NOT_CONSULTED: 0,

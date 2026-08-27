@@ -49,6 +49,7 @@ from pipeline.models.mmsplice.models import MODEL_FILENAMES, MODULE_NAMES, Modul
 from pipeline.models.mmsplice.utils import SeqSplitter, encode_batch
 from utils.auto_install import (
     PackageCheckStatus,
+    _auto_install_disabled_for_tests,
     check_pip_package_availability,
     ensure_pip_package_available,
     is_pip_package_installed,
@@ -61,10 +62,16 @@ logger = get_logger(__name__)
 _MMSPLICE_PIP_NAME = "mmsplice"
 # Cache of the --no-deps auto-install outcome, same "cheap check,
 # install-once, cache the outcome" shape as utils/auto_install.py.
+#
+# INVARIANT: this only ever holds the outcome of a REAL install attempt.
+# A check skipped under pytest is not a result and is never written here
+# -- see the guard in `_ensure_mmsplice_package_files_available` -- so a
+# cached False always means "attempted, and it failed", never "we did
+# not look".
 _NO_DEPS_INSTALL_RESULT: Dict[str, bool] = {}
 
 
-def _ensure_mmsplice_package_files_available() -> bool:
+def _ensure_mmsplice_package_files_available() -> PackageCheckStatus:
     """
     Idempotent, automatic setup: installs the `mmsplice` PyPI package
     with `--no-deps` (see module docstring) if it isn't already
@@ -73,9 +80,26 @@ def _ensure_mmsplice_package_files_available() -> bool:
     in this process.
     """
     if is_pip_package_installed(_MMSPLICE_PIP_NAME):
-        return True
+        return PackageCheckStatus.PRESENT
     if _MMSPLICE_PIP_NAME in _NO_DEPS_INSTALL_RESULT:
-        return _NO_DEPS_INSTALL_RESULT[_MMSPLICE_PIP_NAME]
+        # A real attempt already happened this process; its outcome stands.
+        return PackageCheckStatus.PRESENT if _NO_DEPS_INSTALL_RESULT[_MMSPLICE_PIP_NAME] else PackageCheckStatus.ABSENT
+    if _auto_install_disabled_for_tests():
+        # THE SECOND SEAM. `utils/auto_install.py` refuses to spawn a
+        # live `pip install` under pytest -- an unpinned install running
+        # mid-run makes package availability mutable process state, so
+        # outcomes start depending on test order and network reach (see
+        # that guard's docstring for the CI run that proved it). This
+        # install path is separate code and honoured none of that: it
+        # shelled out regardless, and was safe only because both callers
+        # happen to short-circuit first.
+        #
+        # NOT memoised, deliberately: the cache exists solely to avoid
+        # re-running the subprocess, this branch never reaches the
+        # subprocess, so the write would buy nothing -- while a cached
+        # False would be read straight back as a confirmed ABSENT,
+        # reintroducing the conflation inside its own fix.
+        return PackageCheckStatus.NOT_CHECKED
 
     import subprocess
     import sys
@@ -95,7 +119,7 @@ def _ensure_mmsplice_package_files_available() -> bool:
     if not ok:
         logger.error(f"Automatic 'mmsplice --no-deps' installation failed: {(result.stderr or '').strip()[-500:]}")
     _NO_DEPS_INSTALL_RESULT[_MMSPLICE_PIP_NAME] = ok
-    return ok
+    return PackageCheckStatus.PRESENT if ok else PackageCheckStatus.ABSENT
 
 
 def _resolve_mmsplice_package_dir() -> Optional[str]:
@@ -161,7 +185,7 @@ class MMSpliceModel(BaseGenomicModel):
             return False
         if not ensure_pip_package_available("tensorflow"):
             return False
-        return _ensure_mmsplice_package_files_available()
+        return _ensure_mmsplice_package_files_available() is PackageCheckStatus.PRESENT
 
     @classmethod
     def unavailability_reason(cls) -> str:
@@ -175,6 +199,18 @@ class MMSpliceModel(BaseGenomicModel):
             return "tensorflow availability not checked (auto-install disabled under pytest)"
         if tensorflow is PackageCheckStatus.ABSENT:
             return "tensorflow could not be installed automatically"
+        # Read the memo cache DIRECTLY rather than calling the seam. A
+        # function named `unavailability_reason` must not be able to
+        # trigger an install, and the seam's pytest guard is a property
+        # of the ENVIRONMENT, not of this function -- so the first caller
+        # in a new context would inherit the trap. `.get()` returning
+        # None (nobody attempted) is deliberately distinguished from a
+        # cached False (attempted, failed); `if not cached:` would
+        # collapse exactly those two, which is the bug class this whole
+        # type exists to prevent.
+        attempted = _NO_DEPS_INSTALL_RESULT.get(_MMSPLICE_PIP_NAME)
+        if attempted is None:
+            return "mmsplice package-file availability not checked (no install has been attempted)"
         return "mmsplice package files could not be installed automatically (--no-deps)"
 
     def _tf_device(self) -> str:
@@ -206,7 +242,15 @@ class MMSpliceModel(BaseGenomicModel):
             )
         if tensorflow_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError("MMSplice requires 'tensorflow', which could not be installed automatically.")
-        if not _ensure_mmsplice_package_files_available():
+        package_files_status = _ensure_mmsplice_package_files_available()
+        if package_files_status is PackageCheckStatus.NOT_CHECKED:
+            raise ModelLoadError(
+                "MMSplice requires the 'mmsplice' package's bundled model files, whose "
+                "availability was not checked in this environment (auto-install is "
+                "disabled under pytest) -- they are not confirmed missing, they were "
+                "never looked for."
+            )
+        if package_files_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError(
                 "MMSplice requires the 'mmsplice' package's bundled model files, which "
                 "could not be installed automatically (pip install mmsplice --no-deps)."

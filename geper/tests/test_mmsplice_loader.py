@@ -54,7 +54,10 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
                 "pipeline.models.mmsplice.loader.check_pip_package_availability",
                 return_value=PackageCheckStatus.PRESENT,
             ),
-            mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True),
+            mock.patch(
+                "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch(
                 "pipeline.models.mmsplice.loader._resolve_mmsplice_package_dir",
                 return_value="/some/local/path/site-packages/mmsplice",
@@ -78,7 +81,10 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
                 "pipeline.models.mmsplice.loader.check_pip_package_availability",
                 return_value=PackageCheckStatus.PRESENT,
             ),
-            mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True),
+            mock.patch(
+                "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available",
+                return_value=PackageCheckStatus.PRESENT,
+            ),
             mock.patch("pipeline.models.mmsplice.loader._resolve_mmsplice_package_dir", return_value=None),
         ):
             with self.assertRaises(ModelLoadError) as ctx:
@@ -102,7 +108,8 @@ class TestMMSpliceLoadImplSanitization(unittest.TestCase):
                     return_value=PackageCheckStatus.PRESENT,
                 ),
                 mock.patch(
-                    "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available", return_value=True
+                    "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available",
+                    return_value=PackageCheckStatus.PRESENT,
                 ),
                 mock.patch("pipeline.models.mmsplice.loader._resolve_mmsplice_package_dir", return_value=tmp),
             ):

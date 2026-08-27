@@ -119,6 +119,14 @@ class ClinVarMatchStatus(str, enum.Enum):
     POSITION_ONLY = "position_only"  # record(s) exist at this position, but none match this allele
     MATCHED = "matched"  # at least one record's allele (and position) matches the query variant
 
+    def __bool__(self):
+        raise TypeError(
+            "ClinVarMatchStatus has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:`/`if not x:` silently collapses NOT_FOUND, POSITION_ONLY and MATCHED "
+            "into one answer, which is exactly the distinction this type exists to "
+            "keep. Compare explicitly, e.g. `x is ClinVarMatchStatus.MATCHED`."
+        )
+
 
 class ClinVarClient:
     """Fetches clinical significance data for a variant from NCBI ClinVar."""

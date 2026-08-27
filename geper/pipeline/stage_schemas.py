@@ -100,6 +100,14 @@ class StageStatus(str, enum.Enum):
     NOT_FOUND = "not_found"
     FOUND = "found"
 
+    def __bool__(self):
+        raise TypeError(
+            "StageStatus has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:`/`if not x:` silently collapses NOT_RUN, ERROR, NOT_FOUND and FOUND "
+            "into one answer, which is exactly the distinction this type exists to "
+            "keep. Compare explicitly, e.g. `x is StageStatus.FOUND`."
+        )
+
 
 class StageEvidence(BaseModel):
     """

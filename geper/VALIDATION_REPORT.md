@@ -59,28 +59,38 @@ fabricated torch dtype — both are overrides of existing, unmodified
 Full reasoning is in the module docstring of `models/alphamissense.py`
 and in `config.py::AlphaMissenseConfig`.
 
-## 3. Licensing — flagged, not resolved
+## 3. Licensing — resolved which licence governs; the attribution trigger stays open
 
 The task requirements ask for a design "suitable for future commercial
-deployment." For AlphaMissense specifically, **this cannot be fully
-resolved from documentation alone, and that is stated plainly rather
-than assumed away:**
+deployment." For AlphaMissense specifically:
 
-- The current official repository (`github.com/google-deepmind/alphamissense`,
-  archived 2025-05-16) states the predictions are licensed **CC BY
-  4.0** (attribution only, commercial use permitted).
-- The Google Cloud Storage download page, the Ensembl VEP plugin docs,
-  the EBI announcement, and the HuggingFace dataset mirror all instead
-  describe the predictions as **CC BY-NC-SA 4.0 — non-commercial
-  research use only** — and note GCS-hosted files are additionally
-  subject to the Google Cloud Platform Terms of Service.
+- The predictions catalogue is **CC BY 4.0** (attribution required,
+  commercial use permitted). This is confirmed directly from the
+  primary source, not inferred: the GCS bucket's own README.pdf, at
+  the exact URL `config.py::AlphaMissenseConfig` downloads from
+  (`https://storage.googleapis.com/dm_alphamissense/README.pdf`,
+  `timeCreated` 2024-03-13, the day of DeepMind's public relicense),
+  states verbatim: "Copyright (2023) DeepMind Technologies Limited.
+  All materials are licensed under the Creative Commons Attribution
+  4.0 International License (CC-BY)."
+- This resolves what used to be flagged here as a genuine discrepancy
+  between sources: the Ensembl VEP plugin's current `main` branch
+  agrees (CC BY 4.0), but its old `release/110` tag still reads CC
+  BY-NC-SA 4.0 (predates the relicense), and the unofficial
+  `huggingface.co/datasets/katielink/dm_alphamissense` mirror still
+  reads CC BY-NC-SA 4.0 (never updated after it) — the source of the
+  apparent conflict. GEPER reads none of those three, only the GCS
+  bucket above, which is unambiguous and dated after the relicense.
 
-These sources disagree and GEPER cannot determine which currently
-governs the exact file a given deployment downloads. This is called
-out in three places a reader is likely to see it: `config.py`'s
-`AlphaMissenseConfig` docstring, `README.md` §11, and here. **Confirm
-licensing for the exact file before commercial use** — this is a real
-open question, not a formality.
+**What this does not settle:** confirming CC BY 4.0 governs is a
+different question from whether its attribution condition is actually
+*triggered* by GEPER's use — an indexed tabix lookup that extracts one
+row's score from a ~71M-row catalogue into a clinical report, not a
+redistribution of the catalogue itself. That question remains open and
+is not resolved by this document; it is called out, alongside the now-
+resolved licence question, in the same three places a reader is likely
+to see it: `config.py`'s `AlphaMissenseConfig` docstring, `README.md`
+§11, and here.
 
 ## 4. Test results
 

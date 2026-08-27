@@ -18,14 +18,28 @@ therefore the reverse complement, A>C, not T>G. Skips (rather than
 fails) if the live API is unreachable, matching every other "_live"
 test in this project (test_interpro_live.py, test_alphafold_live.py,
 test_orphanet_live_fetch.py).
+
+EXCLUDED FROM THE DEFAULT CI RUN -- marked `live_network` (see `pytest.ini`) and
+excluded there via `addopts`. This module makes real HTTP calls to Ensembl's REST
+API; an Ensembl outage was making `master` go red at random intervals, which
+erodes CI's signal ("red but probably external" becomes the default reading and a
+real regression gets waved through the same way). Default CI green therefore does
+NOT mean this live reference-base cross-check passed -- that specific coverage
+(validate_hgvs's reference-base check against a REAL fetched genome base, as
+opposed to a hardcoded/mocked one) is real but is not exercised by the default
+run. Run it explicitly with `pytest -m live_network` when that needs confirming
+against the real API.
 """
 
 import unittest
 
+import pytest
 import requests
 
 from pipeline.hgvs_utils import validate_hgvs
 from pipeline.sequence_context import SequenceContextGenerator
+
+pytestmark = pytest.mark.live_network
 
 
 def _skip_if_unreachable(test_case, fn):

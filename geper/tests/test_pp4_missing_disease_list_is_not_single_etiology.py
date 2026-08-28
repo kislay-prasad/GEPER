@@ -45,15 +45,27 @@ overlap_ratio to 0, `specific_enough` is False, and PP4 cannot fire. Two
 lines, one apart, same idiom, opposite failure directions, and nothing
 at the call site tells you which is which.
 
-SCOPE -- WHAT THIS FILE DELIBERATELY DOES NOT CHANGE
+SCOPE -- WHAT THIS FILE LEFT OPEN, AND HOW IT WAS CLOSED
 
 `distinct_disease_ids: []` PRESENT is a measurement: HPO was consulted
 and this gene has no curated disease entries. Whether a gene with zero
 curated diseases should satisfy "a single genetic etiology" is a
-SEMANTIC question about the rule, not a truthiness bug, and answering it
-would change the classification of real variants that get output today.
-Current behaviour for the empty list is therefore PINNED BELOW UNCHANGED
-and flagged for a separate ruling. Only the unknown case moves.
+SEMANTIC question about the rule, not a truthiness bug, so when this
+file first landed only the UNKNOWN case moved and the empty list was
+PINNED BELOW UNCHANGED, flagged for a separate ruling.
+
+*** THAT RULING ARRIVED (2026-08-28): IT DOES NOT SATISFY IT. *** A gene
+with no curated diseases has not answered the single-etiology question
+either way, so it cannot meet the condition; `len([]) <= threshold`
+resolving to True was the empty-means-satisfied collapse. Both states
+now return not_evaluated, and they are required to give DIFFERENT
+rationales, because "nobody told us" and "we asked, and the answer is
+zero" are different facts.
+
+The control below has therefore been INVERTED rather than deleted. It
+was the written answer the ruling was made against, and keeping it --
+now asserting the opposite -- is what makes the change legible to
+whoever reads this file next.
 """
 
 import unittest
@@ -168,25 +180,27 @@ class TestTheHalvesThatMustKeepWorking(unittest.TestCase):
         self.assertEqual(pp4["status"], "not_triggered")
         self.assertIn("distinct HPO-curated disease entries", pp4["rationale"])
 
-    def test_an_empty_list_that_is_actually_present_keeps_its_current_meaning(self):
-        """PINNED, NOT ENDORSED, AND OUT OF SCOPE ON PURPOSE.
+    def test_an_empty_list_that_is_actually_present_does_not_satisfy_single_etiology(self):
+        """RULED 2026-08-28. INVERTED FROM PINNED-AND-NOT-ENDORSED.
 
-        `[]` present is a measurement -- HPO was consulted and this gene
-        has no curated disease entries -- and today that satisfies
-        `single_etiology`. Whether "no curated diseases" should count as
-        "a single genetic etiology" is a question about the RULE, and
-        changing it would alter the classification of variants that
-        produce output today.
+        This test used to assert the opposite -- that `[]` TRIGGERED PP4
+        -- with a docstring saying so was pinned, not endorsed, and out
+        of scope on purpose. The ruling closed it: a gene HPO curates
+        against zero diseases has not answered the single-etiology
+        question either way, so it cannot satisfy the condition.
 
-        This test exists so that the fix above cannot quietly change it
-        as a side effect, and so the current answer is written down where
-        whoever rules on it will find it.
+        `[]` is still a MEASUREMENT and not an unknown, which is why the
+        rationale must differ from the missing-key case above rather
+        than both reducing to one message. That distinction is asserted
+        here, not just the status -- the status alone cannot tell the
+        two apart now that they agree on it.
         """
         evidence = _fbn1_evidence()
         evidence["distinct_disease_ids"] = []
         pp4 = _pp4(evidence)
-        self.assertEqual(pp4["status"], "triggered")
-        self.assertEqual(pp4["details"]["distinct_disease_count"], 0)
+        self.assertEqual(pp4["status"], "not_evaluated")
+        self.assertIn("zero disease entries", pp4["rationale"].lower())
+        self.assertNotIn("no curated disease list", pp4["rationale"].lower())
 
     def test_the_sibling_line_still_fails_safe(self):
         """`distinct_phenotype_terms` uses the identical `or []` idiom one

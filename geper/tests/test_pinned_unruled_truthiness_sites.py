@@ -24,12 +24,15 @@ deliberate, which is the whole difference between a decision and a
 drift.
 
 --------------------------------------------------------------------
-SITE 1  PP4 fires on an EMPTY curated disease list
-        pipeline/acmg_rules.py, the `distinct_diseases` half of _pp4
-        Open question: is "this gene has no curated diseases at all" a
-        SINGLE GENETIC ETIOLOGY? 58f5fe5 fixed only the UNKNOWN case
-        (missing key / None). `[]` is not None, so it survives that
-        guard untouched and still satisfies the condition.
+SITE 1  PP4 on an EMPTY curated disease list -- *** RULED 2026-08-28,
+        AND THIS CLASS IS NOW INVERTED. *** The question was: is "this
+        gene has no curated diseases at all" a SINGLE GENETIC ETIOLOGY?
+        Ruling: no. A gene with no curated diseases has not answered
+        that question either way, so it cannot satisfy the condition.
+        58f5fe5 had fixed only the UNKNOWN case (missing key / None);
+        `[]` is not None, survived that guard, and still satisfied the
+        condition until this ruling. The class below now pins the RULED
+        behaviour and is no longer "not endorsed".
 
 SITE 2  orchestrator.py:1313  _classify_variant_result
         `if context.get("error"):` -- an empty-string sequence-context
@@ -85,45 +88,82 @@ def _pp4(hpo_result, terms=MARFAN_TERMS):
 
 
 class TestSite1_PP4OnAnEmptyDiseaseList(unittest.TestCase):
-    """PINNED, NOT ENDORSED.
+    """RULED 2026-08-28. INVERTED FROM PINNED-AND-NOT-ENDORSED.
 
-    OPEN QUESTION: should a gene with zero curated disease entries
-    satisfy PP4's "a disease with a single genetic etiology"? The
-    reviewing position is that it should not -- a gene with no curated
-    diseases has not answered the question either way -- but that is a
-    lean, not a ruling, and the fix would disable PP4 for every gene
-    with an empty list.
+    Until this ruling these tests pinned the OPPOSITE assertion -- that
+    an empty curated disease list TRIGGERED PP4 -- under a docstring
+    saying the behaviour was pinned and not endorsed. The ruling is that
+    "no curated diseases at all" does NOT satisfy PP4's single-etiology
+    condition: such a gene has not answered the question either way, and
+    `len([]) <= threshold` resolving to True was the empty-means-
+    satisfied collapse, pointed at AWARDING a pathogenic-supporting
+    criterion.
 
-    COUNT AS REPORTED: 0 of the 5,268 gene symbols in the real HPO
-    `genes_to_phenotype.txt` release produce an empty list, so no
-    variant routed through the LOCAL dataset can reach this. The live
-    API fallback CAN reach it (`provider.py:273` builds phenotype
-    associations with no disease_id at all, so `distinct_disease_ids`
-    comes only from a separate `diseases` payload that may be empty)
-    and was not counted -- it needs live network calls.
+    THIS IS WHAT THE PIN WAS FOR. The ruling was made against a written
+    answer -- these assertions -- rather than against code someone had
+    to re-derive and then guess whether it was deliberate. The edit that
+    inverts them is the visible mark of the decision.
+
+    COUNT THE RULING WAS MADE ON: 0 of the 5,268 gene symbols in the
+    real HPO `genes_to_phenotype.txt` release (332,599 rows) produce an
+    empty list, so nothing routed through the LOCAL dataset changes
+    output today. The live API fallback CAN reach it
+    (`provider.py:273` builds phenotype associations with no disease_id
+    at all, so `distinct_disease_ids` comes only from a separate
+    `diseases` payload that may be empty). That path remains UNMEASURED
+    -- measuring it costs live API calls the human declined to spend,
+    which is a decision and not a gap. The exposure is real and its size
+    is unknown.
     """
 
-    def test_an_empty_disease_list_currently_triggers_pp4(self):
+    def test_an_empty_disease_list_does_not_trigger_pp4(self):
+        """THE RULED CASE. The phenotype overlap is perfect, so the rule
+        turns entirely on the single-etiology half -- which is being
+        answered for a gene HPO curates against no disease at all."""
         evidence = _fbn1_evidence()
         evidence["distinct_disease_ids"] = []
         pp4 = _pp4(evidence)
-        self.assertEqual(pp4["status"], "triggered")
-        self.assertEqual(pp4["details"]["distinct_disease_count"], 0)
+        self.assertNotEqual(
+            pp4["status"],
+            "triggered",
+            f"PP4 fired a single-etiology claim for a gene with zero curated diseases; got {pp4!r}",
+        )
+        self.assertEqual(
+            pp4["status"],
+            "not_evaluated",
+            "zero curated diseases is not a FAILED single-etiology judgement -- it is no judgement "
+            "at all, so not_evaluated rather than not_triggered",
+        )
 
-    def test_the_landed_none_guard_does_not_cover_the_empty_list(self):
-        """The two states 58f5fe5 separated, asserted side by side.
+    def test_unknown_and_empty_reach_the_same_status_by_different_routes(self):
+        """The two states now agree on STATUS and must still differ in
+        RATIONALE, because they are different facts.
 
-        This is the assertion that keeps the empty-list case from being
-        mistaken for something already handled: `None` is now
-        not_evaluated, `[]` still triggers, and the ONLY difference is
-        which falsy value the key holds.
+        `None` means nobody told us the disease list. `[]` means HPO was
+        consulted and curates this gene against zero diseases -- a
+        measurement, not the absence of one. Both now end at
+        not_evaluated, and a reader who cannot tell which one they hit
+        is sent looking in the wrong place. Asserting only the shared
+        status would pass while the two collapsed into a single message,
+        so this asserts on the text that separates them.
         """
         unknown = _fbn1_evidence()
         unknown["distinct_disease_ids"] = None
         empty = _fbn1_evidence()
         empty["distinct_disease_ids"] = []
-        self.assertEqual(_pp4(unknown)["status"], "not_evaluated")
-        self.assertEqual(_pp4(empty)["status"], "triggered")
+
+        unknown_pp4, empty_pp4 = _pp4(unknown), _pp4(empty)
+        self.assertEqual(unknown_pp4["status"], "not_evaluated")
+        self.assertEqual(empty_pp4["status"], "not_evaluated")
+
+        self.assertIn("no curated disease list", unknown_pp4["rationale"].lower())
+        self.assertIn("zero disease entries", empty_pp4["rationale"].lower())
+        self.assertNotEqual(
+            unknown_pp4["rationale"],
+            empty_pp4["rationale"],
+            "an unknown disease list and a measured-zero one are different facts and must not "
+            "collapse into one rationale",
+        )
 
     def test_a_curated_single_disease_gene_is_the_case_nobody_disputes(self):
         """Control. Whatever the ruling, this must keep triggering."""

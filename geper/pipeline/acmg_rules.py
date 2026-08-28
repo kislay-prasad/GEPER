@@ -3247,6 +3247,30 @@ class ACMGRuleEngine:
                 "whether this gene has a single genetic etiology could not be determined; PP4 "
                 "requires that judgement and is not awarded on an unknown.",
             )
+        if len(raw_disease_ids) == 0:
+            # RULED 2026-08-28. `[]` is a MEASUREMENT, not an unknown --
+            # HPO was consulted and curates this gene against zero
+            # disease entries -- which is why it is handled here rather
+            # than folded into the `is None` guard above. But a gene with
+            # no curated diseases has not answered "is this phenotype
+            # specific to a disease with a single genetic etiology?"
+            # either way, so it cannot SATISFY that condition. Before
+            # this guard `len([]) <= threshold` was True and the empty
+            # list resolved into the affirmative -- the empty-means-
+            # satisfied collapse, in the direction of AWARDING a
+            # pathogenic-supporting criterion.
+            #
+            # not_evaluated rather than not_triggered: not_triggered
+            # would claim we made the single-etiology judgement and it
+            # failed. We did not make it; there was nothing to make it
+            # from. Same reason the `is None` branch above is
+            # not_evaluated, reached from the opposite starting point.
+            return _not_evaluated(
+                "PP4",
+                f"HPO curates {gene} against zero disease entries, so whether this gene has a single "
+                "genetic etiology has not been established either way; PP4 requires that judgement "
+                "and is not awarded on a gene with no curated disease to be specific to.",
+            )
         distinct_diseases = raw_disease_ids
 
         cfg = CONFIG.hpo

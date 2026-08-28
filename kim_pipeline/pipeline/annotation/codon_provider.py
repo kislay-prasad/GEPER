@@ -553,7 +553,17 @@ class FastaCodonContextProvider:
         alt_aa = _translate(mut_codon_str)
 
         # Classify
-        if ref_aa == alt_aa:
+        # GUARD (2026-08-28): an undetermined amino acid ("?", from
+        # `_translate`'s codon-table fallback -- typically an "N" surviving
+        # into the reference FASTA at this codon) must never compare equal
+        # to another undetermined amino acid and be read as "no change".
+        # Two unknowns are not evidence of sameness: when an "N" sits
+        # elsewhere in the same codon (not at the variant's own position),
+        # it survives into BOTH ref_codon and mut_codon, so ref_aa == alt_aa
+        # == "?" previously satisfied this branch by plain string equality
+        # and reported synonymous_variant for a protein change that was
+        # never actually determined -- which then fed BP7 benign evidence.
+        if ref_aa == alt_aa and "?" not in (ref_aa, alt_aa):
             consequence = "synonymous"
         elif alt_aa == "*":
             consequence = "stop_gained"

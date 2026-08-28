@@ -301,6 +301,22 @@ class ClinVarLookup:
             # never scan or query — return "insufficient data".
             return (None, None)
 
+        if wildtype_aa == "?" or mutant_aa == "?":
+            # GUARD (2026-08-28): "?" means the codon provider's
+            # `_translate` fell through its codon-table lookup and never
+            # resolved a real amino acid (see
+            # pipeline/annotation/codon_provider.py -- `_CODON_TABLE.get(
+            # codon, "?")`; the ordinary cause is an "N" surviving into the
+            # reference FASTA at this codon). An undetermined amino acid
+            # must never enter the same/novel-AA comparison below: the
+            # same-AA check (PS1) only stays accidentally safe today because
+            # `_aa3to1("?")` returns "" (falsy), but the novel-AA check
+            # (PM5) below is a bare truthiness test on the strings with no
+            # AA verification at all — a genuinely unknown wildtype_aa would
+            # make PM5 fire against any P/LP hit found in the codon window.
+            # This is insufficient data, not a checked negative.
+            return (None, None)
+
         norm_chrom = chrom.lstrip("chr")
         ref_upper = ref.upper()
         alt_upper = alt.upper()

@@ -124,12 +124,40 @@ def transcript_context_from_dict(record: Dict[str, Any]) -> Optional[TranscriptC
 # ---------------------------------------------------------------------------
 
 
-def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tuple[str, List[str]]:
+def dosage_sensitivity_verdict(
+    clingen_result: Optional[Dict[str, Any]],
+    *,
+    sufficient_scores: Optional[Any] = None,
+    autosomal_recessive_score: int = _DOSAGE_AUTOSOMAL_RECESSIVE,
+    unlikely_score: int = _DOSAGE_UNLIKELY,
+) -> Tuple[str, Optional[int], Optional[str]]:
     """
     Map ClinGen's dosage-sensitivity curation onto PVS1's precondition,
-    "a gene where LOF is a known mechanism of disease".
+    "a gene where LOF is a known mechanism of disease" -- UNCONDITIONALLY,
+    for every score, not just the ones a caller intends to act on.
 
-    Returns `(mechanism_state, evidence_lines)`:
+    HIGH 3 / T3-F2a (2026-08-28, ruled): extracted out of
+    `lof_mechanism_from_clingen` below so `InterpretationEngine.
+    _clingen_acmg_evidence` (legacy, `pipeline/interpretation.py`) can
+    resolve the identical verdict instead of independently re-deriving
+    it with its own whitelist that silently produced NO evidence line
+    at all for scores 0/1/2 ("curated, but not established") -- the
+    missing-versus-empty collapse this ruling names as the HIGH 1
+    defect class in the evidence layer: a reviewer seeing nothing
+    couldn't tell whether ClinGen looked and found little, or was never
+    asked. `lof_mechanism_from_clingen` never had that gap (see its own
+    docstring below); this fix is legacy adopting `lof_mechanism_from_
+    clingen`'s existing unconditional behavior, not new behavior
+    invented here.
+
+    Returns `(mechanism_state, raw_score, raw_label)` -- a pure
+    resolution, no sentence-building and no scoring/weighting decision:
+    callers phrase their own evidence sentence, and where they score
+    evidence at all (legacy does; PVS1 itself does not), decide their
+    own weight from `mechanism_state`. `raw_score`/`raw_label` are
+    ClinGen's own fields, passed through unchanged so a caller's
+    sentence can cite the real curated label rather than a value this
+    function invents:
       - score 3  ("sufficient evidence for dosage pathogenicity")
                  -> established
       - score 30 ("gene associated with autosomal recessive phenotype")
@@ -140,7 +168,10 @@ def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tupl
                  for PVS1 when the disorder is biallelic.
       - score 40 ("dosage sensitivity unlikely") -> refuted
       - scores 0/1/2 -> curated, but not established
-      - no record / skipped / errored -> unknown
+      - no record / skipped / errored / no dosage curation -> unknown
+        (`raw_score` is None only in this case -- it is ClinGen's only
+        source of LOF_UNKNOWN, so a caller can tell "never curated"
+        apart from every other verdict by checking `raw_score is None`)
 
     Scores 1 and 2 ("little"/"some evidence") are deliberately *not*
     mapped onto a reduced PVS1 strength: neither ACMG/AMP 2015 nor the
@@ -148,6 +179,49 @@ def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tupl
     would put a number on a judgement no guideline makes. They are
     reported as "not established", with the curated label carried
     through so a reviewer can override.
+
+    `sufficient_scores`/`autosomal_recessive_score`/`unlikely_score`
+    default to this module's own hardcoded ClinGen codes (PVS1's
+    existing, unchanged behavior) -- legacy's caller passes its own
+    `CONFIG.clingen`-sourced values instead, so legacy's existing
+    "all thresholds/configuration must remain configurable" guarantee
+    (`tests/test_clingen_acmg.py::test_threshold_is_configurable`) is
+    preserved through this shared function, not lost to it.
+    """
+    if sufficient_scores is None:
+        sufficient_scores = frozenset({_DOSAGE_SUFFICIENT})
+    if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error"):
+        return LOF_UNKNOWN, None, None
+    if not clingen_result.get("found"):
+        return LOF_UNKNOWN, None, None
+
+    dosage = clingen_result.get("dosage_sensitivity") or {}
+    score = dosage.get("haploinsufficiency_score")
+    if score is None:
+        return LOF_UNKNOWN, None, None
+    label = dosage.get("haploinsufficiency_label") or "n/a"
+
+    if score in sufficient_scores:
+        return LOF_ESTABLISHED, score, label
+    if score == autosomal_recessive_score:
+        return LOF_ESTABLISHED_RECESSIVE, score, label
+    if score == unlikely_score:
+        return LOF_REFUTED, score, label
+    return LOF_NOT_ESTABLISHED, score, label
+
+
+def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tuple[str, List[str]]:
+    """
+    Map ClinGen's dosage-sensitivity curation onto PVS1's precondition,
+    "a gene where LOF is a known mechanism of disease", AND build the
+    two-line evidence disclosure PVS1's own decision tree carries
+    (gene-disease validity, then haploinsufficiency curation).
+
+    Returns `(mechanism_state, evidence_lines)` -- see
+    `dosage_sensitivity_verdict` above for the score -> mechanism_state
+    mapping this delegates to (using this module's own hardcoded
+    ClinGen codes, unchanged from before the refactor); this function's
+    own job is only the two sentences and their ordering.
     """
     if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error"):
         return LOF_UNKNOWN, []
@@ -161,20 +235,10 @@ def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tupl
     if validity:
         evidence.append(f"ClinGen gene-disease validity for {gene}: {validity}.")
 
-    dosage = clingen_result.get("dosage_sensitivity") or {}
-    score = dosage.get("haploinsufficiency_score")
-    label = dosage.get("haploinsufficiency_label") or "n/a"
-    if score is None:
-        return LOF_UNKNOWN, evidence
-
-    evidence.append(f"ClinGen haploinsufficiency curation for {gene}: {label} (score {score}).")
-    if score == _DOSAGE_SUFFICIENT:
-        return LOF_ESTABLISHED, evidence
-    if score == _DOSAGE_AUTOSOMAL_RECESSIVE:
-        return LOF_ESTABLISHED_RECESSIVE, evidence
-    if score == _DOSAGE_UNLIKELY:
-        return LOF_REFUTED, evidence
-    return LOF_NOT_ESTABLISHED, evidence
+    mechanism, score, label = dosage_sensitivity_verdict(clingen_result)
+    if score is not None:
+        evidence.append(f"ClinGen haploinsufficiency curation for {gene}: {label} (score {score}).")
+    return mechanism, evidence
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +475,76 @@ def coding_consequence(transcript: Optional[TranscriptContext], pos: int, ref: s
     return detail.category if detail else None
 
 
+def alphamissense_evidence_sentence(alphamissense_result: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Full evidence sentence for an AlphaMissense call. HIGH 3 / AM-07
+    (2026-08-28, ruled): shared between `InterpretationEngine.
+    interpret()` (legacy) and `ACMGRuleEngine._pp3_bp4` (real ACMG),
+    which independently worded the same fact until this fix -- both
+    call sites already carried the "not clinically validated; not
+    approved for clinical use" caveat (an earlier, per-site fix), but
+    kept two different sentences for it, differing only in surface
+    formatting.
+
+    Keeps legacy's richer format: the `protein_variant` clause, and a
+    `.3f`-formatted score with an explicit "n/a" fallback for a missing/
+    non-numeric `am_pathogenicity`. The ruling names real ACMG's bare,
+    un-fallback'd print of that field a latent None-formatting defect
+    this unification fixes, not a house-style choice to pick between.
+
+    Why the caveat exists at all (moved here from `acmg_rules.py`'s
+    former per-site comment, now the single source of this wording):
+    AlphaMissense's own README (github.com/google-deepmind/
+    alphamissense) states plainly that it is "not approved for clinical
+    use", "not intended to be a substitute for professional medical
+    advice", and that "predictions have varying levels of confidence"
+    -- the same class of limitation `ACMGRuleEngine._bp7` already
+    discloses for the splice models, and nothing about AlphaMissense's
+    own documentation exempts it. This is a distinct claim from
+    "uncalibrated": AlphaMissense's score is reported as calibrated
+    against a curated benchmark in Cheng et al. 2023 -- the caveat here
+    is about clinical-use approval status, not about calibration, so it
+    is worded differently from `_bp7`'s "uncalibrated" phrasing rather
+    than copied verbatim. The model name is bound ahead of the score,
+    not trailing, so a reader sees the limitation before the number and
+    PDF line-wrapping cannot split it across a break.
+
+    Returns None (no sentence) when AlphaMissense was skipped, errored,
+    or found nothing -- callers are expected to gate on that themselves
+    before deciding whether/where to use the sentence (e.g. real ACMG
+    still needs `am_class` itself to route the sentence into its own
+    damaging/benign evidence lists), so this restates the same gate
+    defensively rather than assuming every caller checked first.
+    """
+    if not alphamissense_result or alphamissense_result.get("skipped") or not alphamissense_result.get("found"):
+        return None
+    am_class = (alphamissense_result.get("am_class") or "").strip().lower()
+    am_score = alphamissense_result.get("am_pathogenicity")
+    am_score_str = f"{am_score:.3f}" if isinstance(am_score, (int, float)) else "n/a"
+    return (
+        f"AlphaMissense (not clinically validated; not approved for clinical use) predicts "
+        f"'{am_class or 'unclassified'}' (am_pathogenicity={am_score_str}) for "
+        f"{alphamissense_result.get('protein_variant', 'this substitution')}. This is a raw model "
+        f"score, not a validated clinical pathogenicity measure."
+    )
+
+
+def null_variant_term(is_frameshift: bool) -> str:
+    """
+    Canonical two-word term for a protein-truncating null consequence.
+    HIGH 3 / T3-F3 (2026-08-28, ruled): shared by `classify_null_variant`
+    below, `pipeline/interpretation.py`'s legacy evidence line, and
+    `pipeline/acmg_rules.py::ACMGRuleEngine._pp3_bp4_inapplicability_reason`
+    -- all three independently reworded the same frameshift-vs-nonsense
+    fact. Both halves of the gloss are kept deliberately (not
+    consolidated to one): "stop-gained" is the term a reader may
+    recognize from VEP output, "nonsense" is the clinical term. This
+    function makes only that wording call; each caller keeps its own
+    surrounding sentence template.
+    """
+    return "frameshift" if is_frameshift else "nonsense (stop-gained)"
+
+
 def classify_null_variant(
     variant_dict: Optional[Dict[str, Any]],
     protein_result: Optional[Dict[str, Any]] = None,
@@ -487,10 +621,10 @@ def classify_null_variant(
 
     nonsense, frameshift = _protein_null_flags(protein_result)
     if nonsense:
-        notes.append("Local protein translation introduces a premature stop codon (nonsense).")
+        notes.append(f"Local protein translation shows {null_variant_term(is_frameshift=False)}.")
         return NULL_NONSENSE, notes
     if frameshift:
-        notes.append("Local protein translation shows a frameshift.")
+        notes.append(f"Local protein translation shows {null_variant_term(is_frameshift=True)}.")
         return NULL_FRAMESHIFT, notes
     return None, notes
 

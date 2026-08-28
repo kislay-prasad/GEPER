@@ -86,7 +86,9 @@ class TestGnomadAcmgEvidence(unittest.TestCase):
         # highest single population frequency, not the pooled global one).
         result = self.engine._gnomad_acmg_evidence(
             {
-                "skipped": False, "found": True, "global_af": 0.005,
+                "skipped": False,
+                "found": True,
+                "global_af": 0.005,
                 "population_breakdown": {"fin": {"af": 0.15}},
             }
         )
@@ -94,18 +96,51 @@ class TestGnomadAcmgEvidence(unittest.TestCase):
         self.assertIn("BA1", text)
 
     def test_evidence_is_additive_not_replacing(self):
-        """Full interpret() call: gnomAD evidence appended alongside pre-existing ClinVar evidence, never overwriting it."""
+        """Full interpret() call: ClinVar evidence is never overwritten by the gnomAD block running
+        alongside it (requirement #6's actual guarantee -- this used to also check that gnomAD's own
+        text was ADDED to `supporting_evidence`; per the HIGH 3 Q4-B/T3-F1 ruling that text is no
+        longer appended there at all, see `test_legacy_gnomad_text_no_longer_reaches_supporting_evidence`
+        below for that half)."""
         variant_dict = {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"}
         primary = {"clinical_significance": "Pathogenic", "review_status": "criteria provided", "variant_match": True}
         clinvar_result = {"records": [primary], "match_status": "matched", "primary_record": primary}
         gnomad_result = {"skipped": False, "found": True, "global_af": 0.2, "population_breakdown": {}}
 
         result = self.engine.interpret(
-            variant_dict, [], clinvar_result, {}, {}, {}, gnomad_result=gnomad_result,
+            variant_dict,
+            [],
+            clinvar_result,
+            {},
+            {},
+            {},
+            gnomad_result=gnomad_result,
         )
         evidence_text = " ".join(result["supporting_evidence"])
         self.assertIn("Pathogenic", evidence_text)  # ClinVar evidence preserved
-        self.assertTrue(any("gnomAD" in e and "BA1" in e for e in result["supporting_evidence"]))  # gnomAD evidence added
+
+    def test_legacy_gnomad_text_no_longer_reaches_supporting_evidence(self):
+        """HIGH 3 Q4-B/T3-F1 (2026-08-28): `_gnomad_acmg_evidence`'s own sentence must never reach
+        `supporting_evidence` any more -- it has no population-priority-AF awareness (unlike the real
+        ACMGRuleEngine's `_ba1_bs1`/`_pm2`) and could be flatly wrong under a supported config while
+        sitting beside the real engine's own correct sentence for the same variant. The score
+        contribution is intentionally unchanged (provably unread by every renderer) -- only the text
+        is removed. This variant would have produced a BA1 sentence before the fix."""
+        variant_dict = {"chrom": "1", "pos": 100, "ref": "A", "alt": "T"}
+        gnomad_result = {"skipped": False, "found": True, "global_af": 0.2, "population_breakdown": {}}
+
+        result = self.engine.interpret(
+            variant_dict,
+            [],
+            {},
+            {},
+            {},
+            {},
+            gnomad_result=gnomad_result,
+        )
+        self.assertFalse(any("gnomAD" in e for e in result["supporting_evidence"]))
+        # The internal pre-ACMG score still moves (unchanged, deliberately) -- confirms this is a
+        # text-only removal, not silently disabling the whole gnomAD block.
+        self.assertLess(result["legacy_pre_acmg_significance_score"], 0)
 
 
 if __name__ == "__main__":

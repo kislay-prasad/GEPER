@@ -184,15 +184,30 @@ class TestConflictMentionCaveated(unittest.TestCase):
         _assert_all_caveated(self, [("conflict-resolution mention", conflict.evidence_a["statement"])])
 
 
-class TestDangerousCaseBothSentencesCaveated(unittest.TestCase):
-    """THE fixture the dispatch specifically asked for: real production
-    code (not hand-typed strings) makes a single variant's actual
-    `supporting_evidence` list contain BOTH the legacy sentence and the
-    PP3 sentence -- the common production case, not a contrived edge
-    case, since both fire off the exact same `found`/`not skipped`
-    guard on the same `alphamissense_result`."""
+class TestFormerlyDangerousCaseNowUnifiedByConstruction(unittest.TestCase):
+    """THE fixture the original dispatch specifically asked for: real
+    production code (not hand-typed strings) makes a single variant's
+    actual `supporting_evidence` list contain both the legacy sentence
+    and the PP3 sentence for the same AlphaMissense call -- the common
+    production case, not a contrived edge case, since both fire off the
+    exact same `found`/`not skipped` guard on the same
+    `alphamissense_result`.
 
-    def test_single_variant_both_am_sentences_all_caveated(self):
+    HIGH 3 / AM-07 (2026-08-28, ruled): both sites now source that
+    sentence from the same shared `alphamissense_evidence_sentence`
+    (pvs1/utils.py), so they are byte-identical, and the EXISTING
+    exact-match `_dedupe` in `interpretation_result.py` -- unmodified,
+    no new code there -- collapses them to one line on its own. Before
+    this fix, this test asserted `len(am_lines) >= 2` (two differently-
+    worded, individually-caveated duplicates survived dedup, which is
+    what made this "dangerous": a reader could see a caveated and an
+    uncaveated version side by side if the per-site caveat fix had
+    lapsed on either side). That assertion would now be WRONG -- it
+    would demand the regression this fix removes. Renamed and inverted:
+    this now pins that construction (one shared source) is what keeps
+    the duplicate from recurring, not vigilance on two copies."""
+
+    def test_single_variant_produces_exactly_one_deduped_am_sentence(self):
         variant_dict = {"chrom": "3", "pos": 10141852, "ref": "G", "alt": "T"}
         am_result = _am("likely_pathogenic")
 
@@ -232,11 +247,11 @@ class TestDangerousCaseBothSentencesCaveated(unittest.TestCase):
         )
 
         am_lines = [line for line in ir.supporting_evidence if "AlphaMissense" in line]
-        self.assertGreaterEqual(
+        self.assertEqual(
             len(am_lines),
-            2,
-            "fixture did not reproduce the dangerous case (need both the legacy AND PP3 AlphaMissense "
-            f"sentences present in supporting_evidence to prove this test isn't vacuous): {am_lines!r}",
+            1,
+            "unification should make the legacy and PP3 AlphaMissense sentences byte-identical, so "
+            f"the existing exact-match dedup collapses them to exactly one line: {am_lines!r}",
         )
         _assert_all_caveated(self, [(f"supporting_evidence[{i}]", line) for i, line in enumerate(am_lines)])
 

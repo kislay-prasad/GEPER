@@ -138,14 +138,28 @@ class TestClinGenAcmgEvidence(unittest.TestCase):
         evidence = self.engine._clingen_acmg_evidence(result, is_predicted_lof=False)
         self.assertEqual(evidence, [])
 
-    def test_score_not_in_the_sufficient_set_and_not_a_special_code_contributes_nothing(self):
+    def test_score_not_in_the_sufficient_set_and_not_a_special_code_is_reported_neutrally(self):
+        """HIGH 3 / T3-F2a (2026-08-28, ruled): this used to assert `evidence == []` -- a score of 1
+        ("curated, but not established") was silently indistinguishable from "no curation exists at
+        all". PVS1's own `lof_mechanism_from_clingen` never had that gap; this engine now shares its
+        verdict resolution (`dosage_sensitivity_verdict`) and reports the same way: a real, neutral
+        (0.0-weight) finding, not silence."""
         result = _clingen_result(
             dosage_sensitivity={"haploinsufficiency_score": 1, "haploinsufficiency_label": "Little evidence"}
         )
         evidence = self.engine._clingen_acmg_evidence(result, is_predicted_lof=True)
-        self.assertEqual(evidence, [])
+        self.assertEqual(len(evidence), 1)
+        text, weight = evidence[0]
+        self.assertEqual(weight, 0.0)
+        self.assertNotIn(_SUFFICIENT_EVIDENCE_FRAGMENT, text)
+        self.assertIn("Little evidence", text)
+        self.assertIn("does not establish", text)
 
     def test_threshold_is_configurable(self):
+        """Reconfiguring `DOSAGE_SUFFICIENT_EVIDENCE_SCORES` to exclude score 3 must change score 3
+        from the +1.5 'sufficient' branch to the neutral 'not established' branch -- not to silence.
+        Silence would be indistinguishable from 'this variant has no dosage curation at all', which
+        is exactly the collapse the HIGH 3 / T3-F2a ruling exists to remove."""
         self.engine  # keep reference; reconfigure the set to exclude the score provided
         with mock.patch("pipeline.interpretation.CONFIG") as fake_config:
             fake_config.clingen = _FakeClinGenConfig()
@@ -154,7 +168,10 @@ class TestClinGenAcmgEvidence(unittest.TestCase):
                 dosage_sensitivity={"haploinsufficiency_score": 3, "haploinsufficiency_label": "x"}
             )
             evidence = self.engine._clingen_acmg_evidence(result, is_predicted_lof=True)
-        self.assertEqual(evidence, [])
+        self.assertEqual(len(evidence), 1)
+        text, weight = evidence[0]
+        self.assertEqual(weight, 0.0)
+        self.assertNotIn(_SUFFICIENT_EVIDENCE_FRAGMENT, text)
 
     # -- gene-disease clinical validity (PP5/BP6-style) -----------------
 
@@ -236,6 +253,14 @@ class TestDosageSensitivityAcrossTheFullClinGenScale:
     arithmetic/ordering (no `score - 1` "just below" case): the scale
     is not ordinal above 3, so there is no "below" any more.
 
+    HIGH 3 / T3-F2a (2026-08-28, ruled): scores 0/1/2 used to be the
+    one gap this enumeration didn't cover -- `evidence == []` for all
+    three, silently identical to "no dosage curation for this gene at
+    all". Per the ruling, this engine now shares `pvs1/utils.py::
+    dosage_sensitivity_verdict` with PVS1's own `lof_mechanism_from_
+    clingen`, which never had that gap, and reports 0/1/2 the same way
+    PVS1 always did: a real, neutral (0.0-weight) finding.
+
     ASSERTS THE EMITTED TEXT, NOT ONLY THE WEIGHT, per the dispatch's
     explicit instruction: a weight-only test would have passed on a
     report sentence that refuted itself using its own interpolated
@@ -280,8 +305,19 @@ class TestDosageSensitivityAcrossTheFullClinGenScale:
             assert _SUFFICIENT_EVIDENCE_FRAGMENT not in text
             assert "does not establish" in text
             assert "single loss-of-function allele" in text
-        else:  # 0, 1, 2 -- no dosage-sensitivity evidence at all
-            assert evidence == []
+        else:  # 0, 1, 2 -- "curated, but not established"
+            # HIGH 3 / T3-F2a (2026-08-28, ruled): this used to assert
+            # `evidence == []`, silently collapsing "ClinGen curated
+            # this and found little/some evidence" into the same
+            # observable state as "ClinGen has no dosage curation for
+            # this gene at all". Now reported, weight 0.0, same
+            # convention as the score-30 branch above.
+            assert len(evidence) == 1
+            text, weight = evidence[0]
+            assert weight == 0.0
+            assert _SUFFICIENT_EVIDENCE_FRAGMENT not in text
+            assert "does not establish" in text
+            assert DOSAGE_SCORE_LABELS[score] in text
 
     def test_none_score_contributes_nothing(self):
         evidence = _evidence_for_score(None)

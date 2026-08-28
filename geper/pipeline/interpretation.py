@@ -19,7 +19,15 @@ from pipeline.confidence_engine import ConfidenceEngine
 from pipeline.prioritization_engine import PrioritizationEngine, floor_category_for_conflict_severity
 from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.explainability_engine import ExplainabilityEngine
-from pipeline.pvs1.utils import protein_effect_flags, protein_effect_undetermined_reason, transcript_from_result
+from pipeline.pvs1.models import LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE, LOF_NOT_ESTABLISHED, LOF_REFUTED
+from pipeline.pvs1.utils import (
+    alphamissense_evidence_sentence,
+    dosage_sensitivity_verdict,
+    null_variant_term,
+    protein_effect_flags,
+    protein_effect_undetermined_reason,
+    transcript_from_result,
+)
 
 logger = get_logger(__name__)
 
@@ -163,10 +171,11 @@ class InterpretationEngine:
         elif protein_flags.is_synonymous:
             evidence.append("Transcript-verified protein consequence: synonymous (no amino acid change).")
         elif protein_flags.is_lof:
-            if len(ref or "") != len(alt or ""):
-                evidence.append("Transcript-verified protein consequence: frameshift.")
-            else:
-                evidence.append("Transcript-verified protein consequence: premature stop codon (nonsense).")
+            # HIGH 3 / T3-F3 (2026-08-28, ruled): term sourced from the
+            # shared `null_variant_term` -- see its docstring for why
+            # both "frameshift"/"nonsense (stop-gained)" are kept.
+            is_frameshift = len(ref or "") != len(alt or "")
+            evidence.append(f"Transcript-verified protein consequence: {null_variant_term(is_frameshift)}.")
             significance_score += 2
             is_predicted_lof = True
         elif protein_flags.is_inframe_indel:
@@ -179,27 +188,22 @@ class InterpretationEngine:
         # protein-level missense evidence above -- deliberately small
         # relative to ClinVar's weights, since AlphaMissense is a
         # computational predictor, not a clinical classification.
-        if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
-            am_class = (alphamissense_result.get("am_class") or "").strip().lower()
-            am_score = alphamissense_result.get("am_pathogenicity")
-            am_score_str = f"{am_score:.3f}" if isinstance(am_score, (int, float)) else "n/a"
-            # Same caveat wording `acmg_rules.py::_pp3_bp4` established:
-            # this legacy pre-ACMG evidence line and PP3/BP4's own
-            # evidence line can both land in the same variant's
-            # `supporting_evidence` (this engine's `evidence` list feeds
-            # `InterpretationResult.supporting_evidence` unfiltered for
-            # AlphaMissense text -- see interpretation_result.py), worded
-            # differently enough that exact-string dedup never merges
-            # them. Before this fix that meant a caveated and an
-            # uncaveated claim about the same tool, side by side, in
-            # every report format -- a visible contradiction, not merely
-            # a missing disclosure.
-            evidence.append(
-                f"AlphaMissense (not clinically validated; not approved for clinical use) predicts "
-                f"'{am_class or 'unclassified'}' (am_pathogenicity={am_score_str}) for "
-                f"{alphamissense_result.get('protein_variant', 'this substitution')}. This is a raw model "
-                f"score, not a validated clinical pathogenicity measure."
-            )
+        # HIGH 3 / AM-07 (2026-08-28, ruled): text sourced from the
+        # shared `alphamissense_evidence_sentence` -- this legacy line
+        # and `acmg_rules.py::_pp3_bp4`'s own AlphaMissense line used to
+        # be two independently-worded sentences that could both land in
+        # the same variant's `supporting_evidence` (worded differently
+        # enough that exact-string dedup never merged them: a caveated
+        # and an uncaveated claim about the same tool, side by side, in
+        # every report format -- a visible contradiction, not merely a
+        # missing disclosure). Now byte-identical when both fire, so the
+        # existing exact-match `_dedupe` in interpretation_result.py
+        # collapses the duplicate on its own -- construction instead of
+        # a second, by-hand-synced copy.
+        am_sentence = alphamissense_evidence_sentence(alphamissense_result)
+        if am_sentence is not None:
+            evidence.append(am_sentence)
+            am_class = ((alphamissense_result or {}).get("am_class") or "").strip().lower()
             if am_class == "likely_pathogenic":
                 significance_score += 1
             elif am_class == "likely_benign":
@@ -234,18 +238,35 @@ class InterpretationEngine:
                 f"({mmsplice_result.get('skip_reason', 'unknown reason')})."
             )
 
-        # gnomAD: population-frequency evidence contributing ACMG/AMP
-        # BA1 (stand-alone benign), BS1 (strong benign), and PM2
-        # (moderate pathogenic -- absent/extremely rare) criteria,
-        # using configurable thresholds (CONFIG.gnomad.*). This block
-        # only ever appends new `evidence` entries and adds to
-        # `significance_score` -- it never rewrites or removes any
-        # evidence ClinVar/dbSNP/protein/AlphaMissense/MMSplice already
-        # contributed above (requirement #6: "Never overwrite existing
-        # evidence.").
+        # gnomAD: population-frequency evidence contributing to this
+        # engine's own `significance_score` (BA1/BS1/PM2-shaped
+        # weights, using configurable thresholds, CONFIG.gnomad.*).
+        #
+        # Q4-B/T3-F1 (HIGH 3, 2026-08-28): this block used to also
+        # `evidence.append(text)` -- deliberately removed. `_gnomad_
+        # acmg_evidence` only ever reads `global_af`/popmax; it has no
+        # population-priority-AF awareness at all (unlike `ACMGRuleEngine.
+        # _ba1_bs1`/`_pm2`, which do via `_population_priority_context`
+        # when `CONFIG.gnomad.POPULATION_PRIORITY` is configured), so
+        # under that supported config its sentence can be flatly wrong
+        # (e.g. "no BA1/BS1/PM2 threshold met" for a variant the real
+        # ACMG engine correctly flags as PM2-triggered from the priority
+        # population's own AF) while sitting right beside the real
+        # engine's own correct, disclosure-carrying sentence for the
+        # same variant in the same rendered `supporting_evidence` pool.
+        # The real engine already emits the correct frequency with its
+        # own disclosures, so this line was a redundant sentence that
+        # could be wrong under a supported config, not a needed one.
+        # Removing it is smaller than correcting it and eliminates the
+        # divergence rather than maintaining it (ruling: HIGH 3 Q4-B
+        # amendment). The `significance_score` contribution below is
+        # intentionally UNCHANGED -- that number is provably unread by
+        # every report renderer (verified by search, HIGH 3 Q4-B) and
+        # the underlying global_af-only inconsistency is its own,
+        # separately carded, deliberately-not-dispatched issue; only the
+        # reader-visible sentence is in scope here.
         gnomad_criteria = self._gnomad_acmg_evidence(gnomad_result)
-        for text, weight in gnomad_criteria:
-            evidence.append(text)
+        for _text, weight in gnomad_criteria:
             significance_score += weight
 
         # ClinGen: gene-level clinical evidence (gene-disease clinical
@@ -719,31 +740,47 @@ class InterpretationEngine:
 
         dosage = clingen_result.get("dosage_sensitivity")
         if is_predicted_lof and dosage:
-            hi_score = dosage.get("haploinsufficiency_score")
-            # Set membership, not `>=`. ClinGen's Score column is not
-            # one ordinal range: 30 and 40 are special codes that both
-            # argue AGAINST haploinsufficiency, so an inequality reads
-            # them as the strongest support for exactly the claim they
-            # contradict. See CONFIG.clingen for why this must stay a
-            # whitelist and never become a blacklist of {30, 40}.
-            if hi_score in cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORES:
+            # HIGH 3 / T3-F2a (2026-08-28, ruled): verdict sourced from
+            # the shared `dosage_sensitivity_verdict` (pvs1/utils.py),
+            # passing this engine's own CONFIG.clingen thresholds through
+            # so its existing "all thresholds/configuration must remain
+            # configurable" guarantee is unaffected -- membership, not
+            # `>=`, is still what the shared function checks (ClinGen's
+            # Score column is not one ordinal range; 30 and 40 both argue
+            # AGAINST haploinsufficiency).
+            #
+            # PVS1's unconditional behaviour wins on WHICH SCORES produce
+            # evidence: this engine used to silently emit NOTHING for
+            # scores 0/1/2 ("curated, but not established"), collapsing
+            # that state into "no curation exists" -- a reviewer seeing
+            # nothing couldn't tell which. The LOF_NOT_ESTABLISHED branch
+            # below is new; every other branch's wording/weight is
+            # unchanged, since this engine's own scoring is not the
+            # shared function's decision to make.
+            mechanism, hi_score, hi_label = dosage_sensitivity_verdict(
+                clingen_result,
+                sufficient_scores=cfg.DOSAGE_SUFFICIENT_EVIDENCE_SCORES,
+                autosomal_recessive_score=cfg.DOSAGE_AUTOSOMAL_RECESSIVE_SCORE,
+                unlikely_score=cfg.DOSAGE_UNLIKELY_SCORE,
+            )
+            if mechanism == LOF_ESTABLISHED:
                 results.append(
                     (
                         f"ClinGen: {gene_symbol} has sufficient curated evidence for haploinsufficiency "
-                        f"({dosage.get('haploinsufficiency_label', 'n/a')}), supporting a PVS1-style "
+                        f"({hi_label}), supporting a PVS1-style "
                         f"interpretation of this predicted loss-of-function variant.",
                         1.5,
                     )
                 )
-            elif hi_score == cfg.DOSAGE_UNLIKELY_SCORE:
+            elif mechanism == LOF_REFUTED:
                 results.append(
                     (
-                        f"ClinGen: {gene_symbol} is curated as '{dosage.get('haploinsufficiency_label', 'dosage sensitivity unlikely')}' "
+                        f"ClinGen: {gene_symbol} is curated as '{hi_label}' "
                         f"-- a naive PVS1 application to this predicted loss-of-function variant should be applied with caution.",
                         -0.5,
                     )
                 )
-            elif hi_score == cfg.DOSAGE_AUTOSOMAL_RECESSIVE_SCORE:
+            elif mechanism == LOF_ESTABLISHED_RECESSIVE:
                 # Deliberately weight 0.0, and deliberately not silent.
                 # ClinGen curating a gene as autosomal-recessive says
                 # one damaged allele is NOT sufficient, so this is not
@@ -758,12 +795,26 @@ class InterpretationEngine:
                 # `_biological_context_evidence` already uses).
                 results.append(
                     (
-                        f"ClinGen: {gene_symbol} is curated as "
-                        f"'{dosage.get('haploinsufficiency_label', 'gene associated with autosomal recessive phenotype')}' "
+                        f"ClinGen: {gene_symbol} is curated as '{hi_label}' "
                         f"(haploinsufficiency score {hi_score}), so ClinGen's dosage curation does not establish that a "
                         f"single loss-of-function allele is sufficient to cause disease -- this predicted "
                         f"loss-of-function variant gets no PVS1 gene-level support from dosage sensitivity. Loss of "
                         f"function may still be this gene's disease mechanism when both alleles are affected.",
+                        0.0,
+                    )
+                )
+            elif mechanism == LOF_NOT_ESTABLISHED:
+                # New branch (HIGH 3 / T3-F2a): scores 0/1/2. Weight 0.0
+                # for the same reason as the autosomal-recessive branch
+                # above -- a real curated finding, not a directional
+                # claim this module can justify inventing.
+                results.append(
+                    (
+                        f"ClinGen: {gene_symbol} is curated for haploinsufficiency as '{hi_label}' "
+                        f"(score {hi_score}) -- curated evidence exists, but does not establish that a single "
+                        f"loss-of-function allele is sufficient to cause disease. This predicted loss-of-function "
+                        f"variant gets no PVS1 gene-level support from dosage sensitivity yet, but this is a "
+                        f"different state from 'ClinGen has no dosage curation for this gene at all'.",
                         0.0,
                     )
                 )

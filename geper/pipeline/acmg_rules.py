@@ -53,10 +53,12 @@ from pipeline.pvs1.models import (
 )
 from pipeline.pvs1.utils import (
     PM4_IN_FRAME_INDEL,
+    alphamissense_evidence_sentence,
     build_pvs1_input,
     classify_pm4_variant,
     coding_consequence_detail,
     lof_mechanism_from_clingen,
+    null_variant_term,
     population_af_from_gnomad,
     protein_effect_flags,
     protein_effect_undetermined_reason,
@@ -1844,7 +1846,10 @@ class ACMGRuleEngine:
         if protein_flags is not None and protein_flags.determined and protein_flags.is_lof:
             ref = (variant_dict.get("ref") or "") if variant_dict else ""
             alt = (variant_dict.get("alt") or "") if variant_dict else ""
-            kind = "a frameshift" if len(ref) != len(alt) else "a nonsense (stop-gained)"
+            # HIGH 3 / T3-F3 (2026-08-28, ruled): term sourced from the
+            # shared `null_variant_term` -- unchanged wording here, now
+            # from one source instead of three independent copies.
+            kind = "a " + null_variant_term(len(ref) != len(alt))
             return (
                 f"this is {kind} variant with a transcript-CDS-frame-determined null consequence; "
                 "missense/regulatory computational predictors are not applicable evidence for a "
@@ -1949,43 +1954,25 @@ class ACMGRuleEngine:
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
             sources.append("AlphaMissense")
-            # Disclosed inline, ahead of the score -- same placement and
-            # reasoning as the SpliceFormer/SpliceBERT caveat in _bp7
-            # below. AlphaMissense's own README (github.com/
-            # google-deepmind/alphamissense) states plainly that it is
-            # "not approved for clinical use", "not intended to be a
-            # substitute for professional medical advice", and that
-            # "predictions have varying levels of confidence" -- the
-            # same class of limitation _bp7 already discloses for the
-            # splice models, and nothing about AlphaMissense's own
-            # documentation exempts it. (Note this is a distinct claim
-            # from "uncalibrated": AlphaMissense's score is reported as
-            # calibrated against a curated benchmark in Cheng et al.
-            # 2023 -- the caveat here is about clinical-use approval
-            # status, not about calibration, so it is worded
-            # differently from _bp7's "uncalibrated" phrasing rather
-            # than copied verbatim.) Bound to the model name ahead of
-            # the score, not trailing, so a reader sees the limitation
-            # before the number and PDF line-wrapping cannot split it
-            # across a break.
-            qualified = "AlphaMissense (not clinically validated; not approved for clinical use)"
-            caveat = " This is a raw model score, not a validated clinical pathogenicity measure."
-            if am_class == "likely_pathogenic":
-                damaging.append(
-                    (
-                        "AlphaMissense",
-                        f"{qualified} predicts 'likely_pathogenic' (am_pathogenicity="
-                        f"{alphamissense_result.get('am_pathogenicity')})." + caveat,
-                    )
-                )
-            elif am_class == "likely_benign":
-                benign.append(
-                    (
-                        "AlphaMissense",
-                        f"{qualified} predicts 'likely_benign' (am_pathogenicity="
-                        f"{alphamissense_result.get('am_pathogenicity')})." + caveat,
-                    )
-                )
+            # HIGH 3 / AM-07 (2026-08-28, ruled): text sourced from the
+            # shared `alphamissense_evidence_sentence` (pvs1/utils.py) --
+            # this used to independently rebuild the same caveated
+            # sentence `InterpretationEngine.interpret()`'s legacy
+            # evidence line also builds, differing only in surface
+            # formatting (no `protein_variant` clause, and
+            # `am_pathogenicity` printed with no format spec or None
+            # fallback -- a latent formatting defect the shared function
+            # now fixes on this side, not a style choice being made).
+            # Gating (only likely_pathogenic/likely_benign produce a
+            # sentence here, routed to `damaging`/`benign` respectively)
+            # is unchanged -- that routing is this function's own
+            # concern, not something the shared sentence decides.
+            am_sentence = alphamissense_evidence_sentence(alphamissense_result)
+            if am_sentence is not None:
+                if am_class == "likely_pathogenic":
+                    damaging.append(("AlphaMissense", am_sentence))
+                elif am_class == "likely_benign":
+                    benign.append(("AlphaMissense", am_sentence))
 
         # Report review round 4, I5: MMSplice previously participated
         # in the agree/disagree vote for every variant regardless of
@@ -2562,6 +2549,26 @@ class ACMGRuleEngine:
     # ClinGen SVI classification tiers (see
     # `pipeline/clingen/models.py::CLINICAL_VALIDITY_CLASSIFICATIONS`);
     # only these three definitively rule the prerequisite out.
+    #
+    # HIGH 3 / T3-F2b (2026-08-28, ruled): `clinical_validity_summary`
+    # also has two OTHER independent readers -- `InterpretationEngine.
+    # _clingen_acmg_evidence` (legacy, `pipeline/interpretation.py`)
+    # scores the classification itself, 5-way, as its own supporting/
+    # conflicting/neutral evidence toward pathogenicity; `pipeline/pvs1/
+    # utils.py::lof_mechanism_from_clingen` discloses it as one
+    # unconditional, unscored sentence. This is DELIBERATELY NOT
+    # unified with either of them, and that is the finding, not an
+    # omission: PP1/BS4's read of this field answers "does a
+    # gene-disease relationship exist at all, so a segregation
+    # prerequisite can be satisfied" (a 3-item failure set); legacy's
+    # read answers "is this classification itself evidence toward or
+    # against pathogenicity" (a different, 2-directional split, e.g. a
+    # "Limited"/"Moderate" classification is a PP1 non-failure here but
+    # legacy's own neutral bucket there). Forcing these through one
+    # shared verdict would create a false common concept and invite the
+    # next reader to helpfully collapse three genuinely different
+    # questions that only coincidentally read the same field. Do not
+    # unify it.
     _VALIDITY_PREREQUISITE_FAILURES = ("Refuted", "Disputed", "No Known Disease Relationship")
 
     @staticmethod

@@ -21,6 +21,20 @@
 #
 # NOTE: Must be sourced (source bin/guard...), not run directly (bash bin/guard...).
 # Direct execution exits 2 (failure, fails closed). Do not "fix" that into exit 0.
+#
+# THERE IS NO AUTOMATIC ENFORCEMENT. GIT CANNOT BLOCK A CHECKOUT.
+#   git has no pre-checkout hook. post-checkout exists, but it fires only AFTER the working
+#   tree has already been rewritten, so no hook can stop a checkout from clobbering a held
+#   file. This script is therefore the ONLY coverage there is, and it is coverage only on
+#   the runs where somebody actually calls it.
+#   A .git/hooks/pre-checkout file used to sit in this repository reading like automatic
+#   enforcement of exactly this policy. It had never run and could never run -- measured,
+#   not assumed: a pre-checkout hook exiting 1 does not stop `git checkout`, while a
+#   post-checkout hook in the same repository does fire. It was removed, because a
+#   mechanism that cannot fire is worse than an absent one: an absent guard leaves people
+#   careful, and a broken guard lets them proceed with a clean check behind them.
+#   Verify this script with `bash bin/guard-tests.sh`. Do not assume something upstream is
+#   catching this for you. Nothing is.
 
 OPERATION="${1:-checkout}"
 TARGET="${2:-unknown}"

@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pipeline.pgx.stage import PGX_VALIDATION_CAVEAT
+from pipeline.reporting.clinical_sections import consequence_display_label
 
 logger = logging.getLogger("geper.pipeline.reporting.pdf_report")
 
@@ -74,6 +75,7 @@ def render_clinical_pdf(
     pipeline_version: str = "Bij AI",
     generated_at: Optional[str] = None,
     lab_disclaimer: Optional[str] = None,
+    codon_resolution_disclaimer: Optional[str] = None,
 ) -> str:
     """Render the full clinical PDF report to `pdf_path` and return it.
 
@@ -242,6 +244,9 @@ def render_clinical_pdf(
     # ── Variant table ──
     story.append(PageBreak())
     story.append(Paragraph("Variant Detail", section_style))
+    if codon_resolution_disclaimer:
+        story.append(Paragraph(codon_resolution_disclaimer, small_style))
+        story.append(Spacer(1, 4))
     if merged_variants:
         headers = ["Gene", "Transcript", "HGVS", "Consequence", "Classification", "gnomAD AF"]
         var_data = [headers]
@@ -251,7 +256,7 @@ def render_clinical_pdf(
             gene = v.get("gene_name") or acmg.get("gene") or "—"
             transcript = v.get("transcript_id") or "—"
             hgvs = v.get("hgvs") or "—"
-            consequence = v.get("consequence") or "—"
+            consequence = consequence_display_label(v.get("consequence"))
             classification = acmg.get("classification", "Not classified")
             af = acmg.get("gnomad_af")
             af_str = (

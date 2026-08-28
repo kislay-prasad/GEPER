@@ -42,6 +42,7 @@ from pipeline.reporting.clinical_sections import (
     variant_dashboard,
     clinical_interpretation,
     merge_variants_with_acmg,
+    consequence_display_label,
 )
 from pipeline.reporting import pdf_report as _pdf_report_mod
 from pipeline.pgx.stage import PGX_VALIDATION_CAVEAT
@@ -403,6 +404,16 @@ def _annotation_summary_to_html(ann_d: Dict) -> str:
         else "<p><em>No annotation summary available.</em></p>"
     )
 
+    if not ann_d.get("codon_resolution_available", True):
+        disclaimer = (
+            "<p><strong>Codon-level consequence resolution (missense / synonymous / "
+            "stop-gained, etc.) was not available for this run</strong> -- no reference "
+            "FASTA + GFF3 CDS source was configured. Every exonic single-nucleotide "
+            'variant in this report is annotated "Not determined" for Consequence '
+            "rather than a specific molecular effect.</p>"
+        )
+        table = disclaimer + table
+
     skipped = ann_d.get("skipped_symbolic") or []
     if not skipped:
         return table
@@ -462,7 +473,7 @@ def _variants_to_html_table(
             gene_cell,
             v.get("transcript_id") or "",
             v.get("hgvs", ""),
-            v.get("consequence") or "—",
+            consequence_display_label(v.get("consequence")),
             v.get("zygosity", ""),
             v.get("gt", ""),
             v.get("dp", ""),
@@ -770,6 +781,12 @@ class ReportingStage:
                 pipeline_version=PIPELINE_VERSION,
                 generated_at=generated_at_str,
                 lab_disclaimer=lab_disclaimer,
+                codon_resolution_disclaimer=(
+                    None
+                    if ann_d.get("codon_resolution_available", True)
+                    else "Codon-level consequence resolution was not available for this run -- every exonic "
+                    'SNV is annotated "Not determined" for Consequence.'
+                ),
             )
 
         result = ReportResult(

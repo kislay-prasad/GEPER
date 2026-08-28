@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED
+
 
 # ─── Patient metadata ───────────────────────────────────────────────────────────
 
@@ -297,3 +299,19 @@ def merge_variants_with_acmg(
             )
 
     return merged
+
+
+# ─── Consequence display ────────────────────────────────────────────────────────
+
+
+def consequence_display_label(raw: Optional[str]) -> str:
+    """Map a stored consequence value to what a clinician reads.
+
+    Explicit mapping, not a truthy fallback -- CONSEQUENCE_NOT_DETERMINED
+    is a non-empty string and therefore truthy; `raw or "—"` would let it
+    pass through unchanged, which is the exact defect this function
+    exists to prevent.
+    """
+    if raw == CONSEQUENCE_NOT_DETERMINED:
+        return "Not determined"
+    return raw or "—"

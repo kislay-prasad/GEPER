@@ -85,6 +85,15 @@ class NoCdsCodonContextProvider(CodonContextProvider):
 
 # ─── Consequence mapping ──────────────────────────────────────────────────────
 
+# Explicit not-determined sentinel — distinct from any real SO consequence
+# term, so a downstream reader (rendering, ACMG evidence logic) can tell
+# "we tried and could not resolve a codon-level effect" apart from an
+# actual classification. Never returned by `_map_consequence` for the MNV/
+# complex case (situation 3): that path always has a real, if coarse,
+# answer (`coding_sequence_variant`) and giving it this sentinel would
+# misrepresent a real answer as a failure to answer.
+CONSEQUENCE_NOT_DETERMINED = "consequence_not_determined"
+
 
 def _map_consequence(
     region: str,
@@ -158,10 +167,15 @@ def _map_consequence(
             logger.debug("CodonContextProvider failed for %s:%d: %s", chrom, pos, exc)
 
     if is_snv:
-        # No codon context available — annotate safely without guessing
-        return "coding_sequence_variant"
+        # No codon context available, or this variant's codon could not be
+        # determined despite a configured provider -- an explicit
+        # not-determined sentinel, never a guessed classification.
+        return CONSEQUENCE_NOT_DETERMINED
 
-    # Multi-nucleotide variant / complex
+    # Multi-nucleotide variant / complex: a real, if coarse, classification
+    # -- keep the honest SO term. Giving this the sentinel would misrepresent
+    # a real answer as a failure to answer (situation 3, confirmed by the
+    # human: keeps coding_sequence_variant).
     return "coding_sequence_variant"
 
 
@@ -825,6 +839,13 @@ class AnnotationResult:
     # filtered out before annotation/ACMG. Each entry documents why the
     # record was skipped, so reports never silently drop variants.
     skipped_symbolic: List[Dict] = field(default_factory=list)
+    # Run-level fact for the not-determined sentinel: whether a real
+    # FastaCodonContextProvider was available for this run (vs. the
+    # NoCdsCodonContextProvider placeholder). When False, every exonic SNV
+    # in `variants` was annotated CONSEQUENCE_NOT_DETERMINED rather than a
+    # specific molecular effect -- a run-level disclosure, not a per-variant
+    # one, since it applies uniformly to every such variant in this run.
+    codon_resolution_available: bool = True
 
     def to_dict(self) -> Dict:
         return {
@@ -838,6 +859,7 @@ class AnnotationResult:
             "elapsed_seconds": self.elapsed_seconds,
             "skipped_symbolic_count": len(self.skipped_symbolic),
             "skipped_symbolic": self.skipped_symbolic,
+            "codon_resolution_available": self.codon_resolution_available,
             "variants": [v.to_dict() for v in self.variants],
         }
 
@@ -865,6 +887,7 @@ def _write_annotation_json_streaming(path: str, result: "AnnotationResult") -> N
         "elapsed_seconds": result.elapsed_seconds,
         "skipped_symbolic_count": len(result.skipped_symbolic),
         "skipped_symbolic": result.skipped_symbolic,
+        "codon_resolution_available": result.codon_resolution_available,
     }
     with open(path, "w") as fh:
         fh.write("{\n")
@@ -1194,6 +1217,7 @@ class AnnotationStage:
             elapsed_seconds=round(time.time() - t0, 3),
             variants=variants,
             skipped_symbolic=skipped_symbolic,
+            codon_resolution_available=bool(getattr(self._codon_provider, "_available", False)),
         )
         _write_annotation_json_streaming(annotation_json, result)
 

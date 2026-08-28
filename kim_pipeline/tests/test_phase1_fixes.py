@@ -8,6 +8,7 @@ Tests for all Phase 1 fixes:
   FIX 1.4 — Per-variant exception isolation in Stage 4b
   FIX 1.5 — PM3, PP1, BS4, BP2, BP5 ACMG criteria
 """
+
 from __future__ import annotations
 
 import sys
@@ -25,9 +26,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pipeline.annotation.stage import (
     _map_consequence,
     _consequence_to_is_inframe_indel,
+    CONSEQUENCE_NOT_DETERMINED,
     NoCdsCodonContextProvider,
     AnnotationStage,
-    AnnotatedVariant,
 )
 
 
@@ -35,42 +36,63 @@ class TestMapConsequence:
     """_map_consequence maps region + variant shape to the correct SO term."""
 
     def test_splice_donor(self):
-        assert _map_consequence("splice_donor", "A", "T", None, "chr1", 100, "tx") == "splice_donor_variant"
+        assert (
+            _map_consequence("splice_donor", "A", "T", None, "chr1", 100, "tx")
+            == "splice_donor_variant"
+        )
 
     def test_splice_acceptor(self):
-        assert _map_consequence("splice_acceptor", "G", "C", None, "chr1", 100, "tx") == "splice_acceptor_variant"
+        assert (
+            _map_consequence("splice_acceptor", "G", "C", None, "chr1", 100, "tx")
+            == "splice_acceptor_variant"
+        )
 
     def test_intron_variant(self):
         assert _map_consequence("intronic", "A", "T", None, "chr1", 100, "tx") == "intron_variant"
 
     def test_intergenic(self):
-        assert _map_consequence("intergenic", "A", "T", None, "chr1", 100, "tx") == "intergenic_variant"
+        assert (
+            _map_consequence("intergenic", "A", "T", None, "chr1", 100, "tx")
+            == "intergenic_variant"
+        )
 
     def test_frameshift_deletion(self):
         # length diff = 2, not divisible by 3 → frameshift
-        assert _map_consequence("exonic", "ATG", "A", None, "chr1", 100, "tx") == "frameshift_variant"
+        assert (
+            _map_consequence("exonic", "ATG", "A", None, "chr1", 100, "tx") == "frameshift_variant"
+        )
 
     def test_frameshift_insertion(self):
         # length diff = 2
-        assert _map_consequence("exonic", "A", "ATT", None, "chr1", 100, "tx") == "frameshift_variant"
+        assert (
+            _map_consequence("exonic", "A", "ATT", None, "chr1", 100, "tx") == "frameshift_variant"
+        )
 
     def test_inframe_deletion(self):
         # length diff = 3
-        assert _map_consequence("exonic", "ATGC", "A", None, "chr1", 100, "tx") == "inframe_deletion"
+        assert (
+            _map_consequence("exonic", "ATGC", "A", None, "chr1", 100, "tx") == "inframe_deletion"
+        )
 
     def test_inframe_insertion(self):
         # length diff = 3
-        assert _map_consequence("exonic", "A", "ATGC", None, "chr1", 100, "tx") == "inframe_insertion"
+        assert (
+            _map_consequence("exonic", "A", "ATGC", None, "chr1", 100, "tx") == "inframe_insertion"
+        )
 
-    def test_exonic_snv_no_cds_returns_coding_sequence_variant(self):
-        # Without a CDS provider, SNV → coding_sequence_variant (not a guess)
+    def test_exonic_snv_no_cds_returns_not_determined_sentinel(self):
+        # Not-determined sentinel design: without a CDS provider, SNV
+        # consequence is genuinely unresolved -- an explicit sentinel,
+        # never a guessed classification. Previously returned
+        # "coding_sequence_variant" as a default guess; the sentinel
+        # design replaced that guess.
         result = _map_consequence("exonic", "A", "T", None, "chr1", 100, "tx")
-        assert result == "coding_sequence_variant"
+        assert result == CONSEQUENCE_NOT_DETERMINED
 
-    def test_exonic_snv_with_no_cds_provider_raises_returns_coding(self):
+    def test_exonic_snv_with_no_cds_provider_returns_not_determined_sentinel(self):
         provider = NoCdsCodonContextProvider()
         result = _map_consequence("exonic", "A", "T", provider, "chr1", 100, "tx")
-        assert result == "coding_sequence_variant"
+        assert result == CONSEQUENCE_NOT_DETERMINED
 
 
 class TestConsequenceToIsInframeIndel:
@@ -110,13 +132,10 @@ class TestAnnotationStageConsequence:
         )
 
     def _write_vcf(self, path: Path, records: list) -> None:
-        header = (
-            "##fileformat=VCFv4.2\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-        )
+        header = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
         path.write_text(header + "".join(records))
 
-    def test_exonic_snv_gets_coding_sequence_variant(self, tmp_path):
+    def test_exonic_snv_gets_not_determined_sentinel(self, tmp_path):
         gff = tmp_path / "test.gff3"
         self._write_gff3(gff)
         vcf = tmp_path / "test.vcf"
@@ -126,8 +145,10 @@ class TestAnnotationStageConsequence:
         result = stage.run(str(vcf), str(tmp_path / "out"))
         assert result.total_variants == 1
         v = result.variants[0]
-        # Without CDS FASTA, exonic SNV → coding_sequence_variant
-        assert v.consequence == "coding_sequence_variant"
+        # Not-determined sentinel design: without CDS FASTA, exonic SNV
+        # consequence is genuinely unresolved -- CONSEQUENCE_NOT_DETERMINED,
+        # not a guessed "coding_sequence_variant" default.
+        assert v.consequence == CONSEQUENCE_NOT_DETERMINED
         # is_inframe_indel must be False for SNV
         assert v.is_inframe_indel is False
 
@@ -180,21 +201,19 @@ class TestAnnotationStageConsequence:
 # FIX 1.3 — ZygosityExtractor wired into AnnotationStage
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAnnotationStageZygosity:
     """Richer zygosity fields now appear on AnnotatedVariant."""
 
     def _write_vcf(self, path: Path, records: list) -> None:
         path.write_text(
             "##fileformat=VCFv4.2\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
-            + "".join(records)
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n" + "".join(records)
         )
 
     def test_gq_and_ab_populated(self, tmp_path):
         vcf = tmp_path / "test.vcf"
-        self._write_vcf(vcf, [
-            "chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:AD:DP:GQ\t0/1:15,10:25:99\n"
-        ])
+        self._write_vcf(vcf, ["chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:AD:DP:GQ\t0/1:15,10:25:99\n"])
         stage = AnnotationStage({"annotation": {"require_gff": False}})
         result = stage.run(str(vcf), str(tmp_path / "out"))
         v = result.variants[0]
@@ -203,9 +222,7 @@ class TestAnnotationStageZygosity:
 
     def test_phase_set_populated(self, tmp_path):
         vcf = tmp_path / "test.vcf"
-        self._write_vcf(vcf, [
-            "chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:PS\t0|1:100\n"
-        ])
+        self._write_vcf(vcf, ["chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:PS\t0|1:100\n"])
         stage = AnnotationStage({"annotation": {"require_gff": False}})
         result = stage.run(str(vcf), str(tmp_path / "out"))
         v = result.variants[0]
@@ -213,9 +230,7 @@ class TestAnnotationStageZygosity:
 
     def test_hemizygous_flagged(self, tmp_path):
         vcf = tmp_path / "test.vcf"
-        self._write_vcf(vcf, [
-            "chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT\t1\n"
-        ])
+        self._write_vcf(vcf, ["chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT\t1\n"])
         stage = AnnotationStage({"annotation": {"require_gff": False}})
         result = stage.run(str(vcf), str(tmp_path / "out"))
         v = result.variants[0]
@@ -224,9 +239,7 @@ class TestAnnotationStageZygosity:
 
     def test_existing_fields_unchanged(self, tmp_path):
         vcf = tmp_path / "test.vcf"
-        self._write_vcf(vcf, [
-            "chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:AD:DP\t0/1:15,10:25\n"
-        ])
+        self._write_vcf(vcf, ["chr1\t100\t.\tA\tT\t200\tPASS\t.\tGT:AD:DP\t0/1:15,10:25\n"])
         stage = AnnotationStage({"annotation": {"require_gff": False}})
         result = stage.run(str(vcf), str(tmp_path / "out"))
         v = result.variants[0]
@@ -240,15 +253,13 @@ class TestAnnotationStageZygosity:
 # FIX 1.2 — AlphaMissense wiring via compute_computational_score
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from pipeline.evidence.aggregator import EvidenceAggregator
+from pipeline.evidence.aggregator import EvidenceAggregator  # noqa: E402
 
 
 class TestAlphaMissenseWiring:
     def test_alphamissense_included_in_computational_score(self):
         # With only alphamissense, score = alphamissense (normalised directly)
-        score = EvidenceAggregator.compute_computational_score(
-            alphamissense_score=0.8
-        )
+        score = EvidenceAggregator.compute_computational_score(alphamissense_score=0.8)
         assert score == pytest.approx(0.8, rel=1e-4)
 
     def test_alphamissense_averages_with_cadd(self):
@@ -272,7 +283,7 @@ class TestAlphaMissenseWiring:
 # FIX 1.4 — Per-variant exception isolation (unit-level test of classify isolation)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence
+from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence  # noqa: E402
 
 
 class TestPerVariantIsolation:
@@ -295,6 +306,7 @@ class TestPerVariantIsolation:
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIX 1.5 — New ACMG criteria: PM3, PP1, BS4, BP2, BP5
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 def _clf():
     return AcmgClassifier()

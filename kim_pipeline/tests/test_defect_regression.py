@@ -938,22 +938,49 @@ class TestGff3PhaseHandling:
         rec = CdsRecord("chr1", 100, 199, "+", 2, "NM_000001.1")
         assert rec.phase == 2
 
-    def test_phase_applied_to_cds_position(self):
-        """Verify phase offset shifts the codon_index correctly."""
-        # With phase=0 at pos 100 in an exon starting at 100:
-        #   cds_pos = (pos_in_exon=0) - phase_offset(0) = 0 → codon_index = 0
-        # With phase=1:
-        #   cds_pos = (pos_in_exon=0) - phase_offset(1) = -1 → codon_index = (-1 % 3) = 2
-        # This verifies frame is shifted by phase
-        for phase, expected_codon_index in [(0, 0), (1, 2), (2, 1)]:
-            pos_in_exon = 0
-            cds_offset = 0
-            phase_offset = phase
-            cds_pos = cds_offset + pos_in_exon - phase_offset
-            codon_index = cds_pos % 3
-            assert codon_index == expected_codon_index, (
-                f"phase={phase}: expected codon_index={expected_codon_index}, got {codon_index}"
-            )
+    def test_phase_applied_to_cds_position(self, tmp_path, monkeypatch):
+        """Verify GFF3 phase shifts the codon frame used to read/translate a variant.
+
+        PROBE-CONFIRMED REWRITE (T2-F2, audit finding): the previous version of
+        this test reimplemented codon_provider.py's own phase arithmetic locally
+        (`cds_pos = cds_offset + pos_in_exon - phase_offset; codon_index = cds_pos
+        % 3` — byte-identical to `_classify_snv_full`'s `cds_pos = cds_offset +
+        pos_in_exon - _phase_offset` / `codon_index = cds_pos % 3`,
+        codon_provider.py:450/453) instead of calling the real
+        FastaCodonContextProvider. Probe: flipping the sign in the real function
+        (`+ _phase_offset` instead of `-`) left the old test green — it pinned its
+        own copy of the formula, not the function it claimed to guard.
+
+        This version drives the real provider end-to-end against a real (temp-file)
+        GFF3 + FASTA — no formula is duplicated here. The expected codon/AA values
+        are the exact output of the real (correct) function for this input,
+        confirmed by direct execution, not derived from the phase formula by hand.
+        """
+        monkeypatch.setattr(
+            "pipeline.annotation.codon_provider._FastaReader._check_samtools",
+            staticmethod(lambda: False),
+        )
+        from pipeline.annotation.codon_provider import CdsRecord, FastaCodonContextProvider
+
+        # Single-exon CDS, chr1, + strand, phase=1.
+        gff_path = tmp_path / "phase.gff3"
+        gff_path.write_text(
+            "chr1\tsrc\tCDS\t101\t130\t.\t+\t1\tParent=NM_TEST.1\n", encoding="utf-8"
+        )
+        seq = ("N" * 100) + "GATGCATGGATCCATGAATTCCGGATCCTAGGAA" + ("N" * 20)
+        fasta_path = tmp_path / "phase.fasta"
+        fasta_path.write_text(f">chr1\n{seq}\n", encoding="utf-8")
+
+        provider = FastaCodonContextProvider(gff_path=str(gff_path), fasta_path=str(fasta_path))
+        assert provider._available, "fixture GFF3/FASTA must load for this probe to mean anything"
+        provider._cds_map = {"NM_TEST.1": [CdsRecord("chr1", 101, 130, "+", 1, "NM_TEST.1")]}
+
+        result = provider.get_codon_and_aa("chr1", 105, "C", "A", "NM_TEST.1")
+        assert result == ("missense", "GCA", "ACA", "A", "T"), (
+            f"real FastaCodonContextProvider.get_codon_and_aa output for this "
+            f"phase=1 fixture changed from the confirmed-correct value; got {result!r}. "
+            f"This is exactly what the T2-F2 sign-flip probe breaks."
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -998,23 +1025,96 @@ class TestCodonProviderTuple:
         assert ref_aa == "K"
         assert alt_aa == "N"
 
-    def test_annotation_stage_unpack_accepts_5tuple(self):
-        """Explicit test: the annotation-stage unpack code handles 5 values."""
-        # Before fix: ref_codon, alt_codon, ref_aa, alt_aa = get_codon_and_aa() → ValueError
-        # After fix: consequence, ref_codon, alt_codon, ref_aa, alt_aa = get_codon_and_aa()
-        five_tuple = ("missense_variant", "AAA", "AAT", "Lys", "Asn")
-        consequence, ref_codon, alt_codon, ref_aa, alt_aa = five_tuple  # must not raise
-        assert consequence == "missense_variant"
-        assert ref_aa == "Lys"
-        assert alt_aa == "Asn"
+    def _run_annotation_stage_with_codon_provider(self, tmp_path, monkeypatch, get_codon_and_aa):
+        """Drives AnnotationStage.run() for real, with the GFF3/RNA-analyser
+        dependencies faked out (no real GFF3/FASTA needed to reach the target
+        code) but the real "AI engine sequence inputs from codon provider"
+        unpack block in stage.py (inside AnnotationStage.run()'s per-variant
+        loop: `consequence, ref_codon, alt_codon, ref_aa, alt_aa =
+        self._codon_provider.get_codon_and_aa(...)`) running unmodified.
+        Returns the single resulting AnnotatedVariant.
+        """
+        from pipeline.annotation.stage import AnnotationStage
 
-    def test_5tuple_unpack_does_not_raise(self):
-        """Simulates the fixed unpack. If still 4-tuple, this would raise ValueError."""
-        result = (None, None, None, None, None)  # 5-tuple as returned after fix
-        consequence, ref_codon, alt_codon, ref_aa, alt_aa = result
-        assert consequence is None
-        assert ref_aa is None
-        assert alt_aa is None
+        vcf_path = tmp_path / "variant.vcf"
+        vcf_path.write_text(
+            "##fileformat=VCFv4.2\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+            "chr1\t105\t.\tC\tA\t.\tPASS\t.\n",
+            encoding="utf-8",
+        )
+
+        class _FakeGffIndex:
+            def lookup(self, chrom, pos):
+                return "GENE1", "NM_TEST.1"
+
+        class _FakeRnaAnalyser:
+            def get_transcript(self, transcript_id):
+                return MagicMock(strand="+")  # truthy, and stage.py reads .strand off it
+
+            def genomic_to_cds_pos(self, chrom, pos, transcript_id):
+                return None  # falls back to genomic (g.) HGVS notation -- fine, not under test
+
+            def classify_region(self, chrom, pos, transcript_id):
+                return "exonic"
+
+        class _FakeCodonProvider:
+            _available = True
+            _fasta = MagicMock(fetch=MagicMock(return_value=""))
+            _cds_map: Dict = {}
+
+            def get_codon_change(self, chrom, pos, ref, alt, transcript_id):
+                return "missense"  # drives var.consequence to "missense_variant"
+
+            def get_codon_and_aa(self, chrom, pos, ref, alt, transcript_id):
+                return get_codon_and_aa(chrom, pos, ref, alt, transcript_id)
+
+        stage = AnnotationStage(cfg={})
+        monkeypatch.setattr(stage, "_get_gff_index", lambda: _FakeGffIndex())
+        monkeypatch.setattr(stage, "_get_rna_analyser", lambda: _FakeRnaAnalyser())
+        stage._codon_provider = _FakeCodonProvider()
+
+        result = stage.run(str(vcf_path), str(tmp_path), sample_id="TESTSAMPLE")
+        assert len(result.variants) == 1
+        return result.variants[0]
+
+    def test_annotation_stage_unpack_accepts_5tuple(self, tmp_path, monkeypatch):
+        """T2-F3 REWRITE: drives the REAL annotation-stage unpack (stage.py's
+        "AI engine sequence inputs from codon provider" block, inside
+        AnnotationStage.run()) against a fake codon provider returning a real
+        5-tuple. Before this rewrite, the docstring claimed "the annotation-
+        stage unpack code handles 5 values" but the body only unpacked a
+        hand-typed tuple literal — it never touched the annotation stage at
+        all. This version proves the real unpack reaches AnnotatedVariant.
+        """
+        var = self._run_annotation_stage_with_codon_provider(
+            tmp_path,
+            monkeypatch,
+            get_codon_and_aa=lambda *a: ("missense", "GCA", "ACA", "Ala", "Thr"),
+        )
+        assert var.consequence == "missense_variant"
+        assert var.wildtype_aa == "Ala", "real 5-tuple unpack must reach var.wildtype_aa"
+        assert var.mutant_aa == "Thr", "real 5-tuple unpack must reach var.mutant_aa"
+
+    def test_5tuple_unpack_does_not_raise(self, tmp_path, monkeypatch):
+        """T2-F3 REWRITE, and a correction of this test's own former premise:
+        its old docstring said "If still 4-tuple, this would raise ValueError" —
+        but the real unpack site (stage.py, inside AnnotationStage.run()) wraps
+        the unpack in `except Exception: pass` ("best-effort only"), so a
+        too-few-values ValueError is SWALLOWED, never raised out of run().
+        Simulates the pre-fix defect (get_codon_and_aa returning only 3 values)
+        against the real code and verifies the actual real behavior: run()
+        completes without raising, and the AA fields it would have set are
+        left at their default (None) rather than fabricated.
+        """
+        var = self._run_annotation_stage_with_codon_provider(
+            tmp_path,
+            monkeypatch,
+            get_codon_and_aa=lambda *a: ("missense", "GCA", "ACA"),  # too few to unpack into 5
+        )
+        assert var.consequence == "missense_variant"
+        assert var.wildtype_aa is None, "swallowed unpack failure must not fabricate an AA"
+        assert var.mutant_aa is None, "swallowed unpack failure must not fabricate an AA"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -73,6 +73,7 @@ from report.clinical_report_builder import (
     # resolve for existing callers and tests.
     _consent_value_label,
     _offline_sources_caveat_text,
+    _variant_hgvs_or_locus,
     _variant_reviewer_flags,
     # Relocated 2026-08-21 (A7): the QC vocabulary, thresholds and
     # `{status, value, reason}` parsing are renderer-neutral, so the
@@ -1827,18 +1828,32 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     """Renders one variant's already-computed `clinical_report` dict (see report/clinical_report_builder.py) -- no evidence is re-derived here."""
     variant = variant_result.get("variant", {})
     locus = f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+    # Card T3-F4: HGVS added alongside the coordinate string (not a
+    # replacement -- the coordinate stays for precision, HGVS is the
+    # identifier clinicians actually use), via the same shared fallback
+    # helper the full Markdown heading and the short PDF heading both
+    # call, so all three degrade identically when neither hgvs_c nor
+    # hgvs_g is available. In that fallback-to-locus case the
+    # parenthetical below repeats `locus` verbatim -- an accepted
+    # consequence of one shared rule, not a fourth special case.
+    locus_with_hgvs = f"{locus} ({_variant_hgvs_or_locus(variant_result)})"
     clinical = candidate_interpretation_of(variant_result)
 
     flow: List[Any] = [
         # `_Bookmark`'s title is a raw PDF outline string (`Canvas.
         # addOutlineEntry`), never parsed as XML the way `Paragraph`
-        # text is -- deliberately built from the unescaped `locus` here
-        # (escaping it would show a literal "&gt;" in the PDF's
-        # sidebar/outline panel instead of decoding it). Only the
-        # `Paragraph` heading right below needs `esc()`.
-        _Bookmark(f"bm_finding_{idx}", f"Finding {idx}: {locus}"),
+        # text is -- deliberately built from the unescaped
+        # `locus_with_hgvs` here (escaping it would show a literal
+        # "&gt;" in the PDF's sidebar/outline panel instead of decoding
+        # it). Only the `Paragraph` heading right below needs `esc()`.
+        # The bookmark carries the same HGVS-augmented text as the
+        # heading (Card T3-F4) -- a PDF outline entry is itself a
+        # navigation identifier, and giving it a different string from
+        # the heading it points to would be the same correlation
+        # failure one level down.
+        _Bookmark(f"bm_finding_{idx}", f"Finding {idx}: {locus_with_hgvs}"),
         Spacer(1, 4 * mm),
-        Paragraph(f"Finding {idx}: {esc(locus)}", styles["SectionHeading"]),
+        Paragraph(f"Finding {idx}: {esc(locus_with_hgvs)}", styles["SectionHeading"]),
     ]
 
     # Round 14, B2: per-finding, not report-level -- see

@@ -19,6 +19,7 @@ import os
 import tempfile
 import unittest
 
+from report.clinical_report_builder import _variant_hgvs_or_locus
 from report.summary import generate_pdf
 from report.summary_short import (
     _build_identity_block,
@@ -27,7 +28,6 @@ from report.summary_short import (
     _confidence_text,
     _ordered_variants,
     _short_interpretation,
-    _variant_hgvs,
     _build_short_stylesheet,
     generate_short_pdf,
 )
@@ -110,16 +110,22 @@ def _document(n_variants=4):
 
 class TestFieldExtraction(unittest.TestCase):
     def test_hgvs_c_preferred(self):
+        # Card T3-F4: this fallback chain moved to
+        # `report/clinical_report_builder.py::_variant_hgvs_or_locus` so
+        # the full Markdown and full PDF headings can share it instead
+        # of each growing their own copy -- see that function's
+        # docstring. `summary_short.py::_build_variant_block` now calls
+        # the same shared function these tests exercise directly.
         vr = _variant_result(normalization={"hgvs_c": "NM_1.2:c.5A>T", "hgvs_g": "NC_1.2:g.99A>T"})
-        self.assertEqual(_variant_hgvs(vr), "NM_1.2:c.5A>T")
+        self.assertEqual(_variant_hgvs_or_locus(vr), "NM_1.2:c.5A>T")
 
     def test_falls_back_to_hgvs_g(self):
         vr = _variant_result(normalization={"hgvs_c": None, "hgvs_g": "NC_1.2:g.99A>T"})
-        self.assertEqual(_variant_hgvs(vr), "NC_1.2:g.99A>T")
+        self.assertEqual(_variant_hgvs_or_locus(vr), "NC_1.2:g.99A>T")
 
     def test_falls_back_to_locus_when_no_hgvs_at_all(self):
         vr = _variant_result(chrom="17", pos=100, ref="A", alt="T")
-        self.assertEqual(_variant_hgvs(vr), "17:100 A>T")
+        self.assertEqual(_variant_hgvs_or_locus(vr), "17:100 A>T")
 
     def test_classification_missing_is_not_classified(self):
         self.assertEqual(_classification_text(None), "Not classified")

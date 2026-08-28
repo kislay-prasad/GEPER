@@ -72,6 +72,7 @@ from report.clinical_report_builder import (
     RESEARCH_USE_DISCLAIMER,
     _consent_value_label,
     _offline_sources_caveat_text,
+    _variant_hgvs_or_locus,
     _variant_reviewer_flags,
 )
 from report.pdf_escape import esc
@@ -178,25 +179,6 @@ def _build_short_stylesheet() -> Dict[str, ParagraphStyle]:
 # ---------------------------------------------------------------------------
 # Field extraction (read-only over data the full report already has)
 # ---------------------------------------------------------------------------
-
-
-def _variant_locus(variant_result: Dict[str, Any]) -> str:
-    variant = variant_result.get("variant") or {}
-    return f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
-
-
-def _variant_hgvs(variant_result: Dict[str, Any]) -> str:
-    """
-    Best available HGVS notation for this variant, from the same
-    `normalization` stage dict the JSON document already carries
-    (`pipeline/orchestrator.py::_run_normalization_stage` /
-    `_attach_hgvs_c`): transcript-level HGVS.c when the transcript
-    stage resolved structure for it, otherwise genomic HGVS.g,
-    otherwise the plain chrom:pos ref>alt locus. Never synthesizes
-    notation of its own.
-    """
-    normalization = variant_result.get("normalization") or {}
-    return normalization.get("hgvs_c") or normalization.get("hgvs_g") or _variant_locus(variant_result)
 
 
 def _variant_gene(variant_result: Dict[str, Any]) -> Optional[str]:
@@ -461,7 +443,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     variant = variant_result.get("variant", {})
     clinical = candidate_interpretation_of(variant_result)
     gene = _variant_gene(variant_result)
-    hgvs = _variant_hgvs(variant_result)
+    hgvs = _variant_hgvs_or_locus(variant_result)
     heading = f"Finding {idx}: {esc(gene) + ' ' if gene else ''}{esc(hgvs)}"
 
     lbl, val = styles["TableLabel"], styles["TableValue"]

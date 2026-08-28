@@ -22,6 +22,7 @@ from report.clinical_report_builder import (
     RESEARCH_USE_DISCLAIMER,
     _consent_value_label,
     _offline_sources_caveat_text,
+    _variant_hgvs_or_locus,
     _variant_reviewer_flags,
 )
 from utils.logger import get_logger
@@ -541,8 +542,21 @@ class ReportGenerator:
         variant = result.get("variant", {})
         lines: List[str] = []
 
+        # Card T3-F4: the coordinate string is retained (it is the
+        # precise identifier) and HGVS is added alongside it (the
+        # identifier clinicians actually use, and the one the short PDF
+        # heading is built from -- see `summary_short.py::
+        # _build_variant_block`) via the same shared fallback helper
+        # both PDFs and the short PDF now call, so all three degrade the
+        # same way when neither hgvs_c nor hgvs_g is available (the
+        # helper falls back to the locus itself in that case, so the
+        # parenthetical below will then literally repeat the coordinate
+        # string just shown -- an accepted, intentional consequence of
+        # one shared fallback rather than a fourth, renderer-specific
+        # special case).
         header = (
             f"## Variant {idx}: {variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+            f" ({_variant_hgvs_or_locus(result)})"
         )
         lines.append(header)
         lines.append("")

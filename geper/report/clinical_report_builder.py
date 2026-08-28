@@ -1044,6 +1044,38 @@ def _offline_sources_caveat_text() -> Optional[str]:
     )
 
 
+def _variant_locus(variant_result: Dict[str, Any]) -> str:
+    """Genomic-coordinate identifier -- chrom:pos ref>alt. Always
+    available whenever `variant_result["variant"]` is present; the
+    fallback of last resort for `_variant_hgvs_or_locus` below."""
+    variant = variant_result.get("variant") or {}
+    return f"{variant.get('chrom')}:{variant.get('pos')} {variant.get('ref')}>{variant.get('alt')}"
+
+
+def _variant_hgvs_or_locus(variant_result: Dict[str, Any]) -> str:
+    """
+    Best available variant identifier: transcript-level HGVS.c when the
+    normalization stage resolved one, otherwise genomic HGVS.g,
+    otherwise the plain chrom:pos ref>alt locus. Never synthesizes
+    notation of its own -- see `pipeline/orchestrator.py::
+    _run_normalization_stage` / `_attach_hgvs_c` for how `normalization`
+    is populated.
+
+    Card T3-F4: single source of truth for all three report renderers
+    (full Markdown, full PDF, short PDF) so they degrade the same way
+    when a field is missing, rather than each carrying its own
+    independently-maintained copy of this fallback order that could
+    silently drift out of sync -- the same failure mode commit b2a6083
+    ("HIGH 3: replace three by-hand-synced duplications with shared
+    functions, and delete one divergent line") removed elsewhere in this
+    codebase. Previously this logic existed only in
+    `report/summary_short.py` (as `_variant_hgvs`); the full report
+    headings carried no HGVS at all.
+    """
+    normalization = variant_result.get("normalization") or {}
+    return normalization.get("hgvs_c") or normalization.get("hgvs_g") or _variant_locus(variant_result)
+
+
 def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[Dict[str, Any]]) -> List[str]:
     """
     Short, plain-language reasons this one variant's finding may need a

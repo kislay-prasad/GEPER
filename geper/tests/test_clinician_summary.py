@@ -272,8 +272,15 @@ class TestGeneratePdfEndToEnd(unittest.TestCase):
             titles = flatten(reader.outline)
             self.assertIn("Clinician Summary", titles)
             self.assertIn("Sequencing Quality Control Metrics", titles)
-            self.assertIn("Finding 1: 17:100 A>T", titles)
-            self.assertIn("Finding 2: 20:200 C>G", titles)
+            # Card T3-F4: the bookmark now carries HGVS alongside the
+            # coordinate string, via the same shared fallback helper the
+            # heading uses -- see `report/summary.py::
+            # _build_variant_section`. Neither finding below has a
+            # `normalization` entry, so the fallback lands on the locus
+            # itself and the parenthetical repeats it verbatim (an
+            # accepted consequence of one shared rule, not a bug).
+            self.assertIn("Finding 1: 17:100 A>T (17:100 A>T)", titles)
+            self.assertIn("Finding 2: 20:200 C>G (20:200 C>G)", titles)
             self.assertIn("Sign-off & Disclaimer", titles)
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")

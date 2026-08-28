@@ -14,6 +14,18 @@
 #   working tree), which is what a bare `git checkout <ref>` actually is -- so it blocks
 #   while any held item is uncommitted. That is the guard working, not the guard stuck.
 #
+# WHAT IS EXAMINED IS DECIDED BY REACHABILITY, INCLUDING WHETHER AN ENTRY IS VALID.
+#   A manifest entry the operation cannot reach is not examined at all -- not for existence,
+#   not for uncommitted changes. It is not that such an entry is assumed safe; it is that
+#   this operation cannot touch it either way, so there is nothing for the guard to say.
+#   The earlier version validated every entry on every call, which meant a manifest naming a
+#   path absent from the current checkout -- a held item exists only on the holder's machine,
+#   so a fresh clone never has it -- blocked every operation, permanently, everywhere else.
+#   A guard that fails on a fresh clone protects nothing there and gets deleted by whoever
+#   hits it first.
+#   An UNSCOPED call reaches everything, so every entry is still validated there and a
+#   misspelled path is still caught loudly. Validation is deferred, never skipped.
+#
 # THE SCOPE IS DECLARED BY THE CALLER; THIS GUARD CANNOT VERIFY IT.
 #   It has no way to know what command you run after it returns. If you declare `site/`
 #   and then run an unscoped checkout, the all-clear does not cover you. Declare the widest
@@ -101,15 +113,6 @@ if [ -z "$HELD_FILES" ]; then
     return 1
 fi
 
-# Validate that all manifest entries match actual files (catch typos)
-while IFS= read -r item; do
-    if ! git ls-files --error-unmatch "$item" >/dev/null 2>&1 && [ ! -e "$item" ]; then
-        echo "ERROR: Manifest entry does not match any file: $item" >&2
-        echo "This is likely a typo in $MANIFEST. Fix it before proceeding." >&2
-        return 1
-    fi
-done <<< "$HELD_FILES"
-
 # Normalise the declared scope. An operation with no declared paths, or with any path
 # this guard cannot evaluate, is unbounded: it is treated as reaching every held item.
 GUARD_SCOPE=()
@@ -130,48 +133,84 @@ else
     done
 fi
 
-# Check whether any held item is BOTH uncommitted AND reachable from the declared scope.
+# For each held item: decide REACHABILITY first, and examine only what is reachable.
 BLOCKED=0
 BLOCKED_ITEMS=""
-DIRTY_COUNT=0
+UNVERIFIABLE=0
 HELD_COUNT=0
+REACHABLE_COUNT=0
+SKIPPED_COUNT=0
 while IFS= read -r item; do
     HELD_COUNT=$((HELD_COUNT + 1))
-    # git status --porcelain returns non-empty only for uncommitted changes
-    # Matches: " M " (modified), "?? " (untracked), etc.
-    if [ -z "$(git status --porcelain -- "$item" 2>/dev/null)" ]; then
-        continue
-    fi
-    DIRTY_COUNT=$((DIRTY_COUNT + 1))
 
+    reachable=0
+    matched_scope=""
     if [ "$GUARD_UNBOUNDED" -eq 1 ]; then
-        BLOCKED=1
-        BLOCKED_ITEMS="${BLOCKED_ITEMS}${item}"$'\n'
-        continue
-    fi
-
-    if held_norm=$(_guard_normalise_path "$item"); then
-        :
+        reachable=1
+    elif held_norm=$(_guard_normalise_path "$item"); then
+        for scope in "${GUARD_SCOPE[@]}"; do
+            if _guard_path_reaches "$held_norm" "$scope"; then
+                reachable=1
+                matched_scope="$scope"
+                break
+            fi
+        done
     else
-        # A held path this guard cannot normalise must never be reasoned away.
+        # A manifest path this guard cannot normalise must never be reasoned away.
         BLOCKED=1
         BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (manifest path cannot be evaluated; blocking)"$'\n'
         continue
     fi
 
-    for scope in "${GUARD_SCOPE[@]}"; do
-        if _guard_path_reaches "$held_norm" "$scope"; then
-            BLOCKED=1
-            BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (reachable from declared path: ${scope})"$'\n'
-            break
-        fi
-    done
+    if [ "$reachable" -eq 0 ]; then
+        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+        continue
+    fi
+    REACHABLE_COUNT=$((REACHABLE_COUNT + 1))
+
+    # This operation CAN touch this path, so the entry has to be one the guard can check.
+    # Deferred to here on purpose: doing it up front blocked fresh clones on every call.
+    if ! git ls-files --error-unmatch "$item" >/dev/null 2>&1 && [ ! -e "$item" ]; then
+        BLOCKED=1
+        UNVERIFIABLE=1
+        BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (NOT VERIFIABLE: matches no tracked file and is not on disk)"$'\n'
+        continue
+    fi
+
+    # --ignored matters: `git status --porcelain` reports NOTHING for an ignored path,
+    # exactly as it does for a clean one, so an ignored held item would read as safe.
+    # Empty reading as clean is the defect this guard has produced more than once.
+    ITEM_STATUS="$(git status --porcelain --ignored -- "$item" 2>/dev/null)"
+    if [ -z "$ITEM_STATUS" ]; then
+        continue   # committed and clean: there is nothing here to lose
+    fi
+
+    BLOCKED=1
+    case "$ITEM_STATUS" in
+        '!!'*)
+            BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (GITIGNORED, so untracked and unversioned -- a clobbered copy is unrecoverable)"$'\n'
+            ;;
+        *)
+            if [ -n "$matched_scope" ]; then
+                BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (uncommitted; reachable from declared path: ${matched_scope})"$'\n'
+            else
+                BLOCKED_ITEMS="${BLOCKED_ITEMS}${item} (uncommitted)"$'\n'
+            fi
+            ;;
+    esac
 done <<< "$HELD_FILES"
 
 if [ "$BLOCKED" -eq 1 ]; then
     echo "GUARD ERROR: $OPERATION blocked by uncommitted held items" >&2
-    echo "Items with uncommitted changes that this operation can reach:" >&2
+    echo "Held items this operation can reach, and why each one stops it:" >&2
     echo "$BLOCKED_ITEMS" | sed 's/^/  /' >&2
+    if [ "$UNVERIFIABLE" -eq 1 ]; then
+        echo "NOT VERIFIABLE means the guard cannot tell whether that path is safe, so it will" >&2
+        echo "not say that it is. Either the entry is misspelled in $MANIFEST, or it names a" >&2
+        echo "held item that exists only in the checkout it is held in -- an untracked held" >&2
+        echo "file is absent from every other clone by definition. Fix the spelling, or narrow" >&2
+        echo "the operation so it cannot reach that path." >&2
+    fi
     if [ "$GUARD_UNBOUNDED" -eq 1 ]; then
         echo "Scope: UNBOUNDED -- ${GUARD_UNBOUNDED_REASON}." >&2
         echo "If this operation really cannot touch the held paths, re-run the guard passing" >&2
@@ -187,7 +226,7 @@ fi
 
 # Say what was actually examined. A clean result that does not name its subject cannot
 # tell you it examined nothing.
-echo "GUARD OK: $OPERATION $TARGET -- ${HELD_COUNT} held item(s) checked, ${DIRTY_COUNT} uncommitted, none reachable."
+echo "GUARD OK: $OPERATION $TARGET -- ${HELD_COUNT} held item(s) in $MANIFEST; ${REACHABLE_COUNT} reachable from this operation and examined; ${SKIPPED_COUNT} not reachable and therefore NOT examined."
 if [ "${#GUARD_SCOPE[@]}" -gt 0 ]; then
     echo "GUARD OK: declared scope: ${GUARD_SCOPE[*]}"
     echo "GUARD OK: this scope was DECLARED, not measured -- it does not cover an operation broader than those paths."

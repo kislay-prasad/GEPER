@@ -10,6 +10,10 @@
 #   v2  tested file EXISTENCE, so it could never stop blocking               -> permanent block
 #   v3  a trailing space on a manifest entry produced "safe to proceed"      -> silent all-clear
 #   v4  blocked operations that could not reach a held path                  -> permanent block
+#   v5  validated every entry on every call, so a manifest naming an untracked
+#       held item blocked EVERY operation in EVERY other clone                -> permanent block
+#       ...and `git status --porcelain` reported an ignored held item as
+#       nothing at all, which the guard read as clean                         -> silent all-clear
 # Every one of those was found by running the guard, not by reading it. Do the same:
 # if you change the guard, make it go red on purpose in BOTH directions before trusting it.
 #
@@ -67,6 +71,19 @@ CLEAN_FIXTURE="$(git ls-files | while IFS= read -r f; do
 done)"
 if [ -z "$CLEAN_FIXTURE" ]; then echo "FATAL: no committed-clean tracked file to test with" >&2; exit 1; fi
 
+# A second fixture that git will report as IGNORED, used by section 9. The ignore is applied
+# through a private excludes file passed per-command, so .gitignore is never touched -- and
+# so the main fixture in section 1 stays visible, which the precondition above requires.
+IGNORED_FIXTURE="$FIXDIR/ignored_fixture.tmp"
+echo "ignored content" > "$IGNORED_FIXTURE"
+EXCL="$TMPDIR_REL/excludes"
+printf 'ignored_fixture.tmp\n' > "$EXCL"
+if [ -z "$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0="$EXCL" \
+           git status --porcelain --ignored -- "$IGNORED_FIXTURE" 2>/dev/null | grep '^!!')" ]; then
+    echo "FATAL: could not make a fixture gitignored, so section 9 would test nothing." >&2
+    exit 1
+fi
+
 FAILED=0
 PASSED=0
 SKIPPED=0
@@ -89,6 +106,21 @@ expect() {  # expect <manifest> <rc> <label> -- <args...>
     fi
 }
 
+expect_ig() {  # like expect, but runs with IGNORED_FIXTURE gitignored
+    local man="$1"; shift
+    local want="$1"; shift
+    local label="$1"; shift
+    shift  # the literal --
+    local got
+    got=$( GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0="$EXCL" \
+           GUARD_TEST_MANIFEST="$man" bash -c 'source "$1" "${@:2}" >/dev/null 2>&1; echo $?' _ "$PROBE" "$@" )
+    if [ "$got" = "$want" ]; then
+        PASSED=$((PASSED + 1)); printf '  ok    rc=%s  %s\n' "$got" "$label"
+    else
+        FAILED=$((FAILED + 1)); printf '  FAIL  rc=%s want=%s  %s\n' "$got" "$want" "$label"
+    fi
+}
+
 M="$TMPDIR_REL/man"
 printf '%s\n' "$DIRTY_FIXTURE"                  > "$M/dirty"
 printf '%s\n' "$CLEAN_FIXTURE"                  > "$M/clean"
@@ -101,6 +133,9 @@ printf '%s\n' "no/such/file/anywhere.py"        > "$M/typo"
 printf './%s\n' "$DIRTY_FIXTURE"                > "$M/dotslash"
 printf '%s\n' "${DIRTY_FIXTURE//\//\\}"         > "$M/backslash"
 printf '%s\n' "$FIXDIR"                         > "$M/dir_entry"
+printf '%s\n%s\n' "$CLEAN_FIXTURE" "no/such/file/anywhere.py" > "$M/fresh_clone_shape"
+printf '%s\n' "$IGNORED_FIXTURE"                > "$M/ignored"
+printf '%s\n%s\n' "$DIRTY_FIXTURE" "$IGNORED_FIXTURE" > "$M/dirty_plus_ignored"
 
 echo "== 1. THE CASE THE GUARD EXISTS FOR: a reachable uncommitted held item BLOCKS =="
 expect "$M/dirty" 1 "bare call, no declared paths (operation is unbounded)"                 -- checkout master
@@ -138,7 +173,6 @@ expect "$M/nonexistent"      1 "manifest file missing, even with a narrow scope"
 expect "$M/comments_only"    1 "manifest holds only comments"                                -- checkout master "site/"
 expect "$M/whitespace_line"  1 "manifest holds a whitespace-only line"                       -- checkout master "site/"
 expect "$M/indented_comment" 1 "manifest holds only an indented comment"                     -- checkout master "site/"
-expect "$M/typo"             1 "manifest entry matches no file (misspelling)"                -- checkout master "site/"
 expect "$M/trailing_space"   1 "manifest entry has a trailing space, reachable scope"        -- checkout master "$FIXDIR/"
 expect "$M/trailing_space"   1 "manifest entry has a trailing space, bare call"              -- checkout master
 
@@ -148,19 +182,57 @@ expect "$M/backslash"  1 "manifest entry written with backslashes"              
 expect "$M/dir_entry"  1 "manifest entry is a directory, scope is a file inside it"          -- checkout master "$DIRTY_FIXTURE"
 expect "$M/dir_entry"  0 "same directory entry, scope cannot reach it"                       -- checkout master "site/"
 
+echo "== 8. VALIDATION IS GATED ON REACHABILITY, DEFERRED BUT NEVER SKIPPED =="
+# An untracked held item exists only in the checkout holding it, so every other clone is
+# missing it by definition. Validating every entry on every call therefore blocked every
+# operation everywhere else, permanently. The fix examines an entry only when the operation
+# could reach it -- and an unscoped operation reaches everything, so the typo check that
+# found the v3 silent all-clear still fires exactly where it has to.
+expect "$M/typo"              0 "unverifiable entry, scope cannot reach it -> not examined"   -- checkout master "site/"
+expect "$M/typo"              1 "unverifiable entry, UNSCOPED call -> still caught, loudly"   -- checkout master
+expect "$M/typo"              1 "unverifiable entry, scope CAN reach it -> caught"            -- checkout master "no/such/"
+expect "$M/typo"              1 "unverifiable entry, scope is the repo root"                  -- checkout master "."
+expect "$M/typo"              1 "unverifiable entry, unevaluable scope (fails closed)"        -- checkout master "some*"
+expect "$M/fresh_clone_shape" 0 "THE FRESH-CLONE SHAPE: clean file + absent held file, scoped elsewhere" -- mv site/product site/index.html site/product/
+expect "$M/fresh_clone_shape" 1 "same manifest, unscoped call -> blocks on the absent entry"  -- checkout master
+
+echo "== 9. AN IGNORED HELD ITEM IS A HAZARD, NOT A CLEAN RESULT =="
+# `git status --porcelain` prints NOTHING for an ignored path, exactly as for a clean one,
+# so before --ignored the guard reported "safe to proceed" for a gitignored held file.
+# An ignored held item is untracked and unversioned, so a clobbered copy is unrecoverable.
+expect_ig "$M/ignored"           1 "gitignored held item, reachable scope -> blocks"          -- checkout master "$FIXDIR/"
+expect_ig "$M/ignored"           1 "gitignored held item, unscoped call -> blocks"            -- checkout master
+expect_ig "$M/ignored"           0 "gitignored held item, scope cannot reach it -> passes"    -- checkout master "site/"
+expect_ig "$M/dirty_plus_ignored" 1 "dirty item plus ignored item, both reachable"            -- checkout master "$FIXDIR/"
+
 echo "== 7. THE REAL MANIFEST (precondition-gated, so it cannot pass by not applying) =="
 if [ ! -f .held/manifest ]; then
     echo "  SKIP  .held/manifest does not exist"; SKIPPED=$((SKIPPED + 1))
 else
     REAL_DIRTY=0
+    REAL_ABSENT=0
     while IFS= read -r item; do
         [ -z "$item" ] && continue
         case "$item" in \#*) continue ;; esac
-        if [ -n "$(git status --porcelain -- "$item" 2>/dev/null)" ]; then REAL_DIRTY=$((REAL_DIRTY + 1)); fi
+        if ! git ls-files --error-unmatch "$item" >/dev/null 2>&1 && [ ! -e "$item" ]; then
+            REAL_ABSENT=$((REAL_ABSENT + 1))
+        elif [ -n "$(git status --porcelain --ignored -- "$item" 2>/dev/null)" ]; then
+            REAL_DIRTY=$((REAL_DIRTY + 1))
+        fi
     done < <(grep -vE '^[[:space:]]*#' .held/manifest | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$')
 
     if [ "$REAL_DIRTY" -gt 0 ]; then
         expect ".held/manifest" 1 "real manifest, bare call ($REAL_DIRTY item(s) uncommitted right now)" -- checkout master
+    elif [ "$REAL_ABSENT" -gt 0 ]; then
+        # KNOWN RESIDUAL, ASSERTED SO IT CANNOT BE MISTAKEN FOR A BUG OR QUIETLY LOST.
+        # This is what a fresh clone looks like: $REAL_ABSENT manifest entry/entries name a
+        # held item that exists only in the checkout holding it. The guard cannot tell that
+        # apart from a misspelling, so an UNSCOPED call still blocks here. Scoped operations
+        # pass, which is what makes the clone usable. Closing this needs the manifest to say
+        # which entries are expected to be untracked -- a format change, not a code change.
+        echo "  NOTE  fresh-clone shape: $REAL_ABSENT held entry/entries absent from this checkout"
+        expect ".held/manifest" 1 "real manifest, bare call (absent entry -> unscoped still blocks: KNOWN RESIDUAL)" -- checkout master
+        expect ".held/manifest" 0 "real manifest, SCOPED elsewhere -> passes, which is the point of the fix" -- checkout master "site/"
     else
         echo "  SKIP  every real held item is committed clean, so a block here would be wrong"
         SKIPPED=$((SKIPPED + 1))

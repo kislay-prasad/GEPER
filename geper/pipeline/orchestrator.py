@@ -1310,7 +1310,7 @@ class GeperPipeline:
         if variant_result.get("out_of_scope"):
             return "out_of_scope"
         context = variant_result.get("sequence_context", {})
-        if context.get("error"):
+        if context.get("error") is not None:
             return "skipped"
         interpretation_result = variant_result.get("interpretation_result")
         if not isinstance(interpretation_result, dict) or "error" in interpretation_result:

@@ -34,10 +34,13 @@ SITE 1  PP4 on an EMPTY curated disease list -- *** RULED 2026-08-28,
         condition until this ruling. The class below now pins the RULED
         behaviour and is no longer "not endorsed".
 
-SITE 2  orchestrator.py:1313  _classify_variant_result
-        `if context.get("error"):` -- an empty-string sequence-context
-        error does not mark the variant "skipped", so it is counted and
-        reported as analysed.
+SITE 2  orchestrator.py:1313  _classify_variant_result -- *** RULED
+        2026-08-28, AND THIS CLASS IS NOW INVERTED. *** It read
+        `if context.get("error"):`, so an empty-string sequence-context
+        error did not mark the variant "skipped" and it was counted and
+        reported as analysed. Ruled: a context that failed with no
+        message still failed. Fixed even though the count was 0, to
+        stop the site being a trap for whoever adds a second producer.
 
 SITE 3  orchestrator.py:1786  conservation provenance
         `error = conservation_result.get("error")` then `if error and
@@ -189,24 +192,36 @@ _OK_INTERPRETATION = {"classification": "Likely pathogenic"}
 class TestSite2_ClassifyVariantResultOnAnEmptyContextError(unittest.TestCase):
     """PINNED, NOT ENDORSED.
 
-    OPEN QUESTION: `if context.get("error"):` decides whether a variant
-    is reported as "skipped". An empty-string error means the sequence
-    context failed and said nothing about why; today that variant is
-    counted as analysed.
+    RULED 2026-08-28. INVERTED FROM PINNED-AND-NOT-ENDORSED.
 
-    COUNT AS REPORTED: 0 variants. `sequence_context["error"]` has
-    exactly ONE producer in the tree -- orchestrator.py:1549, the
+    `if context.get("error"):` decided whether a variant is reported as
+    "skipped", so an empty-string error -- the context failed and said
+    nothing about why -- left that variant counted as analysed. Ruled:
+    it still failed.
+
+    COUNT THE RULING WAS MADE ON: 0 variants. `sequence_context["error"]`
+    has exactly ONE producer in the tree -- orchestrator.py:1549, the
     hard-coded literal "sequence context unavailable" -- and
-    pipeline/sequence_context.py emits no "error" key at all. The key is
-    therefore always either absent (`.get` -> None, both forms False) or
-    that non-empty constant (both forms True). The defect is real and
-    the value space is currently closed against it.
+    pipeline/sequence_context.py emits no "error" key at all, so the key
+    was always either absent (`.get` -> None, both forms False) or that
+    non-empty constant (both forms True).
+
+    SO THIS FIX CHANGES NO OUTPUT TODAY, AND THAT IS THE REASON FOR IT
+    RATHER THAN AN ARGUMENT AGAINST IT. The value space is closed by a
+    single caller's current habit, not by anything enforcing it. The
+    next producer of this key inherits a guard that silently disagrees
+    with its name. A count of 0 sized the change; it did not make the
+    site correct.
     """
 
-    def test_an_empty_context_error_is_not_currently_skipped(self):
+    def test_an_empty_context_error_is_skipped(self):
+        """THE RULED CASE. A sequence context that failed with a blank
+        message still failed, so the variant was not analysed and must
+        not be counted as though it were."""
         self.assertEqual(
             _classify({"sequence_context": {"error": ""}, "interpretation_result": _OK_INTERPRETATION}),
-            "success",
+            "skipped",
+            "an empty-string context error left the variant classified as analysed",
         )
 
     def test_the_only_error_value_production_can_emit_is_skipped(self):

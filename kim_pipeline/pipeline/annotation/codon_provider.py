@@ -42,34 +42,83 @@ KNOWN LIMITATIONS:
     handled, but rare transcript-specific first-codon offsets may produce
     incorrect frame assignments for a small fraction of transcripts.
 """
+
 from __future__ import annotations
 
 import gzip
 import logging
 import os
 import subprocess
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("geper.pipeline.annotation.codon_provider")
 
 # ── Standard genetic code (codon → single-letter AA) ──────────────────────────
 _CODON_TABLE: Dict[str, str] = {
-    "TTT": "F", "TTC": "F", "TTA": "L", "TTG": "L",
-    "CTT": "L", "CTC": "L", "CTA": "L", "CTG": "L",
-    "ATT": "I", "ATC": "I", "ATA": "I", "ATG": "M",
-    "GTT": "V", "GTC": "V", "GTA": "V", "GTG": "V",
-    "TCT": "S", "TCC": "S", "TCA": "S", "TCG": "S",
-    "CCT": "P", "CCC": "P", "CCA": "P", "CCG": "P",
-    "ACT": "T", "ACC": "T", "ACA": "T", "ACG": "T",
-    "GCT": "A", "GCC": "A", "GCA": "A", "GCG": "A",
-    "TAT": "Y", "TAC": "Y", "TAA": "*", "TAG": "*",
-    "CAT": "H", "CAC": "H", "CAA": "Q", "CAG": "Q",
-    "AAT": "N", "AAC": "N", "AAA": "K", "AAG": "K",
-    "GAT": "D", "GAC": "D", "GAA": "E", "GAG": "E",
-    "TGT": "C", "TGC": "C", "TGA": "*", "TGG": "W",
-    "CGT": "R", "CGC": "R", "CGA": "R", "CGG": "R",
-    "AGT": "S", "AGC": "S", "AGA": "R", "AGG": "R",
-    "GGT": "G", "GGC": "G", "GGA": "G", "GGG": "G",
+    "TTT": "F",
+    "TTC": "F",
+    "TTA": "L",
+    "TTG": "L",
+    "CTT": "L",
+    "CTC": "L",
+    "CTA": "L",
+    "CTG": "L",
+    "ATT": "I",
+    "ATC": "I",
+    "ATA": "I",
+    "ATG": "M",
+    "GTT": "V",
+    "GTC": "V",
+    "GTA": "V",
+    "GTG": "V",
+    "TCT": "S",
+    "TCC": "S",
+    "TCA": "S",
+    "TCG": "S",
+    "CCT": "P",
+    "CCC": "P",
+    "CCA": "P",
+    "CCG": "P",
+    "ACT": "T",
+    "ACC": "T",
+    "ACA": "T",
+    "ACG": "T",
+    "GCT": "A",
+    "GCC": "A",
+    "GCA": "A",
+    "GCG": "A",
+    "TAT": "Y",
+    "TAC": "Y",
+    "TAA": "*",
+    "TAG": "*",
+    "CAT": "H",
+    "CAC": "H",
+    "CAA": "Q",
+    "CAG": "Q",
+    "AAT": "N",
+    "AAC": "N",
+    "AAA": "K",
+    "AAG": "K",
+    "GAT": "D",
+    "GAC": "D",
+    "GAA": "E",
+    "GAG": "E",
+    "TGT": "C",
+    "TGC": "C",
+    "TGA": "*",
+    "TGG": "W",
+    "CGT": "R",
+    "CGC": "R",
+    "CGA": "R",
+    "CGG": "R",
+    "AGT": "S",
+    "AGC": "S",
+    "AGA": "R",
+    "AGG": "R",
+    "GGT": "G",
+    "GGC": "G",
+    "GGA": "G",
+    "GGG": "G",
 }
 
 _START_CODONS = frozenset({"ATG"})
@@ -87,8 +136,10 @@ def _reverse_complement(seq: str) -> str:
 
 # ── CDS record ────────────────────────────────────────────────────────────────
 
+
 class CdsRecord:
     """One CDS exon segment from a GFF3 CDS feature."""
+
     __slots__ = ("chrom", "start", "end", "strand", "phase", "transcript_id")
 
     def __init__(
@@ -101,14 +152,15 @@ class CdsRecord:
         transcript_id: str,
     ) -> None:
         self.chrom = chrom
-        self.start = start      # 1-based, inclusive
-        self.end = end          # 1-based, inclusive
+        self.start = start  # 1-based, inclusive
+        self.end = end  # 1-based, inclusive
         self.strand = strand
-        self.phase = phase      # GFF3 phase (0/1/2) — bases to skip at start
+        self.phase = phase  # GFF3 phase (0/1/2) — bases to skip at start
         self.transcript_id = transcript_id
 
 
 # ── FASTA reader ──────────────────────────────────────────────────────────────
+
 
 class _FastaReader:
     """Minimal FASTA sequence extractor.
@@ -134,7 +186,9 @@ class _FastaReader:
         try:
             result = subprocess.run(
                 ["samtools", "version"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             return result.returncode == 0
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -194,7 +248,9 @@ class _FastaReader:
         try:
             result = subprocess.run(
                 ["samtools", "faidx", self._path, region],
-                capture_output=True, text=True, timeout=15,
+                capture_output=True,
+                text=True,
+                timeout=15,
             )
             if result.returncode != 0:
                 # Try alternate chrom name
@@ -202,12 +258,14 @@ class _FastaReader:
                 region2 = f"{alt}:{start}-{end}"
                 result = subprocess.run(
                     ["samtools", "faidx", self._path, region2],
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
             if result.returncode != 0:
                 return ""
             lines = result.stdout.strip().splitlines()
-            seq = "".join(l for l in lines if not l.startswith(">"))
+            seq = "".join(line for line in lines if not line.startswith(">"))
             return seq.upper()
         except Exception as exc:
             logger.debug("[CodonProvider] samtools faidx failed for %s: %s", region, exc)
@@ -215,6 +273,7 @@ class _FastaReader:
 
 
 # ── GFF3 CDS loader ───────────────────────────────────────────────────────────
+
 
 def _load_cds_from_gff(gff_path: str) -> Dict[str, List[CdsRecord]]:
     """Parse CDS features from a GFF3 file.
@@ -255,15 +314,12 @@ def _load_cds_from_gff(gff_path: str) -> Dict[str, List[CdsRecord]]:
                         attrs[k.strip()] = v.strip().strip('"')
             else:
                 import re
+
                 for m in re.finditer(r'(\w+)\s+"([^"]*)"', attrs_str):
                     attrs[m.group(1)] = m.group(2)
 
             # GFF3 Parent = transcript; GTF transcript_id attr
-            parent = (
-                attrs.get("Parent")
-                or attrs.get("transcript_id")
-                or ""
-            )
+            parent = attrs.get("Parent") or attrs.get("transcript_id") or ""
             if not parent:
                 continue
 
@@ -286,6 +342,7 @@ def _load_cds_from_gff(gff_path: str) -> Dict[str, List[CdsRecord]]:
 
 
 # ── Main provider ─────────────────────────────────────────────────────────────
+
 
 class FastaCodonContextProvider:
     """Resolve codon-level consequence for exonic SNVs.
@@ -317,7 +374,8 @@ class FastaCodonContextProvider:
             self._available = True
             logger.info(
                 "[CodonProvider] Ready: %d transcripts with CDS from %s",
-                len(self._cds_map), gff_path,
+                len(self._cds_map),
+                gff_path,
             )
         except Exception as exc:
             logger.error("[CodonProvider] Initialisation failed: %s", exc)
@@ -357,8 +415,7 @@ class FastaCodonContextProvider:
 
         if len(ref) != 1 or len(alt) != 1:
             raise NotImplementedError(
-                "FastaCodonContextProvider only handles SNVs; "
-                f"got ref={ref!r} alt={alt!r}"
+                f"FastaCodonContextProvider only handles SNVs; got ref={ref!r} alt={alt!r}"
             )
 
         if ref == alt:
@@ -369,7 +426,12 @@ class FastaCodonContextProvider:
         except Exception as exc:
             logger.debug(
                 "[CodonProvider] classify_snv failed for %s:%d %s>%s tx=%s: %s",
-                chrom, pos, ref, alt, transcript_id, exc,
+                chrom,
+                pos,
+                ref,
+                alt,
+                transcript_id,
+                exc,
             )
             return (None, None, None, None, None)
 
@@ -386,9 +448,7 @@ class FastaCodonContextProvider:
         """Core codon-change classification; returns (consequence, ref_codon, alt_codon, ref_aa, alt_aa)."""
         cds_chain = self._cds_map.get(transcript_id)  # type: ignore[union-attr]
         if not cds_chain:
-            logger.debug(
-                "[CodonProvider] No CDS for transcript %s", transcript_id
-            )
+            logger.debug("[CodonProvider] No CDS for transcript %s", transcript_id)
             return (None, None, None, None, None)
 
         # Normalise chrom for FASTA lookup
@@ -399,9 +459,7 @@ class FastaCodonContextProvider:
         # Minus-strand: descending genomic order (reversed) — this MUST match
         # the order used by _fetch_codon(), otherwise the offset is wrong and
         # multi-exon codons are assembled incorrectly.
-        transcript_ordered_chain = (
-            cds_chain if strand == "+" else list(reversed(cds_chain))
-        )
+        transcript_ordered_chain = cds_chain if strand == "+" else list(reversed(cds_chain))
 
         # FIX 4: Apply GFF3 phase of the first CDS exon.
         # phase=N means the first N bases of this exon belong to the tail of a
@@ -435,7 +493,9 @@ class FastaCodonContextProvider:
         if cds_exon is None:
             logger.debug(
                 "[CodonProvider] pos %s:%d not in any CDS exon of %s",
-                chrom, pos, transcript_id,
+                chrom,
+                pos,
+                transcript_id,
             )
             return (None, None, None, None, None)
 
@@ -455,13 +515,12 @@ class FastaCodonContextProvider:
         codon_cds_start = cds_pos - codon_index
 
         # Fetch reference codon from genomic FASTA
-        ref_codon = self._fetch_codon(
-            chrom, transcript_id, cds_chain, strand, codon_cds_start
-        )
+        ref_codon = self._fetch_codon(chrom, transcript_id, cds_chain, strand, codon_cds_start)
         if not ref_codon or len(ref_codon) != 3:
             logger.debug(
                 "[CodonProvider] Could not fetch codon at CDS pos %d for %s",
-                codon_cds_start, transcript_id,
+                codon_cds_start,
+                transcript_id,
             )
             return (None, None, None, None, None)
 
@@ -470,7 +529,12 @@ class FastaCodonContextProvider:
         if actual_ref_base != ref:
             logger.debug(
                 "[CodonProvider] Ref mismatch at %s:%d: VCF=%s FASTA=%s (codon=%s idx=%d)",
-                chrom, pos, ref, actual_ref_base, ref_codon, codon_index,
+                chrom,
+                pos,
+                ref,
+                actual_ref_base,
+                ref_codon,
+                codon_index,
             )
 
         # Build mutant codon
@@ -566,6 +630,7 @@ class FastaCodonContextProvider:
 
 # ── Factory function ──────────────────────────────────────────────────────────
 
+
 def make_codon_provider_from_cfg(cfg: Optional[dict]) -> "CodonContextProvider":  # noqa: F821
     """Create the best available CodonContextProvider from pipeline config.
 
@@ -579,11 +644,7 @@ def make_codon_provider_from_cfg(cfg: Optional[dict]) -> "CodonContextProvider":
     align_cfg = (cfg or {}).get("alignment", {}) or {}
 
     gff_path = ann_cfg.get("refseq_gff") or rna_cfg.get("refseq_gff") or ""
-    fasta_path = (
-        align_cfg.get("reference_fasta")
-        or (cfg or {}).get("reference_fasta")
-        or ""
-    )
+    fasta_path = align_cfg.get("reference_fasta") or (cfg or {}).get("reference_fasta") or ""
 
     if gff_path and fasta_path and os.path.isfile(gff_path) and os.path.isfile(fasta_path):
         try:

@@ -762,10 +762,21 @@ def _not_evaluated(
 
 class ACMGRuleEngine:
     """
-    Evaluates every ACMG/AMP 2015 criterion independently from the same
+    Evaluates each ACMG/AMP 2015 criterion independently from the same
     provider-result dicts the orchestrator already collects, and combines
-    the triggered ones into a classification via the standard Richards et
-    al. point-based combining rules.
+    the triggered ones into a classification via Tavtigian et al. 2018's
+    Bayesian-calibrated point system -- see `_combine`.
+
+    The combining rules are NOT Richards et al. 2015's. This module's own
+    comment above `_STRENGTH` and `_combine`'s comment both name Tavtigian
+    2018 (PMID 29300386) and say explicitly that it is not a threshold
+    approximation of Richards, whose 2015 scheme is a categorical lookup
+    table and not a point system at all -- the two do not always agree,
+    and GEPER follows Tavtigian.
+
+    Note also that not every criterion is reachable: the nine codes in
+    `_NEVER_INTEGRATED_ACMG_CODES` have no integrated data source and
+    always return "not_evaluated".
     """
 
     def evaluate(

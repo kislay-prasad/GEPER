@@ -1,0 +1,8 @@
+# Shell scripts must keep LF endings on checkout.
+#
+# core.autocrlf=true converts LF to CRLF when checking out on Windows. A fresh clone
+# therefore received bin/*.sh with CRLF, which broke them: bin/guard-tests.sh builds a
+# probe copy of the guard with `sed 's|^MANIFEST=...$|...|'`, and the `$` anchor does not
+# match before a stray CR, so the substitution silently did nothing and the suite aborted.
+# Measured in a fresh clone of this repository, not assumed.
+*.sh text eol=lf

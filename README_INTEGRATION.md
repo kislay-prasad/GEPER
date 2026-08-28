@@ -28,7 +28,7 @@ actionable before mandatory qualified human review and final sign-off (see
 geper_integrated/
 ├── geper/            Project A — current Bij AI. UNCHANGED. Remains the sole,
 │                     authoritative implementation for Annotation, AI Models
-│                     (DNABERT-2, HyenaDNA, RNA-FM, ESM2, AlphaMissense, Evo 2,
+│                     (HyenaDNA, RNA-FM, ESM2, AlphaMissense, Evo 2,
 │                     MMSplice), ClinVar, dbSNP, gnomAD, ClinGen, UniProt,
 │                     InterPro, Pfam, AlphaFold DB, BLAST+, ACMG automation,
 │                     confidence engine, variant prioritization, conflict

@@ -20,7 +20,16 @@ FASTQ-to-VCF engine) retains and actively uses DNABERT-2 independently
 `revision` on `from_pretrained()` to mitigate the `trust_remote_code=True`
 RCE surface -- see root `DATA_PROVENANCE.md` for the security review.
 This audit file does not cover kim_pipeline's own model/dependency
-license posture; that is tracked separately.
+license posture. kim_pipeline's DNABERT-2 usage was reviewed for
+**security** on 2026-08-20 (the `trust_remote_code=True` RCE surface,
+mitigated with a pinned `revision` -- see root `DATA_PROVENANCE.md`);
+as of 2026-08-28 it has **not been reviewed for licensing**: no one
+has independently fetched and confirmed `zhihan1996/DNABERT-2-117M`'s
+Hugging Face license frontmatter (the security review fetched the
+model's *code* to read for RCE risk, not its license metadata), and
+`kim_pipeline/docs/DATA_PROVENANCE.md` -- the only license/provenance
+document kim_pipeline has -- does not mention DNABERT-2 or its license
+at all. This is an open, unreviewed gap, not a completed review.
 
 ## Models GEPER loads and runs
 

@@ -1631,7 +1631,7 @@ class GeperPipeline:
         """
         try:
             if clinvar_result:
-                if clinvar_result.get("error"):
+                if clinvar_result.get("error") is not None:
                     self.provenance.record(
                         "ClinVar", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {clinvar_result['error']}"
                     )
@@ -1649,7 +1649,7 @@ class GeperPipeline:
                 build = (dbsnp_result.get("detail") or {}).get("dbsnp_build")
                 if build:
                     self.provenance.record("dbSNP", VersionStatus.VERSION_KNOWN, version=f"dbSNP build {build}")
-                elif dbsnp_result.get("error"):
+                elif dbsnp_result.get("error") is not None:
                     self.provenance.record(
                         "dbSNP", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {dbsnp_result['error']}"
                     )
@@ -1677,7 +1677,7 @@ class GeperPipeline:
                         version=f"UniProt {uniprot_result['release']}",
                         release_date=uniprot_result.get("release_date"),
                     )
-                elif uniprot_result.get("error"):
+                elif uniprot_result.get("error") is not None:
                     self.provenance.record(
                         "UniProt", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {uniprot_result['error']}"
                     )
@@ -1696,7 +1696,7 @@ class GeperPipeline:
                     self.provenance.record(
                         "InterPro", VersionStatus.VERSION_KNOWN, version=f"InterPro {interpro_result['api_version']}"
                     )
-                elif interpro_result.get("error"):
+                elif interpro_result.get("error") is not None:
                     self.provenance.record(
                         "InterPro", VersionStatus.UNKNOWN, notes=f"Most recent query failed: {interpro_result['error']}"
                     )
@@ -1717,7 +1717,7 @@ class GeperPipeline:
                         VersionStatus.VERSION_KNOWN,
                         version=f"AlphaFold DB v{alphafold_result['model_version']}",
                     )
-                elif alphafold_result.get("error"):
+                elif alphafold_result.get("error") is not None:
                     self.provenance.record(
                         "AlphaFold DB",
                         VersionStatus.UNKNOWN,
@@ -1765,7 +1765,7 @@ class GeperPipeline:
                             VersionStatus.TIMESTAMP_ONLY,
                             notes=_FUNCTIONAL_EVIDENCE_PROVENANCE_NOTE.get(consulted, ""),
                         )
-                if functional_evidence_result.get("error"):
+                if functional_evidence_result.get("error") is not None:
                     # The composite provider doesn't disclose which of
                     # ERepo/MaveDB the failure was in -- honestly
                     # recorded against both rather than guessing one.

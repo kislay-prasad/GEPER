@@ -952,9 +952,31 @@ class TestGff3PhaseHandling:
         own copy of the formula, not the function it claimed to guard.
 
         This version drives the real provider end-to-end against a real (temp-file)
-        GFF3 + FASTA — no formula is duplicated here. The expected codon/AA values
-        are the exact output of the real (correct) function for this input,
-        confirmed by direct execution, not derived from the phase formula by hand.
+        GFF3 + FASTA — no formula is duplicated here.
+
+        ORACLE CORRECTED (phase!=0 codon fix). The expected values were
+        previously ("missense", "GCA", "ACA", "A", "T"), described here as "the
+        exact output of the real (correct) function ... confirmed by direct
+        execution". They were the exact output of the real function, but the
+        function was WRONG: `_fetch_codon` consumed a phase-adjusted
+        `codon_cds_start` as though it were a raw exon offset, so every codon of
+        a phase!=0 transcript was read `phase` bases upstream. Executing the code
+        confirms what the code DOES, never what it SHOULD do, so taking the
+        oracle from the implementation locked the defect in as the guard.
+
+        The rewrite that produced this test was still right, and its probe (flip
+        the sign of `_phase_offset`, watch the old test stay green) was a real
+        known-positive — it proved the test could DETECT a change. What it could
+        not prove, and what no self-derived oracle can, is that the value being
+        pinned is the CORRECT one.
+
+        The value below is derived by hand instead, from the GFF3 spec and the
+        genetic code, and only then compared against the fixed implementation:
+          exon starts 101, phase=1 -> "remove 1 base to reach the first base of
+          the next codon" -> first complete codon starts at 102.
+          pos 105 is offset 3 from 102 -> codon_index 0 -> codon spans 105-107.
+          Sequence at 105,106,107 = C,A,T -> ref codon CAT; C>A at index 0 gives
+          AAT. CAT = His (H), AAT = Asn (N) -> a missense.
         """
         monkeypatch.setattr(
             "pipeline.annotation.codon_provider._FastaReader._check_samtools",
@@ -976,10 +998,13 @@ class TestGff3PhaseHandling:
         provider._cds_map = {"NM_TEST.1": [CdsRecord("chr1", 101, 130, "+", 1, "NM_TEST.1")]}
 
         result = provider.get_codon_and_aa("chr1", 105, "C", "A", "NM_TEST.1")
-        assert result == ("missense", "GCA", "ACA", "A", "T"), (
+        assert result == ("missense", "CAT", "AAT", "H", "N"), (
             f"real FastaCodonContextProvider.get_codon_and_aa output for this "
-            f"phase=1 fixture changed from the confirmed-correct value; got {result!r}. "
-            f"This is exactly what the T2-F2 sign-flip probe breaks."
+            f"phase=1 fixture is not the hand-derived correct value; got {result!r}. "
+            f"Expected codon CAT at 105-107 (phase=1 -> first complete codon at 102). "
+            f"Getting ('missense', 'GCA', 'ACA', 'A', 'T') back means the phase "
+            f"offset is no longer reaching _fetch_codon and codons are being read "
+            f"one base upstream again."
         )
 
 

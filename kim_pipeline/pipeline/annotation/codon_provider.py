@@ -515,7 +515,9 @@ class FastaCodonContextProvider:
         codon_cds_start = cds_pos - codon_index
 
         # Fetch reference codon from genomic FASTA
-        ref_codon = self._fetch_codon(chrom, transcript_id, cds_chain, strand, codon_cds_start)
+        ref_codon = self._fetch_codon(
+            chrom, transcript_id, cds_chain, strand, codon_cds_start, _phase_offset
+        )
         if not ref_codon or len(ref_codon) != 3:
             logger.debug(
                 "[CodonProvider] Could not fetch codon at CDS pos %d for %s",
@@ -571,16 +573,44 @@ class FastaCodonContextProvider:
         cds_chain: List[CdsRecord],
         strand: str,
         codon_cds_start: int,
+        phase_offset: int = 0,
     ) -> Optional[str]:
         """Assemble three bases of the codon from the CDS chain.
 
         Args:
-            codon_cds_start: 0-based CDS coordinate of codon start.
+            codon_cds_start: codon start in PHASE-ADJUSTED CDS coordinates, as
+                produced by `_classify_snv_full` (`cds_pos = cds_offset +
+                pos_in_exon - _phase_offset`).
+            phase_offset: GFF3 phase of the first CDS exon -- the same value the
+                caller already subtracted.
 
         Returns:
             3-character reference codon string (sense strand), or None.
+
+        THE TWO COORDINATE SYSTEMS, AND WHY THIS ARGUMENT EXISTS.
+        The caller works in PHASE-ADJUSTED CDS coordinates: its position 0 is the
+        first base of the first COMPLETE codon. This method walks the exon chain
+        accumulating RAW exon lengths, so its `cds_cursor` counts from the first
+        base of the first CDS exon -- position 0 is the exon start, whatever the
+        phase. The two origins differ by exactly `phase`.
+
+        Before this argument existed, a phase-adjusted `codon_cds_start` was
+        consumed as though it were raw, so every codon of every transcript whose
+        first CDS exon has phase != 0 was read `phase` bases UPSTREAM of the true
+        codon. Confirmed by execution on both strands, phase 0 unaffected as a
+        control, and the second codon of the same exon wrong by the same
+        constant.
+
+        Translating once here, at the boundary between the two systems, is why
+        the fix is a single conversion rather than an adjustment inside each
+        strand branch: neither branch was wrong about anything except which
+        origin it was counting from. It is correct for multi-exon chains for the
+        same reason -- `cds_cursor` is raw throughout the walk.
         """
-        # Walk CDS chain collecting bases starting at codon_cds_start
+        # Convert to the RAW exon-offset coordinates this walk actually uses.
+        raw_cds_start = codon_cds_start + phase_offset
+
+        # Walk CDS chain collecting bases starting at raw_cds_start
         bases: List[str] = []
         cds_cursor = 0
 
@@ -590,14 +620,14 @@ class FastaCodonContextProvider:
             exon_len = exon.end - exon.start + 1
             exon_end_in_cds = cds_cursor + exon_len
 
-            if exon_end_in_cds <= codon_cds_start:
+            if exon_end_in_cds <= raw_cds_start:
                 cds_cursor += exon_len
                 continue
 
             # This exon contributes to our codon
             if strand == "+":
                 # Genomic start of needed bases
-                skip = max(0, codon_cds_start - cds_cursor)
+                skip = max(0, raw_cds_start - cds_cursor)
                 gstart = exon.start + skip
                 gend = min(exon.end, gstart + (3 - len(bases)))
                 if gend < gstart:
@@ -608,7 +638,7 @@ class FastaCodonContextProvider:
             else:
                 # Minus strand: exons in the chain are reversed above.
                 # Genomic coords: high end first.
-                skip = max(0, codon_cds_start - cds_cursor)
+                skip = max(0, raw_cds_start - cds_cursor)
                 gend = exon.end - skip
                 gstart = max(exon.start, gend - (3 - len(bases)) + 1)
                 if gstart > gend:

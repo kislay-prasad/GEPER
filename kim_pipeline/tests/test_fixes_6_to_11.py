@@ -224,25 +224,41 @@ class TestFix7ReportDirectory:
                     f"Report path assignment should reference 'reporting': {stripped!r}"
                 )
 
-    def test_end_to_end_report_paths_set_when_files_exist(self, tmp_path):
-        """Report paths become non-None when files exist at work_dir/reporting/."""
+    def test_end_to_end_report_paths_set_when_files_exist(self, tmp_path, monkeypatch):
+        """Report paths become non-None when files exist at work_dir/reporting/ --
+        exercised by calling the REAL `_run_pipeline_sync`, not a copy of its
+        path-setting lines. Only the heavy pipeline execution (`PipelineRunner`)
+        is mocked out; `_run_pipeline_sync`'s own `work_dir / "reporting" / ...`
+        assignment (api/main.py:301-307) is what actually runs and is asserted on.
+        """
+        from api import main as main_mod
+
         sample_id = "TESTSAMPLE"
+        run_id = "test-run-fix7"
         work_dir = tmp_path / sample_id
         (work_dir / "reporting").mkdir(parents=True)
         (work_dir / "reporting" / "report.json").write_text('{"ok":true}')
         (work_dir / "reporting" / "report.html").write_text("<html/>")
 
-        run: dict[str, Any] = {"report_json_path": None, "report_html_path": None}
-        # Replicate the path-setting logic from _run_pipeline_sync
-        json_report = tmp_path / sample_id / "reporting" / "report.json"
-        html_report = tmp_path / sample_id / "reporting" / "report.html"
-        if json_report.exists():
-            run["report_json_path"] = str(json_report)
-        if html_report.exists():
-            run["report_html_path"] = str(html_report)
+        req = main_mod.PipelineStartRequest(
+            fastq_r1_path="irrelevant.fastq.gz",
+            reference_fasta_path="irrelevant.fasta",
+            sample_id=sample_id,
+        )
 
-        assert run["report_json_path"] is not None
-        assert run["report_html_path"] is not None
+        fake_runner = MagicMock()
+        fake_runner.run.return_value = MagicMock(stages_completed=["done"], log_path=None)
+
+        monkeypatch.setattr(main_mod, "_OUTPUT_DIR", tmp_path)
+        monkeypatch.setattr(main_mod, "_RUNS", {run_id: {"stages_failed": []}})
+        monkeypatch.setattr(main_mod, "_RUN_STORE", MagicMock())
+        monkeypatch.setattr(main_mod, "PipelineRunner", MagicMock(return_value=fake_runner))
+
+        main_mod._run_pipeline_sync(run_id, req)
+
+        run = main_mod._RUNS[run_id]
+        assert run["report_json_path"] == str(work_dir / "reporting" / "report.json")
+        assert run["report_html_path"] == str(work_dir / "reporting" / "report.html")
         assert Path(run["report_json_path"]).exists()
         assert Path(run["report_html_path"]).exists()
 

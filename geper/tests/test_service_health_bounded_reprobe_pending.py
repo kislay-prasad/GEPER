@@ -1,55 +1,57 @@
 """
-INTENTIONALLY UNCOMMITTED / NOT YET GREEN.
+Bounded re-probe after latch -- ALL 4 TESTS ARE GREEN AND THE FEATURE
+IS SHIPPED. This file is committed, not ignored; do not skip its
+results.
 
 This file tests the "bounded re-probe" feature for
 `utils/service_health.py::ServiceHealthRegistry` (card
 `health-probe-bounded-reprobe`, follow-up to
-`ensembl-health-probe-false-negative`). That feature does NOT exist in
-the shipped code yet -- only the instrumentation it depends on
-(`measure_latched_services()`, covered separately and already
-committed in `test_service_health.py::TestMeasureLatchedServicesIsObservationOnly`)
-has landed.
+`ensembl-health-probe-false-negative`). That feature EXISTS in the
+shipped code: `ServiceHealthRegistry._maybe_reprobe()`, called from
+`is_offline()`, driven by `CONFIG.health_check.REPROBE_AFTER_SKIPS`
+(default 20), `REPROBE_AFTER_SECS` (default 120) and
+`REPROBE_MAX_ATTEMPTS` (default 3).
 
-WHY THIS IS SEPARATE FROM test_service_health.py: all 4 tests below
-were written ahead of the implementation, per the dispatch's own
-TDD framing. Three of them are DELIBERATELY RED right now and will
-stay red until Kelly lands the feature -- committing them into the
-main test file would put `origin/master` red with exactly the kind of
-failure the repo fixed this morning (see commit 1007b99). They are
-kept in this separate, clearly-named, git-ignored-by-convention file
-instead so the working tree still has real test coverage on disk
-(protected against a stash accident) without breaking the committed
-suite.
+HISTORY, because the text this replaces said the opposite. The
+docstring here used to open "INTENTIONALLY UNCOMMITTED / NOT YET
+GREEN", state that the feature "does NOT exist in the shipped code
+yet", that three of the four tests were "DELIBERATELY RED right now
+and will stay red until Kelly lands the feature", and that the file
+was "git-ignored-by-convention". All four claims are false and appear
+to have been false from the start: commit 72aec5a added THIS FILE and
+`_maybe_reprobe()` in the same commit, so the feature landed at the
+moment these tests were committed. The file is tracked, `git
+check-ignore` does not match it, and all 4 tests pass.
 
-WHAT HAS TO EXIST BEFORE THIS GOES GREEN: `ServiceHealthRegistry` (or
-whatever internal helper backs `is_offline()`) needs to retain each
-service's probe callable after `run_startup_checks()` latches it
-offline, and internally re-invoke that same probe -- bounded to a cap
-of ~3 attempts per service per run -- once EITHER N accumulated
-`note_skip()` calls (N~20-25) OR T seconds elapsed (T~120) have passed
-since the latch, whichever comes first. A successful re-probe must
-flip `is_offline()` back to False; a still-failing re-probe must not,
-and once the cap is exhausted no further probe calls may fire for that
-service for the rest of the run. `note_success()`/`note_failure()`
-must remain advisory-only and must never affect the latch themselves
-(this is what distinguishes the agreed design, shape (a), from the
-rejected shape (b) that would have piggybacked recovery on client
-traffic -- see the full reasoning in the class docstring below).
+WHY THAT MATTERED ENOUGH TO REWRITE RATHER THAN DELETE: a test file
+that tells its reader its own failures are expected disarms every
+test in it. These 4 are live and load-bearing -- they are the only
+coverage of the re-probe contract.
 
-DO NOT mark these `@pytest.mark.xfail` to make a suite "look" clean --
-that was explicitly rejected (human + god, 2026-08-21): an xfail
-nobody ever removes is the same "green test asserting nothing" shape
-already fixed three times this week. Leave them red and out of the
-committed suite until the feature is real, then move this file's
-contents back into test_service_health.py (as
-`TestBoundedReprobeAfterLatch`) and delete this file.
+THESE TESTS ARE NOT VACUOUS -- they were checked, not assumed. With
+`_maybe_reprobe` patched to a no-op, exactly the three feature tests
+fail (`test_recovery_after_many_skips_unlatches`,
+`test_recovery_after_long_elapsed_time_unlatches`,
+`test_reprobe_attempts_are_capped_and_eventually_stop_spamming`) and
+`test_note_success_and_note_failure_do_not_unlatch_on_their_own`
+still passes, which is correct: that fourth test pins an invariant
+the feature must NOT violate (`note_success()`/`note_failure()` stay
+advisory and never un-latch by themselves -- the difference between
+the agreed shape (a) and the rejected shape (b)), rather than a
+capability the feature had to add.
 
-`test_note_success_and_note_failure_do_not_unlatch_on_their_own` is
-the one test of the four that already passes today -- it pins an
-invariant the fix must not violate, not a capability the fix must add.
-It stays here with the other three rather than in the committed file
-so the whole feature's coverage lands as one unit when the class moves
-back.
+The tests deliberately assert on the probe's own call count with
+generous margins (200 skips against a threshold of 20, a 10,000s jump
+against 120s, 12 cycles against a cap of 3) instead of binding to the
+shipped constants, so they stay valid if those defaults are retuned.
+Do not tighten them onto the current values.
+
+REMAINING TIDY-UP, not yet done and not required for correctness:
+this file's original plan was to fold its contents back into
+`test_service_health.py` as `TestBoundedReprobeAfterLatch` (no such
+class exists there today) and delete this file, so the feature's
+coverage lives with the rest of the health-probe suite. That is a
+pure test-file move; it is left for whoever owns that consolidation.
 """
 
 import unittest

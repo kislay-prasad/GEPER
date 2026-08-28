@@ -66,8 +66,11 @@ changed.
   parameter on `ACMGRuleEngine.evaluate()`, `_pp3()`, `_bp4()`. When
   provided, ensemble evidence is folded in as a third source alongside
   AlphaMissense/MMSplice, following the same 0/1/2-model routing
-  rules. Every existing call site (which never passes this parameter)
-  is completely unaffected.
+  rules. The parameter is additive and defaults to `None`, so any
+  caller that omits it is unaffected. It IS now passed in the
+  production path: `orchestrator.py` threads the ensemble stage's
+  result into `InterpretationEngine.interpret()`, which forwards it
+  to `ACMGRuleEngine.evaluate()`.
 - `geper/pipeline/interpretation.py` — additive `ensemble_result=None`
   parameter on `InterpretationEngine.interpret()`, threaded to the
   ACMG engine call.

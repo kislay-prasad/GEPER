@@ -245,7 +245,7 @@ class UCSCApiProvider(ConservationProviderBase):
             logger.warning(f"UCSC conservation API query failed for {query_chrom}:{pos} ({track}): {exc}")
             return ConservationAnnotation.from_error(chrom, pos, ref, alt, build, str(exc))
 
-        if payload.get("error"):
+        if payload.get("error") is not None:
             # UCSC's API returns HTTP 200 with an {"error": ...} body
             # for some bad-request cases in addition to a 4xx status --
             # treated the same way either way.

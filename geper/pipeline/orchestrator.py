@@ -1807,7 +1807,7 @@ class GeperPipeline:
                         "not a GERP/dbNSFP data release, so no version is recorded; only the query "
                         "timestamp is.",
                     )
-                if error and not conservation_result.get("found"):
+                if error is not None and not conservation_result.get("found"):
                     note = f"Most recent query failed: {error}"
                     self.provenance.record("Conservation (PhyloP/PhastCons, UCSC)", VersionStatus.UNKNOWN, notes=note)
                     self.provenance.record("Conservation (GERP++, MyVariant.info)", VersionStatus.UNKNOWN, notes=note)

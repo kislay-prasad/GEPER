@@ -42,17 +42,30 @@ SITE 2  orchestrator.py:1313  _classify_variant_result -- *** RULED
         message still failed. Fixed even though the count was 0, to
         stop the site being a trap for whoever adds a second producer.
 
-SITE 3  orchestrator.py:1786  conservation provenance
+SITE 3  conservation, provider.py:248 AND orchestrator.py:1810 --
+        *** RULED 2026-08-28, FIXED AS A PAIR, AND THIS CLASS IS NOW
+        INVERTED. *** orchestrator held
         `error = conservation_result.get("error")` then `if error and
         not found:` -- an ASSIGNMENT, which is why no AST scan keyed on
-        `ast.If` tests ever saw it. An empty-string conservation error
-        records no failure.
+        `ast.If` tests ever saw it, and why an empty-string conservation
+        error recorded no failure.
+        THE TWO SITES HAD TO MOVE TOGETHER. provider.py:248's own
+        `if payload.get("error"):` filtered an empty UCSC error body out
+        before it could ever reach the orchestrator, so the downstream
+        bug was unreachable -- one truthiness bug hiding another.
+        Fixing :1810 alone gives a correct handler that never receives
+        the case it handles. Fixing :248 alone makes the empty body
+        flow through to a guard that still drops it, which is strictly
+        worse than either. The class below is therefore backed by a
+        FULL-PATH test, not by two isolated ones.
 --------------------------------------------------------------------
 """
 
 import unittest
+from unittest import mock
 
 from pipeline.acmg_rules import ACMGRuleEngine
+from pipeline.conservation.provider import UCSCApiProvider
 from pipeline.hpo.models import HPOGeneEvidence, HPOPhenotypeAssociation
 from pipeline.hpo.utils import build_phenotype_result
 from pipeline.orchestrator import GeperPipeline
@@ -302,31 +315,42 @@ def _capture_conservation(conservation_result):
 class TestSite3_ConservationErrorAssignment(unittest.TestCase):
     """PINNED, NOT ENDORSED.
 
-    OPEN QUESTION: `error = conservation_result.get("error")` followed
-    by `if error and not conservation_result.get("found"):`. An
-    empty-string error records no failure against the conservation
-    sources. This is the site that is an ASSIGNMENT rather than an `if`
-    test, which is exactly why the AST sweep that found the other
-    sites missed it -- the sweep was keyed on `ast.If` tests, and a
-    scan is bounded by the shape it searched for.
+    RULED 2026-08-28. INVERTED FROM PINNED-AND-NOT-ENDORSED, AND FIXED
+    AS A PAIR WITH provider.py:248.
 
-    COUNT AS REPORTED: 0 variants. Every value this key can hold is
-    enumerated: `ConservationAnnotation.from_error` is reached from 3
-    call sites in pipeline/conservation/provider.py -- two `str(exc)`
-    on an `ExternalAPIError` (:246, :362) and one
-    `f"{provider.name} raised: {exc}"` (:478, never empty). Both
-    `_get`s that can raise it do so with a non-empty f-string literal
-    and use `requests` directly, so no other raise reaches here. The
-    fourth path, `str(payload["error"])` at :252, sits behind its own
-    `if payload.get("error"):` -- an empty error body is filtered by
-    the same truthiness bug one line above, so it cannot arrive empty.
+    `error = conservation_result.get("error")` followed by `if error and
+    not conservation_result.get("found"):` recorded no failure for an
+    empty-string error. It is an ASSIGNMENT rather than an `if` test,
+    which is exactly why the AST sweep that found the other sites missed
+    it -- the sweep was keyed on `ast.If` tests, and a scan is bounded
+    by the shape it searched for.
+
+    COUNT THE RULING WAS MADE ON: 0 variants, and the reason is the
+    interesting part. Every value this key could hold was enumerated:
+    `ConservationAnnotation.from_error` is reached from 3 call sites in
+    provider.py -- two `str(exc)` on an `ExternalAPIError` (:246, :362)
+    and one `f"{provider.name} raised: {exc}"` (:478, never empty).
+    Both `_get`s that can raise use `requests` directly and raise with a
+    non-empty f-string literal, so no empty-message instance reaches
+    them. The fourth path, `str(payload["error"])` at :252, sat behind
+    provider.py:248's own `if payload.get("error"):` --
+
+        *** THE COUNT OF 0 WAS LOAD-BEARING ON A SECOND BUG. ***
+
+    An empty UCSC error body was filtered out by the same truthiness
+    collapse one line above, which is the only thing that made this site
+    unreachable. That is why the two were fixed in one commit: :248
+    alone would have made this site LIVE while it was still wrong.
     """
 
-    def test_an_empty_conservation_error_currently_records_no_failure(self):
+    def test_an_empty_conservation_error_records_a_failure(self):
+        """THE RULED CASE. A conservation query that failed with a blank
+        message still failed, and the provenance table must say so
+        rather than leaving the source looking unqueried."""
         provenance = _capture_conservation({"error": "", "found": False, "source": "ucsc_api"})
-        self.assertFalse(
+        self.assertTrue(
             any("Most recent query failed" in note for note in provenance.notes_for(UCSC)),
-            provenance.calls,
+            f"an empty-string conservation error recorded no failure; calls were {provenance.calls!r}",
         )
 
     def test_a_real_conservation_error_does_record_a_failure(self):
@@ -349,6 +373,75 @@ class TestSite3_ConservationErrorAssignment(unittest.TestCase):
     def test_a_skipped_conservation_result_records_nothing(self):
         provenance = _capture_conservation({"skipped": True, "error": ""})
         self.assertEqual(provenance.notes_for(UCSC), [])
+
+
+class TestSite3_TheFullPathFromUCSCToProvenance(unittest.TestCase):
+    """The test the paired fix actually needs: ONE run from UCSC's
+    response to the provenance record, not two isolated sites.
+
+    Two green unit tests -- "the provider builds an error annotation"
+    and "the orchestrator records an empty error" -- would BOTH have
+    passed with the pair half-fixed, because neither exercises the hop
+    between them. That hop is the entire defect: :248 decided whether
+    :1810 ever saw the case at all. So this drives the real
+    `UCSCApiProvider.query` against a real HTTP-200-with-an-empty-error
+    -body, takes the dict it actually produces, and feeds THAT to the
+    real `_capture_stage_provenance`.
+    """
+
+    @staticmethod
+    def _ucsc_response(payload, status=200):
+        response = mock.Mock()
+        response.status_code = status
+        response.json.return_value = payload
+        return response
+
+    def _annotation_for(self, payload):
+        provider = UCSCApiProvider("phylop")
+        with (
+            mock.patch.object(UCSCApiProvider, "is_available", return_value=True),
+            mock.patch(
+                "pipeline.conservation.provider.requests.get",
+                return_value=self._ucsc_response(payload),
+            ) as fake_get,
+        ):
+            annotation = provider.query("chr15", 48408313, "C", "T", "GRCh38")
+        self.assertTrue(fake_get.called, "the UCSC endpoint was never called -- the mock is orphaned")
+        return annotation
+
+    def test_an_empty_ucsc_error_body_survives_to_the_provenance_record(self):
+        """UCSC answers 200 with {"error": ""} -- a real bad-request
+        shape their API uses -- and the failure must be recorded."""
+        annotation = self._annotation_for({"error": ""})
+        self.assertIsNotNone(annotation)
+        self.assertEqual(annotation.error, "", "the empty error body was dropped at provider.py:248")
+        self.assertFalse(annotation.found)
+
+        provenance = _capture_conservation(annotation.to_dict())
+        self.assertTrue(
+            any("Most recent query failed" in note for note in provenance.notes_for(UCSC)),
+            f"the empty error reached the orchestrator and was dropped there; {provenance.calls!r}",
+        )
+
+    def test_a_non_empty_ucsc_error_body_still_works(self):
+        """Control: the path that worked before must still work, or the
+        test above proves nothing about what changed."""
+        annotation = self._annotation_for({"error": "bad request"})
+        self.assertEqual(annotation.error, "bad request")
+        provenance = _capture_conservation(annotation.to_dict())
+        self.assertTrue(any("bad request" in note for note in provenance.notes_for(UCSC)), provenance.calls)
+
+    def test_a_successful_ucsc_response_is_not_an_error(self):
+        """Control at the other end: a real payload with scores must not
+        acquire an error, or the fix would be recording failures for
+        every successful query."""
+        annotation = self._annotation_for({"phyloP100way": [{"value": 5.2}]})
+        self.assertIsNone(annotation.error)
+        provenance = _capture_conservation(annotation.to_dict())
+        self.assertFalse(
+            any("Most recent query failed" in note for note in provenance.notes_for(UCSC)),
+            provenance.calls,
+        )
 
 
 if __name__ == "__main__":

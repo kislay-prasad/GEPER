@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Unlisted while claims are still settling. Indexing is a decision for when
+     the validation position is stable; it is reversible in one direction only. -->
+<meta name="robots" content="noindex, nofollow">
+<title>Bij AI — Variant prioritisation for clinicians and pathologists</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a class="wordmark" href="index.html">Bij AI</a>
+  <nav><a href="about.html">About</a></nav>
+</header>
+
+<main>
+
+  <section class="hero">
+    <h1>Bij AI</h1>
+    <p class="lede">Variant prioritisation for clinicians and pathologists.</p>
+    <p class="sub">
+      Bij AI reads a VCF and returns a draft ACMG/AMP classification for every
+      variant, with the evidence and the reasoning that produced it — for a
+      qualified clinician or pathologist to review and sign off.
+    </p>
+    <!-- The constraint sits with the claim, not in the footer. This mirrors the
+         architecture diagram in README_INTEGRATION.md, which annotates its own
+         final box rather than deferring the caveat. -->
+    <p class="constraint">
+      Bij AI produces draft classifications requiring qualified human review.
+      It does not provide final clinical interpretation.
+    </p>
+  </section>
+
+  <section class="status-band">
+    <h2>Where Bij AI stands today</h2>
+    <p>
+      Bij AI is a research pipeline in active development. It has not been
+      clinically validated, holds no regulatory approval or certification, and
+      is not a medical device. It is not a substitute for professional clinical
+      genetic interpretation, diagnosis, or advice.
+    </p>
+  </section>
+
+  <section>
+    <h2>From FASTQ or VCF to a reviewable draft</h2>
+    <p>
+      Bij AI takes variant calls and assembles, for each variant, the evidence a
+      reviewer would otherwise gather by hand: clinical database records,
+      population frequencies, protein and structural annotation, and
+      computational predictions. It then evaluates the ACMG/AMP criteria against
+      that evidence and shows its working.
+    </p>
+    <ul class="features">
+      <li>
+        <h3>Evidence assembly</h3>
+        <p>
+          Public and curated sources are queried per variant and returned
+          together, each labelled with where it came from.
+        </p>
+      </li>
+      <li>
+        <h3>ACMG/AMP criteria evaluation</h3>
+        <p>
+          Each of the 28 criteria is assessed individually and reported as
+          triggered, not triggered, or not evaluated — with the rationale for
+          each.
+        </p>
+      </li>
+      <li>
+        <h3>Transparent reasoning</h3>
+        <p>
+          Every criterion carries its decision path, its supporting and
+          conflicting evidence, and the sources it relied on.
+        </p>
+      </li>
+      <li>
+        <h3>Prioritisation</h3>
+        <p>
+          Variants are scored for confidence and review priority so a reviewer
+          can start where it matters.
+        </p>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <ol class="flow">
+      <li>FASTQ</li>
+      <li>QC, alignment, variant calling</li>
+      <li>VCF</li>
+      <li>Annotation, models, databases, interpretation</li>
+      <li>Draft clinical report</li>
+    </ol>
+    <p class="flow-note">
+      A draft report is not clinically actionable. Mandatory qualified human
+      review and final sign-off stand between Bij AI’s output and any clinical
+      use.
+    </p>
+  </section>
+
+  <section>
+    <h2>Reasoning you can audit</h2>
+    <p>
+      Bij AI is built so a reviewer can disagree with it. Each criterion states
+      the path it took to its conclusion, and records what it could
+      <em>not</em> check as explicitly as what it could — unverified caveats are
+      printed, not omitted.
+    </p>
+    <p>
+      Where a source returned nothing, the report distinguishes
+      <strong>not queried</strong> from <strong>queried, nothing found</strong>
+      from <strong>lookup failed</strong>. An absence is never presented as a
+      finding.
+    </p>
+  </section>
+
+  <section class="contact">
+    <h2>Bij AI is a product of Geper</h2>
+    <p>
+      For partnership, data access, or evaluation enquiries:
+      <!-- PLACEHOLDER — the human supplies this line. Do not invent an address. -->
+      <span class="placeholder">[CONTACT — TO BE SUPPLIED]</span>
+    </p>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p>
+    Bij AI produces draft classifications requiring qualified human review and
+    final sign-off before any clinical use. Not clinically validated. Not a
+    medical device.
+  </p>
+  <p class="colophon">Bij AI is a product of Geper.</p>
+</footer>
+
+</body>
+</html>

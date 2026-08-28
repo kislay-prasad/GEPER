@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Unlisted while claims are still settling; see index.html. -->
+<meta name="robots" content="noindex, nofollow">
+<title>About — Bij AI</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a class="wordmark" href="index.html">Bij AI</a>
+  <nav><a href="about.html" aria-current="page">About</a></nav>
+</header>
+
+<main>
+
+  <section class="hero">
+    <h1>About Bij AI</h1>
+    <p class="lede">
+      Bij AI is a variant prioritisation system built for the part of clinical
+      genetics that does not scale: reading the evidence for one variant at a
+      time.
+    </p>
+    <p class="sub">
+      A qualified reviewer classifying a variant gathers records from clinical
+      databases, checks population frequencies, looks at protein domains and
+      structure, weighs computational predictions, and applies the ACMG/AMP
+      criteria to what they find. Bij AI does that assembly and produces a
+      draft, with its reasoning attached, so the reviewer’s time goes to
+      judgement rather than collection.
+    </p>
+  </section>
+
+  <section>
+    <h2>A draft, not a decision</h2>
+    <p>
+      Bij AI produces a draft classification requiring qualified human review
+      and final sign-off. It does not independently provide final clinical
+      interpretation. This is a design decision, not a disclaimer bolted on
+      afterwards: the system records what it could not determine as carefully as
+      what it could, and it declines to state a conclusion the evidence does not
+      carry.
+    </p>
+    <p>
+      Every report Bij AI generates carries this position in its own text. The
+      reviewer, not the system, is the one who classifies.
+    </p>
+  </section>
+
+  <section>
+    <h2>What is in the pipeline</h2>
+
+    <h3>Evidence sources</h3>
+    <p>
+      Bij AI queries clinical variant databases, population frequency resources,
+      gene–disease and dosage curations, protein sequence and domain annotation,
+      predicted protein structure, and phenotype and rare-disease resources.
+      Each result is recorded with its provenance.
+    </p>
+
+    <h3>Computational models</h3>
+    <p>
+      Bij AI integrates existing pretrained genomic and protein models as
+      published by their authors. No model is retrained or fine-tuned. Models
+      are one input among several, and which of them apply depends on the
+      variant and on how the system is configured for a given run — a run’s
+      report states which models were used and which were not.
+    </p>
+
+    <h3>ACMG/AMP evaluation</h3>
+    <p>
+      The 28 criteria are evaluated individually against the assembled evidence
+      and combined using the standard published point-based rules, producing a
+      candidate classification for a qualified human to confirm.
+    </p>
+  </section>
+
+  <section>
+    <h2>Saying “we do not know” is a feature</h2>
+    <p>
+      A system that fills gaps with plausible values is worse than one that
+      leaves them open, because a plausible gap is indistinguishable from a
+      finding. Bij AI separates <strong>not queried</strong> from
+      <strong>queried and genuinely absent</strong> from
+      <strong>lookup failed</strong>, and reports unchecked caveats alongside
+      the criteria they qualify.
+    </p>
+    <p>
+      Where a run is incomplete, the report says so rather than presenting
+      partial results as whole.
+    </p>
+  </section>
+
+  <section>
+    <h2>Governance</h2>
+    <h3>Provenance and review</h3>
+    <p>
+      Each report records the sources consulted, the code version that produced
+      it, and its review state. Reports are produced as drafts and remain drafts
+      until a qualified reviewer signs them off.
+    </p>
+  </section>
+
+  <section class="status-band">
+    <h2>Status</h2>
+    <p>
+      Bij AI is a research pipeline in active development. It has not been
+      clinically validated, holds no regulatory approval or certification, and
+      is not a medical device. It produces draft classifications requiring
+      qualified human review and final sign-off before any clinical use.
+    </p>
+  </section>
+
+  <section class="contact">
+    <h2>Bij AI is a product of Geper</h2>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p>
+    Bij AI produces draft classifications requiring qualified human review and
+    final sign-off before any clinical use. Not clinically validated. Not a
+    medical device.
+  </p>
+  <p class="colophon">Bij AI is a product of Geper.</p>
+</footer>
+
+</body>
+</html>

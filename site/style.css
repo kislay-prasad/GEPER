@@ -1,0 +1,234 @@
+/* Bij AI site — one stylesheet, no JavaScript, no build step, no external
+   resources. Self-contained by design: nothing here fetches a font or a script
+   at page load, so the site renders identically offline and cannot fail on a
+   third-party host during a meeting. */
+
+:root {
+  --ink:        #16202b;
+  --ink-soft:   #4a5766;
+  --rule:       #dfe4ea;
+  --bg:         #ffffff;
+  --bg-soft:    #f6f8fa;
+  --accent:     #1f4e79;
+  --caution-bg: #fdf6e7;
+  --caution-ln: #d9b45e;
+  --measure:    38rem;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 1.0625rem;
+  line-height: 1.65;
+}
+
+/* ---------- header / footer ---------- */
+
+.site-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.wordmark {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  font-size: 1.2rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.site-header nav a {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.site-header nav a:hover,
+.site-header nav a[aria-current="page"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.site-footer {
+  max-width: 60rem;
+  margin: 4rem auto 0;
+  padding: 1.75rem 1.5rem 3rem;
+  border-top: 1px solid var(--rule);
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+.site-footer p { margin: 0 0 0.5rem; max-width: var(--measure); }
+.colophon { color: var(--ink); }
+
+/* ---------- layout ---------- */
+
+main {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+section {
+  padding: 2.5rem 0;
+  border-bottom: 1px solid var(--rule);
+}
+section:last-of-type { border-bottom: 0; }
+
+p { max-width: var(--measure); }
+
+/* ---------- type ---------- */
+
+h1 {
+  font-size: 2.6rem;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin: 0 0 0.75rem;
+}
+
+h2 {
+  font-size: 1.45rem;
+  line-height: 1.25;
+  margin: 0 0 0.9rem;
+}
+
+h3 {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 1.5rem 0 0.4rem;
+}
+
+.hero { padding-top: 3.25rem; }
+
+.lede {
+  font-size: 1.3rem;
+  line-height: 1.45;
+  color: var(--ink);
+  margin: 0 0 1.25rem;
+}
+
+.sub { color: var(--ink-soft); margin: 0 0 1.5rem; }
+
+/* The constraint that travels with the claim. Deliberately given weight:
+   it is not fine print and must not read as fine print. */
+.constraint {
+  margin: 0;
+  padding: 0.9rem 1.1rem;
+  background: var(--bg-soft);
+  border-left: 3px solid var(--accent);
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+/* The status band states what has not been established. Amber, so it reads as
+   a standing qualification rather than a warning about a fault. */
+.status-band {
+  background: var(--caution-bg);
+  border-left: 3px solid var(--caution-ln);
+  padding: 1.5rem 1.25rem;
+  margin: 2.5rem 0;
+  border-bottom: 0;
+}
+.status-band h2 { font-size: 1.15rem; margin-bottom: 0.5rem; }
+.status-band p {
+  margin: 0;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ---------- feature list ---------- */
+
+.features {
+  list-style: none;
+  margin: 1.75rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 1.75rem 2.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.features h3 { margin-top: 0; }
+.features p { margin: 0; color: var(--ink-soft); font-size: 1rem; }
+
+/* ---------- pipeline flow ---------- */
+
+.flow {
+  list-style: none;
+  margin: 1.5rem 0 1.25rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.5rem;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.9rem;
+}
+.flow li {
+  flex: 1 1 8.5rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+}
+.flow li + li { position: relative; }
+.flow li + li::before {
+  content: "\2192";
+  position: absolute;
+  left: -0.55rem;
+  color: var(--ink-soft);
+}
+
+.flow-note {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+/* ---------- contact ---------- */
+
+.contact h2 { font-size: 1.15rem; }
+
+/* Deliberately conspicuous: an unfilled placeholder must never ship looking
+   like finished copy. */
+.placeholder {
+  font-family: "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.85rem;
+  background: #fff2f2;
+  border: 1px dashed #c46a6a;
+  color: #8f3a3a;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 34rem) {
+  body { font-size: 1rem; }
+  h1 { font-size: 2rem; }
+  .lede { font-size: 1.15rem; }
+  .flow li { flex-basis: 100%; }
+  .flow li + li::before { display: none; }
+}

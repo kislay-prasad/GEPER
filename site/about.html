@@ -71,10 +71,22 @@
     </p>
 
     <h3>ACMG/AMP evaluation</h3>
+    <!-- Two claims here are checkable and were checked against source before
+         being written. (a) 19, not 28 — see _NEVER_INTEGRATED_ACMG_CODES in
+         pipeline/acmg_rules.py. (b) The combining rules are Tavtigian et al.
+         2018, NOT the 2015 guideline's categorical table; acmg_rules.py's
+         _combine says so explicitly and notes the two do not always agree.
+         Do not soften this back to "standard published rules" — a clinical
+         geneticist knows the difference. -->
     <p>
-      The 28 criteria are evaluated individually against the assembled evidence
-      and combined using the standard published point-based rules, producing a
-      candidate classification for a qualified human to confirm.
+      Bij AI evaluates 19 of the 28 ACMG/AMP criteria individually against the
+      assembled evidence. The remaining nine have no integrated data source and
+      are always reported as not evaluated rather than silently omitted.
+    </p>
+    <p>
+      Triggered criteria are combined using the Tavtigian et al. 2018
+      Bayesian-calibrated point system, producing a candidate classification for
+      a qualified human to confirm.
     </p>
   </section>
 

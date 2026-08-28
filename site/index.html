@@ -46,7 +46,7 @@
   </section>
 
   <section>
-    <h2>From FASTQ or VCF to a reviewable draft</h2>
+    <h2>From VCF to a reviewable draft</h2>
     <p>
       Bij AI takes variant calls and assembles, for each variant, the evidence a
       reviewer would otherwise gather by hand: clinical database records,
@@ -64,10 +64,16 @@
       </li>
       <li>
         <h3>ACMG/AMP criteria evaluation</h3>
+        <!-- 19, not 28: nine criteria (PS2, PS4, PM3, PM6, PP2, PP5, BS2, BP2,
+             BP5) have no integrated data source and are always reported as not
+             evaluated. See _NEVER_INTEGRATED_ACMG_CODES in
+             pipeline/acmg_rules.py, which a test keeps in sync with a real run.
+             Do not round this up to 28. -->
         <p>
-          Each of the 28 criteria is assessed individually and reported as
-          triggered, not triggered, or not evaluated — with the rationale for
-          each.
+          Bij AI evaluates 19 of the 28 ACMG/AMP criteria, each reported as
+          triggered, not triggered, or not evaluated, with its rationale. The
+          remaining nine have no integrated data source and are always reported
+          as not evaluated rather than silently omitted.
         </p>
       </li>
       <li>
@@ -89,13 +95,19 @@
 
   <section>
     <h2>How it works</h2>
+    <!-- VCF leads, deliberately. A lab hands us a VCF, and it is the path the
+         completed run exercises. The FASTQ stage is a separate upstream
+         component and is mentioned as available, not as the headline flow —
+         do not promote it back to the front. -->
     <ol class="flow">
-      <li>FASTQ</li>
-      <li>QC, alignment, variant calling</li>
       <li>VCF</li>
       <li>Annotation, models, databases, interpretation</li>
       <li>Draft clinical report</li>
     </ol>
+    <p class="flow-note">
+      Upstream processing from FASTQ — quality control, alignment and variant
+      calling — is also available as a separate stage for labs that need it.
+    </p>
     <p class="flow-note">
       A draft report is not clinically actionable. Mandatory qualified human
       review and final sign-off stand between Bij AI’s output and any clinical

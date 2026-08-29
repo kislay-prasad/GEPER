@@ -77,6 +77,7 @@ from pipeline.models.status import build_ai_model_status, rollup_run_status
 from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
 from pipeline.provenance import (
+    RetrievalMode,
     RunProvenanceCollector,
     VersionStatus,
     capture_blast_local_tool_versions,
@@ -527,6 +528,32 @@ class GeperPipeline:
 
         self._capture_bootstrapped_datasets_provenance()
 
+    def _capture_blast_retrieval_provenance(self) -> None:
+        """
+        Records WHERE this run's BLAST evidence came from -- the network,
+        or the on-disk cache a previous run wrote.
+
+        The two are otherwise indistinguishable downstream: a disk-cache
+        replay returns the same normalized hits, with the same real
+        accessions, in milliseconds (observed: real NCBI hits in 0.015s
+        with no NCBI contact). Nothing in the report could tell them
+        apart, because `VersionStatus` only ever describes version
+        identifiability -- see `pipeline/provenance.py::RetrievalMode`.
+
+        Uses `note_retrieval`, not `record`: this is the retrieval axis
+        and must not touch the BLAST tool version already captured at
+        startup.
+        """
+        try:
+            counts = self.blast_client.retrieval_counts()
+        except Exception as exc:  # noqa: BLE001 -- provenance capture must never break a run
+            logger.warning(f"BLAST retrieval-mode provenance capture failed: {exc}")
+            return
+
+        live, replayed = counts.get("live", 0), counts.get("cache_replay", 0)
+        self.provenance.note_retrieval("BLAST", RetrievalMode.from_counts(live, replayed))
+        logger.info(f"BLAST retrieval provenance: {live} live search(es), {replayed} replayed from disk cache.")
+
     def _capture_bootstrapped_datasets_provenance(self) -> None:
         """
         Reads whatever's currently on disk for every bootstrapped/cached
@@ -861,6 +888,11 @@ class GeperPipeline:
         # (D1, report review round 3). This re-sweep is what lets a
         # source consulted via the cache path show up as consulted.
         self._capture_bootstrapped_datasets_provenance()
+
+        # Same timing reason: whether BLAST answered from the network or
+        # from its on-disk cache is only known once every variant has
+        # been searched.
+        self._capture_blast_retrieval_provenance()
 
         # Same timing fix, applied to the "AI model checkpoints"
         # provenance list (F1a, report review round 4): whether

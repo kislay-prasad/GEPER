@@ -57,7 +57,7 @@ from pipeline.models.status import DISABLED as _STATUS_DISABLED
 from pipeline.models.status import FAILED as _STATUS_FAILED
 from pipeline.models.status import SKIPPED as _STATUS_SKIPPED
 from pipeline.models.status import USED as _STATUS_USED
-from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX
+from pipeline.provenance import EVIDENCE_SOURCE_TO_PROVENANCE_PREFIX, RETRIEVAL_MODE_LABELS
 from pipeline.stage_schemas import StageStatus as _StageStatus
 from report.clinical_report_builder import (
     candidate_interpretation_of,
@@ -1089,6 +1089,14 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
             detail_bits.append(
                 f"hash ({esc(record.get('hash_algorithm') or 'unknown algorithm')}): {esc(record['content_hash'])}"
             )
+        # Second axis -- see `report_generator.py::_render_provenance`
+        # and `pipeline/provenance.py::RetrievalMode`. Same shared
+        # label map as the Markdown, so the two formats cannot drift
+        # on this the way the status labels above are only kept in step
+        # by a comment.
+        retrieval = record.get("retrieval")
+        if retrieval:
+            detail_bits.append(f"retrieval: {esc(RETRIEVAL_MODE_LABELS.get(retrieval, retrieval))}")
         flow.append(Paragraph("• " + "; ".join(detail_bits), styles["BulletText"]))
     return flow
 

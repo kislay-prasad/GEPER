@@ -167,6 +167,101 @@ _STATUS_PRIORITY = {
 }
 
 
+class RetrievalMode(str, enum.Enum):
+    """
+    WHERE this run's answer from a source actually came from -- a
+    SEPARATE AXIS from `VersionStatus`, which is only ever about
+    version identifiability.
+
+    Deliberately NOT a sixth `VersionStatus` member, for two reasons:
+
+      1. The two facts are independent. A BLAST result replayed from
+         the on-disk cache in local mode still has a real, known
+         blast+ tool version; a live remote query has none. Every
+         combination of (version identifiability x retrieval mode) is
+         reachable, so folding one into the other would force
+         recording either fact to destroy the other -- the same
+         collapse `VersionStatus`'s own docstring exists to prevent.
+      2. `VersionStatus` is TOTALLY ORDERED, and that ordering is
+         load-bearing: `RunProvenanceCollector.record` uses it to stop
+         a later degraded query downgrading an already-captured real
+         version. "Replayed from cache" is not more or less
+         informative than "version known" -- there is no honest place
+         to put it in that ordering. Retrieval mode therefore MERGES
+         (see `RunProvenanceCollector.note_retrieval`) rather than
+         ranking.
+
+    Why it matters clinically: a cache replay returns bytes a previous
+    run obtained, and this run cannot verify they are still current.
+    ClinVar reclassifies weekly; NCBI's `nt` changes continuously. A
+    report that cannot distinguish "we asked the source and it said
+    this" from "we reused what it said some unrecorded time ago" is
+    making a stronger claim than it can support.
+    """
+
+    NOT_RETRIEVED = "not_retrieved"  # tracked this run, but no answer was obtained from this source at all
+    LIVE = "live"  # every answer used this run came from contacting the source this run
+    CACHE_REPLAY = "cache_replay"  # every answer used this run was replayed from a local cache written by an EARLIER run; the source itself was not contacted, and this run cannot verify the answer is still current
+    MIXED = "mixed"  # both happened this run -- some answers live, some replayed (see note_retrieval: recording either alone would be a false claim about the other)
+
+    def __bool__(self):
+        raise TypeError(
+            "RetrievalMode has no truth value -- same reason as VersionStatus: every member of a "
+            "`str` enum is truthy, so `if x:` would silently collapse NOT_RETRIEVED (tried nothing) "
+            "and CACHE_REPLAY (answered without contacting the source) into one answer. Compare "
+            "explicitly, e.g. `x is RetrievalMode.CACHE_REPLAY`."
+        )
+
+    @classmethod
+    def from_counts(cls, live: int, cache_replay: int) -> "RetrievalMode":
+        """
+        Maps "how many answers came from where" onto the honest single
+        label for a run.
+
+        Lives here, next to the vocabulary it produces, rather than in
+        the orchestrator that happens to call it: it IS the meaning of
+        these members, and putting it beside them is what lets the
+        rule be tested without constructing a pipeline. Any future
+        source that grows the same live/cached split gets one call, not
+        a second copy of this reasoning.
+
+        Note `live and cache_replay -> MIXED` comes FIRST. Checking
+        either count alone first would silently describe a mostly-cached
+        run as live (or the reverse), which is the whole failure being
+        fixed.
+        """
+        if live and cache_replay:
+            return cls.MIXED
+        if live:
+            return cls.LIVE
+        if cache_replay:
+            return cls.CACHE_REPLAY
+        # Nothing was retrieved at all. Recorded explicitly rather than
+        # left unset, so "this source returned nothing this run" stays
+        # distinguishable from "nobody tracked this source".
+        return cls.NOT_RETRIEVED
+
+
+# Human-readable labels for `RetrievalMode`, defined HERE rather than in
+# each renderer. `report/summary.py::_PROVENANCE_STATUS_LABELS` and
+# `report/report_generator.py::_render_provenance`'s `status_labels`
+# are two hand-maintained copies of the same map that only a comment
+# keeps in step; this axis is not going to repeat that. Both renderers
+# import this one.
+RETRIEVAL_MODE_LABELS: Dict[str, str] = {
+    RetrievalMode.NOT_RETRIEVED.value: "no data retrieved from this source this run",
+    RetrievalMode.LIVE.value: "retrieved live from the source this run",
+    RetrievalMode.CACHE_REPLAY.value: (
+        "REPLAYED FROM LOCAL CACHE -- the source itself was not contacted this run, "
+        "so this report cannot confirm the data is still current"
+    ),
+    RetrievalMode.MIXED.value: (
+        "MIXED -- some data retrieved live this run, some replayed from local cache; "
+        "the cached portion cannot be confirmed current"
+    ),
+}
+
+
 class DataSourceProvenance(BaseModel):
     """
     One external data source's provenance for this run. `status` is
@@ -179,6 +274,16 @@ class DataSourceProvenance(BaseModel):
 
     source: str
     status: VersionStatus
+    # `None` means "retrieval mode was not tracked for this source",
+    # which is NOT the same claim as RetrievalMode.NOT_RETRIEVED
+    # ("tracked, and nothing was retrieved") -- and neither is a claim
+    # that the data came live off the wire. Only BLAST is wired to
+    # report retrieval mode today, so every other source stays None and
+    # the renderers print nothing for it, rather than every unwired
+    # source silently acquiring a "retrieved live" claim nobody
+    # verified. Unlike `status` this therefore CAN default: the default
+    # asserts nothing.
+    retrieval: Optional[RetrievalMode] = None
     version: Optional[str] = None  # e.g. "gnomad_r4", "InterPro 109.0", "dbSNP build 157", "UniProt 2026_02"
     release_date: Optional[str] = (
         None  # ISO date/string if the source publishes one (Orphanet's `date`, ClinGen's filename date, UniProt's release date, ...)
@@ -651,6 +756,17 @@ class RunProvenanceCollector:
         self._records[source] = DataSourceProvenance(
             source=source,
             status=status,
+            # Carried forward, never reset: `record` is about the
+            # VERSION axis and has no business clearing the RETRIEVAL
+            # axis. The two capture paths run at different points in a
+            # run (status at startup, retrieval after the variant
+            # loop), and the orchestrator's post-loop
+            # `_capture_bootstrapped_datasets_provenance` re-sweep can
+            # re-`record` a source after its retrieval mode is already
+            # known -- so a rebuild that dropped this field would erase
+            # the cache-replay finding in the ordinary case, not an
+            # exotic one.
+            retrieval=existing.retrieval,
             version=version,
             release_date=release_date,
             content_hash=content_hash,
@@ -659,6 +775,42 @@ class RunProvenanceCollector:
             endpoint=endpoint,
             notes=notes,
         )
+
+    def note_retrieval(self, source: str, mode: RetrievalMode) -> None:
+        """
+        Records that `source` answered this run via `mode`, MERGING with
+        whatever is already recorded rather than ranking (see
+        `RetrievalMode`: there is no honest ordering between "live" and
+        "replayed from cache", so `record`'s priority-overwrite rule
+        would be the wrong instrument here).
+
+        The merge rule that matters: LIVE and CACHE_REPLAY together
+        become MIXED. A run that made nine cache replays and one live
+        query is not honestly describable as either -- calling it LIVE
+        implies nine unverifiable answers were fresh, calling it
+        CACHE_REPLAY implies a live query never happened. MIXED is the
+        only claim supported by what actually occurred.
+
+        NOT_RETRIEVED is the identity element: it never overwrites a
+        real retrieval, and any real retrieval overwrites it.
+        """
+        if source not in KNOWN_SOURCES:
+            logger.warning(
+                f"RunProvenanceCollector.note_retrieval: unrecognized source '{source}' -- "
+                "not in KNOWN_SOURCES, ignoring."
+            )
+            return
+        existing = self._records[source].retrieval
+        if existing is None or existing is RetrievalMode.NOT_RETRIEVED:
+            merged = mode
+        elif mode is RetrievalMode.NOT_RETRIEVED or mode is existing:
+            merged = existing
+        else:
+            # existing and mode are two different real retrieval modes
+            # (LIVE vs CACHE_REPLAY, or either against an already-MIXED
+            # record) -- the only honest answer is MIXED.
+            merged = RetrievalMode.MIXED
+        self._records[source] = self._records[source].model_copy(update={"retrieval": merged})
 
     def get(self, source: str) -> Optional[DataSourceProvenance]:
         return self._records.get(source)

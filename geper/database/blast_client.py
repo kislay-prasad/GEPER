@@ -460,6 +460,19 @@ class BLASTClient:
         # max_hits, sequence) for this process's lifetime.
         self._result_cache: Dict[str, Dict[str, Any]] = {}
 
+        # How many searches this run were answered by actually
+        # contacting BLAST vs replayed off the on-disk cache. Read once
+        # per run by `pipeline/orchestrator.py` and mapped onto
+        # `pipeline/provenance.py::RetrievalMode`, so a report can say
+        # which of the two produced its BLAST evidence. Kept as plain
+        # ints here rather than a RetrievalMode: `database/` must not
+        # import from `pipeline/` (provenance.py already imports THIS
+        # module, lazily, inside `capture_blast_local_tool_versions`),
+        # and the mapping is the orchestrator's job anyway.
+        self._retrieval_lock = threading.Lock()
+        self._live_query_count = 0
+        self._cache_replay_count = 0
+
         if enable_disk_cache is None:
             enable_disk_cache = CONFIG.api.BLAST_DISK_CACHE_ENABLED
         self._disk_cache: Optional[_BlastDiskCache] = None
@@ -527,6 +540,12 @@ class BLASTClient:
 
         cached = self._result_cache.get(key)
         if cached is not None:
+            # Deliberately NOT counted as a retrieval of either kind.
+            # An in-memory hit is this run re-using an answer this run
+            # already obtained; whichever way that first occurrence was
+            # retrieved (live or disk replay) was already counted, and
+            # counting it again would inflate one side of a ratio that
+            # exists to describe where the run's data came from.
             logger.info(f"BLAST in-memory cache hit for a {len(sequence)}bp sequence -- skipping a duplicate search.")
             return cached
 
@@ -537,6 +556,8 @@ class BLASTClient:
                     f"BLAST disk cache hit for a {len(sequence)}bp sequence "
                     "(result reused from a previous run) -- skipping NCBI submission."
                 )
+                with self._retrieval_lock:
+                    self._cache_replay_count += 1
                 self._result_cache[key] = disk_hit
                 return disk_hit
 
@@ -545,10 +566,30 @@ class BLASTClient:
         else:
             result = self._search_local(sequence, program, max_hits)
 
+        with self._retrieval_lock:
+            self._live_query_count += 1
         self._result_cache[key] = result
         if self._disk_cache is not None:
             self._disk_cache.set(key, result)
         return result
+
+    def retrieval_counts(self) -> Dict[str, int]:
+        """
+        `{"live": n, "cache_replay": m}` for this client's lifetime --
+        how many BLAST searches actually contacted a BLAST backend
+        versus were answered from the on-disk cache written by an
+        EARLIER run.
+
+        Exists because the two are indistinguishable from the outside:
+        a disk-cache replay returns the same normalized dict, with the
+        same real hits, in milliseconds. Consumed by
+        `pipeline/orchestrator.py::_capture_blast_retrieval_provenance`.
+
+        In-memory (same-run, duplicate-sequence) hits are counted in
+        NEITHER bucket -- see `search`.
+        """
+        with self._retrieval_lock:
+            return {"live": self._live_query_count, "cache_replay": self._cache_replay_count}
 
     def search_many(
         self,

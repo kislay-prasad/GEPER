@@ -30,6 +30,7 @@ from utils.timezone_utils import format_ist_from_iso
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.models.status import DISABLED, FAILED, SKIPPED, USED, render_status_table_lines
+from pipeline.provenance import RETRIEVAL_MODE_LABELS
 from pipeline.stage_schemas import StageStatus as _StageStatus
 
 logger = get_logger(__name__)
@@ -442,6 +443,15 @@ class ReportGenerator:
             status = record.get("status", "unknown")
             label = status_labels.get(status, status)
             lines.append(f"- **{record.get('source')}:** {label}")
+            # A SECOND, independent axis: where this run's data actually
+            # came from. Absent (None) for every source whose retrieval
+            # mode is not tracked -- rendered as nothing at all rather
+            # than as an implied "live", since claiming a source was
+            # contacted when nobody checked is the failure this line
+            # exists to fix.
+            retrieval = record.get("retrieval")
+            if retrieval:
+                lines.append(f"  - Retrieval: {RETRIEVAL_MODE_LABELS.get(retrieval, retrieval)}")
             if record.get("version"):
                 lines.append(f"  - Version: {record['version']}")
             if record.get("release_date"):

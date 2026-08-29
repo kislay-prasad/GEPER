@@ -99,6 +99,23 @@ class TestJSONResultBuilderRunComplete(unittest.TestCase):
         self.assertIs(on_disk["run_complete"], False)
 
 
+class TestInputVcfAbsolutePath(unittest.TestCase):
+    """Finding 0: `input_vcf` stores the raw --vcf argument as given, with
+    no cwd recorded -- opening the document from a different working
+    directory leaves no way to resolve a relative argument back to a real
+    file. `input_vcf` itself is untouched (REPRODUCIBILITY_PROTOCOL.md
+    treats it as a field that must match between two runs of the same
+    input); `input_vcf_absolute_path` is additive."""
+
+    def test_relative_argument_resolved_alongside_original(self):
+        import os
+
+        doc = JSONResultBuilder(input_vcf_path="./file.vcf").build()
+        self.assertEqual(doc["input_vcf"], "./file.vcf")
+        self.assertEqual(doc["input_vcf_absolute_path"], os.path.abspath("./file.vcf"))
+        self.assertTrue(os.path.isabs(doc["input_vcf_absolute_path"]))
+
+
 class TestAbsentReadsAsIncomplete(unittest.TestCase):
     """Round 12's own explicit requirement: 'Absent must read as false
     everywhere it's checked -- no reader may default a missing key to

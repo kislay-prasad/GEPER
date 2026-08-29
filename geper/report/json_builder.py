@@ -7,6 +7,7 @@ unified interpretation) into a single, stable JSON structure.
 """
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -141,6 +142,15 @@ class JSONResultBuilder:
             "geper_version": "1.0.0",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "input_vcf": self.input_vcf_path,
+            # Additive: the argument above is recorded verbatim (and stays
+            # the field REPRODUCIBILITY_PROTOCOL.md treats as comparable
+            # between two runs of the same input) -- but a relative
+            # argument like "./test.vcf" or "../data/test.vcf" cannot be
+            # resolved back to a real file once this document is opened
+            # from a different working directory (or a different machine
+            # entirely). Resolved once, here, against this process's own
+            # cwd at build time -- the only place that cwd is still known.
+            "input_vcf_absolute_path": os.path.abspath(self.input_vcf_path),
             "assembly": self.assembly,
             "vcf_samples": self.vcf_samples,
             "variant_count": len(self.variant_results),

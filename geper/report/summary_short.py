@@ -709,7 +709,7 @@ def generate_short_pdf(
         story.append(Paragraph("No variants were analysed in this run; no findings are reported.", styles["BodyText"]))
 
     story.append(Spacer(1, 2 * mm))
-    offline_caveat = _offline_sources_caveat_text()
+    offline_caveat = _offline_sources_caveat_text(document)
     if offline_caveat:
         story.append(Paragraph("! " + offline_caveat, styles["Flag"]))
         story.append(Spacer(1, 1.5 * mm))

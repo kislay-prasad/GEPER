@@ -30,6 +30,7 @@ class JSONResultBuilder:
         model_checkpoints: Dict[str, str] = None,
         patient_consent: Optional[Dict[str, Any]] = None,
         qc_metrics: Optional[Dict[str, Any]] = None,
+        service_health_registry: Any = None,
     ):
         self.input_vcf_path = input_vcf_path
         # Genome reference build resolved by the orchestrator's assembly
@@ -118,6 +119,19 @@ class JSONResultBuilder:
         # no --qc-metrics-json was supplied, so there genuinely is no
         # run-level QC -- never a fabricated empty table.
         self.qc_metrics = qc_metrics
+        # External-service availability for this run
+        # (`utils/service_health.py`). Held as a live REFERENCE, exactly
+        # like `provenance_collector` above and for the same reason:
+        # `.snapshot()` is only called inside `build()`, so a mid-run
+        # checkpoint write reflects what has happened so far and the
+        # final write reflects the whole run. `None` (the default, for
+        # any caller that does not pass one) renders as an empty list.
+        # An empty list is NOT an all-clear: it means availability was
+        # not recorded for this run, which is why
+        # `report/clinical_report_builder.py::_offline_sources_caveat_text`
+        # falls back to the live registry rather than treating it as
+        # "nothing failed".
+        self.service_health_registry = service_health_registry
 
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
@@ -151,6 +165,15 @@ class JSONResultBuilder:
             # this field gates a real action) and
             # `report/report_generator.py::_render_review_status_banner`
             # (the one place it is rendered) for the two consumers.
+            # Which external sources failed and were retried this run.
+            # Every failure counted here was already handled by its
+            # client's retry loop, so none of it reaches any variant's
+            # `errors` list -- which is why a degraded run could report
+            # `errors: []` and `run_complete: true` with no other trace.
+            # See `utils/service_health.py::ServiceHealthRegistry.snapshot`.
+            "service_health": (
+                self.service_health_registry.snapshot() if self.service_health_registry is not None else []
+            ),
             "review_status": "draft",
             "reviewed_by": None,
             "reviewed_at": None,

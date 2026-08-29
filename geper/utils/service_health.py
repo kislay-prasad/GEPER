@@ -46,7 +46,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
 
@@ -554,6 +554,56 @@ class ServiceHealthRegistry:
         if record.failure_count == 0:
             return "Healthy"
         return f"Intermittent ({record.failure_count} failures)"
+
+    def snapshot(self) -> List[Dict[str, Any]]:
+        """
+        Serialisable copy of what `print_summary()` prints, for the run
+        document (`report/json_builder.py` -> `service_health`).
+
+        Why this exists: every failure this registry counts has already
+        been RETRIED AND HANDLED by the client that reported it, so it
+        never reaches the per-variant `errors` list (which collects
+        stage exceptions only, see `pipeline/orchestrator.py`). Until
+        this method, that meant a run in which Ensembl failed three
+        times and recovered wrote `errors: []`, `run_complete: true`
+        and four output artefacts that said nothing about it, while the
+        console printed `Ensembl ... Intermittent (2 failures)` and
+        exited. Handled degradation is still degradation; a reader of
+        the report could not see it, and the log is not part of the
+        output bundle.
+
+        This is the same fix, and the same reasoning, as the run-level
+        `caveats` key in `report/json_builder.py::build` (printed by
+        every renderer, absent from the document) and the `qc_metrics`
+        field on that class ("a caveat in the document survives; an
+        argument passed once does not").
+
+        Deliberately reuses `_summary_status` -- the exact function the
+        console summary uses -- so the document and the console cannot
+        drift into saying different things about the same run.
+
+        Pure read of already-collected counters: no probing, no network,
+        no mutation. Safe to call at report-build time.
+        """
+        with self._lock:
+            records = list(self._records.values())
+        return [
+            {
+                "service": record.name,
+                # Same string the console prints, from the same function.
+                "status": self._summary_status(record),
+                # The one field a renderer needs to decide whether to
+                # raise a flag, so no renderer has to re-derive
+                # "degraded" from the counters and get it subtly wrong.
+                "degraded": bool(record.failure_count) or record.startup_status == ServiceStatus.OFFLINE,
+                "startup_status": record.startup_status.value,
+                "failure_count": record.failure_count,
+                "success_count": record.success_count,
+                "skipped_count": record.skipped_count,
+                "latency_ms": record.latency_ms,
+            }
+            for record in sorted(records, key=lambda r: r.name)
+        ]
 
     def reset(self) -> None:
         """Test/CLI-run hook: clear all state for a fresh run."""

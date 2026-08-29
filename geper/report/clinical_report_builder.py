@@ -25,7 +25,7 @@ from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
 from pipeline.stage_schemas import StageStatus as _StageStatus
 from utils.logger import get_logger
-from utils.service_health import HEALTH
+from utils.service_health import HEALTH, ServiceStatus
 
 logger = get_logger(__name__)
 
@@ -1014,16 +1014,56 @@ def _references(ir: Dict[str, Any]) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _offline_sources_caveat_text() -> Optional[str]:
+def _offline_sources_caveat_text(document: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """
     Run-level, not per-finding: which external evidence sources (see
-    `utils/service_health.py`) were confirmed offline at startup and
-    therefore skipped for every variant in this run, rather than
-    genuinely queried and found to have nothing. Read once here so any
-    "not evaluated" or "not found" text for one of these sources
-    elsewhere in the report is not mistaken for a completed, negative
-    search. Returns `None` when every configured source was reachable
-    at startup (the common case, no caveat needed).
+    `utils/service_health.py`) did not fully answer during this run, so
+    that "not evaluated" or "not found" text elsewhere in the report is
+    never mistaken for a completed, negative search. Returns `None`
+    only when every source was reachable at startup AND none failed
+    during the run.
+
+    TWO KINDS OF UNAVAILABILITY, REPORTED SEPARATELY BECAUSE THEY MEAN
+    DIFFERENT THINGS:
+
+      offline at startup -- never queried for any variant this run.
+      failed during the run -- queried, failed, retried. The client
+          may have recovered on a later attempt or fallen back to a
+          graceful skip, so evidence from it may be present, partial,
+          or absent, and the report cannot tell the reader which.
+
+    The second kind used to be reported nowhere. `offline_services()`
+    only knows about services LATCHED OFFLINE AT STARTUP, so a source
+    that was healthy at startup and then failed mid-run produced no
+    caveat at all -- while its handled failures never reached any
+    variant's `errors` list either (that list collects stage
+    exceptions, and a retried failure raises none). Observed 2026-08-29:
+    Ensembl probed Online (1155 ms) at startup, failed 3/3 attempts on a
+    sequence region and 3/3 on an exon annotation mid-run, and the run
+    wrote `errors: []`, `run_complete: true` and four output artefacts
+    that said nothing about it, while the console printed
+    `Ensembl ... Intermittent (2 failures)` and exited. The one visible
+    consequence was an exon-annotation lookup rendered as the
+    biological claim "no exon annotation found near this variant" -- for
+    a canonical splice-acceptor variant.
+
+    PREFER THE DOCUMENT, FALL BACK TO THE LIVE REGISTRY. When
+    `document` carries a `service_health` list (written by
+    `report/json_builder.py` from `ServiceHealthRegistry.snapshot()`),
+    this reads that. Otherwise it reads the live `HEALTH` singleton, as
+    it always did, so a legacy document produced before that field
+    existed still renders the startup-offline caveat.
+
+    Reading the document matters for re-renders. `review/signoff.py`
+    loads a stored `geper_results.json` back in a FRESH PROCESS and
+    re-invokes both PDF renderers and the Markdown generator against
+    it. In that process `HEALTH` has never run a check, so the live
+    registry is empty and this function returned `None` unconditionally
+    -- meaning approving a run in which a source was offline produced a
+    SIGNED, clinician-facing PDF with the caveat silently dropped. Same
+    failure, and the same fix, as `qc_metrics` on
+    `report/json_builder.py::JSONResultBuilder`: a caveat in the
+    document survives, an argument passed once does not.
 
     IndiGenomes no longer appears here as of 2026-08-08: it's retired
     from GEPER's active query path (see `config.py::IndiGenomesConfig`'s
@@ -1033,15 +1073,38 @@ def _offline_sources_caveat_text() -> Optional[str]:
     here, so this caveat mechanism naturally stops mentioning it
     without needing a special case.
     """
-    offline = HEALTH.offline_services()
-    if not offline:
+    snapshot = (document or {}).get("service_health") or []
+    if snapshot:
+        offline = [s.get("service") for s in snapshot if s.get("startup_status") == ServiceStatus.OFFLINE.value]
+        degraded = [s for s in snapshot if s.get("failure_count") and s.get("service") not in offline]
+    else:
+        # Legacy document (no `service_health` key) or a caller that
+        # passed nothing: fall back to exactly the previous behaviour.
+        offline = HEALTH.offline_services()
+        degraded = []
+
+    if not offline and not degraded:
         return None
-    return (
-        "The following data source(s) were unreachable during this analysis run and were not queried for "
-        "any variant in this report: " + ", ".join(offline) + '. Any finding reported as "not evaluated" '
-        "or lacking data from these sources reflects a data-collection gap for this run, not a confirmed "
-        "absence -- it should not be treated as a negative result."
-    )
+
+    parts: List[str] = []
+    if offline:
+        parts.append(
+            "The following data source(s) were unreachable during this analysis run and were not queried for "
+            "any variant in this report: " + ", ".join(offline) + '. Any finding reported as "not evaluated" '
+            "or lacking data from these sources reflects a data-collection gap for this run, not a confirmed "
+            "absence -- it should not be treated as a negative result."
+        )
+    if degraded:
+        detail = ", ".join(f"{s.get('service')} ({s.get('failure_count')} failure(s))" for s in degraded)
+        parts.append(
+            "The following data source(s) failed at least once during this run and were retried: "
+            + detail
+            + ". A retry may have succeeded, so evidence from these sources may be complete, partial, or "
+            "absent, and this report cannot distinguish which. Any finding that depends on them and is "
+            "reported as absent, not evaluated, or not found should be read as possibly reflecting that "
+            "failure rather than a confirmed negative."
+        )
+    return " ".join(parts)
 
 
 def _variant_locus(variant_result: Dict[str, Any]) -> str:

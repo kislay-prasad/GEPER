@@ -345,7 +345,7 @@ class ReportGenerator:
                 v = variant_result.get("variant") or {}
                 locus = f"{v.get('chrom')}:{v.get('pos')} {v.get('ref')}>{v.get('alt')}"
                 attention.append(f"Finding {idx} ({locus}): {'; '.join(flags)}")
-        offline_caveat = _offline_sources_caveat_text()
+        offline_caveat = _offline_sources_caveat_text(json_document)
         if offline_caveat:
             attention.append(offline_caveat)
 

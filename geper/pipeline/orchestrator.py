@@ -101,6 +101,7 @@ from report.json_builder import JSONResultBuilder, build_variant_result
 from report.summary import _parse_patient_meta, _parse_qc_metrics, generate_pdf
 from report.summary_short import generate_short_pdf
 from report.report_generator import ReportGenerator
+from utils.service_health import HEALTH
 from utils.exceptions import (
     AssemblyMismatchError,
     ExternalAPIError,
@@ -790,6 +791,12 @@ class GeperPipeline:
             code_version=self.geper_code_version,
             model_checkpoints=self.model_checkpoints,
             patient_consent=patient_consent,
+            # Live reference, snapshotted inside build() -- see
+            # JSONResultBuilder.service_health_registry. Without this the
+            # run document cannot say that a source failed and recovered,
+            # because a handled failure never reaches any variant's
+            # `errors` list.
+            service_health_registry=HEALTH,
             # Parsed once here and stored on the document, so a later
             # re-render (review/signoff.py's approve()/override()) sees
             # the same QC this run observed instead of falling back to
@@ -827,6 +834,7 @@ class GeperPipeline:
                     code_version=self.geper_code_version,
                     model_checkpoints=self.model_checkpoints,
                     patient_consent=patient_consent,
+                    service_health_registry=HEALTH,
                 )
                 completed_keys = set()
                 stats = {"processed": 0, "success": 0, "skipped": 0, "out_of_scope": 0, "failed": 0}

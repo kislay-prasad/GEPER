@@ -1682,7 +1682,7 @@ def _build_clinician_summary_flowables(
         attention_lines.append(
             "Data-source version not determinable for cited evidence from: " + ", ".join(sorted(gap_sources)) + "."
         )
-    offline_caveat = _offline_sources_caveat_text()
+    offline_caveat = _offline_sources_caveat_text(document)
     if offline_caveat:
         attention_lines.append(offline_caveat)
 

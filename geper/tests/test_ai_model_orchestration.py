@@ -61,108 +61,193 @@ class TestBuildAIModelStatusCoversEveryModel(unittest.TestCase):
 
 class TestDNAContextModelStatus(unittest.TestCase):
     def test_used_when_routed_and_result_present(self):
-        status = build_ai_model_status(**_base_kwargs(
-            dna_models_used=["hyenadna"],
-            dna_model_results={"hyenadna": {"embedding_mean": [0.1, 0.2]}},
-            model_availability={"hyenadna": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                dna_models_used=["hyenadna"],
+                dna_model_results={"hyenadna": {"embedding_mean": [0.1, 0.2]}},
+                model_availability={"hyenadna": True},
+            )
+        )
         self.assertEqual(status["hyenadna"]["status"], USED)
 
     def test_disabled_when_unavailable(self):
-        status = build_ai_model_status(**_base_kwargs(
-            model_availability={"evo2": False},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                model_availability={"evo2": False},
+            )
+        )
         self.assertEqual(status["evo2"]["status"], DISABLED)
 
     def test_failed_when_stage_error_recorded(self):
-        status = build_ai_model_status(**_base_kwargs(
-            model_availability={"hyenadna": True},
-            model_stage_errors={"hyenadna": "CUDA out of memory"},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                model_availability={"hyenadna": True},
+                model_stage_errors={"hyenadna": "CUDA out of memory"},
+            )
+        )
         self.assertEqual(status["hyenadna"]["status"], FAILED)
         self.assertIn("CUDA", status["hyenadna"]["reason"])
 
     def test_skipped_when_available_but_not_routed(self):
-        status = build_ai_model_status(**_base_kwargs(
-            model_availability={"evo2": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                model_availability={"evo2": True},
+            )
+        )
         self.assertEqual(status["evo2"]["status"], SKIPPED)
 
 
 class TestRnaEsm2AlphamissenseMmspliceStatus(unittest.TestCase):
     def test_rna_fm_used(self):
-        status = build_ai_model_status(**_base_kwargs(
-            rna_result={"skipped": False, "embedding_mean": [0.1]},
-            model_availability={"rna_fm": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                rna_result={"skipped": False, "embedding_mean": [0.1]},
+                model_availability={"rna_fm": True},
+            )
+        )
         self.assertEqual(status["rna_fm"]["status"], USED)
 
     def test_esm2_used(self):
-        status = build_ai_model_status(**_base_kwargs(
-            protein_result={"skipped": False, "esm2": {"embedding_mean": [0.1]}},
-            model_availability={"esm2": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                protein_result={"skipped": False, "esm2": {"embedding_mean": [0.1]}},
+                model_availability={"esm2": True},
+            )
+        )
         self.assertEqual(status["esm2"]["status"], USED)
 
     def test_alphamissense_used(self):
-        status = build_ai_model_status(**_base_kwargs(
-            alphamissense_result={"skipped": False, "score": 0.9},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                alphamissense_result={"skipped": False, "score": 0.9},
+            )
+        )
         self.assertEqual(status["alphamissense"]["status"], USED)
 
     def test_mmsplice_used(self):
-        status = build_ai_model_status(**_base_kwargs(
-            mmsplice_result={"supported": True, "predicted": True, "exon_skipping": 0.2},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                mmsplice_result={"supported": True, "predicted": True, "exon_skipping": 0.2},
+            )
+        )
         self.assertEqual(status["mmsplice"]["status"], USED)
+
+
+class TestAlphamissenseDisabledVsSkippedReason(unittest.TestCase):
+    """Finding 2 (2026-08-29): DISABLED and SKIPPED carry contradictory
+    semantics if the DISABLED branch is allowed to show a SKIPPED-style
+    per-variant reason. `_run_alphamissense_stage` (pipeline/orchestrator.py)
+    checks missense-eligibility *before* model availability, so for a
+    non-eligible variant `alphamissense_result["reason"]` is scoped to that
+    variant ("...not an eligible missense substitution...") even when the
+    model is unavailable for the whole run. status.py must not let that
+    variant-scoped reason surface under a DISABLED label."""
+
+    def test_disabled_with_variant_applicability_reason_still_shows_unavailability_cause(self):
+        """The exact regression shape: model unavailable AND this
+        particular variant would also have been ineligible -- the reason
+        shown must be about the model being unavailable, not about this
+        variant's eligibility."""
+        status = build_ai_model_status(
+            **_base_kwargs(
+                alphamissense_result={
+                    "skipped": True,
+                    "reason": "variant is not an eligible missense substitution "
+                    "(synonymous, nonsense, frameshift, structural, non-coding, "
+                    "or undeterminable-consequence variants are never routed to "
+                    "AlphaMissense)",
+                },
+                model_availability={"alphamissense": False},
+            )
+        )
+        self.assertEqual(status["alphamissense"]["status"], DISABLED)
+        reason = status["alphamissense"]["reason"]
+        self.assertIn("not installed", reason)
+        self.assertNotIn("eligible missense substitution", reason)
+
+    def test_disabled_reason_preserved_when_result_already_names_unavailability(self):
+        status = build_ai_model_status(
+            **_base_kwargs(
+                alphamissense_result={"skipped": True, "reason": "AlphaMissense not available in this environment"},
+                model_availability={"alphamissense": False},
+            )
+        )
+        self.assertEqual(status["alphamissense"]["status"], DISABLED)
+        self.assertIn("not available", status["alphamissense"]["reason"])
+
+    def test_skipped_not_disabled_when_model_available_but_variant_ineligible(self):
+        """Control: the model IS available this run, this variant just
+        isn't eligible -- must stay SKIPPED with the per-variant reason,
+        unaffected by the DISABLED-branch fix above."""
+        status = build_ai_model_status(
+            **_base_kwargs(
+                alphamissense_result={
+                    "skipped": True,
+                    "reason": "variant is not an eligible missense substitution",
+                },
+                model_availability={"alphamissense": True},
+            )
+        )
+        self.assertEqual(status["alphamissense"]["status"], SKIPPED)
+        self.assertIn("eligible missense substitution", status["alphamissense"]["reason"])
 
 
 class TestEnformerBorzoiStatus(unittest.TestCase):
     def test_used_when_in_models_used(self):
-        status = build_ai_model_status(**_base_kwargs(
-            ensemble_result={"models_used": ["enformer", "borzoi"]},
-            plugin_availability={"enformer": True, "borzoi": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                ensemble_result={"models_used": ["enformer", "borzoi"]},
+                plugin_availability={"enformer": True, "borzoi": True},
+            )
+        )
         self.assertEqual(status["enformer"]["status"], USED)
         self.assertEqual(status["borzoi"]["status"], USED)
 
     def test_disabled_when_plugin_unavailable(self):
-        status = build_ai_model_status(**_base_kwargs(
-            ensemble_result={"models_used": []},
-            plugin_availability={"enformer": False, "borzoi": False},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                ensemble_result={"models_used": []},
+                plugin_availability={"enformer": False, "borzoi": False},
+            )
+        )
         self.assertEqual(status["enformer"]["status"], DISABLED)
         self.assertEqual(status["borzoi"]["status"], DISABLED)
 
     def test_failed_when_plugin_failure_recorded_even_though_available(self):
         """The exact case the task called out: a model that COULD have
         run but errored must report Failed, never a silent Skipped."""
-        status = build_ai_model_status(**_base_kwargs(
-            ensemble_result={"models_used": ["borzoi"]},  # enformer absent from the result
-            plugin_availability={"enformer": True, "borzoi": True},
-            plugin_failures={"enformer": "weight download timed out"},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                ensemble_result={"models_used": ["borzoi"]},  # enformer absent from the result
+                plugin_availability={"enformer": True, "borzoi": True},
+                plugin_failures={"enformer": "weight download timed out"},
+            )
+        )
         self.assertEqual(status["enformer"]["status"], FAILED)
         self.assertIn("timed out", status["enformer"]["reason"])
         self.assertEqual(status["borzoi"]["status"], USED)
 
     def test_failed_when_whole_ensemble_stage_errored(self):
-        status = build_ai_model_status(**_base_kwargs(
-            ensemble_result=None,
-            plugin_availability={"enformer": True, "borzoi": True},
-            model_stage_errors={"ai_splicing_ensemble": "unexpected exception"},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                ensemble_result=None,
+                plugin_availability={"enformer": True, "borzoi": True},
+                model_stage_errors={"ai_splicing_ensemble": "unexpected exception"},
+            )
+        )
         self.assertEqual(status["enformer"]["status"], FAILED)
         self.assertEqual(status["borzoi"]["status"], FAILED)
 
 
 class TestRenderStatusTableLines(unittest.TestCase):
     def test_used_models_rendered_as_checkmarks(self):
-        status = build_ai_model_status(**_base_kwargs(
-            dna_models_used=["hyenadna"],
-            dna_model_results={"hyenadna": {"embedding_mean": [0.1]}},
-            model_availability={"hyenadna": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                dna_models_used=["hyenadna"],
+                dna_model_results={"hyenadna": {"embedding_mean": [0.1]}},
+                model_availability={"hyenadna": True},
+            )
+        )
         lines = render_status_table_lines(status)
         text = "\n".join(lines)
         self.assertIn("HyenaDNA", text)
@@ -191,9 +276,15 @@ class TestModelManagerLastInferenceErrors(unittest.TestCase):
             @classmethod
             def metadata(cls):
                 from pipeline.models.base import ModelMetadata
+
                 return ModelMetadata(
-                    name="fake", version="1", source="n/a", license_name="MIT",
-                    license_url="n/a", commercial_use_allowed=True, license_notes="n/a",
+                    name="fake",
+                    version="1",
+                    source="n/a",
+                    license_name="MIT",
+                    license_url="n/a",
+                    commercial_use_allowed=True,
+                    license_notes="n/a",
                 )
 
             @classmethod
@@ -366,11 +457,13 @@ class TestJsonBuilderAndReportGeneratorAIModelStatus(unittest.TestCase):
     def test_report_generator_renders_status_table_section(self):
         from report.report_generator import ReportGenerator
 
-        status = build_ai_model_status(**_base_kwargs(
-            dna_models_used=["hyenadna"],
-            dna_model_results={"hyenadna": {"embedding_mean": [0.1]}},
-            model_availability={"hyenadna": True},
-        ))
+        status = build_ai_model_status(
+            **_base_kwargs(
+                dna_models_used=["hyenadna"],
+                dna_model_results={"hyenadna": {"embedding_mean": [0.1]}},
+                model_availability={"hyenadna": True},
+            )
+        )
         lines = ReportGenerator._render_ai_model_status(status)
         text = "\n".join(lines)
         self.assertIn("### AI Models", text)

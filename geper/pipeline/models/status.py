@@ -175,8 +175,20 @@ def _alphamissense_status(
     reason = alphamissense_result.get("reason", "")
     if "alphamissense" in model_stage_errors:
         return _entry(FAILED, model_stage_errors["alphamissense"])
-    if not model_availability.get("alphamissense", True) or "not available" in reason:
-        return _entry(DISABLED, reason or "AlphaMissense is not available in this environment.")
+    if not model_availability.get("alphamissense", True):
+        # DISABLED means AlphaMissense itself is unavailable this run -- true
+        # for every variant, regardless of what THIS variant's own `reason`
+        # says. `_run_alphamissense_stage` checks missense-eligibility
+        # *before* availability, so a non-eligible variant's `reason` is a
+        # per-variant applicability message ("variant is not an eligible
+        # missense substitution...") that must never be shown under a
+        # DISABLED label -- that's SKIPPED semantics leaking into DISABLED.
+        # Only trust `reason` here when it already names unavailability.
+        if "not available" in reason:
+            return _entry(DISABLED, reason)
+        return _entry(DISABLED, "AlphaMissense is not available in this environment (not installed).")
+    if "not available" in reason:
+        return _entry(DISABLED, reason)
     return _entry(
         SKIPPED,
         reason or "Variant is not an eligible missense substitution.",

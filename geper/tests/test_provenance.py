@@ -24,6 +24,7 @@ from pipeline.provenance import (
     capture_blast_local_tool_versions,
     capture_ensembl_release,
     compute_file_sha256,
+    finalize_model_checkpoint_provenance,
     get_geper_code_version,
     get_model_checkpoint_identifiers,
     get_runtime_environment_provenance,
@@ -182,6 +183,69 @@ class TestCodeVersionAndModelCheckpoints(unittest.TestCase):
         self.assertIn("esm2", checkpoints)
         self.assertIn("rna_fm", checkpoints)
         self.assertIn("evo2_variant", checkpoints)
+
+    def test_real_default_config_already_includes_the_config_disabled_splicebert(self):
+        """Finding 1 (2026-08-29), proven against REAL config, no mocking:
+        `GEPER_ENABLE_SPLICEBERT` defaults to "false" (config.py's
+        SplicingConfig -- every other splicing/regulatory flag defaults
+        true) -- so on an unmodified checkout, SpliceBERT is genuinely
+        config-disabled right now. It must still appear."""
+        from config import CONFIG
+
+        self.assertFalse(
+            CONFIG.splicing.ENABLE_SPLICEBERT,
+            "This test's premise (SpliceBERT disabled by default) no longer holds -- "
+            "check config.py's SplicingConfig default before trusting this test either way.",
+        )
+        checkpoints = get_model_checkpoint_identifiers()
+        self.assertIn("splicebert", checkpoints)
+
+    def test_config_disabled_models_all_still_appear(self):
+        """The exact regression shape: every optionally-gated model
+        (mmsplice, alphamissense, spliceformer, splicebert, enformer,
+        borzoi) explicitly disabled at once -- previously NONE of these
+        six keys would exist in the returned dict at all."""
+        fake_config = SimpleNamespace(
+            models=SimpleNamespace(
+                HYENADNA_CHECKPOINT_DIR="dir",
+                HYENADNA_MODEL_NAME="name",
+                RNA_FM="rna_fm_id",
+                ESM2="esm2_id",
+                EVO2_VARIANT="evo2_id",
+            ),
+            mmsplice=SimpleNamespace(ENABLED=False),
+            alphamissense=SimpleNamespace(ENABLED=False),
+            splicing=SimpleNamespace(
+                ENABLE_SPLICEFORMER=False,
+                ENABLE_SPLICEBERT=False,
+                ENABLE_ENFORMER=False,
+                ENABLE_BORZOI=False,
+            ),
+        )
+        with mock.patch("pipeline.provenance.CONFIG", fake_config):
+            checkpoints = get_model_checkpoint_identifiers()
+        for key in ("mmsplice", "alphamissense_catalogue_source", "spliceformer", "splicebert", "enformer", "borzoi"):
+            self.assertIn(key, checkpoints, f"{key} missing from checkpoint identifiers when config-disabled")
+
+    def test_finalize_reports_config_disabled_model_as_disabled_not_absent(self):
+        """End-to-end through `finalize_model_checkpoint_provenance`: once
+        the identifier is present (the fix above) and a run-level status
+        was tracked for it (`pipeline.models.status.rollup_run_status`,
+        exercised elsewhere), the existing enrichment already resolves it
+        to DISABLED with a reason -- nothing in this function needed to
+        change, only the upstream omission that starved it of an entry
+        to enrich in the first place."""
+        identifiers = {"enformer": "enformer-pytorch (see pipeline/models/ensemble.py)"}
+        run_status = {
+            "enformer": {
+                "status": "disabled",
+                "reason": "Disabled by default (CONFIG.splicing.ENABLE_ENFORMER), or its optional pip package is not installed.",
+            }
+        }
+        enriched = finalize_model_checkpoint_provenance(identifiers, run_status)
+        self.assertEqual(enriched["enformer"]["status"], "disabled")
+        self.assertEqual(enriched["enformer"]["identifier"], "enformer-pytorch (see pipeline/models/ensemble.py)")
+        self.assertIn("CONFIG.splicing.ENABLE_ENFORMER", enriched["enformer"]["reason"])
 
 
 class TestRuntimeEnvironmentProvenance(unittest.TestCase):

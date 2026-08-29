@@ -547,32 +547,35 @@ def get_model_checkpoint_identifiers() -> Dict[str, str]:
     tracks (`config.py::ModelConfig` plus the splicing-plugin config
     flags) -- purely reads existing config, invokes no model loading or
     network I/O, safe to call unconditionally at pipeline startup.
-    Only lists a model when it's actually configured/enabled, so this
-    doubles as a record of which models this run's provenance covers.
+
+    Lists every model GEPER knows about, config-disabled ones included
+    (Finding 1, 2026-08-29): a model this deployment's config turned
+    off was still *considered* -- the config made a deliberate choice
+    to disable it, and a reviewer reading the report needs to see that
+    choice, not a silent gap indistinguishable from "this model doesn't
+    exist here". `finalize_model_checkpoint_provenance` (below) already
+    resolves each of these to the correct USED/DISABLED/SKIPPED/FAILED
+    status once the run has processed at least one variant -- omitting
+    the identifier here pre-empted that machinery from ever running for
+    a config-disabled model, dropping it from `model_checkpoints`
+    entirely rather than reporting it as disabled.
     """
     mc = CONFIG.models
-    identifiers: Dict[str, str] = {
+    return {
         "hyenadna_checkpoint_dir": mc.HYENADNA_CHECKPOINT_DIR,
         "hyenadna_model_name": mc.HYENADNA_MODEL_NAME,
         "rna_fm": mc.RNA_FM,
         "esm2": mc.ESM2,
         "evo2_variant": mc.EVO2_VARIANT,
-    }
-    if CONFIG.mmsplice.ENABLED:
-        identifiers["mmsplice"] = "mmsplice==2.4.0 (pinned, see requirements.txt)"
-    if CONFIG.alphamissense.ENABLED:
-        identifiers["alphamissense_catalogue_source"] = (
+        "mmsplice": "mmsplice==2.4.0 (pinned, see requirements.txt)",
+        "alphamissense_catalogue_source": (
             "see 'AlphaMissense catalogue' in the data-source provenance list, not a model checkpoint"
-        )
-    if getattr(CONFIG.splicing, "ENABLE_SPLICEFORMER", False):
-        identifiers["spliceformer"] = "spliceformer (see pipeline/models/spliceformer_plugin.py for checkpoint URL)"
-    if getattr(CONFIG.splicing, "ENABLE_SPLICEBERT", False):
-        identifiers["splicebert"] = "splicebert (HuggingFace BertForMaskedLM, see pipeline/models/splicebert_plugin.py)"
-    if getattr(CONFIG.splicing, "ENABLE_ENFORMER", False):
-        identifiers["enformer"] = "enformer-pytorch (see pipeline/models/ensemble.py)"
-    if getattr(CONFIG.splicing, "ENABLE_BORZOI", False):
-        identifiers["borzoi"] = "borzoi-pytorch (see pipeline/models/ensemble.py)"
-    return identifiers
+        ),
+        "spliceformer": "spliceformer (see pipeline/models/spliceformer_plugin.py for checkpoint URL)",
+        "splicebert": "splicebert (HuggingFace BertForMaskedLM, see pipeline/models/splicebert_plugin.py)",
+        "enformer": "enformer-pytorch (see pipeline/models/ensemble.py)",
+        "borzoi": "borzoi-pytorch (see pipeline/models/ensemble.py)",
+    }
 
 
 # Maps each key `get_model_checkpoint_identifiers()` uses onto the

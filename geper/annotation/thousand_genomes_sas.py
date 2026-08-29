@@ -324,18 +324,29 @@ class ThousandGenomesSASLookup:
             if not rsid:
                 rsid = _resolve_rsid(variant.chrom, variant.pos, variant.ref, variant.alt)
             if not rsid:
-                return {"skipped": False, "found": False, "rsid": None}
+                return {
+                    "skipped": False,
+                    "found": False,
+                    "rsid": None,
+                    "reason": "no dbSNP rsID could be resolved for this position/allele in Ensembl",
+                }
 
             frequencies = _fetch_population_frequencies(rsid, variant.alt)
         except ExternalAPIError as exc:
             logger.warning(f"1000 Genomes SAS lookup failed for {variant.chrom}:{variant.pos}: {exc}")
-            return {"skipped": False, "found": False, "error": str(exc)}
+            return {"skipped": False, "found": False, "error": str(exc), "reason": str(exc)}
 
         pooled = frequencies.get(_POOLED_CODE)
         sub_populations = {code: frequencies[code] for code in _SUB_POPULATION_CODES if code in frequencies}
 
         if pooled is None and not sub_populations:
-            return {"skipped": False, "found": False, "rsid": rsid}
+            return {
+                "skipped": False,
+                "found": False,
+                "rsid": rsid,
+                "reason": f"rsID {rsid} resolved but has no 1000 Genomes SAS/sub-population "
+                "allele frequency recorded (monomorphic or unobserved in this cohort)",
+            }
 
         return {
             "skipped": False,

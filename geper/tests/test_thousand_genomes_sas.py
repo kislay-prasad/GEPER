@@ -202,6 +202,38 @@ class TestQueryVariantEndToEnd(unittest.TestCase):
             result = m.ThousandGenomesSASLookup().query_variant(_variant(), assembly="GRCh38", rsid_hint="rs699")
         self.assertFalse(result["found"])
 
+    def test_every_found_false_shape_carries_a_reason_explaining_the_absence(self):
+        """Finding 6 (dispatched 2026-08-29): before this fix, every bare
+        `found=False` case returned NOTHING explaining why -- unlike
+        `clinvar_codon_matches`/`ps1_pm5.lookup`, gnomAD, HPO, Orphanet,
+        etc., which all populate a `reason` string on an empty result.
+        Confirmed live (RED, against the pre-fix module, quoted verbatim):
+
+            CASE 1 (no rsID resolved at all):
+                {'skipped': False, 'found': False, 'rsid': None}
+            CASE 2 (rsID resolved, zero SAS/sub-population frequency rows):
+                {'skipped': False, 'found': False, 'rsid': 'rs699'}
+
+        Neither carries a `reason` or `error` key -- a caller reading this
+        dict cannot tell "genuinely absent from 1000 Genomes" apart from
+        any other silent gap. GREEN, below: both shapes now carry `reason`.
+        """
+        _patch_config()
+
+        with self.subTest("no rsID resolved"):
+            with mock.patch("requests.get", return_value=_fake_response([])):
+                result = m.ThousandGenomesSASLookup().query_variant(_variant(), assembly="GRCh38")
+            self.assertFalse(result["found"])
+            self.assertIn("reason", result)
+            self.assertTrue(result["reason"])
+
+        with self.subTest("rsID resolved, no population data"):
+            with mock.patch("requests.get", return_value=_fake_response({"populations": []})):
+                result = m.ThousandGenomesSASLookup().query_variant(_variant(), assembly="GRCh38", rsid_hint="rs699")
+            self.assertFalse(result["found"])
+            self.assertIn("reason", result)
+            self.assertIn("rs699", result["reason"])
+
     def test_query_failure_after_retries_is_reported_not_hidden(self):
         import requests as real_requests
 

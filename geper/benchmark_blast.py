@@ -53,6 +53,7 @@ if _SCRIPT_DIR not in sys.path:
 os.environ.setdefault("GEPER_CACHE_DIR", tempfile.mkdtemp(prefix="geper_bench_cache_"))
 
 import _fake_heavy_deps  # noqa: E402
+
 _fake_heavy_deps.install()
 
 # Simulated per-submission NCBI queue latency. Real remote BLAST is
@@ -117,7 +118,7 @@ def _install_common_mocks():
     patches.append(mock.patch.object(BaseGenomicModel, "_verify_materialized", _fake_verify_materialized))
 
     def _fake_build_context(self, variant, flank_size=None):
-        flank = flank_size or 500
+        flank = flank_size if flank_size is not None else 500
         # Sequence content derived from the variant's own position so
         # different variants BLAST as genuinely distinct sequences
         # (exercising real dedup/concurrency, not an accidental
@@ -145,13 +146,15 @@ def _install_common_mocks():
     )
     patches.append(
         mock.patch.object(
-            ClinVarClient, "query_variant",
+            ClinVarClient,
+            "query_variant",
             lambda self, variant, rsid=None, assembly=None: {"query": None, "found": False},
         )
     )
     patches.append(
         mock.patch.object(
-            DbSNPClient, "lookup_variant",
+            DbSNPClient,
+            "lookup_variant",
             lambda self, variant, assembly=None: {"rsid": None, "found": False},
         )
     )
@@ -194,16 +197,16 @@ def main() -> int:
     blast_patch.start()
     try:
         print("=" * 78)
-        print(f"BLAST performance benchmark -- {n_variants} variants, "
-              f"simulated NCBI latency {_FAKE_REMOTE_LATENCY_SECS}s/submission")
+        print(
+            f"BLAST performance benchmark -- {n_variants} variants, "
+            f"simulated NCBI latency {_FAKE_REMOTE_LATENCY_SECS}s/submission"
+        )
         print("=" * 78)
 
         # --- BEFORE: no prefetch, no disk cache (original behavior) --------
         before_dir = tempfile.mkdtemp(prefix="geper_bench_before_")
         _blast_call_count["n"] = 0
-        before_wall, before_profiler = _run_pipeline(
-            vcf_path, before_dir, prefetch=False, disk_cache=False
-        )
+        before_wall, before_profiler = _run_pipeline(vcf_path, before_dir, prefetch=False, disk_cache=False)
         before_blast_calls = _blast_call_count["n"]
         before_blast_secs = before_profiler.total_secs_by_stage().get("blast", 0.0)
         results["BEFORE (serial, no cache)"] = {
@@ -211,7 +214,7 @@ def main() -> int:
             "real_blast_calls": before_blast_calls,
             "blast_stage_secs": before_blast_secs,
         }
-        print(f"\nBEFORE (serial BLAST, no disk cache):")
+        print("\nBEFORE (serial BLAST, no disk cache):")
         print(f"  Wall-clock run() time : {before_wall:.2f}s")
         print(f"  Real BLAST submissions: {before_blast_calls}")
         print(f"  Time attributed to 'blast' stage: {before_blast_secs:.2f}s")
@@ -219,20 +222,17 @@ def main() -> int:
         # --- AFTER: batch/concurrent prefetch + disk cache ------------------
         after_dir = tempfile.mkdtemp(prefix="geper_bench_after_")
         _blast_call_count["n"] = 0
-        after_wall, after_profiler = _run_pipeline(
-            vcf_path, after_dir, prefetch=True, disk_cache=True
-        )
+        after_wall, after_profiler = _run_pipeline(vcf_path, after_dir, prefetch=True, disk_cache=True)
         after_blast_calls = _blast_call_count["n"]
-        after_blast_secs = (
-            after_profiler.total_secs_by_stage().get("blast", 0.0)
-            + after_profiler.total_secs_by_stage().get("blast_prefetch", 0.0)
-        )
+        after_blast_secs = after_profiler.total_secs_by_stage().get(
+            "blast", 0.0
+        ) + after_profiler.total_secs_by_stage().get("blast_prefetch", 0.0)
         results["AFTER (concurrent prefetch + disk cache)"] = {
             "wall_clock_secs": after_wall,
             "real_blast_calls": after_blast_calls,
             "blast_stage_secs": after_blast_secs,
         }
-        print(f"\nAFTER (concurrent BLAST prefetch, disk cache ENABLED):")
+        print("\nAFTER (concurrent BLAST prefetch, disk cache ENABLED):")
         print(f"  Wall-clock run() time : {after_wall:.2f}s")
         print(f"  Real BLAST submissions: {after_blast_calls}")
         print(f"  Time attributed to BLAST (prefetch + stage): {after_blast_secs:.2f}s")
@@ -244,20 +244,17 @@ def main() -> int:
         # "AFTER" run above, so this pass should make ~zero real BLAST
         # calls at all.
         _blast_call_count["n"] = 0
-        rerun_wall, rerun_profiler = _run_pipeline(
-            vcf_path, after_dir, prefetch=True, disk_cache=True
-        )
+        rerun_wall, rerun_profiler = _run_pipeline(vcf_path, after_dir, prefetch=True, disk_cache=True)
         rerun_blast_calls = _blast_call_count["n"]
-        rerun_blast_secs = (
-            rerun_profiler.total_secs_by_stage().get("blast", 0.0)
-            + rerun_profiler.total_secs_by_stage().get("blast_prefetch", 0.0)
-        )
+        rerun_blast_secs = rerun_profiler.total_secs_by_stage().get(
+            "blast", 0.0
+        ) + rerun_profiler.total_secs_by_stage().get("blast_prefetch", 0.0)
         results["AFTER, RERUN (disk cache reused, 0 new BLAST calls expected)"] = {
             "wall_clock_secs": rerun_wall,
             "real_blast_calls": rerun_blast_calls,
             "blast_stage_secs": rerun_blast_secs,
         }
-        print(f"\nAFTER, RERUN (same VCF, reusing the on-disk BLAST cache):")
+        print("\nAFTER, RERUN (same VCF, reusing the on-disk BLAST cache):")
         print(f"  Wall-clock run() time : {rerun_wall:.2f}s")
         print(f"  Real BLAST submissions: {rerun_blast_calls} (expected 0)")
         print(f"  Time attributed to BLAST (prefetch + stage): {rerun_blast_secs:.2f}s")
@@ -277,13 +274,17 @@ def main() -> int:
     print(header)
     print("-" * len(header))
     for name, row in results.items():
-        print(f"{name:<55} {row['wall_clock_secs']:>10.2f} {row['real_blast_calls']:>12} {row['blast_stage_secs']:>16.2f}")
+        print(
+            f"{name:<55} {row['wall_clock_secs']:>10.2f} {row['real_blast_calls']:>12} {row['blast_stage_secs']:>16.2f}"
+        )
 
     before = results["BEFORE (serial, no cache)"]
     after = results["AFTER (concurrent prefetch + disk cache)"]
     rerun = results["AFTER, RERUN (disk cache reused, 0 new BLAST calls expected)"]
 
-    speedup_first_run = before["wall_clock_secs"] / after["wall_clock_secs"] if after["wall_clock_secs"] else float("inf")
+    speedup_first_run = (
+        before["wall_clock_secs"] / after["wall_clock_secs"] if after["wall_clock_secs"] else float("inf")
+    )
     speedup_rerun = before["wall_clock_secs"] / rerun["wall_clock_secs"] if rerun["wall_clock_secs"] else float("inf")
 
     print()
@@ -297,8 +298,11 @@ def main() -> int:
         and rerun["wall_clock_secs"] < after["wall_clock_secs"]
     )
     print()
-    print("Correctness check (same distinct-sequence BLAST count before/after,"
-          " 0 real calls on rerun, monotonically faster):", "PASSED" if ok else "FAILED")
+    print(
+        "Correctness check (same distinct-sequence BLAST count before/after,"
+        " 0 real calls on rerun, monotonically faster):",
+        "PASSED" if ok else "FAILED",
+    )
     return 0 if ok else 1
 
 

@@ -241,7 +241,7 @@ class CompositeUniProtProvider:
             dataset_path=CONFIG.uniprot.LOCAL_DATASET_FILE or None
         )
         self.api_provider = api_provider or LiveAPIUniProtProvider()
-        self.max_concurrent = max_concurrent or 8
+        self.max_concurrent = max_concurrent if max_concurrent is not None else 8
 
     def query(self, gene_symbol: str) -> UniProtAnnotation:
         if CONFIG.uniprot.OFFLINE_MODE:

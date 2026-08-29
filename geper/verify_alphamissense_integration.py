@@ -108,8 +108,14 @@ def main() -> int:
 
     def _variant(chrom="1", pos=100, ref="A", alt="T", variant_type="SNV", info=None):
         return Variant(
-            chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt,
-            qual=None, filter_status=".", info=info or {},
+            chrom=chrom,
+            pos=pos,
+            variant_id=".",
+            ref=ref,
+            alt=alt,
+            qual=None,
+            filter_status=".",
+            info=info or {},
         )
 
     # Real, live-fetched TP53/BRCA1 transcript fixtures (same ones
@@ -141,13 +147,26 @@ def main() -> int:
         # Real: BRCA1 codon 50, K->* (nonsense).
         ("nonsense (real BRCA1 codon 50 K->*)", _variant("17", 43106520, "T", "A"), _brca1_result(), False),
         # Real: TP53 c.792_794del (p.Leu265del), in-frame deletion.
-        ("in-frame indel (real TP53 c.792_794del)",
-         _variant("17", 7673826, "AGTAG", "AG", variant_type="deletion"), _tp53_result(), False),
+        (
+            "in-frame indel (real TP53 c.792_794del)",
+            _variant("17", 7673826, "AGTAG", "AG", variant_type="deletion"),
+            _tp53_result(),
+            False,
+        ),
         # Real: frameshift deletion at the same TP53 locus.
-        ("frameshift (length changes)",
-         _variant("17", 7673826, "AG", "A", variant_type="deletion"), _tp53_result(), False),
+        (
+            "frameshift (length changes)",
+            _variant("17", 7673826, "AG", "A", variant_type="deletion"),
+            _tp53_result(),
+            False,
+        ),
         ("undetermined consequence (no transcript data)", _variant("17", 7674221, "G", "A"), None, False),
-        ("non-SNV variant type (insertion)", _variant(ref="A", alt="ATG", variant_type="insertion"), _tp53_result(), False),
+        (
+            "non-SNV variant type (insertion)",
+            _variant(ref="A", alt="ATG", variant_type="insertion"),
+            _tp53_result(),
+            False,
+        ),
         ("symbolic ALT allele", _variant(alt="<DEL>"), _tp53_result(), False),
         ("SVTYPE-flagged record", _variant(info={"SVTYPE": "DEL"}), _tp53_result(), False),
     ]
@@ -161,11 +180,13 @@ def main() -> int:
         print(f"  [{status}] {label}: expected={expected}, got={actual}")
 
     if part1_ok:
-        print("\nPART 1: PASSED -- missense eligibility, classified from real "
-              "transcript-CDS-frame data, correctly includes only clean, "
-              "single-residue SNV substitutions and excludes synonymous, "
-              "nonsense, frameshift/in-frame-indel, symbolic/structural, "
-              "non-SNV, and undetermined-consequence cases.\n")
+        print(
+            "\nPART 1: PASSED -- missense eligibility, classified from real "
+            "transcript-CDS-frame data, correctly includes only clean, "
+            "single-residue SNV substitutions and excludes synonymous, "
+            "nonsense, frameshift/in-frame-indel, symbolic/structural, "
+            "non-SNV, and undetermined-consequence cases.\n"
+        )
     else:
         print("\nPART 1: FAILED\n")
         all_passed = False
@@ -193,7 +214,8 @@ def main() -> int:
         ModelCache.clear()
 
         with mock.patch.dict(
-            "os.environ", {"GEPER_ALPHAMISSENSE_HG19_LOCAL": AM_FIXTURE_HG19, "GEPER_ALPHAMISSENSE_HG38_LOCAL": AM_FIXTURE_HG38}
+            "os.environ",
+            {"GEPER_ALPHAMISSENSE_HG19_LOCAL": AM_FIXTURE_HG19, "GEPER_ALPHAMISSENSE_HG38_LOCAL": AM_FIXTURE_HG38},
         ):
             # config.py reads os.environ at import/dataclass-default time,
             # so rebuild CONFIG.alphamissense with the env override applied
@@ -201,10 +223,12 @@ def main() -> int:
             # env var before starting the process would experience.
             import importlib
             import config as config_module
+
             importlib.reload(config_module)
             from config import CONFIG as RELOADED_CONFIG
 
             import models.alphamissense as am_module
+
             am_module.CONFIG = RELOADED_CONFIG
 
             part2_ok = True
@@ -218,17 +242,18 @@ def main() -> int:
                 # A real hit -- F5 rs6025 (Factor V Leiden), GRCh37.
                 hit = model.predict("1:169519049:T:C", assembly="GRCh37")
                 hit_ok = hit.get("found") is True and hit.get("am_class") == "likely_pathogenic"
-                print(f"  known missense hit (F5 rs6025): found={hit.get('found')}, "
-                      f"am_class={hit.get('am_class')}, "
-                      f"am_pathogenicity={hit.get('am_pathogenicity')} "
-                      f"-> {'PASS' if hit_ok else 'FAIL'}")
+                print(
+                    f"  known missense hit (F5 rs6025): found={hit.get('found')}, "
+                    f"am_class={hit.get('am_class')}, "
+                    f"am_pathogenicity={hit.get('am_pathogenicity')} "
+                    f"-> {'PASS' if hit_ok else 'FAIL'}"
+                )
                 part2_ok = part2_ok and hit_ok
 
                 # A real miss -- a position not in the catalogue.
                 miss = model.predict("1:999999999:A:T", assembly="GRCh37")
                 miss_ok = miss.get("found") is False
-                print(f"  no-catalogue-entry lookup: found={miss.get('found')} "
-                      f"-> {'PASS' if miss_ok else 'FAIL'}")
+                print(f"  no-catalogue-entry lookup: found={miss.get('found')} -> {'PASS' if miss_ok else 'FAIL'}")
                 part2_ok = part2_ok and miss_ok
 
                 # Startup-validation dummy key round-trips without raising.
@@ -241,6 +266,7 @@ def main() -> int:
                 # bare/uncaught exception -- keeps the orchestrator's
                 # graceful-degradation contract intact.
                 from utils.exceptions import ModelInferenceError
+
                 try:
                     model.predict("not-a-valid-key")
                     print("  malformed key -> FAIL (no exception raised)")
@@ -252,8 +278,10 @@ def main() -> int:
                 device_ok = str(model.device) == "cpu"
                 precision = model._report_precision()
                 precision_ok = "n/a" in precision.lower()
-                print(f"  device={model.device} ({'PASS' if device_ok else 'FAIL'}), "
-                      f"precision='{precision}' ({'PASS' if precision_ok else 'FAIL'})")
+                print(
+                    f"  device={model.device} ({'PASS' if device_ok else 'FAIL'}), "
+                    f"precision='{precision}' ({'PASS' if precision_ok else 'FAIL'})"
+                )
                 part2_ok = part2_ok and device_ok and precision_ok
 
             except Exception as exc:  # noqa: BLE001
@@ -261,18 +289,22 @@ def main() -> int:
                 part2_ok = False
 
         if part2_ok:
-            print("\nPART 2: PASSED -- real tabix subprocess queries against a real "
-                  "bgzip+tabix-indexed catalogue file resolve correctly, gracefully "
-                  "report not-found, and translate malformed input into "
-                  "ModelInferenceError.\n")
+            print(
+                "\nPART 2: PASSED -- real tabix subprocess queries against a real "
+                "bgzip+tabix-indexed catalogue file resolve correctly, gracefully "
+                "report not-found, and translate malformed input into "
+                "ModelInferenceError.\n"
+            )
         else:
             print("\nPART 2: FAILED\n")
             all_passed = False
 
     # ==================================================================
     print("=" * 78)
-    print("PART 3 -- Integration: full orchestrator run, existing stages "
-          "faked (network-gated, per dry_run_harness.py), AlphaMissense REAL")
+    print(
+        "PART 3 -- Integration: full orchestrator run, existing stages "
+        "faked (network-gated, per dry_run_harness.py), AlphaMissense REAL"
+    )
     print("=" * 78)
 
     from models import MODEL_REGISTRY
@@ -292,9 +324,7 @@ def main() -> int:
             continue  # left real -- this is what we're verifying
         patches.append(mock.patch.object(model_cls, "_load_impl", _fake_load_impl))
         patches.append(mock.patch.object(model_cls, "_infer_impl", _fake_infer_impl))
-    patches.append(
-        mock.patch.object(BaseGenomicModel, "_verify_materialized", _fake_verify_materialized)
-    )
+    patches.append(mock.patch.object(BaseGenomicModel, "_verify_materialized", _fake_verify_materialized))
 
     # Build a context with a REAL, deterministic single-residue missense
     # substitution at the variant position, for every variant in the
@@ -304,7 +334,7 @@ def main() -> int:
     # variant's REF>ALT, changing AAA (Lys) -> AAC (Asn): a clean
     # missense, same length, no stop introduced.
     def _fake_build_context(self, variant, flank_size=None):
-        flank = flank_size or 500
+        flank = flank_size if flank_size is not None else 500
         ref_seq = "ATG" + "AAA" + "CCC" * 100
         alt_seq = "ATG" + "AAC" + "CCC" * 100
         return SequenceContext(
@@ -317,14 +347,17 @@ def main() -> int:
             variant_offset=flank,
         )
 
-    patches.append(
-        mock.patch.object(SequenceContextGenerator, "build_context", _fake_build_context)
-    )
+    patches.append(mock.patch.object(SequenceContextGenerator, "build_context", _fake_build_context))
     patches.append(
         mock.patch.object(
-            BLASTClient, "_search_remote", lambda self, seq, program, database, max_hits: {
-                "mode": "remote", "database": database, "hits": [], "hit_count": 0
-            }
+            BLASTClient,
+            "_search_remote",
+            lambda self, seq, program, database, max_hits: {
+                "mode": "remote",
+                "database": database,
+                "hits": [],
+                "hit_count": 0,
+            },
         )
     )
 
@@ -374,7 +407,7 @@ def main() -> int:
     # is what actually gets verified against real catalogue data).
     _fake_codons = {
         ("1", 169519049): "TTT",  # F5 rs6025: T>C -> CTT (Phe->Leu), missense
-        ("11", 5248232): "TTT",   # HBB rs334: T>A -> ATT (Phe->Ile), missense
+        ("11", 5248232): "TTT",  # HBB rs334: T>A -> ATT (Phe->Ile), missense
         ("12", 112241766): "GGG",  # ALDH2 rs671: G>A -> AGG (Gly->Arg), missense
     }
 
@@ -398,16 +431,20 @@ def main() -> int:
         return {"found": True, "skipped": False, "transcript": transcript}
 
     from pipeline.pvs1.lookup import TranscriptLookup
+
     patches.append(mock.patch.object(TranscriptLookup, "query_variant", _fake_transcript_query))
 
     with mock.patch.dict(
-        "os.environ", {"GEPER_ALPHAMISSENSE_HG19_LOCAL": AM_FIXTURE_HG19, "GEPER_ALPHAMISSENSE_HG38_LOCAL": AM_FIXTURE_HG38}
+        "os.environ",
+        {"GEPER_ALPHAMISSENSE_HG19_LOCAL": AM_FIXTURE_HG19, "GEPER_ALPHAMISSENSE_HG38_LOCAL": AM_FIXTURE_HG38},
     ):
         import importlib
         import config as config_module
+
         importlib.reload(config_module)
         from config import CONFIG as RELOADED_CONFIG
         import models.alphamissense as am_module
+
         am_module.CONFIG = RELOADED_CONFIG
 
         captured_startup_rows: list = []
@@ -421,10 +458,12 @@ def main() -> int:
         try:
             import importlib as _il
             import pipeline.orchestrator as orch_module
+
             _il.reload(orch_module)
 
             startup_patch = mock.patch.object(
-                orch_module.GeperPipeline, "_log_startup_report",
+                orch_module.GeperPipeline,
+                "_log_startup_report",
                 staticmethod(_capture_startup_rows),
             )
             startup_patch.start()
@@ -447,9 +486,11 @@ def main() -> int:
             # equivalent "does the always-on default model still load"
             # smoke test.)
             hyenadna_ok = row_by_name.get("HyenaDNA", {}).get("status") == "PASS"
-            print(f"  (a) HyenaDNA startup status: "
-                  f"{row_by_name.get('HyenaDNA', {}).get('status')} "
-                  f"-> {'PASS' if hyenadna_ok else 'FAIL'}")
+            print(
+                f"  (a) HyenaDNA startup status: "
+                f"{row_by_name.get('HyenaDNA', {}).get('status')} "
+                f"-> {'PASS' if hyenadna_ok else 'FAIL'}"
+            )
             part3_ok = part3_ok and hyenadna_ok
 
             # --- (b) AlphaMissense appears in startup validation table
@@ -461,8 +502,7 @@ def main() -> int:
                 and am_row.get("device") == "cpu"
                 and "n/a" in am_row.get("precision", "").lower()
             )
-            print(f"  (b) AlphaMissense startup row: {am_row} "
-                  f"-> {'PASS' if am_row_ok else 'FAIL'}")
+            print(f"  (b) AlphaMissense startup row: {am_row} -> {'PASS' if am_row_ok else 'FAIL'}")
             part3_ok = part3_ok and am_row_ok
 
             # --- (c) ClinVar still returns records ---
@@ -476,8 +516,7 @@ def main() -> int:
                 and f5_result["clinvar"].get("found")
                 and f5_result["clinvar"]["records"][0]["clinical_significance"] == "Pathogenic"
             )
-            print(f"  (c) ClinVar record present for F5 rs6025: "
-                  f"{'PASS' if clinvar_ok else 'FAIL'}")
+            print(f"  (c) ClinVar record present for F5 rs6025: {'PASS' if clinvar_ok else 'FAIL'}")
             part3_ok = part3_ok and clinvar_ok
 
             # --- (d) AlphaMissense returns a real prediction for the
@@ -488,46 +527,45 @@ def main() -> int:
                 and am_result.get("am_class") == "likely_pathogenic"
                 and not am_result.get("skipped")
             )
-            print(f"  (d) AlphaMissense prediction for F5 rs6025: {am_result} "
-                  f"-> {'PASS' if am_ok else 'FAIL'}")
+            print(f"  (d) AlphaMissense prediction for F5 rs6025: {am_result} -> {'PASS' if am_ok else 'FAIL'}")
             part3_ok = part3_ok and am_ok
 
             # --- (e) No regressions in the other two known variants
             #         (HBB / ALDH2) -- also missense-eligible, also hit
             #         the fixture catalogue ---
             other_hits = [
-                v for v in variants
-                if v["variant"]["chrom"] in ("11", "12") and v["alphamissense"].get("found")
+                v for v in variants if v["variant"]["chrom"] in ("11", "12") and v["alphamissense"].get("found")
             ]
             others_ok = len(other_hits) == 2
-            print(f"  (e) HBB + ALDH2 AlphaMissense hits: {len(other_hits)}/2 "
-                  f"-> {'PASS' if others_ok else 'FAIL'}")
+            print(f"  (e) HBB + ALDH2 AlphaMissense hits: {len(other_hits)}/2 -> {'PASS' if others_ok else 'FAIL'}")
             part3_ok = part3_ok and others_ok
 
             # --- (f) JSON output contains the alphamissense key ---
             json_ok = all("alphamissense" in v for v in variants)
-            print(f"  (f) 'alphamissense' present in every JSON variant record: "
-                  f"{'PASS' if json_ok else 'FAIL'}")
+            print(f"  (f) 'alphamissense' present in every JSON variant record: {'PASS' if json_ok else 'FAIL'}")
             part3_ok = part3_ok and json_ok
 
             # --- (g) Markdown report contains an AlphaMissense section ---
             from report.report_generator import ReportGenerator
+
             md = ReportGenerator().generate(json_document)
             md_ok = "### AlphaMissense" in md and "am_pathogenicity" in md
-            print(f"  (g) Markdown report includes '### AlphaMissense' section: "
-                  f"{'PASS' if md_ok else 'FAIL'}")
+            print(f"  (g) Markdown report includes '### AlphaMissense' section: {'PASS' if md_ok else 'FAIL'}")
             part3_ok = part3_ok and md_ok
 
             # --- (h) No unexpected stage errors recorded for the 3
             #         known variants ---
             no_errors = all(not v.get("errors") for v in variants)
-            print(f"  (h) No stage errors recorded for any known variant: "
-                  f"{'PASS' if no_errors else 'FAIL'}"
-                  + ("" if no_errors else f" ({[v.get('errors') for v in variants]})"))
+            print(
+                f"  (h) No stage errors recorded for any known variant: "
+                f"{'PASS' if no_errors else 'FAIL'}"
+                + ("" if no_errors else f" ({[v.get('errors') for v in variants]})")
+            )
             part3_ok = part3_ok and no_errors
 
         except Exception as exc:  # noqa: BLE001
             import traceback
+
             traceback.print_exc()
             print(f"  PART 3 raised an unexpected exception: {exc}")
             part3_ok = False
@@ -536,11 +574,13 @@ def main() -> int:
                 p.stop()
 
     if part3_ok:
-        print("\nPART 3: PASSED -- full pipeline run succeeds with AlphaMissense "
-              "integrated: existing stages (HyenaDNA, ClinVar, dbSNP, RNA-FM, ESM-2, "
-              "BLAST, reporting, startup validation) are unaffected, and "
-              "AlphaMissense correctly routes only eligible missense variants, "
-              "returns predictions, and appears in both JSON and Markdown output.\n")
+        print(
+            "\nPART 3: PASSED -- full pipeline run succeeds with AlphaMissense "
+            "integrated: existing stages (HyenaDNA, ClinVar, dbSNP, RNA-FM, ESM-2, "
+            "BLAST, reporting, startup validation) are unaffected, and "
+            "AlphaMissense correctly routes only eligible missense variants, "
+            "returns predictions, and appears in both JSON and Markdown output.\n"
+        )
     else:
         print("\nPART 3: FAILED\n")
         all_passed = False
@@ -551,39 +591,52 @@ def main() -> int:
     print("=" * 78)
     from models.alphamissense import AlphaMissenseModel as AMModel2
     from utils.model_cache import ModelCache as ModelCache2
+
     ModelCache2.clear()
 
     with mock.patch.dict("os.environ", {"GEPER_ENABLE_ALPHAMISSENSE": "false"}):
         import importlib
         import config as config_module
+
         importlib.reload(config_module)
         import models.alphamissense as am_module
+
         am_module.CONFIG = config_module.CONFIG
         disabled_ok = AMModel2.is_available() is False
-        print(f"  GEPER_ENABLE_ALPHAMISSENSE=false -> is_available()="
-              f"{AMModel2.is_available()} -> {'PASS' if disabled_ok else 'FAIL'}")
+        print(
+            f"  GEPER_ENABLE_ALPHAMISSENSE=false -> is_available()="
+            f"{AMModel2.is_available()} -> {'PASS' if disabled_ok else 'FAIL'}"
+        )
 
     with mock.patch("shutil.which", return_value=None):
         import importlib
         import config as config_module
+
         importlib.reload(config_module)
         import models.alphamissense as am_module
+
         am_module.CONFIG = config_module.CONFIG
         missing_tabix_ok = AMModel2.is_available() is False
-        print(f"  tabix not on PATH -> is_available()={AMModel2.is_available()} "
-              f"-> {'PASS' if missing_tabix_ok else 'FAIL'}")
+        print(
+            f"  tabix not on PATH -> is_available()={AMModel2.is_available()} "
+            f"-> {'PASS' if missing_tabix_ok else 'FAIL'}"
+        )
 
     # restore real config for anything importing this module afterwards
     import importlib
     import config as config_module
+
     importlib.reload(config_module)
     import models.alphamissense as am_module
+
     am_module.CONFIG = config_module.CONFIG
 
     part4_ok = disabled_ok and missing_tabix_ok
     if part4_ok:
-        print("\nPART 4: PASSED -- AlphaMissense can be disabled via config, and "
-              "degrades to 'unavailable' (never a crash) when tabix is missing.\n")
+        print(
+            "\nPART 4: PASSED -- AlphaMissense can be disabled via config, and "
+            "degrades to 'unavailable' (never a crash) when tabix is missing.\n"
+        )
     else:
         print("\nPART 4: FAILED\n")
         all_passed = False

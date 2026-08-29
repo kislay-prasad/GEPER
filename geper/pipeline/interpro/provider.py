@@ -191,7 +191,7 @@ class CompositeInterProProvider:
             dataset_path=CONFIG.interpro.LOCAL_DATASET_FILE or None
         )
         self.api_provider = api_provider or LiveAPIInterProProvider()
-        self.max_concurrent = max_concurrent or 8
+        self.max_concurrent = max_concurrent if max_concurrent is not None else 8
 
     def query(self, accession: str) -> InterProAnnotation:
         if CONFIG.interpro.OFFLINE_MODE:

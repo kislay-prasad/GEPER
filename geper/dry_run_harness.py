@@ -40,10 +40,10 @@ _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-from unittest import mock
+from unittest import mock  # noqa: E402
 
-from models import MODEL_REGISTRY
-from pipeline.sequence_context import SequenceContext
+from models import MODEL_REGISTRY  # noqa: E402
+from pipeline.sequence_context import SequenceContext  # noqa: E402
 
 
 def _fake_load_impl(self):
@@ -71,9 +71,7 @@ def main():
 
     from models.base_model import BaseGenomicModel
 
-    patches.append(
-        mock.patch.object(BaseGenomicModel, "_verify_materialized", _fake_verify_materialized)
-    )
+    patches.append(mock.patch.object(BaseGenomicModel, "_verify_materialized", _fake_verify_materialized))
 
     from pipeline.sequence_context import SequenceContextGenerator
     from database.blast_client import BLASTClient
@@ -81,7 +79,7 @@ def main():
     from database.dbsnp_client import DbSNPClient
 
     def _fake_build_context(self, variant, flank_size=None):
-        flank = flank_size or 500
+        flank = flank_size if flank_size is not None else 500
         ref_seq = "ACGT" * 50
         alt_seq = ref_seq  # not biologically exact; irrelevant for a plumbing test
         return SequenceContext(
@@ -94,14 +92,17 @@ def main():
             variant_offset=flank,
         )
 
-    patches.append(
-        mock.patch.object(SequenceContextGenerator, "build_context", _fake_build_context)
-    )
+    patches.append(mock.patch.object(SequenceContextGenerator, "build_context", _fake_build_context))
     patches.append(
         mock.patch.object(
-            BLASTClient, "_search_remote", lambda self, seq, program, database, max_hits: {
-                "mode": "remote", "database": database, "hits": [], "hit_count": 0
-            }
+            BLASTClient,
+            "_search_remote",
+            lambda self, seq, program, database, max_hits: {
+                "mode": "remote",
+                "database": database,
+                "hits": [],
+                "hit_count": 0,
+            },
         )
     )
     patches.append(

@@ -94,7 +94,7 @@ def _install_heavy_model_and_sequence_fakes():
         return None
 
     def _fake_build_context(self, variant, flank_size=None):
-        flank = flank_size or 500
+        flank = flank_size if flank_size is not None else 500
         ref_seq = "ACGT" * 50
         return SequenceContext(
             chrom=variant.chrom,

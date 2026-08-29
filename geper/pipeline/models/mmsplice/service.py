@@ -40,8 +40,19 @@ from utils.service_health import HEALTH, is_transient_http_error
 logger = get_logger(__name__)
 
 
-def _null_result(supported: bool, predicted: bool, reason: str, runtime_ms: float = 0.0) -> Dict:
-    """The schema requirement #6 specifies, with every scored field set to None."""
+def _null_result(
+    supported: bool, predicted: bool, reason: str, runtime_ms: float = 0.0, error: Optional[str] = None
+) -> Dict:
+    """The schema requirement #6 specifies, with every scored field set to None.
+
+    `error`, when given, is the same key `_run_mmsplice_stage`'s own
+    defense-in-depth crash handler sets (pipeline/orchestrator.py) and
+    that `report_generator.py::_render_mmsplice` checks BEFORE its
+    `supported`-gated "Not scored" text -- a caller that could not
+    determine an answer (fetch failure, retries exhausted) must pass
+    `error` so a lookup failure never renders as a completed,
+    negative biological finding.
+    """
     return {
         "supported": supported,
         "predicted": predicted,
@@ -57,6 +68,7 @@ def _null_result(supported: bool, predicted: bool, reason: str, runtime_ms: floa
         "runtime_ms": round(runtime_ms, 3),
         "model_version": None,
         "skip_reason": reason if not predicted else None,
+        "error": error,
     }
 
 
@@ -197,7 +209,20 @@ class MMSpliceService:
                 runtime_ms=(time.time() - start) * 1000.0,
             )
 
-        exons = self._fetch_overlapping_exons(variant)
+        try:
+            exons = self._fetch_overlapping_exons(variant)
+        except ExternalAPIError as exc:
+            # Distinct from the "genuinely no exon nearby" branch below:
+            # this means Ensembl never actually answered, so `exons`
+            # being empty here would be a lookup failure disguised as a
+            # completed, negative search -- see this module's `_null_result`.
+            return _null_result(
+                supported=False,
+                predicted=False,
+                reason=f"exon annotation lookup failed: {exc}",
+                runtime_ms=(time.time() - start) * 1000.0,
+                error=str(exc),
+            )
         if not exons:
             return _null_result(
                 supported=False,
@@ -312,8 +337,10 @@ class MMSpliceService:
 
         if HEALTH.is_offline("Ensembl"):
             HEALTH.note_skip("Ensembl")
-            self._exon_region_cache[key] = []
-            return []
+            raise ExternalAPIError(
+                f"Exon annotation lookup for {chrom}:{region_start}-{region_end} skipped: "
+                f"Ensembl was confirmed offline at startup."
+            )
 
         last_error: Optional[Exception] = None
         for attempt in range(1, CONFIG.api.MAX_RETRIES + 1):
@@ -342,8 +369,14 @@ class MMSpliceService:
             f"Failed to fetch exon annotation for {chrom}:{region_start}-{region_end} "
             f"after {CONFIG.api.MAX_RETRIES} attempts: {last_error}"
         )
-        self._exon_region_cache[key] = []
-        return []
+        # Deliberately not cached: caching `[]` here would let a
+        # transient failure poison every later variant that happens to
+        # fall in the same region for the rest of this run, reading as
+        # a permanent "no exon here" instead of a retriable failure.
+        raise ExternalAPIError(
+            f"Failed to fetch exon annotation for {chrom}:{region_start}-{region_end} "
+            f"after {CONFIG.api.MAX_RETRIES} attempts"
+        )
 
     @staticmethod
     def _parse_exon_feature(chrom: str, feature: Dict) -> Optional[ExonAnnotation]:

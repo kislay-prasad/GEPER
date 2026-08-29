@@ -20,12 +20,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from compare_reports import diff_reports, load_document, render_markdown  # noqa: E402
 
 
-def _variant(chrom, pos, ref, alt, classification=None, confidence_label=None, evidence_sources=None, pending=False):
+def _variant(
+    chrom,
+    pos,
+    ref,
+    alt,
+    classification=None,
+    confidence_label=None,
+    evidence_sources=None,
+    pending=False,
+    confidence_score=80,
+):
     return {
         "variant": {"chrom": chrom, "pos": pos, "ref": ref, "alt": alt},
         "candidate_interpretation": {
             "acmg_classification": {"classification": classification},
-            "confidence": {"pending": pending, "label": confidence_label, "score": 80},
+            "confidence": {"pending": pending, "label": confidence_label, "score": confidence_score},
             "evidence_sources": evidence_sources or [],
         }
         if classification is not None or evidence_sources is not None
@@ -75,6 +85,67 @@ class TestClassificationChanges(unittest.TestCase):
         doc = _document(variants)
         diff = diff_reports(doc, doc)
         self.assertEqual(diff["classification_changes"], [])
+
+
+class TestConfidenceChanges(unittest.TestCase):
+    """Finding 8 (2026-08-29): a 9-point confidence-score shift (55.6 ->
+    64.8) with an unchanged classification and an unchanged confidence
+    *label* used to be invisible -- `diff_reports` only ever compared
+    classification. These tests exercise the score comparison directly;
+    the red-first proof (old code had no `confidence_changes` key at all,
+    and `render_markdown` said "No classification changes" / had nothing
+    resembling a confidence section) is in the completion report, done
+    via a scoped `git stash` of compare_reports.py alone."""
+
+    def test_detects_a_confidence_score_change_with_classification_and_label_unchanged(self):
+        doc_a = _document(
+            [_variant("17", 100, "A", "T", "Likely pathogenic", "Moderate", ["ClinVar"], confidence_score=55.6)]
+        )
+        doc_b = _document(
+            [_variant("17", 100, "A", "T", "Likely pathogenic", "Moderate", ["ClinVar"], confidence_score=64.8)]
+        )
+        diff = diff_reports(doc_a, doc_b)
+        # The exact bug this closes: with classification AND label both
+        # unchanged, the old code found nothing to report at all.
+        self.assertEqual(diff["classification_changes"], [])
+        self.assertEqual(len(diff["confidence_changes"]), 1)
+        change = diff["confidence_changes"][0]
+        self.assertEqual(change["confidence_score_a"], 55.6)
+        self.assertEqual(change["confidence_score_b"], 64.8)
+        self.assertEqual(change["confidence_label_a"], "Moderate")
+        self.assertEqual(change["confidence_label_b"], "Moderate")
+
+    def test_no_confidence_change_when_scores_identical(self):
+        doc_a = _document([_variant("17", 100, "A", "T", "Benign", "High", ["ClinVar"], confidence_score=91.0)])
+        doc_b = _document([_variant("17", 100, "A", "T", "Benign", "High", ["ClinVar"], confidence_score=91.0)])
+        diff = diff_reports(doc_a, doc_b)
+        self.assertEqual(diff["confidence_changes"], [])
+
+    def test_confidence_change_also_reported_when_classification_changed_too(self):
+        """Confidence-score reporting is independent of, not a
+        replacement for, the classification-change table."""
+        doc_a = _document(
+            [_variant("17", 100, "A", "T", "Uncertain significance", "Moderate", ["ClinVar"], confidence_score=50.0)]
+        )
+        doc_b = _document([_variant("17", 100, "A", "T", "Pathogenic", "High", ["ClinVar"], confidence_score=90.0)])
+        diff = diff_reports(doc_a, doc_b)
+        self.assertEqual(len(diff["classification_changes"]), 1)
+        self.assertEqual(len(diff["confidence_changes"]), 1)
+
+    def test_render_shows_the_score_delta_for_an_unchanged_classification(self):
+        doc_a = _document(
+            [_variant("17", 100, "A", "T", "Likely pathogenic", "Moderate", ["ClinVar"], confidence_score=55.6)]
+        )
+        doc_b = _document(
+            [_variant("17", 100, "A", "T", "Likely pathogenic", "Moderate", ["ClinVar"], confidence_score=64.8)]
+        )
+        diff = diff_reports(doc_a, doc_b)
+        md = render_markdown(diff, doc_a, doc_b, "/dir/a", "/dir/b")
+        self.assertIn("Confidence Changes", md)
+        self.assertIn("55.6", md)
+        self.assertIn("64.8", md)
+        self.assertIn("+9.2", md)
+        self.assertNotIn("*No confidence-score changes", md)
 
 
 class TestUnexplainedChanges(unittest.TestCase):
@@ -224,6 +295,7 @@ class TestRenderMarkdown(unittest.TestCase):
         self.assertIn("# GEPER Report Comparison", md)
         self.assertIn("Unexplained Classification Changes", md)
         self.assertIn("Classification Changes", md)
+        self.assertIn("Confidence Changes", md)
         self.assertIn("Added / Removed Variants", md)
         self.assertIn("Evidence Source Changes", md)
         self.assertIn("Data-Source Provenance Differences", md)

@@ -729,7 +729,7 @@ class InterpretationEngine:
         independently unit-testable without constructing a full
         `InterpretationEngine` call (see tests/test_clingen_acmg.py).
         """
-        if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error"):
+        if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error") is not None:
             return []
         if not clingen_result.get("found"):
             return []

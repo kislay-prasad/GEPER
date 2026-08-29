@@ -1042,7 +1042,7 @@ class ReportGenerator:
         lines.append("")
         lines.append(f"- **Context models used:** {', '.join(seq.get('context_models_used') or []) or 'none'}")
         blast_error = seq["blast"].get("error")
-        if blast_error:
+        if blast_error is not None:
             lines.append(
                 f"- **BLAST:** _lookup failed ({blast_error}) -- not evidence of no homology, see Annotation Detail below._"
             )

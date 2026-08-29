@@ -190,7 +190,7 @@ def dosage_sensitivity_verdict(
     """
     if sufficient_scores is None:
         sufficient_scores = frozenset({_DOSAGE_SUFFICIENT})
-    if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error"):
+    if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error") is not None:
         return LOF_UNKNOWN, None, None
     if not clingen_result.get("found"):
         return LOF_UNKNOWN, None, None
@@ -223,7 +223,7 @@ def lof_mechanism_from_clingen(clingen_result: Optional[Dict[str, Any]]) -> Tupl
     ClinGen codes, unchanged from before the refactor); this function's
     own job is only the two sentences and their ordering.
     """
-    if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error"):
+    if not clingen_result or clingen_result.get("skipped") or clingen_result.get("error") is not None:
         return LOF_UNKNOWN, []
     if not clingen_result.get("found"):
         return LOF_UNKNOWN, []
@@ -323,7 +323,7 @@ def functional_regions_from_interpro(
     merely an annotated domain. It can therefore still over-call; the
     tree reports the domain names it matched so a reviewer can judge.
     """
-    if not interpro_result or interpro_result.get("skipped") or interpro_result.get("error"):
+    if not interpro_result or interpro_result.get("skipped") or interpro_result.get("error") is not None:
         return None
     if not interpro_result.get("found"):
         return None
@@ -924,7 +924,7 @@ def transcript_from_result(transcript_result: Optional[Dict[str, Any]]) -> Optio
     lookup was skipped/errored/not found, or when the variant was flagged
     as falling outside the transcript that was fetched.
     """
-    if not transcript_result or transcript_result.get("skipped") or transcript_result.get("error"):
+    if not transcript_result or transcript_result.get("skipped") or transcript_result.get("error") is not None:
         return None
     if not transcript_result.get("found") or transcript_result.get("variant_outside_transcript"):
         return None

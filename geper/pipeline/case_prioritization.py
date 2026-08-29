@@ -188,7 +188,7 @@ def score_phenotype_match(
     if (
         not gene_hpo_result
         or gene_hpo_result.get("skipped")
-        or gene_hpo_result.get("error")
+        or gene_hpo_result.get("error") is not None
         or not gene_hpo_result.get("found")
     ):
         return PhenotypeMatchScore(

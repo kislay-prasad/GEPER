@@ -409,7 +409,7 @@ def _population_frequency(variant_result: Dict[str, Any]) -> LIMSPopulationFrequ
     gnomad = variant_result.get("gnomad") or {}
     dbsnp = variant_result.get("dbsnp") or {}
     return LIMSPopulationFrequency(
-        gnomad_queried=not (gnomad.get("skipped") or gnomad.get("error")),
+        gnomad_queried=not (gnomad.get("skipped") or gnomad.get("error") is not None),
         gnomad_found=bool(gnomad.get("found")),
         gnomad_global_af=gnomad.get("global_af"),
         dbsnp_rsid=dbsnp.get("rsid") if dbsnp.get("found") else None,

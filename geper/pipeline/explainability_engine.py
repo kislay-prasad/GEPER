@@ -261,7 +261,7 @@ class ExplainabilityEngine:
                 reason = "Not queried for this variant."
             elif r.get("skipped"):
                 reason = "Lookup skipped (see pipeline graceful-fallback log)."
-            elif r.get("error"):
+            elif r.get("error") is not None:
                 reason = f"Lookup errored: {r.get('error')}."
             elif r.get("found") is False:
                 reason = "Queried successfully; no record/result found for this variant."

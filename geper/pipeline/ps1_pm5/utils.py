@@ -147,7 +147,7 @@ def matches_from_clinvar_codon_result(clinvar_codon_result: Optional[Dict[str, A
     -- the neutral value `pipeline/ps1_pm5/decision.py` treats as "no
     ClinVar evidence to compare against" rather than a guess.
     """
-    if not clinvar_codon_result or clinvar_codon_result.get("skipped") or clinvar_codon_result.get("error"):
+    if not clinvar_codon_result or clinvar_codon_result.get("skipped") or clinvar_codon_result.get("error") is not None:
         return []
     return clinvar_codon_result.get("matches") or []
 

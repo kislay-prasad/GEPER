@@ -750,7 +750,7 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
     dbsnp = raw.get("dbsnp") or {}
     return {
         "gnomad": {
-            "queried": not (gnomad.get("skipped") or gnomad.get("error")),
+            "queried": not (gnomad.get("skipped") or gnomad.get("error") is not None),
             "found": bool(gnomad.get("found")),
             "global_af": gnomad.get("global_af"),
             # Round 16: when gnomAD was deliberately never queried (e.g.
@@ -848,7 +848,7 @@ def _indian_population_frequency(
 
     return {
         "gnomad_af_sas": gnomad_sas_af,
-        "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error")),
+        "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error") is not None),
         "common_af_threshold": threshold,
         "common_in_indian_population": common_in_indian_population,
         "sas_shown": sas_shown,

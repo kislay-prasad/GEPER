@@ -12,17 +12,30 @@ Example (Colab or local shell):
     python main.py --vcf sample.vcf
 """
 
-import argparse
-import os
 import sys
-from datetime import datetime
 
-from config import CONFIG
-from pipeline.hpo.utils import build_phenotype_result
-from pipeline.orchestrator import GeperPipeline
-from utils.exceptions import PipelineError
-from utils.logger import get_logger
-from utils.service_health import HEALTH, default_service_checks
+# Fail fast on an unsupported interpreter, before any other import runs.
+# `verify_environment.py`'s EXPECTED dict is the single source of truth for
+# this range (evo2's own PyPI metadata: requires-python >=3.11,<3.13) --
+# reusing its check here instead of hardcoding a second copy of the range
+# keeps this in exactly one place, per that file's own documented intent.
+from verify_environment import check_python
+
+_python_check = check_python()
+if _python_check.status == "FAIL":
+    sys.stderr.write(f"ERROR: {_python_check.detail}\n")
+    sys.exit(1)
+
+import argparse  # noqa: E402 -- after the version guard, deliberately
+import os  # noqa: E402
+from datetime import datetime  # noqa: E402
+
+from config import CONFIG  # noqa: E402
+from pipeline.hpo.utils import build_phenotype_result  # noqa: E402
+from pipeline.orchestrator import GeperPipeline  # noqa: E402
+from utils.exceptions import PipelineError  # noqa: E402
+from utils.logger import get_logger  # noqa: E402
+from utils.service_health import HEALTH, default_service_checks  # noqa: E402
 
 logger = get_logger(__name__)
 

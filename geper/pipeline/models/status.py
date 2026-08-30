@@ -80,6 +80,58 @@ FAILED = "failed"
 _ROLLUP_PRIORITY: Dict[str, int] = {SKIPPED: 0, DISABLED: 1, FAILED: 2, USED: 3}
 
 
+def _scope_reason(reason: str, n: int, total: int) -> str:
+    """
+    Rescopes a `reason` string that `rollup_run_status` is about to
+    promote from a single winning variant's per-variant status onto a
+    run-level field.
+
+    Every per-variant reason in this module is written in the singular
+    ("Ran for THIS variant...", "Not routed to THIS variant...") --
+    correct at the per-variant callsite (`build_ai_model_status`,
+    untouched by this function), but at one variant that referent is
+    invisible and at more than one it has no antecedent, or is
+    outright false for the run as a whole (MEDIUM-1: a run-level
+    "used, reason: ran for this variant" next to per-variant statuses
+    of used/skipped/used/skipped/skipped names an experience only 2 of
+    the 5 variants actually had).
+
+    Per the ruling, a run-level reason "must ... name how many
+    variants it applied to, or ... use run-level language" -- never
+    per-variant wording on a run-level fact. This picks the first
+    option (a count is strictly more informative than a vaguer
+    run-level rewrite, and unlike hand-rewriting each of this module's
+    ~10 distinct per-variant phrasings individually, replacing the
+    literal referent works uniformly across all of them and any reason
+    text added here in future without per-model special-casing).
+
+    Replaces the "this variant"/"this variant's" referent, when the
+    text contains one, with the scope count itself, so the winning
+    status's own descriptive detail survives unmodified (e.g. "Ran for
+    2 of 5 variants and produced a splicing prediction.") rather than
+    being discarded in favor of a generic templated sentence. A reason
+    with no such referent (an environment-level DISABLED fact, a
+    fallback default, or an arbitrary FAILED exception string) has
+    nothing wrong to replace, but the field is still run-level and the
+    reader still has no other way to know how many variants it covers,
+    so the same scope count is appended instead.
+    """
+    if total <= 0 or not reason:
+        return reason
+    word = "variant" if total == 1 else "variants"
+    scope = f"{n} of {total} {word}"
+    if "this variant's" in reason:
+        # Possessive suffix agrees with `word`: plural "variants" takes
+        # a bare apostrophe ("variants'"), singular "variant" takes 's
+        # ("variant's") -- dropping the "s" for the singular case would
+        # silently produce "variant'", which is not a word.
+        possessive = f"{scope}'" if word == "variants" else f"{scope}'s"
+        return reason.replace("this variant's", possessive)
+    if "this variant" in reason:
+        return reason.replace("this variant", scope)
+    return f"{reason} ({scope} in this run)"
+
+
 def rollup_run_status(
     all_variant_statuses: List[Optional[Dict[str, Dict[str, str]]]],
 ) -> Dict[str, Dict[str, str]]:
@@ -98,15 +150,29 @@ def rollup_run_status(
     per-variant reasoning (see e.g. `_ensemble_model_status`'s
     docstring): a real success or failure this run must never be
     diluted by averaging against unrelated variants where the model
-    simply wasn't applicable.
+    simply wasn't applicable. MEDIUM-1: the winning entry's `reason`
+    is additionally rescoped (see `_scope_reason`) before being
+    returned -- the winning STATUS is deliberately still whichever one
+    the priority above picks (out of scope, per the ruling: "the
+    defect is not that the rollup is lossy"), but the reason text that
+    rides along with it must state how many of the run's variants it
+    actually describes, not read as if it were the only variant.
     """
     best: Dict[str, Dict[str, str]] = {}
+    status_counts: Dict[str, Dict[str, int]] = {}
     for variant_status in all_variant_statuses or []:
         for key, entry in (variant_status or {}).items():
             status = (entry or {}).get("status", SKIPPED)
+            counts = status_counts.setdefault(key, {})
+            counts[status] = counts.get(status, 0) + 1
             existing = best.get(key)
             if existing is None or _ROLLUP_PRIORITY.get(status, 0) > _ROLLUP_PRIORITY.get(existing["status"], 0):
                 best[key] = dict(entry)
+    for key, entry in best.items():
+        counts = status_counts.get(key, {})
+        n = counts.get(entry["status"], 0)
+        total = sum(counts.values())
+        entry["reason"] = _scope_reason(entry.get("reason", ""), n, total)
     return best
 
 

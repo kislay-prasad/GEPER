@@ -1076,14 +1076,24 @@ def _offline_sources_caveat_text(document: Optional[Dict[str, Any]] = None) -> O
     snapshot = (document or {}).get("service_health") or []
     if snapshot:
         offline = [s.get("service") for s in snapshot if s.get("startup_status") == ServiceStatus.OFFLINE.value]
-        degraded = [s for s in snapshot if s.get("failure_count") and s.get("service") not in offline]
+        # In-process components are partitioned out here rather than
+        # described as retried data sources: nothing retried them, and
+        # the consequence for the reader is different (a withheld score,
+        # not evidence that may be complete/partial/absent).
+        components = [s for s in snapshot if s.get("failure_count") and s.get("is_local_component")]
+        degraded = [
+            s
+            for s in snapshot
+            if s.get("failure_count") and s.get("service") not in offline and not s.get("is_local_component")
+        ]
     else:
         # Legacy document (no `service_health` key) or a caller that
         # passed nothing: fall back to exactly the previous behaviour.
         offline = HEALTH.offline_services()
         degraded = []
+        components = []
 
-    if not offline and not degraded:
+    if not offline and not degraded and not components:
         return None
 
     parts: List[str] = []
@@ -1103,6 +1113,16 @@ def _offline_sources_caveat_text(document: Optional[Dict[str, Any]] = None) -> O
             "absent, and this report cannot distinguish which. Any finding that depends on them and is "
             "reported as absent, not evaluated, or not found should be read as possibly reflecting that "
             "failure rather than a confirmed negative."
+        )
+    if components:
+        detail = ", ".join(f"{s.get('service')} ({s.get('failure_count')} failure(s))" for s in components)
+        parts.append(
+            "The following internal analysis component(s) failed during this run: "
+            + detail
+            + ". Where this affected a finding, the score that component feeds is reported as "
+            '"Pending" rather than computed, because a component that did not run produces no '
+            "evidence of conflict and must not be read as having found none. Any finding showing a "
+            "pending confidence or review-priority value should be scored manually before sign-off."
         )
     return " ".join(parts)
 

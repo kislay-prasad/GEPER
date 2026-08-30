@@ -164,13 +164,20 @@ class ConflictResolutionEngine:
         (Phase 6 needs Phase 4's own conflict-penalty output as one of
         its *inputs*, so a hard swap would create a real circular
         dependency, not just a call-order preference).
+
+        HIGH-1 narrowed that last claim, and it is worth stating
+        precisely rather than leaving a comment that overstates its
+        case: the cycle is real for `detect()` as a whole, but only
+        because `_ai_conflict` renders the two penalties into display
+        strings. Detection itself does not depend on them -- see
+        `real_conflicts_for_scoring`, which hoists exactly that half.
         """
         return (
             ConflictResolutionEngine._expert_panel_disagreement_conflict(acmg_classification, clinvar_result)
             is not None
         )
 
-    def detect(
+    def _detect_conflict_items(
         self,
         *,
         acmg_classification: Optional[str],
@@ -189,8 +196,16 @@ class ConflictResolutionEngine:
         interpro_result: Optional[Dict[str, Any]] = None,
         alphafold_result: Optional[Dict[str, Any]] = None,
         blast_result: Optional[Dict[str, Any]] = None,
-    ) -> ConflictResolutionResult:
-        cfg = CONFIG.conflict
+    ) -> List[ConflictItem]:
+        """
+        Runs every detector and returns the raw item list, before any
+        scoring filter. Extracted from `detect()` so `detect()` and
+        `real_conflicts_for_scoring()` share ONE detector orchestration
+        -- two hand-maintained copies of this list would drift the
+        moment a detector is added, and the scoring path would then
+        silently stop seeing a conflict category the report still
+        shows.
+        """
         conflicts: List[ConflictItem] = []
 
         c = self._expert_panel_disagreement_conflict(acmg_classification, clinvar_result)
@@ -222,7 +237,10 @@ class ConflictResolutionEngine:
         if c:
             conflicts.append(c)
         conflicts.append(self._sequence_conflict_note(blast_result))
+        return conflicts
 
+    @staticmethod
+    def _real_conflicts(conflicts: List[ConflictItem]) -> List[ConflictItem]:
         # "Not evaluable" notes (Sequence) are excluded from scoring --
         # they are not detected conflicts, just an honest statement that
         # no check could be performed. "ACMG Criterion" items are also
@@ -240,11 +258,119 @@ class ConflictResolutionEngine:
         # full per-finding conflict detail) for reviewer visibility;
         # they just no longer drive the top-line severity/score/summary
         # or the Attention-column flag text.
-        real_conflicts = [
+        #
+        # HIGH-1: this filter is now the SINGLE definition of "a real
+        # conflict" for all three consumers -- the Attention flag (via
+        # the severity/score below), the confidence engine's conflict
+        # penalty and the prioritization engine's. Before this, the flag
+        # read the filtered list while both penalties read the raw
+        # per-criterion `conflicting_evidence`, so the two could never
+        # agree by construction: on a five-variant run every one of the
+        # eight items driving the penalties was an excluded "ACMG
+        # Criterion" caveat, while the one genuine Clinical
+        # disagreement contributed nothing to either penalty.
+        return [
             c
             for c in conflicts
             if c.severity in ("Minor", "Moderate", "Major", "Critical") and c.category != "ACMG Criterion"
         ]
+
+    def real_conflicts_for_scoring(
+        self,
+        *,
+        acmg_classification: Optional[str],
+        acmg_conflicting_evidence: List[Dict[str, Any]],
+        ai_consensus: List[Dict[str, Any]],
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        blast_result: Optional[Dict[str, Any]] = None,
+    ) -> List[ConflictItem]:
+        """
+        The real-conflict list Phases 3 and 4 score against, computed
+        before either of them runs. Same hoist shape as
+        `has_critical_conflict` (I2): a cheap, side-effect-free re-run
+        of the detectors rather than a reordering of the phases.
+
+        `detect()` cannot simply be moved ahead of Phases 3/4, because
+        it takes their conflict penalties as inputs -- but ONLY
+        `_ai_conflict` consumes those four parameters, and only to
+        render its `confidence_impact`/`priority_impact` display
+        strings. Nothing about which items exist, or their severities,
+        depends on them. So this pass supplies placeholder penalties
+        and DISCARDS every rendered string: its return value is counted,
+        never shown. `detect()` re-runs afterwards with the real
+        penalties, and its items are the ones that reach the report.
+        """
+        return self._real_conflicts(
+            self._detect_conflict_items(
+                acmg_classification=acmg_classification,
+                acmg_conflicting_evidence=acmg_conflicting_evidence,
+                ai_consensus=ai_consensus,
+                # Placeholders: see the docstring above. These reach only
+                # `_ai_conflict`'s two impact strings, which this method's
+                # caller never reads.
+                confidence_conflict_penalty=0.0,
+                confidence_conflict_explanation="",
+                priority_conflict_penalty=0.0,
+                priority_conflict_explanation="",
+                clinvar_result=clinvar_result,
+                clingen_result=clingen_result,
+                gnomad_result=gnomad_result,
+                alphamissense_result=alphamissense_result,
+                mmsplice_result=mmsplice_result,
+                uniprot_result=uniprot_result,
+                interpro_result=interpro_result,
+                alphafold_result=alphafold_result,
+                blast_result=blast_result,
+            )
+        )
+
+    def detect(
+        self,
+        *,
+        acmg_classification: Optional[str],
+        acmg_conflicting_evidence: List[Dict[str, Any]],
+        ai_consensus: List[Dict[str, Any]],
+        confidence_conflict_penalty: float,
+        confidence_conflict_explanation: str,
+        priority_conflict_penalty: float,
+        priority_conflict_explanation: str,
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        blast_result: Optional[Dict[str, Any]] = None,
+    ) -> ConflictResolutionResult:
+        cfg = CONFIG.conflict
+        conflicts = self._detect_conflict_items(
+            acmg_classification=acmg_classification,
+            acmg_conflicting_evidence=acmg_conflicting_evidence,
+            ai_consensus=ai_consensus,
+            confidence_conflict_penalty=confidence_conflict_penalty,
+            confidence_conflict_explanation=confidence_conflict_explanation,
+            priority_conflict_penalty=priority_conflict_penalty,
+            priority_conflict_explanation=priority_conflict_explanation,
+            clinvar_result=clinvar_result,
+            clingen_result=clingen_result,
+            gnomad_result=gnomad_result,
+            alphamissense_result=alphamissense_result,
+            mmsplice_result=mmsplice_result,
+            uniprot_result=uniprot_result,
+            interpro_result=interpro_result,
+            alphafold_result=alphafold_result,
+            blast_result=blast_result,
+        )
+        real_conflicts = self._real_conflicts(conflicts)
 
         score = self._score(real_conflicts, cfg)
         severity = self._overall_severity(score, real_conflicts, cfg)

@@ -76,6 +76,16 @@ class ServiceRecord:
     failure_count: int = 0
     success_count: int = 0
     skipped_count: int = 0
+    # False for the external data sources this registry was built for
+    # (ClinVar, Ensembl, ...), True for an in-process component
+    # registered here only to borrow the reporting path -- see
+    # `note_component_failure`. The distinction is carried explicitly
+    # rather than inferred from the counters, because the caveat this
+    # feeds says two different things: an external source "failed and
+    # was retried, so its evidence may be complete, partial or absent",
+    # which is a false statement about a local detector that raised
+    # once and was never retried at all.
+    is_local_component: bool = False
     _skip_logged: bool = False
     # Retained so a latched service can be re-probed later. Two
     # consumers, both inside this class: the bounded re-probe
@@ -460,6 +470,26 @@ class ServiceHealthRegistry:
         with self._lock:
             record.success_count += 1
 
+    def note_component_failure(self, name: str) -> None:
+        """
+        Record that an IN-PROCESS component failed, so the failure
+        reaches the report bundle by the same route a data-source
+        failure does.
+
+        Why this lives here rather than in a second surface: Finding 5
+        established that a handled failure which never reaches the
+        document is invisible to the reviewer -- `logger.exception` is
+        not part of the output bundle. That reasoning does not care
+        whether the thing that failed was across the network or in this
+        process. What differs is only the sentence a reader should see,
+        which is why the record is tagged `is_local_component` instead
+        of being silently folded in with the retried data sources.
+        """
+        record = self._get(name)
+        with self._lock:
+            record.failure_count += 1
+            record.is_local_component = True
+
     # -- final summary ---------------------------------------------------
 
     def measure_latched_services(self) -> None:
@@ -592,6 +622,11 @@ class ServiceHealthRegistry:
                 "service": record.name,
                 # Same string the console prints, from the same function.
                 "status": self._summary_status(record),
+                # See `ServiceRecord.is_local_component`: lets the
+                # caveat renderer say "a component failed and its
+                # result was withheld" rather than the data-source
+                # sentence about retries, which would be false here.
+                "is_local_component": record.is_local_component,
                 # The one field a renderer needs to decide whether to
                 # raise a flag, so no renderer has to re-derive
                 # "degraded" from the counters and get it subtly wrong.

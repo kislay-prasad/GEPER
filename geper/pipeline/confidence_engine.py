@@ -123,7 +123,7 @@ class ConfidenceEngine:
         interpro_result: Dict[str, Any] = None,
         alphafold_result: Dict[str, Any] = None,
         blast_result: Dict[str, Any] = None,
-        conflicting_evidence: List[str] = None,
+        real_conflicts: List[Any] = None,
         ai_consensus: List[Dict[str, Any]] = None,
     ) -> ConfidenceResult:
         cfg = CONFIG.confidence
@@ -142,7 +142,7 @@ class ConfidenceEngine:
         raw_sum = sum(c.contribution for c in categories)
         raw_score = 100.0 * (raw_sum / max_possible) if max_possible > 0 else 0.0
 
-        penalty, penalty_explanation = self._conflict_penalty(conflicting_evidence, ai_consensus, cfg)
+        penalty, penalty_explanation = self._conflict_penalty(real_conflicts, cfg)
         final_score = max(0.0, raw_score * (1.0 - penalty))
 
         label = self._label(final_score, cfg)
@@ -561,36 +561,38 @@ class ConfidenceEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _conflict_penalty(conflicting_evidence, ai_consensus, cfg) -> Tuple[float, str]:
-        conflict_units = 0
-        reasons: List[str] = []
+    def _conflict_penalty(real_conflicts, cfg) -> Tuple[float, str]:
+        """
+        HIGH-1: penalises the conflicts
+        `ConflictResolutionEngine._real_conflicts` recognises, not the
+        raw per-criterion `conflicting_evidence` list this used to
+        count. Two things changed and both are load-bearing:
 
-        n_conflicts = len(conflicting_evidence or [])
-        if n_conflicts:
-            conflict_units += n_conflicts
-            reasons.append(f"{n_conflicts} conflicting-evidence item(s) recorded across ACMG criteria.")
+        1. ACMG-criterion caveats no longer penalise. They are the
+           items D4 excluded from the Attention flag on the grounds
+           that they are "not a disagreement between two independent
+           sources"; penalising them here while refusing to flag them
+           there meant one document asserted a conflict and denied it
+           six fields apart.
+        2. The separate `ai_consensus` direction-disagreement branch is
+           GONE, deliberately. That disagreement now arrives as an
+           `AI`/`Moderate` ConflictItem inside `real_conflicts`
+           (`_ai_conflict`), so keeping the branch would have counted
+           the same discordance twice -- once per path -- for a penalty
+           of 0.30 where 0.15 is meant. Nothing in the five-variant run
+           exercised it, which is exactly why it is pinned by a test.
 
-        if ai_consensus and len(ai_consensus) >= 2:
-            directions = set()
-            for v in ai_consensus:
-                pred = (v.get("prediction") or "").lower()
-                if "pathogenic" in pred or pred in (
-                    "strong_donor_loss",
-                    "strong_acceptor_loss",
-                    "exon_skipping",
-                    "intron_retention",
-                    "strong",
-                    "moderate",
-                ):
-                    directions.add("damaging")
-                elif "benign" in pred:
-                    directions.add("benign")
-            if len(directions) > 1:
-                conflict_units += 1
-                reasons.append("AI classifiers (AlphaMissense/MMSplice) disagree in predicted direction.")
-
+        Flat count, not severity-weighted: one unit per real conflict,
+        whatever its tier. `ConflictResolutionEngine._score` keeps its
+        own severity weighting for the flag; this stays legible until
+        there is evidence for a particular weighting here.
+        """
+        conflict_units = len(real_conflicts or [])
         penalty = min(cfg.MAX_CONFLICT_PENALTY, conflict_units * cfg.CONFLICT_PENALTY_PER_CONFLICT)
-        explanation = " ".join(reasons) if reasons else "No conflicting evidence detected."
+        if not conflict_units:
+            return penalty, "No conflicting evidence detected."
+        detail = "; ".join(f"{c.conflict_type} ({c.severity})" for c in real_conflicts)
+        explanation = f"{conflict_units} conflict(s) detected between independent evidence sources: {detail}."
         return penalty, explanation
 
     @staticmethod

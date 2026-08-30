@@ -1,0 +1,126 @@
+{
+ "blast_result": {},
+ "clingen_result": {
+  "dosage_sensitivity": {
+   "gene_symbol": "TP53",
+   "haploinsufficiency_description": "Sufficient evidence for dosage pathogenicity",
+   "haploinsufficiency_label": "Sufficient evidence for dosage pathogenicity",
+   "haploinsufficiency_score": 3,
+   "triplosensitivity_description": "No evidence available",
+   "triplosensitivity_label": "No evidence available",
+   "triplosensitivity_score": 0
+  },
+  "found": true
+ },
+ "clinvar_codon_result": {
+  "matches": [
+   {
+    "alt": "T",
+    "pos": 7674221,
+    "protein_change": "R248R",
+    "ref": "G"
+   },
+   {
+    "clinical_significance": "Likely pathogenic",
+    "is_conflicting": false,
+    "pos": 7674221,
+    "protein_change": "R248W",
+    "ref": "GG",
+    "review_status": "criteria provided, single submitter",
+    "star_rating": 1,
+    "title": "NM_000546.6(TP53):c.741_742delinsTT (p.Arg248Trp)"
+   }
+  ]
+ },
+ "clinvar_result": {},
+ "dbsnp_result": {},
+ "interpro_result": {
+  "affected_domains": [
+   {
+    "end": 288,
+    "interpro_accession": "IPR011615",
+    "member_accession": "cd08367",
+    "member_database": "cdd",
+    "name": "P53 DNA-binding domain",
+    "short_name": "P53 DNA-binding domain",
+    "start": 109,
+    "type": "domain"
+   }
+  ],
+  "found": true,
+  "protein_position": 248
+ },
+ "protein_result": {},
+ "transcript_result": {
+  "found": true,
+  "transcript": {
+   "cds_genomic_end": 7676594,
+   "cds_genomic_start": 7669609,
+   "cds_sequence": "ATGGAGGAGCCGCAGTCAGATCCTAGCGTCGAGCCCCCTCTGAGTCAGGAAACATTTTCAGACCTATGGAAACTACTTCCTGAAAACAACGTTCTGTCCCCCTTGCCGTCCCAAGCAATGGATGATTTGATGCTGTCCCCGGACGATATTGAACAATGGTTCACTGAAGACCCAGGTCCAGATGAAGCTCCCAGAATGCCAGAGGCTGCTCCCCCCGTGGCCCCTGCACCAGCAGCTCCTACACCGGCGGCCCCTGCACCAGCCCCCTCCTGGCCCCTGTCATCTTCTGTCCCTTCCCAGAAAACCTACCAGGGCAGCTACGGTTTCCGTCTGGGCTTCTTGCATTCTGGGACAGCCAAGTCTGTGACTTGCACGTACTCCCCTGCCCTCAACAAGATGTTTTGCCAACTGGCCAAGACCTGCCCTGTGCAGCTGTGGGTTGATTCCACACCCCCGCCCGGCACCCGCGTCCGCGCCATGGCCATCTACAAGCAGTCACAGCACATGACGGAGGTTGTGAGGCGCTGCCCCCACCATGAGCGCTGCTCAGATAGCGATGGTCTGGCCCCTCCTCAGCATCTTATCCGAGTGGAAGGAAATTTGCGTGTGGAGTATTTGGATGACAGAAACACTTTTCGACATAGTGTGGTGGTGCCCTATGAGCCGCCTGAGGTTGGCTCTGACTGTACCACCATCCACTACAACTACATGTGTAACAGTTCCTGCATGGGCGGCATGAACCGGAGGCCCATCCTCACCATCATCACACTGGAAGACTCCAGTGGTAATCTACTGGGACGGAACAGCTTTGAGGTGCGTGTTTGTGCCTGTCCTGGGAGAGACCGGCGCACAGAGGAAGAGAATCTCCGCAAGAAAGGGGAGCCTCACCACGAGCTGCCCCCAGGGAGCACTAAGCGAGCACTGCCCAACAACACCAGCTCCTCTCCCCAGCCAAAGAAGAAACCACTGGATGGAGAATATTTCACCCTTCAGATCCGTGGGCGTGAGCGCTTCGAGATGTTCCGAGAGCTGAATGAGGCCTTGGAACTCAAGGATGCCCAGGCTGGGAAGGAGCCAGGGGGGAGCAGGGCTCACTCCAGCCACCTGAAGTCCAAAAAGGGTCAGTCTACCTCCCGCCATAAAAAACTCATGTTCAAGACAGAAGGGCCTGACTCAGACTGA",
+   "exons": [
+    {
+     "end": 7687490,
+     "start": 7687377
+    },
+    {
+     "end": 7676622,
+     "start": 7676521
+    },
+    {
+     "end": 7676403,
+     "start": 7676382
+    },
+    {
+     "end": 7676272,
+     "start": 7675994
+    },
+    {
+     "end": 7675236,
+     "start": 7675053
+    },
+    {
+     "end": 7674971,
+     "start": 7674859
+    },
+    {
+     "end": 7674290,
+     "start": 7674181
+    },
+    {
+     "end": 7673837,
+     "start": 7673701
+    },
+    {
+     "end": 7673608,
+     "start": 7673535
+    },
+    {
+     "end": 7670715,
+     "start": 7670609
+    },
+    {
+     "end": 7669690,
+     "start": 7668421
+    }
+   ],
+   "strand": -1
+  }
+ },
+ "variant_dict": {
+  "alt": "A",
+  "chrom": "17",
+  "filter": null,
+  "id": "TP53_PS3_pos",
+  "info": {
+   "CLINSIG": "Pathogenic",
+   "EXPECTED_RULE": "PS3",
+   "GENE": "TP53",
+   "HGVSC": "NM_000546.6:c.742C>T",
+   "HGVSP": "p.Arg248Trp"
+  },
+  "pos": 7674221,
+  "qual": null,
+  "ref": "G",
+  "variant_type": "SNV"
+ }
+}

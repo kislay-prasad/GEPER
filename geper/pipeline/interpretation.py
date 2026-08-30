@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from utils.logger import get_logger
+from utils.service_health import HEALTH
 from pipeline.acmg_rules import ACMGRuleEngine
 from pipeline.interpretation_result import build_interpretation_result
 from pipeline.confidence_engine import ConfidenceEngine
@@ -38,6 +39,13 @@ _SIGNIFICANCE_WEIGHT = {
     "likely benign": -2,
     "benign": -3,
 }
+
+# Registered on the health registry when the real-conflict pre-pass
+# raises, so the failure reaches the report bundle. Named as a component
+# rather than a data source because it is one, and the caveat renderer
+# says something different (and true) about each -- see
+# `ServiceHealthRegistry.note_component_failure`.
+_CONFLICT_DETECTION_COMPONENT = "Conflict detection (internal)"
 
 
 class InterpretationEngine:
@@ -412,38 +420,124 @@ class InterpretationEngine:
                 rna_result=rna_result,
             )
 
-            # Phase 3: independent confidence scoring, applied on top of
-            # the InterpretationResult Phase 2 just built. Reuses its
-            # `conflicting_evidence` / `ai_consensus` (already derived,
-            # not recomputed) alongside the same raw provider dicts.
-            # Only these three fields are set here -- everything else on
-            # `result_obj` (acmg_classification, triggered_rules, etc.)
-            # is untouched.
-            confidence_result = None  # pre-initialized so Phase 6 below can safely check "did this run"
+            # HIGH-1: the conflicts Phases 3 and 4 score against,
+            # computed once here, ahead of both. This is the hoist
+            # `ConflictResolutionEngine.real_conflicts_for_scoring`
+            # documents -- I2's shape, not a second approach: a cheap
+            # side-effect-free re-run of the detectors rather than a
+            # reordering of the phases, which is impossible while Phase
+            # 6 renders Phases 3/4's penalties into its own text.
+            #
+            # THE COUPLING BELOW IS INTENTIONAL AND IS THE POINT. After
+            # this, three consumers read one definition of "a real
+            # conflict": Phase 6's Attention flag (via conflict_
+            # severity), Phase 3's confidence penalty and Phase 4's
+            # priority penalty. Phase 4 additionally has the J3 floor,
+            # which raises its category from that same severity -- so a
+            # single Clinical disagreement now both lowers Phase 4's
+            # score and can raise its category. That is deliberate:
+            # the penalty says "this finding's evidence is less
+            # coherent", the floor says "a human must look at it
+            # anyway", and they are answers to different questions.
+            # Before this change they could not collide only because
+            # they read different inputs, which is not a design.
             try:
-                confidence_result = self._confidence_engine.score(
+                real_conflicts = self._conflict_engine.real_conflicts_for_scoring(
+                    acmg_classification=result_obj.acmg_classification,
+                    acmg_conflicting_evidence=result_obj.conflicting_evidence,
+                    ai_consensus=result_obj.ai_consensus,
                     clinvar_result=clinvar_result,
                     clingen_result=clingen_result,
                     gnomad_result=gnomad_result,
-                    dbsnp_result=dbsnp_result,
                     alphamissense_result=alphamissense_result,
                     mmsplice_result=mmsplice_result,
-                    dna_models_used=dna_models_used,
-                    rna_result=rna_result,
-                    protein_result=protein_result,
                     uniprot_result=uniprot_result,
                     interpro_result=interpro_result,
                     alphafold_result=alphafold_result,
                     blast_result=blast_result,
-                    conflicting_evidence=result_obj.conflicting_evidence,
-                    ai_consensus=result_obj.ai_consensus,
                 )
-                result_obj.confidence_score = confidence_result.score
-                result_obj.confidence_label = confidence_result.label
-                result_obj.confidence_pending = False
-                result_obj.confidence_breakdown = confidence_result.to_dict()
             except Exception:
-                logger.exception("Confidence engine failed; confidence_pending remains True.")
+                # NOT `real_conflicts = []`. That was this block's first
+                # form and it was wrong in the one direction that
+                # matters: an empty list is indistinguishable from "no
+                # conflicts were detected", and it REMOVES a penalty --
+                # so a crashed detector would make a variant look MORE
+                # confident and higher-scoring than a working one. The
+                # absence-versus-failure confusion, inside the fix for a
+                # scoring defect, failing toward the flattering answer.
+                #
+                # `None` is the sentinel, and it is not a quieter zero:
+                # Phases 3 and 4 below skip scoring entirely when they
+                # see it, leaving `confidence_pending` /
+                # `priority_pending` True. The report then renders
+                # "Pending" for this finding instead of a number nobody
+                # can stand behind -- absence expressed as absence,
+                # which is what the four-status work established for
+                # models and what Finding 5 established for sources.
+                #
+                # `logger.exception` alone would not be enough: the log
+                # is not part of the output bundle, which is the whole
+                # point of Finding 5. So the failure is also recorded on
+                # the health registry, which carries it into
+                # `service_health` and out through every renderer.
+                logger.exception(
+                    "Real-conflict detection failed; withholding this variant's confidence and "
+                    "priority scores rather than scoring it as conflict-free."
+                )
+                HEALTH.note_component_failure(_CONFLICT_DETECTION_COMPONENT)
+                real_conflicts = None
+
+            # Phase 3: independent confidence scoring, applied on top of
+            # the InterpretationResult Phase 2 just built. Reuses its
+            # `real_conflicts` (hoisted just above) / `ai_consensus`
+            # (already derived, not recomputed) alongside the same raw
+            # provider dicts.
+            # Only these three fields are set here -- everything else on
+            # `result_obj` (acmg_classification, triggered_rules, etc.)
+            # is untouched.
+            confidence_result = None  # pre-initialized so Phase 6 below can safely check "did this run"
+            # Detection failed (see the sentinel's comment above).
+            # Scoring anyway would score the variant as conflict-free,
+            # which is the flattering direction. Guarded here rather
+            # than raised into the handler below, so the log says what
+            # actually happened instead of blaming the confidence
+            # engine for a failure that was not its own.
+            if real_conflicts is None:
+                logger.warning(
+                    "Confidence not scored for this variant: real-conflict detection was "
+                    "unavailable, and scoring without it would report the variant as "
+                    "conflict-free. confidence_pending remains True."
+                )
+            else:
+                try:
+                    confidence_result = self._confidence_engine.score(
+                        clinvar_result=clinvar_result,
+                        clingen_result=clingen_result,
+                        gnomad_result=gnomad_result,
+                        dbsnp_result=dbsnp_result,
+                        alphamissense_result=alphamissense_result,
+                        mmsplice_result=mmsplice_result,
+                        dna_models_used=dna_models_used,
+                        rna_result=rna_result,
+                        protein_result=protein_result,
+                        uniprot_result=uniprot_result,
+                        interpro_result=interpro_result,
+                        alphafold_result=alphafold_result,
+                        blast_result=blast_result,
+                        # HIGH-1 call site 1 of 2. The raw
+                        # `result_obj.conflicting_evidence` is per-criterion
+                        # caveats, which D4 already ruled are not conflicts;
+                        # scoring against them is what moved three of five
+                        # confidence bands on the nuclear_test run.
+                        real_conflicts=real_conflicts,
+                        ai_consensus=result_obj.ai_consensus,
+                    )
+                    result_obj.confidence_score = confidence_result.score
+                    result_obj.confidence_label = confidence_result.label
+                    result_obj.confidence_pending = False
+                    result_obj.confidence_breakdown = confidence_result.to_dict()
+                except Exception:
+                    logger.exception("Confidence engine failed; confidence_pending remains True.")
 
             # Phase 4: variant prioritization. Independent scoring logic
             # from Phase 1/3, but explicitly takes the ACMG
@@ -454,46 +548,61 @@ class InterpretationEngine:
             # -- see `prioritization_engine.rank_batch`, applied once by
             # the orchestrator after every variant in a run is scored.
             priority_result = None  # pre-initialized so Phase 6 below can safely check "did this run"
-            try:
-                triggered_codes = [c.get("code") for c in result_obj.triggered_rules]
-                # Report review round 4, I2: cheaply re-runs the same
-                # Critical-conflict check Phase 6 will do properly below
-                # (via `ConflictResolutionEngine.has_critical_conflict`,
-                # a thin wrapper around `_expert_panel_disagreement_
-                # conflict`) so Phase 4 can floor review priority at
-                # Critical when it fires -- Phase 6 itself can't run
-                # first here, since it needs Phase 4's own conflict-
-                # penalty output as one of its inputs.
-                critical_conflict = self._conflict_engine.has_critical_conflict(
-                    result_obj.acmg_classification, clinvar_result
+            # Same guard as Phase 3, and it matters more here: an
+            # unpenalised priority score is what sorts a finding to
+            # the top of a reviewer's worklist. A crashed detector
+            # must not promote a variant.
+            if real_conflicts is None:
+                logger.warning(
+                    "Review priority not scored for this variant: real-conflict detection was "
+                    "unavailable, and scoring without it would report the variant as "
+                    "conflict-free. priority_pending remains True."
                 )
-                priority_result = self._prioritization_engine.score(
-                    acmg_classification=result_obj.acmg_classification,
-                    confidence_score=result_obj.confidence_score,
-                    triggered_rule_codes=triggered_codes,
-                    clinvar_result=clinvar_result,
-                    clingen_result=clingen_result,
-                    gnomad_result=gnomad_result,
-                    dbsnp_result=dbsnp_result,
-                    alphamissense_result=alphamissense_result,
-                    mmsplice_result=mmsplice_result,
-                    dna_models_used=dna_models_used,
-                    rna_result=rna_result,
-                    protein_result=protein_result,
-                    interpro_result=interpro_result,
-                    alphafold_result=alphafold_result,
-                    blast_result=blast_result,
-                    ai_consensus=result_obj.ai_consensus,
-                    conflicting_evidence=result_obj.conflicting_evidence,
-                    critical_conflict=critical_conflict,
-                )
-                result_obj.priority_score = priority_result.score
-                result_obj.priority_category = priority_result.category
-                result_obj.priority_pending = False
-                result_obj.priority_explanation = priority_result.explanation
-                result_obj.priority_breakdown = priority_result.to_dict()
-            except Exception:
-                logger.exception("Prioritization engine failed; priority_pending remains True.")
+            else:
+                try:
+                    triggered_codes = [c.get("code") for c in result_obj.triggered_rules]
+                    # Report review round 4, I2: cheaply re-runs the same
+                    # Critical-conflict check Phase 6 will do properly below
+                    # (via `ConflictResolutionEngine.has_critical_conflict`,
+                    # a thin wrapper around `_expert_panel_disagreement_
+                    # conflict`) so Phase 4 can floor review priority at
+                    # Critical when it fires -- Phase 6 itself can't run
+                    # first here, since it needs Phase 4's own conflict-
+                    # penalty output as one of its inputs.
+                    critical_conflict = self._conflict_engine.has_critical_conflict(
+                        result_obj.acmg_classification, clinvar_result
+                    )
+                    priority_result = self._prioritization_engine.score(
+                        acmg_classification=result_obj.acmg_classification,
+                        confidence_score=result_obj.confidence_score,
+                        triggered_rule_codes=triggered_codes,
+                        clinvar_result=clinvar_result,
+                        clingen_result=clingen_result,
+                        gnomad_result=gnomad_result,
+                        dbsnp_result=dbsnp_result,
+                        alphamissense_result=alphamissense_result,
+                        mmsplice_result=mmsplice_result,
+                        dna_models_used=dna_models_used,
+                        rna_result=rna_result,
+                        protein_result=protein_result,
+                        interpro_result=interpro_result,
+                        alphafold_result=alphafold_result,
+                        blast_result=blast_result,
+                        ai_consensus=result_obj.ai_consensus,
+                        # HIGH-1 call site 2 of 2, and not a formality: this
+                        # is the one that demoted TP53 R248W from High
+                        # review priority to Moderate. Fixing only the
+                        # confidence engine leaves that in place.
+                        real_conflicts=real_conflicts,
+                        critical_conflict=critical_conflict,
+                    )
+                    result_obj.priority_score = priority_result.score
+                    result_obj.priority_category = priority_result.category
+                    result_obj.priority_pending = False
+                    result_obj.priority_explanation = priority_result.explanation
+                    result_obj.priority_breakdown = priority_result.to_dict()
+                except Exception:
+                    logger.exception("Prioritization engine failed; priority_pending remains True.")
 
             # Phase 6: conflict resolution. Purely additive and purely
             # documentary -- never touches acmg_classification or the

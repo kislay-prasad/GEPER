@@ -141,7 +141,7 @@ class PrioritizationEngine:
         alphafold_result: Dict[str, Any] = None,
         blast_result: Dict[str, Any] = None,
         ai_consensus: List[Dict[str, Any]] = None,
-        conflicting_evidence: List[str] = None,
+        real_conflicts: List[Any] = None,
         critical_conflict: bool = False,
     ) -> PriorityResult:
         cfg = CONFIG.prioritization
@@ -168,7 +168,7 @@ class PrioritizationEngine:
         raw_sum = sum(f.contribution for f in factors)
         raw_score = 100.0 * (raw_sum / max_possible) if max_possible > 0 else 0.0
 
-        penalty, penalty_explanation = self._conflict_penalty(conflicting_evidence, ai_consensus, cfg)
+        penalty, penalty_explanation = self._conflict_penalty(real_conflicts, cfg)
         if penalty > 0:
             reasons.append(f"✗ {penalty_explanation}")
         final_score = max(0.0, raw_score * (1.0 - penalty))
@@ -464,33 +464,29 @@ class PrioritizationEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _conflict_penalty(conflicting_evidence, ai_consensus, cfg) -> Tuple[float, str]:
-        units = 0
-        reasons: List[str] = []
-        n = len(conflicting_evidence or [])
-        if n:
-            units += n
-            reasons.append(f"{n} conflicting-evidence item(s) recorded across ACMG criteria.")
-        if ai_consensus and len(ai_consensus) >= 2:
-            directions = set()
-            for v in ai_consensus:
-                pred = (v.get("prediction") or "").lower()
-                if "pathogenic" in pred or pred in (
-                    "strong_donor_loss",
-                    "strong_acceptor_loss",
-                    "exon_skipping",
-                    "intron_retention",
-                    "strong",
-                    "moderate",
-                ):
-                    directions.add("damaging")
-                elif "benign" in pred:
-                    directions.add("benign")
-            if len(directions) > 1:
-                units += 1
-                reasons.append("AI classifiers disagree in predicted direction.")
+    def _conflict_penalty(real_conflicts, cfg) -> Tuple[float, str]:
+        """
+        HIGH-1: same change, same reasoning, as
+        `ConfidenceEngine._conflict_penalty` -- see its docstring. Kept
+        as a separate function rather than shared because the two
+        engines' rates are configured independently on purpose
+        (`GEPER_PRIORITY_CONFLICT_PENALTY` vs
+        `GEPER_CONFIDENCE_CONFLICT_PENALTY`); only the *definition of a
+        conflict* is now shared, via
+        `ConflictResolutionEngine._real_conflicts`.
+
+        This site matters on its own: it is what demoted TP53 R248W
+        (Pathogenic, the highest net points of the five-variant run)
+        from High review priority to Moderate on the strength of three
+        self-flagged ACMG caveats. Fixing only the confidence engine
+        would have left that demotion in place.
+        """
+        units = len(real_conflicts or [])
         penalty = min(cfg.MAX_CONFLICT_PENALTY, units * cfg.CONFLICT_PENALTY_PER_CONFLICT)
-        return penalty, (" ".join(reasons) if reasons else "No conflicting evidence detected.")
+        if not units:
+            return penalty, "No conflicting evidence detected."
+        detail = "; ".join(f"{c.conflict_type} ({c.severity})" for c in real_conflicts)
+        return penalty, f"{units} conflict(s) detected between independent evidence sources: {detail}."
 
     @staticmethod
     def _category(score: float, cfg) -> str:

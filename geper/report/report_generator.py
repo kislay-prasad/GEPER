@@ -954,7 +954,12 @@ class ReportGenerator:
             band_label = (
                 f"at residue {struct.get('protein_position')} (transcript-verified)"
                 if struct.get("confidence_band_is_residue_specific")
-                else "whole-protein mean (variant residue position unknown)"
+                # `mapping_unavailable_reason` is the mapping gate's own
+                # specific verdict (mapping_gate.py names six distinct
+                # reasons) -- "variant residue position unknown" is only
+                # accurate for one of them, so it is now a fallback for
+                # the reason being absent, not the default explanation.
+                else f"whole-protein mean ({struct.get('mapping_unavailable_reason') or 'variant residue position unknown'})"
             )
             lines.append(
                 f"- **AlphaFold DB:** confidence band '{struct.get('confidence_band') or 'n/a'}' {band_label} (model {struct.get('model_version') or 'n/a'})"
@@ -1866,10 +1871,15 @@ class ReportGenerator:
                 f"(_{alphafold_result.get('protein_position_basis', 'n/a')}_)"
             )
         elif alphafold_result.get("mean_plddt") is not None:
-            lines.append(
-                "- **pLDDT at variant residue:** not checked -- this variant's residue position could not "
-                "be determined from the transcript structure."
+            # The old hardcoded text here claimed the residue position
+            # couldn't be determined from the transcript -- true only for
+            # one of mapping_gate.py's six failure reasons, and actively
+            # false for the other five (e.g. a known position that's
+            # simply outside the AlphaFold entry's span, or not modelled).
+            reason = alphafold_result.get("mapping_unavailable_reason") or (
+                "this variant's residue position could not be determined from the transcript structure"
             )
+            lines.append(f"- **pLDDT at variant residue:** not checked -- {reason}.")
         lines.append("")
 
         return lines

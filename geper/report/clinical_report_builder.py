@@ -735,6 +735,11 @@ def _structural_knowledge(raw: Dict[str, Any]) -> Dict[str, Any]:
         "available": True,
         "confidence_band": residue_band or alphafold.get("mean_plddt_band"),
         "confidence_band_is_residue_specific": residue_band is not None,
+        # The mapping gate's own specific verdict for why (mapping_gate.py
+        # has six distinct reasons; "position unknown" is only one of
+        # them) -- carried through so a renderer never has to fall back
+        # to a hardcoded, sometimes-inaccurate guess at the reason.
+        "mapping_unavailable_reason": alphafold.get("mapping_unavailable_reason"),
         "protein_position": alphafold.get("protein_position"),
         "mean_plddt": alphafold.get("mean_plddt"),
         "affected_residue_plddt": alphafold.get("affected_residue_plddt"),

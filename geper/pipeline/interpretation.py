@@ -1067,9 +1067,16 @@ class InterpretationEngine:
                     f"(transcript-verified) is '{band}'."
                 )
             elif alphafold_result.get("mean_plddt_band"):
+                # `mapping_unavailable_reason` (models.py) is the mapping
+                # gate's own specific verdict for why residue-specific
+                # confidence isn't available -- state it when present
+                # rather than leaving the fallback unexplained.
+                reason = alphafold_result.get("mapping_unavailable_reason")
+                reason_clause = f" ({reason})" if reason else ""
                 lines.append(
                     f"AlphaFold DB: overall predicted structure confidence for this protein is "
-                    f"'{alphafold_result['mean_plddt_band']}' (mean pLDDT)."
+                    f"'{alphafold_result['mean_plddt_band']}' (mean pLDDT); residue-specific "
+                    f"confidence unavailable{reason_clause}."
                 )
 
         return lines

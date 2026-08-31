@@ -1,8 +1,8 @@
 # GEPER Validation Study Design
 
-**Status:** DEFINITION ONLY. **UNCOMMITTED.** No measurement runs performed, no data
-downloaded, no code written or changed. Nothing in this document commits without human
-review.
+**Status:** DEFINITION ONLY. No measurement runs performed, no data collected, no
+acceptance thresholds set. This document defines how GEPER's accuracy would be measured.
+It contains no measurements.
 **Author:** Vic (validation strategy & study design lane), dispatched by god, 2026-08-21.
 **Scope:** the two studies that would fill rubric domain **D1** — concordance (1a) and
 external QA panel (1c) — plus the **structure** of the acceptance criteria all of D1 is
@@ -37,13 +37,21 @@ result would mean *this validation failed*, as distinct from *this criterion fai
 the one part of this document that determines whether the studies can produce a negative
 result at all, and it should be read before the study designs rather than after.
 
-**The standing frame, restated because every section below depends on it:** the work
-preceding this design established that GEPER no longer **misstates what it observed**. It
-did **not** establish that what it observes is **correct** (tag
-`validation-baseline-2026-08-21`, its own message: *"NOT ESTABLISHED: that what it observes
-is CORRECT... Not partial — absent."*). These studies are the plan for attacking that
-second, separate question. Until one of them is executed, **nothing in this document is
-evidence of anything about GEPER's accuracy** — it is a plan to obtain such evidence.
+**The frame every section below depends on:** prior work established that GEPER no longer
+**misstates what it observed**. It did **not** establish that what it observes is
+**correct**. That gap is not partial — it is absent, and closing it is what this document
+plans.[^baseline]
+
+Until one of these studies is executed, **nothing in this document is evidence of GEPER's
+accuracy.** It is a plan to obtain that evidence.
+
+**Every acceptance threshold in this document is deliberately blank.** They are blank
+because setting them is a clinical judgement, not an engineering one — and they are the
+reason this document is in front of you.
+
+[^baseline]: Provenance, kept out of the frame: tag `validation-baseline-2026-08-21`
+    (`470a993`), whose own message reads *"NOT ESTABLISHED: that what it observes is
+    CORRECT... Not partial — absent."*
 
 ### 0.1 Index of unfilled expert-judgement decisions — **25**
 

@@ -637,13 +637,20 @@ class TestBlastPropagation:
 
         assert "not override ACMG evidence" in annotation["blast_summary"]["note"]
 
-    def test_no_blast_data_does_not_crash(self):
-        """When blast_result_data is None, annotation proceeds normally."""
-        blast_result_data = None
-        annotation = {"variants": [{"chrom": "chr1", "pos": 1, "ref": "A", "alt": "T"}]}
-        if blast_result_data and isinstance(annotation.get("variants"), list):
-            pass  # merge would happen
-        assert "variants" in annotation  # no crash
+    # FIX #9 (2026-08-31): test_no_blast_data_does_not_crash used to sit
+    # here. It built a local `annotation` dict, set `blast_result_data =
+    # None`, guarded them with a literal `if blast_result_data and
+    # isinstance(...): pass` that could never execute (`blast_result_data`
+    # was always `None`) and did nothing even if it had (`pass`), then
+    # asserted `"variants" in annotation` -- true only because the test
+    # had just put that key there itself two lines above. It never
+    # imported or called runner.py, so it could not have caught a real
+    # regression in the guard it claimed to describe. Removed and
+    # replaced by tests/test_vcf_only_mode.py::
+    # TestNoBlastDataLeavesAnnotationUnmerged::
+    # test_no_blast_data_does_not_add_blast_summary, which drives the
+    # real guard at runner.py:752 through an actual `PipelineRunner.run()`
+    # call and is confirmed live by mutation (see that test's docstring).
 
 
 # ══════════════════════════════════════════════════════════════════════════════

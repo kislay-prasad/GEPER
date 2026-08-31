@@ -116,21 +116,30 @@ class TestInputVcfAbsolutePath(unittest.TestCase):
         self.assertTrue(os.path.isabs(doc["input_vcf_absolute_path"]))
 
 
-class TestAbsentReadsAsIncomplete(unittest.TestCase):
-    """Round 12's own explicit requirement: 'Absent must read as false
-    everywhere it's checked -- no reader may default a missing key to
-    true.' A pre-round-17 file has no `run_complete` key at all."""
-
-    def test_missing_key_is_falsy_via_bool_get(self):
-        pre_round_17_doc = {"model_checkpoints": {"splicebert": _BARE_SPLICEBERT}}
-        self.assertFalse(bool(pre_round_17_doc.get("run_complete")))
-
-    def test_explicit_none_is_also_falsy(self):
-        self.assertFalse(bool({"run_complete": None}.get("run_complete")))
-
-
 class TestMarkdownRendererShowsIncompleteRunNotice(unittest.TestCase):
-    """`report/report_generator.py::ReportGenerator._render_provenance`."""
+    """`report/report_generator.py::ReportGenerator._render_provenance`.
+
+    FIX #9 (2026-08-31): a `TestAbsentReadsAsIncomplete` class used to
+    sit above this one, its docstring stating round 12's own
+    requirement ('Absent must read as false everywhere it's checked --
+    no reader may default a missing key to true') and its two tests
+    (test_missing_key_is_falsy_via_bool_get, test_explicit_none_is_also_
+    falsy) asserting `bool({}.get("run_complete"))` and
+    `bool({"run_complete": None}.get("run_complete"))` are both `False`.
+    Both are true of Python's `bool()`/`dict.get()` for ANY dict --
+    neither test ever called report_generator.py, so neither could have
+    caught a reader that used `.get("run_complete", True)`, the exact
+    bug the requirement warns against. Removed rather than replaced:
+    test_missing_run_complete_key_also_shows_notice below, and its
+    twin in TestFullPdfRendererShowsIncompleteRunNotice, already drive
+    the real renderer with a genuinely keyless document -- confirmed
+    live by mutation: temporarily changing `_render_provenance`'s
+    `bool(json_document.get("run_complete"))` to
+    `bool(json_document.get("run_complete", True))` left the two
+    now-removed tests green (they never touched this code) while these
+    two went red; reverting restored green. The removed tests added no
+    discriminating power the file didn't already have.
+    """
 
     def test_incomplete_run_with_bare_identifiers_shows_notice(self):
         doc = {

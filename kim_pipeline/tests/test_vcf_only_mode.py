@@ -71,17 +71,19 @@ class TestVcfOnlyMode:
         r1 = tmp_path / "r1.fastq"
         _make_fastq(r1)
 
-        (mock_validator, mock_qc_result, mock_align_result,
-         mock_vc_result, vcf_path) = _patch_common_stages(tmp_path)
+        (mock_validator, mock_qc_result, mock_align_result, mock_vc_result, vcf_path) = (
+            _patch_common_stages(tmp_path)
+        )
 
-        with patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator), \
-             patch("pipeline.orchestration.runner.QCStage") as MockQC, \
-             patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign, \
-             patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC, \
-             patch("pipeline.orchestration.runner.VEPAnnotationStage") as MockVEP, \
-             patch("pipeline.orchestration.runner.AnnotationStage") as MockAnnotation, \
-             patch("pipeline.orchestration.runner.ReportingStage") as MockReporting:
-
+        with (
+            patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator),
+            patch("pipeline.orchestration.runner.QCStage") as MockQC,
+            patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign,
+            patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC,
+            patch("pipeline.orchestration.runner.VEPAnnotationStage") as MockVEP,
+            patch("pipeline.orchestration.runner.AnnotationStage") as MockAnnotation,
+            patch("pipeline.orchestration.runner.ReportingStage") as MockReporting,
+        ):
             MockQC.return_value.run.return_value = mock_qc_result
             MockAlign.return_value.run.return_value = mock_align_result
             MockVC.return_value.run.return_value = mock_vc_result
@@ -112,15 +114,17 @@ class TestVcfOnlyMode:
         r1 = tmp_path / "r1.fastq"
         _make_fastq(r1)
 
-        (mock_validator, mock_qc_result, mock_align_result,
-         mock_vc_result, vcf_path) = _patch_common_stages(tmp_path)
+        (mock_validator, mock_qc_result, mock_align_result, mock_vc_result, vcf_path) = (
+            _patch_common_stages(tmp_path)
+        )
 
-        with patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator), \
-             patch("pipeline.orchestration.runner.QCStage") as MockQC, \
-             patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign, \
-             patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC, \
-             patch("pipeline.orchestration.runner.ReportingStage") as MockReporting:
-
+        with (
+            patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator),
+            patch("pipeline.orchestration.runner.QCStage") as MockQC,
+            patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign,
+            patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC,
+            patch("pipeline.orchestration.runner.ReportingStage") as MockReporting,
+        ):
             MockQC.return_value.run.return_value = mock_qc_result
             MockAlign.return_value.run.return_value = mock_align_result
             MockVC.return_value.run.return_value = mock_vc_result
@@ -165,8 +169,9 @@ class TestVcfOnlyMode:
         r1 = tmp_path / "r1.fastq"
         _make_fastq(r1)
 
-        (mock_validator, mock_qc_result, mock_align_result,
-         mock_vc_result, vcf_path) = _patch_common_stages(tmp_path)
+        (mock_validator, mock_qc_result, mock_align_result, mock_vc_result, vcf_path) = (
+            _patch_common_stages(tmp_path)
+        )
 
         mock_vep_result = MagicMock(annotated_vcf_path=str(vcf_path), variant_count=1)
         mock_annotation_result = MagicMock()
@@ -174,14 +179,15 @@ class TestVcfOnlyMode:
         mock_report_result = MagicMock()
         mock_report_result.to_dict.return_value = {"report": "ok"}
 
-        with patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator), \
-             patch("pipeline.orchestration.runner.QCStage") as MockQC, \
-             patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign, \
-             patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC, \
-             patch("pipeline.orchestration.runner.VEPAnnotationStage") as MockVEP, \
-             patch("pipeline.orchestration.runner.AnnotationStage") as MockAnnotation, \
-             patch("pipeline.orchestration.runner.ReportingStage") as MockReporting:
-
+        with (
+            patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator),
+            patch("pipeline.orchestration.runner.QCStage") as MockQC,
+            patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign,
+            patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC,
+            patch("pipeline.orchestration.runner.VEPAnnotationStage") as MockVEP,
+            patch("pipeline.orchestration.runner.AnnotationStage") as MockAnnotation,
+            patch("pipeline.orchestration.runner.ReportingStage") as MockReporting,
+        ):
             MockQC.return_value.run.return_value = mock_qc_result
             MockAlign.return_value.run.return_value = mock_align_result
             MockVC.return_value.run.return_value = mock_vc_result
@@ -200,3 +206,81 @@ class TestVcfOnlyMode:
             assert result.stopped_after is None
             assert result.report == {"report": "ok"}
             MockReporting.return_value.run.assert_called_once()
+
+
+class TestNoBlastDataLeavesAnnotationUnmerged:
+    """FIX #9: replaces test_defect_regression.py::TestBlastMergeIntoAnnotation::
+    test_no_blast_data_does_not_crash, which built a local `annotation`
+    dict and `blast_result_data = None` by hand, guarded them with a
+    literal `if blast_result_data and ...: pass` that never executed
+    (`pass` does nothing even when it does), and then asserted
+    `"variants" in annotation` -- true because the test had just put it
+    there two lines above, regardless of what runner.py actually does
+    with `blast_result_data`. It never imported or called runner.py at
+    all.
+
+    This drives the real merge guard at runner.py:752
+    (`if blast_result_data and isinstance(result.annotation.get(
+    "variants"), list):`) through the actual `PipelineRunner.run()`,
+    using the same external-stage-mocking harness the rest of this file
+    already established, with `variants` present as a real list (so the
+    ONLY thing keeping `blast_summary` out is `blast_result_data` being
+    `None`, not the `isinstance` half of the guard) and blast left at
+    its default-disabled config (`cfg={}` -> `blast.enabled` absent ->
+    `False`), exactly as a real run has it unless explicitly configured.
+
+    Confirmed live by mutation (2026-08-31): temporarily changing
+    runner.py:752's guard from `if blast_result_data and isinstance(...)`
+    to `if True and isinstance(...)` (forcing the merge body to run
+    regardless of `blast_result_data`) turned this test red -- the
+    merge body immediately crashes on `blast_result_data.get("hits", [])`
+    when `blast_result_data` is `None`, so the run fails outright rather
+    than quietly adding `blast_summary`. Either way the guard's absence
+    is caught, which is the point; reverting restored green.
+    """
+
+    def test_no_blast_data_does_not_add_blast_summary(self, tmp_path):
+        r1 = tmp_path / "r1.fastq"
+        _make_fastq(r1)
+
+        (mock_validator, mock_qc_result, mock_align_result, mock_vc_result, vcf_path) = (
+            _patch_common_stages(tmp_path)
+        )
+
+        mock_vep_result = MagicMock(annotated_vcf_path=str(vcf_path), variant_count=1)
+        mock_annotation_result = MagicMock()
+        mock_annotation_result.to_dict.return_value = {
+            "variants": [{"chrom": "chr1", "pos": 100, "ref": "A", "alt": "T"}]
+        }
+        mock_report_result = MagicMock()
+        mock_report_result.to_dict.return_value = {}
+
+        with (
+            patch("pipeline.orchestration.runner.FastqValidator", return_value=mock_validator),
+            patch("pipeline.orchestration.runner.QCStage") as MockQC,
+            patch("pipeline.orchestration.runner.AlignmentStage") as MockAlign,
+            patch("pipeline.orchestration.runner.VariantCallingStage") as MockVC,
+            patch("pipeline.orchestration.runner.VEPAnnotationStage") as MockVEP,
+            patch("pipeline.orchestration.runner.AnnotationStage") as MockAnnotation,
+            patch("pipeline.orchestration.runner.ReportingStage") as MockReporting,
+        ):
+            MockQC.return_value.run.return_value = mock_qc_result
+            MockAlign.return_value.run.return_value = mock_align_result
+            MockVC.return_value.run.return_value = mock_vc_result
+            MockVEP.return_value.run.return_value = mock_vep_result
+            MockAnnotation.return_value.run.return_value = mock_annotation_result
+            MockReporting.return_value.run.return_value = mock_report_result
+
+            # blast.enabled left unset -> False, so blast_result_data
+            # stays None exactly as a real unconfigured run has it.
+            runner = PipelineRunner(cfg={}, resume=False)
+            result = runner.run(
+                fastq_r1=str(r1),
+                reference_fasta="/dev/null",
+                output_dir=str(tmp_path / "out"),
+                sample_id="S06",
+            )
+
+        assert "variants" in result.annotation
+        assert "blast_summary" not in result.annotation
+        assert "blast_hits" not in result.annotation["variants"][0]

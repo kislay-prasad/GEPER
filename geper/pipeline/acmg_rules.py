@@ -2494,12 +2494,27 @@ class ACMGRuleEngine:
             # trigger, so it carries at least as much clinical weight.
             # The caveat is bound to the model's name, ahead of its score,
             # rather than trailing the sentence: a reader skimming the
-            # evidence list sees "uncalibrated; not clinically validated"
-            # before they see the number it qualifies. It also keeps the
-            # phrase near the start of the rendered line, so PDF line-
-            # wrapping cannot split "not clinically validated" across a
-            # break the way a trailing clause does.
-            qualified = f"{label} (uncalibrated; not clinically validated)"
+            # evidence list sees the calibration status before they see the
+            # number it qualifies. It also keeps the phrase near the start
+            # of the rendered line, so PDF line-wrapping cannot split it
+            # across a break the way a trailing clause does.
+            # READ, not restated: this used to hand-type "(uncalibrated; not
+            # clinically validated)" here despite this very comment already
+            # naming `details.calibration_status` as the source of truth --
+            # one copy the plugin writes, a second copy a human maintained
+            # by hand next to it, free to drift the moment either changed.
+            # Reading it here means one source, one consumer, nothing to
+            # keep in sync by memory.
+            calibration_status = (plugin_result.get("details") or {}).get("calibration_status")
+            if not calibration_status:
+                # Honest absence, not a guess: a plugin whose result carries
+                # no calibration_status at all gets told apart from one that
+                # reports itself uncalibrated -- inventing "(uncalibrated;
+                # not clinically validated)" here for a missing key would
+                # silently rebuild the exact defect this fix removes, one
+                # level down.
+                calibration_status = "calibration status not reported by this model"
+            qualified = f"{label} ({calibration_status})"
             caveat = " This is a raw model score, not a validated clinical splice-impact measure."
             if classification in ("large_effect", "moderate_effect"):
                 plugin_damaging = True

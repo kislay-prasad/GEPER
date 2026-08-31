@@ -20,6 +20,26 @@ string is just "SpliceFormer predicts a 'large_effect' effect
 (score=X)." -- no disclosure wording yet); GREEN once it's added,
 without this test needing to change, since it asserts on the real
 CriterionResult text rather than a fixture I construct by hand.
+
+UPDATE (2026-08-31, calibration_status coupling fix): `_DISCLOSURE_
+SUBSTRINGS`'s third element changed from "not clinically validated" to
+"not validated against clinical ground truth". `_bp7` used to hand-type
+"(uncalibrated; not clinically validated)" next to the score -- fixed
+wording, regardless of what either plugin actually said about its own
+calibration. It now reads `details.calibration_status` from the real
+plugin result instead (see `pipeline/acmg_rules.py::ACMGRuleEngine.
+_bp7`), so the disclosed text is exactly whichever sentence the plugin
+itself reports. `_DAMAGING_SPLICEFORMER_RESULT` below already carries
+SpliceFormer's real sentence, which does not contain the literal phrase
+"not clinically validated" -- so this test needed exactly the update its
+own docstring said it wouldn't, once the follow-up fix (reading the
+field instead of restating it) landed on top of the original disclosure
+fix this file was written to protect. See
+`TestBP7CalibrationStatusIsReadNotRestated` below for the coupling proof
+this earlier version of the file didn't have: a test that changes what a
+plugin says about its calibration and confirms BP7's output changes with
+it, rather than asserting a fixed phrase that would stay identical
+either way.
 """
 
 import os
@@ -38,7 +58,7 @@ try:
 except ImportError:
     _PYPDF_AVAILABLE = False
 
-_DISCLOSURE_SUBSTRINGS = ("SpliceFormer", "uncalibrated", "not clinically validated")
+_DISCLOSURE_SUBSTRINGS = ("SpliceFormer", "uncalibrated", "not validated against clinical ground truth")
 
 # Shape matches pipeline/models/spliceformer_plugin.py::SpliceFormerPlugin
 # .predict()'s real output (score/classification/confidence/details/meta)
@@ -173,8 +193,17 @@ class TestBP7SpliceFormerDisclosure(unittest.TestCase):
             out = os.path.join(tmp, "full.pdf")
             generate_pdf(self.document, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        # SpliceFormer's real calibration_status sentence (read from the
+        # field rather than the old short hand-typed phrase) is long
+        # enough that the PDF's fixed page width can line-wrap inside
+        # it -- a rendering artifact, not a missing disclosure. Collapse
+        # whitespace before the substring check so a wrap doesn't read
+        # as absence; `text` itself stays unwrapped for the
+        # position-ordering checks below, which only look for short
+        # words/headings the wrap doesn't split.
+        flattened = " ".join(text.split())
         for substring in _DISCLOSURE_SUBSTRINGS:
-            self.assertIn(substring, text)
+            self.assertIn(substring, flattened)
         conflicting_idx = text.index("Conflicting Evidence")
         disclosure_idx = text.index("uncalibrated")
         self.assertLess(conflicting_idx, disclosure_idx)
@@ -182,6 +211,140 @@ class TestBP7SpliceFormerDisclosure(unittest.TestCase):
         # section is present at all, the disclosure must precede it.
         if "Limitations" in text:
             self.assertLess(disclosure_idx, text.index("Limitations"))
+
+
+class TestBP7CalibrationStatusIsReadNotRestated(unittest.TestCase):
+    """The coupling proof the substring tests above cannot provide: they
+    only confirm certain words appear, which stayed true even when the
+    caveat was a hand-typed constant unrelated to what either plugin
+    actually reported. These tests confirm the disclosed text tracks
+    each plugin's own `details.calibration_status` value -- change what
+    a plugin says about its calibration, and BP7's rendered evidence
+    changes with it. Verified manually before this fix landed: mutating
+    SpliceFormerPlugin's calibration_status string and re-running the
+    tests above left them GREEN (the old hand-typed phrase doesn't
+    reference the field, so nothing could break); the same mutation
+    against the fixed `_bp7` makes the *old* substring check ("not
+    clinically validated") go red, because that literal phrase is gone
+    from the output -- see the dispatch report for the captured
+    before/after text. These tests are the automated, permanent form of
+    that same check, using dependency injection instead of a source-file
+    mutation so they stay fast and CI-safe.
+    """
+
+    _ALT_SPLICEFORMER_RESULT = {
+        "score": 0.80,
+        "classification": "moderate_effect",
+        "confidence": 0.80,
+        "details": {
+            "calibration_status": "a distinctly different calibration sentence unique to this fixture",
+        },
+    }
+
+    # Real text from pipeline/models/splicebert_plugin.py's two write
+    # sites (:419 early-return, :481 main path) -- deliberately
+    # DIFFERENT wording (the main path names two extra caveats the
+    # early-return path doesn't: "zero-shot P(ref)-P(alt)" and "not
+    # donor/acceptor-specific"). That divergence is a genuine finding
+    # from the calibration_status investigation, not a bug this fix
+    # corrects (out of scope -- see the dispatch); both fixtures use
+    # classification="no_significant_effect" (a real value either path
+    # can produce) so both exercise BP7's supporting_evidence branch and
+    # are directly comparable.
+    _SPLICEBERT_EARLY_RETURN_RESULT = {
+        "score": 0.0,
+        "classification": "no_significant_effect",
+        "confidence": 0.0,
+        "details": {
+            "calibration_status": (
+                "uncalibrated -- raw SpliceBERT masked-marginal "
+                "probability-change summary, not validated against "
+                "clinical ground truth"
+            ),
+        },
+    }
+    _SPLICEBERT_MAIN_PATH_RESULT = {
+        "score": 0.1,
+        "classification": "no_significant_effect",
+        "confidence": 0.1,
+        "details": {
+            "calibration_status": (
+                "uncalibrated -- raw SpliceBERT masked-marginal "
+                "probability-change summary (zero-shot P(ref)-P(alt)); "
+                "not donor/acceptor-specific, not validated against "
+                "clinical ground truth"
+            ),
+        },
+    }
+
+    def test_two_distinct_spliceformer_wordings_produce_two_distinct_caveats(self):
+        text_a = " ".join(
+            ACMGRuleEngine._bp7(
+                is_synonymous=True,
+                mmsplice_result=None,
+                spliceformer_result=_DAMAGING_SPLICEFORMER_RESULT,
+            ).conflicting_evidence
+        )
+        text_b = " ".join(
+            ACMGRuleEngine._bp7(
+                is_synonymous=True,
+                mmsplice_result=None,
+                spliceformer_result=self._ALT_SPLICEFORMER_RESULT,
+            ).conflicting_evidence
+        )
+        self.assertIn(_DAMAGING_SPLICEFORMER_RESULT["details"]["calibration_status"], text_a)
+        self.assertIn(self._ALT_SPLICEFORMER_RESULT["details"]["calibration_status"], text_b)
+        self.assertNotIn(self._ALT_SPLICEFORMER_RESULT["details"]["calibration_status"], text_a)
+        self.assertNotIn(_DAMAGING_SPLICEFORMER_RESULT["details"]["calibration_status"], text_b)
+
+    def test_splicebert_two_write_sites_carry_different_wording_and_both_flow_through(self):
+        self.assertNotEqual(
+            self._SPLICEBERT_EARLY_RETURN_RESULT["details"]["calibration_status"],
+            self._SPLICEBERT_MAIN_PATH_RESULT["details"]["calibration_status"],
+        )
+        text_early = " ".join(
+            ACMGRuleEngine._bp7(
+                is_synonymous=True,
+                mmsplice_result=None,
+                splicebert_result=self._SPLICEBERT_EARLY_RETURN_RESULT,
+            ).supporting_evidence
+        )
+        text_main = " ".join(
+            ACMGRuleEngine._bp7(
+                is_synonymous=True,
+                mmsplice_result=None,
+                splicebert_result=self._SPLICEBERT_MAIN_PATH_RESULT,
+            ).supporting_evidence
+        )
+        self.assertIn(self._SPLICEBERT_EARLY_RETURN_RESULT["details"]["calibration_status"], text_early)
+        self.assertIn(self._SPLICEBERT_MAIN_PATH_RESULT["details"]["calibration_status"], text_main)
+        self.assertNotIn(self._SPLICEBERT_MAIN_PATH_RESULT["details"]["calibration_status"], text_early)
+        self.assertNotIn(self._SPLICEBERT_EARLY_RETURN_RESULT["details"]["calibration_status"], text_main)
+
+    def test_missing_calibration_status_gets_an_honest_fallback_not_a_guess(self):
+        """No real plugin path produces a result with `classification`
+        set but `details.calibration_status` absent today -- this is a
+        defensive case for a read that must not assume the key exists.
+        The fallback must not re-invent the old hardcoded "(uncalibrated;
+        not clinically validated)" phrasing for a plugin that never said
+        anything about its own calibration -- that would silently
+        rebuild the exact defect this fix removes, one level down, for
+        the one case where asserting "uncalibrated" is least justified."""
+        result = {
+            "score": 0.5,
+            "classification": "moderate_effect",
+            "confidence": 0.5,
+            "details": {},
+        }
+        text = " ".join(
+            ACMGRuleEngine._bp7(
+                is_synonymous=True,
+                mmsplice_result=None,
+                spliceformer_result=result,
+            ).conflicting_evidence
+        )
+        self.assertNotIn("uncalibrated; not clinically validated", text)
+        self.assertIn("not reported", text)
 
 
 if __name__ == "__main__":

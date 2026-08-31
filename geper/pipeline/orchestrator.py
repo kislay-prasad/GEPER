@@ -1427,7 +1427,11 @@ class GeperPipeline:
             with self._timer("sequence_context"):
                 sequence_context = self.sequence_context_gen.build_context(variant, flank_size)
         except (SequenceGenerationError, ExternalAPIError) as exc:
-            errors.append(f"Sequence context generation failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Sequence context generation failed: {detail}")
             logger.error(errors[-1])
 
         dna_model_results: Dict[str, Any] = {}
@@ -1436,7 +1440,8 @@ class GeperPipeline:
             try:
                 model_keys = self.router.route(variant, sequence_context)
             except Exception as exc:  # noqa: BLE001
-                errors.append(f"Routing failed: {exc}")
+                detail = str(exc) or type(exc).__name__
+                errors.append(f"Routing failed: {detail}")
                 model_keys = []
 
             model_keys = self._filter_available_models(model_keys, variant, errors)
@@ -1447,9 +1452,24 @@ class GeperPipeline:
                     dna_model_results[model_key] = result
                     dna_models_used.append(model_key)
                 except (ModelLoadError, ModelInferenceError) as exc:
-                    errors.append(f"Model '{model_key}' failed: {exc}")
+                    # INVESTIGATED AND FOUND CURRENTLY UNREACHABLE (2026-08-31):
+                    # every `raise ModelLoadError(...)`/`raise
+                    # ModelInferenceError(...)` in this codebase (models/
+                    # hyenadna.py, models/evo2.py, models/base_model.py,
+                    # pipeline/models/base.py) passes an explicit,
+                    # non-empty message -- none is ever raised bare, so
+                    # `str(exc)` cannot actually be empty here today.
+                    # Fixed anyway for uniformity with the other eleven
+                    # str(exc) sites in this sweep and as future-proofing:
+                    # the immunity is a fact about today's call sites
+                    # across several independently-changeable files, not
+                    # a property the type system enforces -- a future
+                    # bare `raise ModelLoadError()` would otherwise
+                    # reopen this exact defect at this site silently.
+                    detail = str(exc) or type(exc).__name__
+                    errors.append(f"Model '{model_key}' failed: {detail}")
                     logger.error(errors[-1])
-                    self._model_stage_errors.setdefault(model_key, str(exc)[:120])
+                    self._model_stage_errors.setdefault(model_key, detail[:120])
 
         # ClinGen + transcript-structure resolution: moved ahead of the
         # protein/AlphaMissense stages below (they used to run first,
@@ -1939,9 +1959,18 @@ class GeperPipeline:
             rna_fm_result["alt_rna_preview"] = rna_context.alt_rna[:60]
             return rna_fm_result
         except (SequenceGenerationError, ModelLoadError, ModelInferenceError) as exc:
-            errors.append(f"RNA-FM stage failed: {exc}")
+            # INVESTIGATED AND FOUND CURRENTLY UNREACHABLE (2026-08-31):
+            # every raise of these three types in this codebase passes an
+            # explicit, non-empty message -- none is ever raised bare, so
+            # `str(exc)` cannot actually be empty here today. Fixed
+            # anyway for uniformity with the other sites in this sweep
+            # and as future-proofing: the immunity is a fact about
+            # today's call sites across several independently-changeable
+            # files, not something the type system enforces.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"RNA-FM stage failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault("rna_fm", str(exc)[:120])
+            self._model_stage_errors.setdefault("rna_fm", detail[:120])
             # `skipped: True` is kept (not flipped to False) so every
             # existing downstream reader that gates on it -- e.g.
             # `pipeline/interpretation_result.py`'s
@@ -1953,7 +1982,7 @@ class GeperPipeline:
             # resolve this to `ERROR` instead of `NOT_RUN` -- see that
             # module's docstring for why the two were indistinguishable
             # before this key existed.
-            return {"skipped": True, "reason": str(exc), "error": str(exc)}
+            return {"skipped": True, "reason": detail, "error": detail}
 
     def _run_protein_stage(self, variant: Variant, sequence_context, errors: List[str]) -> Dict[str, Any]:
         if sequence_context is None:
@@ -1989,9 +2018,18 @@ class GeperPipeline:
                 "esm2": esm2_result,
             }
         except (SequenceGenerationError, ModelLoadError, ModelInferenceError) as exc:
-            errors.append(f"Protein/ESM-2 stage failed: {exc}")
+            # INVESTIGATED AND FOUND CURRENTLY UNREACHABLE (2026-08-31):
+            # every raise of these three types in this codebase passes an
+            # explicit, non-empty message -- none is ever raised bare, so
+            # `str(exc)` cannot actually be empty here today. Fixed
+            # anyway for uniformity with the other sites in this sweep
+            # and as future-proofing: the immunity is a fact about
+            # today's call sites across several independently-changeable
+            # files, not something the type system enforces.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Protein/ESM-2 stage failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault("esm2", str(exc)[:120])
+            self._model_stage_errors.setdefault("esm2", detail[:120])
             # `skipped: True` stays True (see `_run_rna_stage`'s
             # matching comment for why -- ESM-2's own downstream
             # consumers still gate on this). Note `_run_alphamissense_stage`
@@ -1999,7 +2037,7 @@ class GeperPipeline:
             # is decided from `transcript_result`, not from whether
             # this ESM-2 translation succeeded (see that method's
             # docstring). `error` is new -- see `_run_rna_stage`'s comment.
-            return {"skipped": True, "reason": str(exc), "error": str(exc)}
+            return {"skipped": True, "reason": detail, "error": detail}
 
     def _run_alphamissense_stage(
         self, variant: Variant, transcript_result: Dict[str, Any], errors: List[str]
@@ -2052,9 +2090,18 @@ class GeperPipeline:
             result["skipped"] = False
             return result
         except (ModelLoadError, ModelInferenceError) as exc:
-            errors.append(f"AlphaMissense stage failed: {exc}")
+            # INVESTIGATED AND FOUND CURRENTLY UNREACHABLE (2026-08-31):
+            # every raise of these two types in this codebase passes an
+            # explicit, non-empty message -- none is ever raised bare, so
+            # `str(exc)` cannot actually be empty here today. Fixed
+            # anyway for uniformity with the other sites in this sweep
+            # and as future-proofing: the immunity is a fact about
+            # today's call sites across several independently-changeable
+            # files, not something the type system enforces.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"AlphaMissense stage failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault("alphamissense", str(exc)[:120])
+            self._model_stage_errors.setdefault("alphamissense", detail[:120])
             # `skipped: True` stays True (see `_run_rna_stage`'s
             # matching comment); `error` is new -- and, unlike
             # RNA-FM/protein, this one also flows into
@@ -2062,7 +2109,7 @@ class GeperPipeline:
             # (`alphamissense` is one of its 11 required fields), so
             # this fix is what lets that boundary resolve a genuine
             # AlphaMissense crash to `ERROR` instead of `NOT_RUN`.
-            return {"skipped": True, "reason": str(exc), "error": str(exc)}
+            return {"skipped": True, "reason": detail, "error": detail}
 
     def _run_mmsplice_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
@@ -2104,9 +2151,14 @@ class GeperPipeline:
                 # result dict, no repeat Keras call.
                 return service.predict(variant)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth; MMSpliceService.predict should already catch everything
-            errors.append(f"MMSplice stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds the log line, the
+            # stage-error truncation, and all three returned fields so
+            # none of them can diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"MMSplice stage failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault("mmsplice", str(exc)[:120])
+            self._model_stage_errors.setdefault("mmsplice", detail[:120])
             # `supported`/`predicted` stay False (this stage has no
             # "skipped" key at all, so keeping both False is what
             # already-existing downstream readers of this shape
@@ -2120,9 +2172,9 @@ class GeperPipeline:
             return {
                 "supported": False,
                 "predicted": False,
-                "skip_reason": str(exc)[:300],
-                "interpretation": str(exc)[:300],
-                "error": str(exc)[:300],
+                "skip_reason": detail[:300],
+                "interpretation": detail[:300],
+                "error": detail[:300],
             }
 
     def _get_mmsplice_service(self) -> MMSpliceService:
@@ -2262,9 +2314,14 @@ class GeperPipeline:
             with self._timer("model:ai_splicing_ensemble"):
                 return self.ensemble_manager.evaluate(sequence_context.ref_sequence, sequence_context.alt_sequence)
         except Exception as exc:  # noqa: BLE001 - never let ensemble evaluation crash a variant
-            errors.append(f"AI splicing ensemble (Enformer/Borzoi) failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds the log line, the
+            # stage-error truncation, and the returned `reasoning` field
+            # so none of them can diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"AI splicing ensemble (Enformer/Borzoi) failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault("ai_splicing_ensemble", str(exc)[:120])
+            self._model_stage_errors.setdefault("ai_splicing_ensemble", detail[:120])
             return {
                 "models_used": [],
                 "individual_scores": {},
@@ -2273,7 +2330,7 @@ class GeperPipeline:
                 "agreement_percentage": None,
                 "classification": None,
                 "basis": "error",
-                "reasoning": f"AI splicing ensemble raised an unexpected error: {exc}",
+                "reasoning": f"AI splicing ensemble raised an unexpected error: {detail}",
             }
 
     def _run_standalone_splice_plugin_stage(self, key: str, sequence_context, errors: List[str]) -> Dict[str, Any]:
@@ -2346,9 +2403,14 @@ class GeperPipeline:
                 }
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth; ModelManager.predict should already catch everything
-            errors.append(f"{_MODEL_DISPLAY_NAMES.get(key, key)} stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds the log line, the
+            # stage-error truncation, and both returned fields so none
+            # of them can diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"{_MODEL_DISPLAY_NAMES.get(key, key)} stage failed: {detail}")
             logger.error(errors[-1])
-            self._model_stage_errors.setdefault(key, str(exc)[:120])
+            self._model_stage_errors.setdefault(key, detail[:120])
             # `available: True` already distinguished "ran (but failed)"
             # from "never eligible to run" (the `available: False`
             # branches above) -- `error` is an additional, explicit
@@ -2359,7 +2421,7 @@ class GeperPipeline:
             # rendering path for these two plugins -- see BP7 in
             # `pipeline/acmg_rules.py`), added for the same schema-
             # correctness reason regardless.
-            return {"available": True, "classification": None, "skip_reason": str(exc)[:300], "error": str(exc)[:300]}
+            return {"available": True, "classification": None, "skip_reason": detail[:300], "error": detail[:300]}
 
     def _build_ai_model_status(
         self,
@@ -2600,9 +2662,13 @@ class GeperPipeline:
                 errors.append(f"Conservation stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"Conservation stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Conservation stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_clingen_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
@@ -2651,9 +2717,13 @@ class GeperPipeline:
                 errors.append(f"HPO stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"HPO stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"HPO stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     @staticmethod
     def _with_gene_resolution_context(result: Dict[str, Any], clingen_result: Dict[str, Any]) -> Dict[str, Any]:
@@ -2726,9 +2796,13 @@ class GeperPipeline:
             )
             return {"skipped": False, "normalized": normalized.to_dict(), "hgvs_g": hgvs_g, "hgvs_c": None}
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"Variant normalization stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Variant normalization stage failed: {detail}")
             logger.error(errors[-1])
-            return {"skipped": False, "normalized": None, "hgvs_g": None, "hgvs_c": None, "error": str(exc)}
+            return {"skipped": False, "normalized": None, "hgvs_g": None, "hgvs_c": None, "error": detail}
 
     def _attach_hgvs_c(self, normalization_result: Dict[str, Any], transcript_result: Dict[str, Any]) -> None:
         """
@@ -2775,9 +2849,13 @@ class GeperPipeline:
                 errors.append(f"Orphanet stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"Orphanet stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Orphanet stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_transcript_stage(
         self, variant: Variant, clingen_result: Dict[str, Any], errors: List[str]
@@ -2857,9 +2935,13 @@ class GeperPipeline:
                 errors.append(f"PS1/PM5 ClinVar codon stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"PS1/PM5 ClinVar codon stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"PS1/PM5 ClinVar codon stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc), "matches": []}
+            return {"found": False, "skipped": False, "error": detail, "matches": []}
 
     def _run_functional_evidence_stage(
         self,
@@ -2904,9 +2986,13 @@ class GeperPipeline:
                 errors.append(f"Functional-evidence (PS3/BS3) stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"Functional-evidence (PS3/BS3) stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Functional-evidence (PS3/BS3) stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc), "records": []}
+            return {"found": False, "skipped": False, "error": detail, "records": []}
 
     # ------------------------------------------------------------------
     # Biological evidence layer: UniProt -> InterPro/Pfam -> AlphaFold DB

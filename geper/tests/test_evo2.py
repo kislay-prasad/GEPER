@@ -26,10 +26,7 @@ class TestEvo2Availability(unittest.TestCase):
         # module docstring) -- is_available() must return False
         # immediately on a CPU-only environment, without even
         # attempting the (potentially slow) package install.
-        with (
-            mock.patch("torch.cuda.is_available", return_value=False),
-            mock.patch("models.evo2.ensure_pip_package_available") as mock_ensure,
-        ):
+        with mock.patch("models.evo2.ensure_pip_package_available") as mock_ensure:
             self.assertFalse(Evo2Model.is_available())
             mock_ensure.assert_not_called()
 
@@ -87,24 +84,21 @@ class TestEvo2Availability(unittest.TestCase):
         self.assertIn("8.0", reason)
 
     def test_unavailability_reason_when_no_gpu(self):
-        with mock.patch("torch.cuda.is_available", return_value=False):
-            reason = Evo2Model.unavailability_reason()
+        reason = Evo2Model.unavailability_reason()
         self.assertIn("no CUDA GPU", reason)
 
 
 class TestEvo2LoadImpl(unittest.TestCase):
     def test_load_impl_raises_without_gpu(self):
         model = Evo2Model.__new__(Evo2Model)  # bypass BaseGenomicModel.__init__ (no device probe needed)
-        with mock.patch("torch.cuda.is_available", return_value=False):
-            with self.assertRaises(ModelLoadError):
-                model._load_impl()
+        with self.assertRaises(ModelLoadError):
+            model._load_impl()
 
     def test_load_impl_raises_when_package_install_fails(self):
         model = Evo2Model.__new__(Evo2Model)
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("models.evo2.get_cuda_compute_capability", return_value=(8, 0)),
-            mock.patch("models.evo2.check_pip_package_availability", return_value=PackageCheckStatus.ABSENT),
         ):
             with self.assertRaises(ModelLoadError):
                 model._load_impl()

@@ -236,11 +236,8 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.assertNotIn("huggingface.co", str(ctx.exception))
 
     def test_missing_package_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.enformer_plugin.check_pip_package_availability", return_value=PackageCheckStatus.ABSENT
-        ):
-            with self.assertRaises(RuntimeError) as ctx:
-                self.instance._load_impl()
+        with self.assertRaises(RuntimeError) as ctx:
+            self.instance._load_impl()
         self.assertIn("enformer-pytorch", str(ctx.exception))
 
     @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
@@ -318,13 +315,7 @@ class TestEnformerMetadataAndAvailability(unittest.TestCase):
         self.assertNotIn("has not been attempted", reason)
 
     def test_unavailability_reason_under_not_checked_says_not_checked(self):
-        with (
-            mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config,
-            mock.patch(
-                "pipeline.models.enformer_plugin.check_pip_package_availability",
-                return_value=PackageCheckStatus.NOT_CHECKED,
-            ),
-        ):
+        with mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config:
             mock_config.splicing.ENABLE_ENFORMER = True
             reason = EnformerPlugin.unavailability_reason()
         self.assertIn("enformer-pytorch", reason)

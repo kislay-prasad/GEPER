@@ -27,7 +27,6 @@ import unittest
 from unittest import mock
 
 from utils.exceptions import ExternalAPIError
-from utils.auto_install import PackageCheckStatus
 
 
 class TestDbSNPClientIsSanitized(unittest.TestCase):
@@ -320,7 +319,6 @@ class TestBlastClientRemoteSearchIsSanitized(unittest.TestCase):
 
         client = BLASTClient(mode="remote", disabled=False)
         with (
-            mock.patch("database.blast_client.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT),
             mock.patch(
                 "Bio.Blast.NCBIWWW.qblast", side_effect=ConnectionError("Failed to reach blast.ncbi.nlm.nih.gov")
             ),

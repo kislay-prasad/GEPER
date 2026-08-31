@@ -162,12 +162,7 @@ class TestBorzoiLoadImpl(unittest.TestCase):
     @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_successful_load_calls_to_and_eval(self):
         fake_model = _FakeBorzoiModel(value=1.0)
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
-        ):
+        with mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model):
             self.instance._load_impl()
 
         self.assertIs(self.instance.model, fake_model)
@@ -176,14 +171,9 @@ class TestBorzoiLoadImpl(unittest.TestCase):
 
     @unittest.skipUnless(_HAS_BORZOI_PYTORCH, _BORZOI_SKIP_REASON)
     def test_network_failure_is_sanitized(self):
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch(
-                "borzoi_pytorch.Borzoi.from_pretrained",
-                side_effect=ConnectionError("could not reach huggingface.co"),
-            ),
+        with mock.patch(
+            "borzoi_pytorch.Borzoi.from_pretrained",
+            side_effect=ConnectionError("could not reach huggingface.co"),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -298,12 +288,7 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
     def test_load_impl_shim_sets_the_attribute_on_the_real_class(self):
         instance = self._make_instance()
         fake_model = _FakeBorzoiModel(value=1.0)
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
-        ):
+        with mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model):
             instance._load_impl()
 
         # The exact attribute access that crashed in the live traceback
@@ -321,12 +306,7 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
         self.Borzoi._tied_weights_keys = {"decoder.weight": "encoder.weight"}
         instance = self._make_instance()
         fake_model = _FakeBorzoiModel(value=1.0)
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model),
-        ):
+        with mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=fake_model):
             instance._load_impl()
         self.assertEqual(self.Borzoi.all_tied_weights_keys, {"decoder.weight": "encoder.weight"})
 
@@ -338,22 +318,12 @@ class TestBorzoiAllTiedWeightsKeysShim(unittest.TestCase):
         # `if not hasattr(...)` guard leaving it untouched rather than
         # resetting it.
         instance1 = self._make_instance()
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=1.0)),
-        ):
+        with mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=1.0)):
             instance1._load_impl()
         first_value = self.Borzoi.all_tied_weights_keys
 
         instance2 = self._make_instance()
-        with (
-            mock.patch(
-                "pipeline.models.borzoi_plugin.check_pip_package_availability", return_value=PackageCheckStatus.PRESENT
-            ),
-            mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=2.0)),
-        ):
+        with mock.patch("borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel(value=2.0)):
             instance2._load_impl()
 
         self.assertIs(self.Borzoi.all_tied_weights_keys, first_value)
@@ -383,21 +353,18 @@ class TestBorzoiMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_BORZOI", BorzoiPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_package_installed(self):
-        # Mocks ensure_pip_package_available rather than relying on the
-        # real package genuinely being pip-installed -- same fix and
-        # same rationale as the equivalent Enformer test
-        # (test_enformer_plugin.py::TestEnformerMetadataAndAvailability
-        # ::test_available_when_flag_on_and_package_installed): unmocked,
-        # this used to reach a real unconstrained
-        # `pip install borzoi-pytorch` that could silently downgrade the
-        # box's transformers pin; post-47748b6 that real call now
-        # correctly fails the requirements.txt constraint instead, so
-        # this test can no longer assume the real package is present
-        # just because is_available() is True.
-        with (
-            mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config,
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
-        ):
+        # Sweep 2026-08-31 (decorative-mock fix): the
+        # ensure_pip_package_available mock this comment used to
+        # describe was deleted -- it patched a return_value (True) that
+        # is exactly what the real, unpatched call returns in every
+        # environment where borzoi_pytorch is genuinely importable
+        # (check_pip_package_availability short-circuits via
+        # importlib.util.find_spec before any subprocess/pip call, so
+        # this never risks the real unconstrained `pip install`
+        # 47748b6's comment warned about -- confirmed by reading that
+        # function before deleting this mock). The mock was decorative:
+        # this test passed identically with it removed.
+        with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
             mock_config.splicing.ENABLE_BORZOI = True
             self.assertTrue(BorzoiPlugin.is_available())
 

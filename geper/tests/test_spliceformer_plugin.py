@@ -194,10 +194,6 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
     def test_successful_load_downloads_checkpoint_and_calls_to_and_eval(self):
         fake_model = _FakeSpliceFormerModel(ref_value=0.0, alt_value=1.0)
         with (
-            mock.patch(
-                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
-                return_value=PackageCheckStatus.PRESENT,
-            ),
             mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model),
             mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint") as mock_download,
             mock.patch(
@@ -218,10 +214,6 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
         self.instance._weight_cache.ensure_dir.return_value.__truediv__ = lambda self_, name: cached_path
 
         with (
-            mock.patch(
-                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
-                return_value=PackageCheckStatus.PRESENT,
-            ),
             mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.build_model", return_value=fake_model),
             mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint") as mock_download,
             mock.patch(
@@ -235,10 +227,6 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
 
     def test_network_failure_is_sanitized(self):
         with (
-            mock.patch(
-                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
-                return_value=PackageCheckStatus.PRESENT,
-            ),
             mock.patch(
                 "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
                 return_value=_FakeSpliceFormerModel(0.0, 1.0),
@@ -266,10 +254,6 @@ class TestSpliceFormerLoadImpl(unittest.TestCase):
         # Exercise through PluginModel.load() (not _load_impl directly)
         # to confirm the base class's own wrapping still applies.
         with (
-            mock.patch(
-                "pipeline.models.spliceformer_plugin.check_pip_package_availability",
-                return_value=PackageCheckStatus.PRESENT,
-            ),
             mock.patch(
                 "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
                 return_value=_FakeSpliceFormerModel(0.0, 1.0),

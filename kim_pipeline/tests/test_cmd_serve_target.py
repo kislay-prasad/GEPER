@@ -23,7 +23,14 @@ from main import cmd_serve
 
 
 def _serve_args(**overrides) -> argparse.Namespace:
-    defaults = dict(host="127.0.0.1", port=8000, reload=False, log_level="INFO")
+    # `config=None` matches real argparse output: `_common()` adds --config
+    # to every subcommand's parser (serve included), defaulting to None
+    # when not passed -- this hand-built Namespace must carry the same
+    # attribute or it silently diverges from what cmd_serve actually
+    # receives at runtime (see FIX #4: cmd_serve ignored args.config
+    # entirely until it did, and this fixture is what a regression there
+    # would run against).
+    defaults = dict(host="127.0.0.1", port=8000, reload=False, log_level="INFO", config=None)
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
@@ -63,3 +70,36 @@ def test_cmd_serve_launches_the_real_target(mock_run):
         "factory" not in mock_run.call_args.kwargs
         or mock_run.call_args.kwargs["factory"] is not True
     )
+
+
+def test_cmd_serve_sets_geper_config_path_env_var_from_config_flag(monkeypatch):
+    """FIX #4: `--config` is accepted by argparse (added generically to
+    every subcommand via `_common()`, INSTALL.md's own documented example
+    is `python main.py serve --config config/production.yaml --port
+    8080`) but cmd_serve never referenced `args.config` at all -- passing
+    it silently did nothing, no error. api/main.py (the actual ASGI app
+    uvicorn imports as the bare string "api.main:app") reads its config
+    path from the GEPER_CONFIG_PATH env var; that's the only channel
+    available to hand a CLI --config value to it, since cmd_serve never
+    calls anything on the app object directly."""
+    monkeypatch.delenv("GEPER_CONFIG_PATH", raising=False)
+    with mock.patch("uvicorn.run") as mock_run:
+        result = cmd_serve(_serve_args(config="config/production.yaml"))
+
+    assert result == 0
+    mock_run.assert_called_once()
+    import os
+
+    assert os.environ.get("GEPER_CONFIG_PATH") == "config/production.yaml"
+
+
+def test_cmd_serve_does_not_clobber_existing_env_var_when_no_config_flag(monkeypatch):
+    """No --config given -> must not overwrite a GEPER_CONFIG_PATH a
+    deployer already exported directly (bypassing the CLI flag)."""
+    monkeypatch.setenv("GEPER_CONFIG_PATH", "already/set/by/deployer.yaml")
+    with mock.patch("uvicorn.run"):
+        cmd_serve(_serve_args(config=None))
+
+    import os
+
+    assert os.environ.get("GEPER_CONFIG_PATH") == "already/set/by/deployer.yaml"

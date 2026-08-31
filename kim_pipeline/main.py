@@ -522,6 +522,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # picking a winner between kim_pipeline's local geper/ and the
     # top-level geper/ (the latter now also growing its own api/main.py
     # for an unrelated endpoint -- see that module for its own scope).
+    # FIX #4: --config is accepted here (added to every subcommand via
+    # _common()) but until now was never read -- silently ignored.
+    # api/main.py is loaded by uvicorn from the bare string "api.main:app"
+    # below; cmd_serve never gets a handle on the app object to configure
+    # directly, so GEPER_CONFIG_PATH (api/main.py's own env var for this,
+    # read at its own import time) is the only channel available to pass
+    # --config through. Only set when --config was actually given, so a
+    # deployer's own already-exported GEPER_CONFIG_PATH is never clobbered
+    # by a bare `serve` with no --config.
+    if args.config:
+        os.environ["GEPER_CONFIG_PATH"] = args.config
+
     api_module = Path(__file__).parent / "api" / "main.py"
     if not api_module.exists():
         print(

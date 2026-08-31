@@ -157,6 +157,18 @@ def _resolve_device(device_cfg: str):
 # HTTP calls, or dynamic imports.
 _DNABERT2_PINNED_REVISION = "7bce263b15377fc15361f52cfab88f8b586abda0"
 
+# Pinned HuggingFace revision (commit SHA) for the default ESM-2 checkpoint
+# ("facebook/esm2_t12_35M_UR50D"), verified live via
+# `git ls-remote https://huggingface.co/facebook/esm2_t12_35M_UR50D HEAD`,
+# 2026-08-31. Unlike DNABERT-2 above, ESM-2 is a standard
+# transformers-library architecture (no trust_remote_code) -- the risk
+# closed here is silent drift, not RCE: without a revision pin,
+# from_pretrained resolves whatever is currently the repo's default-branch
+# tip, and a silent upstream change would move every future run's
+# embeddings/scores with no signal that anything changed (matches
+# geper/models/esm2.py's own pin for its ESM-2 checkpoint).
+_ESM2_PINNED_REVISION = "6fbf070e65b0b7291e7bbcd451118c216cff79d8"
+
 
 class DnaBertEngine:
     """DNABERT-2 variant pathogenicity scorer.
@@ -333,8 +345,20 @@ class Esm2Engine:
         try:
             logger.info("Loading ESM-2 model: %s …", self._model_name)
             self._device = _resolve_device(self._device_cfg)
-            self._tokenizer = transformers.AutoTokenizer.from_pretrained(self._model_name)
-            self._model = transformers.AutoModel.from_pretrained(self._model_name)
+            # Only pin to the verified commit when loading the default repo
+            # -- an operator-supplied model_name (e.g. a different ESM-2
+            # size, or a local fork) is their own responsibility, and a
+            # stale pin would just break the load (same idiom as
+            # DnaBertEngine._load above).
+            revision = (
+                _ESM2_PINNED_REVISION if self._model_name == "facebook/esm2_t12_35M_UR50D" else None
+            )
+            self._tokenizer = transformers.AutoTokenizer.from_pretrained(
+                self._model_name, revision=revision
+            )
+            self._model = transformers.AutoModel.from_pretrained(
+                self._model_name, revision=revision
+            )
             self._model.eval()
             self._model.to(self._device)
             logger.info("ESM-2 loaded on %s", self._device)

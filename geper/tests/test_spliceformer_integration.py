@@ -180,12 +180,7 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
     def test_four_available_keys_reported_by_registry(self):
         # Was "three" before SpliceBERT's own addition; see
         # test_all_five_keys_registered's own comment above.
-        with (
-            mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True),
-            mock.patch("pipeline.models.splicebert_plugin.is_pip_package_installed", return_value=True),
-            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
-            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
-        ):
+        with mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True):
             self.assertEqual(
                 sorted(self.registry.available_keys()),
                 ["borzoi", "enformer", "splicebert", "spliceformer"],

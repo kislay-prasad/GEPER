@@ -24,6 +24,7 @@ from report.clinical_report_builder import (
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
     _variant_reviewer_flags,
+    variant_allele_fraction_text,
 )
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
@@ -573,6 +574,14 @@ class ReportGenerator:
         lines.append(f"- **Type:** {variant.get('variant_type')}")
         lines.append(f"- **VCF ID:** {variant.get('id') or 'n/a'}")
         lines.append(f"- **Filter status:** {variant.get('filter') or 'n/a'}")
+        # Within-sample read support (NABL 112A s.7.8.5(b)(iii)) -- NOT the
+        # gnomAD population allele frequency shown under Population
+        # Evidence, which is a different quantity that shares the name.
+        # Rendered through the shared helper (not the `or 'n/a'` idiom the
+        # three lines above use) because this value is a float: `0.0 or
+        # 'n/a'` would print a genuine 0% allele fraction as "n/a", and an
+        # absence and a real zero are exactly what must stay apart here.
+        lines.append(f"- **Allele fraction (this sample):** {variant_allele_fraction_text(result)}")
         lines.append("")
 
         # Round 14, B2: per-finding, not report-level -- a reviewer reads

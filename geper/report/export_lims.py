@@ -84,7 +84,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from report.clinical_report_builder import candidate_interpretation_of
+from pipeline.stage_schemas import StageStatus as _StageStatus
+from pipeline.vcf_parser import VAF_NO_SAMPLE_COLUMNS_REASON
+from report.clinical_report_builder import (
+    VAF_FIELD_NOT_CAPTURED_REASON,
+    _variant_allele_fraction_found,
+    _variant_allele_fraction_states,
+    candidate_interpretation_of,
+)
 from report.summary import _derive_run_id, _derive_sample_id
 from review.signoff import require_reviewed as _require_reviewed_general
 from utils.exceptions import LIMSExportBlockedError, SignoffError
@@ -171,6 +178,20 @@ class LIMSVariant(BaseModel):
     coding_hgvs: Optional[str] = None  # HGVS.c -- only when a transcript resolved for this variant
     protein_hgvs: Optional[str] = None  # HGVS.p -- see docstring on _protein_hgvs() below for the honest gap here
     protein_hgvs_source: Optional[str] = None  # "alphamissense_catalogue" | None -- see _protein_hgvs()
+    # Within-sample allele fraction (NABL 112A s.7.8.5(b)(iii)). NOT the
+    # gnomAD population allele frequency, which this export already
+    # carries separately as `evidence.gnomad_global_af` -- different
+    # quantity, same name. See `_variant_allele_fraction()` below.
+    #
+    # `variant_allele_fraction_status` is REQUIRED and never None: it is
+    # the only thing that keeps a null fraction meaning "never measured"
+    # apart from a null fraction meaning "measurement failed". A
+    # downstream LIMS that reads the number alone and ignores the status
+    # cannot tell those apart, and neither could a CSV cell.
+    variant_allele_fraction: Optional[float] = None
+    variant_allele_fraction_status: str = _StageStatus.NOT_RUN.value  # found|not_run|error|multiple_samples
+    variant_allele_fraction_sample: Optional[str] = None  # sample the fraction came from; never a bare number
+    variant_allele_fraction_reason: Optional[str] = None
 
 
 class LIMSGene(BaseModel):
@@ -348,10 +369,69 @@ def _protein_hgvs(variant_result: Dict[str, Any]) -> tuple:
     return None, None
 
 
+# A LIMS row is one variant, so a per-sample mapping has to resolve to one
+# cell. This token marks the case where it honestly cannot: several samples
+# carry real fractions and no single one of them is "the" answer. It is a
+# LIMS-surface value only -- `StageStatus` itself is deliberately NOT
+# extended, because in the pipeline the mapping keeps every sample's own
+# status and nothing needs collapsing there.
+LIMS_VAF_MULTIPLE_SAMPLES = "multiple_samples"
+
+_LIMS_VAF_MULTIPLE_SAMPLES_REASON = (
+    "More than one sample carries an allele fraction for this variant; a single-valued export cell "
+    "cannot represent them. Per-sample values are in geper_results.json under "
+    "variants[].variant.variant_allele_fractions."
+)
+
+
+def _variant_allele_fraction(variant_result: Dict[str, Any]) -> tuple:
+    """
+    Collapses the per-sample VAF mapping into the one (value, status,
+    sample, reason) a flat LIMS record can carry, under the SAME
+    precedence the report renderers use (`report/clinical_report_builder
+    .py::variant_allele_fraction_text`): the tri-state resolves first, the
+    sample count second.
+
+    A number is emitted ONLY when exactly one sample carries one, and it
+    is always accompanied by the sample name -- an unlabelled fraction on
+    a multi-sample run reads as though it applied to the whole record.
+    Every other case emits `None` WITH a status that says which "none"
+    this is: never measured (`not_run`), measurement failed (`error`), or
+    more than one real answer (`multiple_samples`). A bare `None` would
+    make the first two indistinguishable, and in the CSV -- where
+    `csv.DictWriter` renders `None` as an empty cell -- indistinguishable
+    from each other and from a blank column, which is why the status
+    column ships alongside the value rather than only in the JSON.
+    """
+    states = _variant_allele_fraction_states(variant_result)
+    if states is None:
+        # Document predates the field. `not_run` is still the honest
+        # status -- nothing was measured -- but the reason must not claim
+        # anything about what the VCF did or didn't carry.
+        return None, _StageStatus.NOT_RUN.value, None, VAF_FIELD_NOT_CAPTURED_REASON
+    if not states:
+        return None, _StageStatus.NOT_RUN.value, None, VAF_NO_SAMPLE_COLUMNS_REASON
+
+    found = _variant_allele_fraction_found(states)
+    if len(found) == 1:
+        name, state = next(iter(found.items()))
+        return float(state["value"]), _StageStatus.FOUND.value, name, state.get("reason")
+    if len(found) > 1:
+        return None, LIMS_VAF_MULTIPLE_SAMPLES, None, _LIMS_VAF_MULTIPLE_SAMPLES_REASON
+
+    errored = {name: s for name, s in states.items() if s.get("status") == _StageStatus.ERROR.value}
+    if errored:
+        reasons = sorted({(s.get("reason") or "No reason recorded.") for s in errored.values()})
+        return None, _StageStatus.ERROR.value, None, " ".join(reasons)
+    reasons = sorted({(s.get("reason") or VAF_NO_SAMPLE_COLUMNS_REASON) for s in states.values()})
+    return None, _StageStatus.NOT_RUN.value, None, " ".join(reasons)
+
+
 def _variant(variant_result: Dict[str, Any]) -> LIMSVariant:
     v = variant_result.get("variant") or {}
     norm = variant_result.get("normalization") or {}
     protein_hgvs, protein_hgvs_source = _protein_hgvs(variant_result)
+    vaf, vaf_status, vaf_sample, vaf_reason = _variant_allele_fraction(variant_result)
     return LIMSVariant(
         chromosome=v.get("chrom"),
         position=v.get("pos"),
@@ -364,6 +444,10 @@ def _variant(variant_result: Dict[str, Any]) -> LIMSVariant:
         coding_hgvs=norm.get("hgvs_c"),
         protein_hgvs=protein_hgvs,
         protein_hgvs_source=protein_hgvs_source,
+        variant_allele_fraction=vaf,
+        variant_allele_fraction_status=vaf_status,
+        variant_allele_fraction_sample=vaf_sample,
+        variant_allele_fraction_reason=vaf_reason,
     )
 
 
@@ -606,6 +690,17 @@ _CSV_COLUMNS = [
     # export was meant to close. Appended last so existing column
     # positions are unchanged for anything already parsing this file.
     "run_caveats",
+    # Within-sample allele fraction and, inseparably, its status --
+    # appended last for the same column-stability reason `run_caveats`
+    # above was. The two columns ship TOGETHER and neither is useful
+    # alone: `csv.DictWriter` writes `None` as an empty cell, so the
+    # value column by itself renders "never measured", "measurement
+    # failed", and "several samples, no single answer" as the same blank.
+    # The status column is what a tabular consumer reads to tell them
+    # apart. Note this is within-sample read support, NOT the population
+    # frequency in `gnomad_global_af` above.
+    "variant_allele_fraction",
+    "variant_allele_fraction_status",
 ]
 
 
@@ -655,6 +750,10 @@ def _csv_row(run: LIMSRun, finding: LIMSFinding) -> Dict[str, Any]:
         # (`run.caveats`) -- without the prefix a reader scanning a
         # per-finding row would reasonably take it for per-finding data.
         "run_caveats": ";".join(run.caveats),
+        # Last two, mirroring `_CSV_COLUMNS`' order. Emitted as a pair,
+        # never one without the other -- see that list's comment.
+        "variant_allele_fraction": v.variant_allele_fraction,
+        "variant_allele_fraction_status": v.variant_allele_fraction_status,
     }
 
 

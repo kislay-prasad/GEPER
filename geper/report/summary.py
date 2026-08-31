@@ -92,6 +92,11 @@ from report.clinical_report_builder import (
     # landed and broke those readers -- the noqa is what keeps a
     # deliberate re-export from looking like a dead import.
     _QC_METRICS_NOT_APPLICABLE_REASON,  # noqa: F401
+    # The single shared rendering of a per-sample allele fraction, called
+    # by this module and by the Markdown renderer, so the two full reports
+    # degrade identically -- the `_variant_hgvs_or_locus` pattern above,
+    # applied to the tri-state this field carries.
+    variant_allele_fraction_text,
 )
 from report.pdf_escape import esc
 from utils.logger import get_logger
@@ -1863,6 +1868,26 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         Spacer(1, 4 * mm),
         Paragraph(f"Finding {idx}: {esc(locus_with_hgvs)}", styles["SectionHeading"]),
     ]
+
+    # Within-sample read support (NABL 112A s.7.8.5(b)(iii)). Read from
+    # `variant_result["variant"]` directly -- the same way this function
+    # already reads the locus above and the mitochondrial chromosome
+    # below, and the same way the Markdown renderer reads it -- through
+    # the ONE shared helper both renderers call, so the two full reports
+    # cannot drift on how an absent or unparseable fraction reads. It is
+    # deliberately not a `candidate_interpretation_of()` section: that
+    # dict is `None` whenever interpretation failed, which would make a
+    # failed interpretation and a VCF with no per-sample data render
+    # identically. Explicitly labelled "within-sample" because the
+    # Population Evidence section further down carries gnomAD's
+    # population allele frequency -- a different quantity with the same
+    # name, and the confusion this label exists to prevent.
+    flow.append(
+        Paragraph(
+            f"<b>Allele fraction (within this sample):</b> {esc(variant_allele_fraction_text(variant_result))}",
+            styles["BodyText"],
+        )
+    )
 
     # Round 14, B2: per-finding, not report-level -- see
     # report/report_generator.py's identical placement/reasoning.

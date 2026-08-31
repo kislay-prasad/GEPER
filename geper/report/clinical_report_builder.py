@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Union
 from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
 from pipeline.stage_schemas import StageStatus as _StageStatus
+from pipeline.vcf_parser import VAF_NO_SAMPLE_COLUMNS_REASON
 from utils.logger import get_logger
 from utils.service_health import HEALTH, ServiceStatus
 
@@ -1162,6 +1163,122 @@ def _variant_hgvs_or_locus(variant_result: Dict[str, Any]) -> str:
     """
     normalization = variant_result.get("normalization") or {}
     return normalization.get("hgvs_c") or normalization.get("hgvs_g") or _variant_locus(variant_result)
+
+
+VAF_FIELD_NOT_CAPTURED_REASON = (
+    "This report was rendered from a geper_results.json written before per-sample allele fractions "
+    "were recorded, so none is available for this variant. The field was never captured for this run "
+    "-- which is not the same as this VCF having carried no per-sample data."
+)
+
+
+def _variant_allele_fraction_states(variant_result: Dict[str, Any]) -> Optional[Dict[str, Dict[str, Any]]]:
+    """
+    The `{sample_name: {status, value, ...}}` mapping `pipeline/vcf_parser.py
+    ::Variant.to_dict` emits.
+
+    Three return values, not two, for the same reason the states inside it
+    are three: `None` means the document predates this field entirely (a
+    re-render of an older `geper_results.json`), while `{}` means this run
+    DID look and the VCF carried no genotype columns. Collapsing them
+    would let a stale document assert something about a VCF it never
+    examined -- the same "absence of a record is not a record of absence"
+    error this whole field exists to avoid, displaced onto the document.
+    """
+    variant = variant_result.get("variant") or {}
+    if "variant_allele_fractions" not in variant:
+        return None
+    return variant.get("variant_allele_fractions") or {}
+
+
+def _variant_allele_fraction_found(states: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Only the samples carrying a REAL number: status FOUND *and* a usable
+    numeric value. `bool` is excluded explicitly because it is an `int`
+    subclass, so a stray `True` can never be read as a fraction of 1.0 --
+    the same guard `_parse_one_qc_metric` applies to QC values, for the
+    same reason.
+    """
+    return {
+        name: state
+        for name, state in states.items()
+        if state.get("status") == _StageStatus.FOUND.value
+        and isinstance(state.get("value"), (int, float))
+        and not isinstance(state.get("value"), bool)
+    }
+
+
+def _one_allele_fraction_text(state: Dict[str, Any]) -> str:
+    """One FOUND sample's fraction, with its denominator when there is one to show."""
+    value = state.get("value")
+    alt_depth, depth = state.get("alt_depth"), state.get("depth")
+    if isinstance(alt_depth, int) and isinstance(depth, int):
+        return f"{value:.3g} ({alt_depth}/{depth} reads, FORMAT/AD)"
+    # FORMAT/AF: a caller-supplied fraction with no denominator to audit
+    # it against. Said out loud rather than left to look like an AD-backed
+    # number with the read counts merely omitted.
+    return f"{value:.3g} (FORMAT/AF; no read depths reported)"
+
+
+def variant_allele_fraction_text(variant_result: Dict[str, Any]) -> str:
+    """
+    The one rendering of a variant's per-sample allele fraction, shared by
+    the full Markdown report (`report/report_generator.py`) and the full
+    clinical PDF (`report/summary.py`) so the two cannot drift -- the same
+    single-source-of-truth reason `_variant_hgvs_or_locus` above exists,
+    and the reason this lives here rather than in either renderer.
+
+    Deliberately NOT a section of `build_clinical_report`'s returned dict:
+    that function returns `None` outright when interpretation is missing
+    or errored (see its guard above), and an allele fraction is a property
+    of the VCF record -- known the instant the line is parsed, and wholly
+    independent of whether interpretation succeeded. Routed through the
+    clinical report, a failed interpretation and a VCF carrying no
+    per-sample data would render identically: the exact collapse this
+    field exists to prevent, one layer up.
+
+    Resolution order -- the tri-state resolves FIRST, the sample count
+    SECOND. Getting that order backwards is what makes "multiple samples;
+    see JSON" a lie on a VCF that has several samples and no allele
+    depths at all: it points a reader at a JSON holding nothing but
+    `not_run` entries, asserting data exists where none does.
+    """
+    states = _variant_allele_fraction_states(variant_result)
+    if states is None:
+        return VAF_FIELD_NOT_CAPTURED_REASON
+    if not states:
+        return VAF_NO_SAMPLE_COLUMNS_REASON
+
+    found = _variant_allele_fraction_found(states)
+    if found:
+        if len(found) > 1:
+            return (
+                f"{len(found)} samples carry an allele fraction for this variant; per-sample values are "
+                f"in geper_results.json (variants[].variant.variant_allele_fractions)."
+            )
+        # Exactly one real number. The sample name always travels with it
+        # -- an unlabelled fraction on a multi-sample run reads as though
+        # it stood for the whole record.
+        name, state = next(iter(found.items()))
+        text = f"{_one_allele_fraction_text(state)}, sample {name}"
+        others = len(states) - 1
+        if others > 0:
+            # Never silently drop the other samples: without this, one
+            # found value on a trio would hide two failed or unmeasured
+            # ones behind a single confident-looking number.
+            return f"{text}; {others} further sample(s) carry no usable fraction -- see geper_results.json."
+        return text
+
+    # No sample carries a number. The count is not what a reader needs
+    # here -- that there is no fraction anywhere is -- so it is not
+    # mentioned, and an "all not_run" run must not be dressed up as a
+    # failure (or the reverse).
+    errored = {name: s for name, s in states.items() if s.get("status") == _StageStatus.ERROR.value}
+    if errored:
+        reasons = sorted({(s.get("reason") or "No reason recorded.") for s in errored.values()})
+        return f"Could not be determined for any sample -- {' '.join(reasons)}"
+    reasons = sorted({(s.get("reason") or VAF_NO_SAMPLE_COLUMNS_REASON) for s in states.values()})
+    return " ".join(reasons)
 
 
 def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[Dict[str, Any]]) -> List[str]:

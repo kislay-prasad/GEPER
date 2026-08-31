@@ -966,7 +966,19 @@ class ReportGenerator:
             )
             if struct.get("pdb_url"):
                 lines.append(f"  - Structure: {struct['pdb_url']}")
-        elif struct.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4):
+        # `elif struct.get("error"):` missed an empty-but-present
+        # error, falling through to the "reason"/generic-negative
+        # branches below -- a confirmed negative, same class as this
+        # module's other provider-status branches. `struct["error"]` is
+        # `clinical_report_builder.py::_structural_knowledge`'s direct
+        # passthrough of `alphafold_result["error"]`, confirmed by
+        # reading that function -- the same field Batch 1 already fixed
+        # at the producer (orchestrator.py's AlphaFold stage /
+        # alphafold/provider.py). Safe today for that reason; fixed
+        # here anyway so the class cannot reopen if that producer
+        # regresses.
+        elif struct.get("error") is not None:
             lines.append(
                 f"*AlphaFold DB lookup failed (external service issue: {struct['error']}) -- not evidence of an unresolved structure, see Annotation Detail below.*"
             )
@@ -1302,7 +1314,14 @@ class ReportGenerator:
         # audit-trail listing can never again be read as "here are up
         # to 3 records about this variant" when some of them aren't.
         lines = ["### ClinVar", ""]
-        if clinvar and clinvar.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4):
+        # `if clinvar and clinvar.get("error"):` missed an empty-but-
+        # present error, falling through to whatever "no record found"
+        # text follows -- a confirmed negative. Safe today because
+        # orchestrator.py's ClinVar stage was already fixed pre-session
+        # (8df8b9f) to never emit an empty string; fixed here anyway so
+        # the class cannot reopen if that producer regresses.
+        if clinvar and clinvar.get("error") is not None:
             lines.append(
                 f"_Failed: {clinvar['error']} -- not evidence ClinVar has no record, see the AI Model Status/Stage Warnings above._"
             )
@@ -1356,7 +1375,14 @@ class ReportGenerator:
         if not rna_result:
             return []
         lines = ["### RNA-FM Analysis", ""]
-        if rna_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): `if
+        # rna_result.get("error"):` missed an empty-but-present error,
+        # falling through to a "skipped" reading -- a confirmed
+        # negative. Safe today because _run_rna_stage's producer was
+        # already fixed in Batch 2 to never emit an empty string; fixed
+        # here anyway so the class cannot reopen if that producer
+        # regresses.
+        if rna_result.get("error") is not None:
             # A genuine crash, not a normal "not transcript-relevant"
             # skip -- distinguished via the `error` key
             # `pipeline/orchestrator.py::_run_rna_stage` now sets only
@@ -1379,7 +1405,11 @@ class ReportGenerator:
         if not protein_result:
             return []
         lines = ["### Protein / ESM-2 Analysis", ""]
-        if protein_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): same
+        # defect and same fix as `_render_rna` above -- safe today
+        # because _run_protein_stage's producer was already fixed in
+        # Batch 2, fixed here anyway for the same reason.
+        if protein_result.get("error") is not None:
             # Same distinction as `_render_rna` -- see that method's comment.
             lines.append(
                 f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._"
@@ -1407,7 +1437,11 @@ class ReportGenerator:
         if not am_result:
             return []
         lines = ["### AlphaMissense", ""]
-        if am_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): same
+        # defect and same fix as `_render_rna` above -- safe today
+        # because _run_alphamissense_stage's producer was already fixed
+        # in Batch 2, fixed here anyway for the same reason.
+        if am_result.get("error") is not None:
             # Same distinction as `_render_rna` -- see that method's comment.
             lines.append(
                 f"_Failed: {am_result['error']} -- not evidence this variant lacks a catalogue entry, see the AI Model Status table above._"
@@ -1452,7 +1486,15 @@ class ReportGenerator:
         if not mmsplice_result:
             return []
         lines = ["### MMSplice (Splice Effect Prediction)", ""]
-        if mmsplice_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): this
+        # is the site that closes Phase 1's "MMSplice untraced" open
+        # item -- `if mmsplice_result.get("error"):` missed an empty-
+        # but-present error, falling through to MMSplice's "not scored"
+        # text, a confirmed negative same class as BLAST's own already-
+        # fixed defect. Safe today because _run_mmsplice_stage's
+        # producer was already fixed in Batch 2, fixed here anyway so
+        # the class cannot reopen if that producer regresses.
+        if mmsplice_result.get("error") is not None:
             # Same distinction as `_render_rna` -- see that method's
             # comment. Checked first: MMSplice's own "not scored"/
             # "skipped" branches below both key off `supported`/
@@ -1669,7 +1711,12 @@ class ReportGenerator:
         lines.append(f"- **Gene:** {gene_symbol or 'n/a'}")
         lines.append(f"- **Source:** {clingen_result.get('source', 'n/a')}")
 
-        if clingen_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): one
+        # of Phase 1's original four confirmed-negative sites. Safe
+        # today because clingen/provider.py's producer was already
+        # fixed in Batch 1, fixed here anyway so the class cannot
+        # reopen if that producer regresses.
+        if clingen_result.get("error") is not None:
             lines.append(f"- **Status:** query failed ({clingen_result['error']})")
             lines.append("")
             return lines
@@ -1729,7 +1776,12 @@ class ReportGenerator:
         lines.append(f"- **Gene:** {gene_symbol or 'n/a'}")
         lines.append(f"- **Source:** {uniprot_result.get('source', 'n/a')}")
 
-        if uniprot_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): one
+        # of Phase 1's original four confirmed-negative sites. Safe
+        # today because uniprot/provider.py's producer was already
+        # fixed in Batch 1, fixed here anyway so the class cannot
+        # reopen if that producer regresses.
+        if uniprot_result.get("error") is not None:
             lines.append(f"- **Status:** query failed ({uniprot_result['error']})")
             lines.append("")
             return lines
@@ -1782,7 +1834,12 @@ class ReportGenerator:
         lines.append(f"- **UniProt accession:** {interpro_result.get('accession', 'n/a')}")
         lines.append(f"- **Source:** {interpro_result.get('source', 'n/a')}")
 
-        if interpro_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): one
+        # of Phase 1's original four confirmed-negative sites. Safe
+        # today because interpro/provider.py's producer was already
+        # fixed in Batch 1, fixed here anyway so the class cannot
+        # reopen if that producer regresses.
+        if interpro_result.get("error") is not None:
             lines.append(f"- **Status:** query failed ({interpro_result['error']})")
             lines.append("")
             return lines
@@ -1889,7 +1946,15 @@ class ReportGenerator:
         if not blast_result:
             return []
         lines = ["### BLAST Results", ""]
-        if blast_result.get("error"):
+        # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): one
+        # of Phase 1's original four confirmed-negative sites -- the
+        # sharpest instance found this sweep, since the comment just
+        # below already names the exact defect this truthiness bug
+        # reopened for any empty-message crash. Safe today because
+        # orchestrator.py's BLAST stage producer was already fixed in
+        # Batch 1, fixed here anyway so the class cannot reopen if that
+        # producer regresses.
+        if blast_result.get("error") is not None:
             # A genuine crash, not "genuinely no hits" -- see
             # `pipeline/orchestrator.py::_run_blast_stage`'s comment.
             # Previously this branch didn't exist at all: an empty

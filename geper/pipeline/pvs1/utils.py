@@ -856,7 +856,16 @@ def protein_effect_undetermined_reason(
     # transcript/CDS resolution `coding_consequence_detail` takes.
     if not transcript_result or transcript_result.get("skipped"):
         return "transcript structure lookup was skipped for this run."
-    if transcript_result.get("error"):
+    # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): `if
+    # transcript_result.get("error"):` missed an empty-but-present
+    # error, falling through to "no transcript structure was found" --
+    # a confirmed negative about the GENE, not the failure of the
+    # LOOKUP this branch exists to report (Phase 1's original finding
+    # on this exact site). Safe today because orchestrator.py's
+    # transcript-structure stage (fixed in Batch 1) never emits an
+    # empty string; fixed here anyway so the class cannot reopen if
+    # that producer regresses.
+    if transcript_result.get("error") is not None:
         return f"transcript structure lookup failed: {transcript_result.get('error')}."
     if not transcript_result.get("found"):
         return "no transcript structure was found for this gene/genome build."

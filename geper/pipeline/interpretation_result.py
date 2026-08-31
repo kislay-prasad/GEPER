@@ -544,14 +544,24 @@ def build_interpretation_result(
     # on their genuine-exception paths (never on a normal skip), so
     # this check can't misfire on an ordinary "AlphaMissense not
     # eligible for this variant" result.
+    # POSITIVE-POLARITY TRUTHINESS (2026-08-31, sweep Batch 4): `if X.get
+    # ("error"):` misses an empty-but-present error, silently dropping a
+    # genuine model crash from this summary list entirely -- the mirror
+    # image of the `not X.get("error")` sites Batch 3 fixed. Safe today
+    # because every one of these four producers (orchestrator.py's
+    # _run_rna_stage/_run_protein_stage/_run_alphamissense_stage/
+    # _run_mmsplice_stage) was already fixed in Batches 1-2 to never
+    # emit an empty string; fixed here anyway so the class cannot reopen
+    # if any of those producers regresses or a fifth model is added
+    # without the same care.
     ai_model_errors: List[Dict[str, Any]] = []
-    if rna_result and rna_result.get("error"):
+    if rna_result and rna_result.get("error") is not None:
         ai_model_errors.append({"source": "RNA-FM", "error": rna_result["error"]})
-    if protein_result and protein_result.get("error"):
+    if protein_result and protein_result.get("error") is not None:
         ai_model_errors.append({"source": "ESM2", "error": protein_result["error"]})
-    if alphamissense_result and alphamissense_result.get("error"):
+    if alphamissense_result and alphamissense_result.get("error") is not None:
         ai_model_errors.append({"source": "AlphaMissense", "error": alphamissense_result["error"]})
-    if mmsplice_result and mmsplice_result.get("error"):
+    if mmsplice_result and mmsplice_result.get("error") is not None:
         ai_model_errors.append({"source": "MMSplice", "error": mmsplice_result["error"]})
 
     return InterpretationResult(

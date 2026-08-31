@@ -135,9 +135,12 @@ class TestStageEvidenceStatusDerivation(unittest.TestCase):
 
 class TestStageEvidenceEmptyStringErrorIsNotDroppedAsAbsent(unittest.TestCase):
     """
-    PRE-FIX regression tests, written before the fix exists.
+    Regression tests for the fix in `8612e45`, written against the
+    pre-fix code. Everything below describes `stage_schemas.py` AT
+    `8612e45^` and reads in that pre-fix present tense; the code
+    coordinates cited are that revision's line numbers, not HEAD's.
 
-    `test_error_key_is_error_not_not_found` above (line 82) already pins
+    `test_error_key_is_error_not_not_found` above already pins
     that a NON-EMPTY error string produces `StageStatus.ERROR`. It never
     exercises the one value that actually breaks the check that reads it --
     `""`. `StageEvidence.from_raw`'s `if error:` (stage_schemas.py:199) and
@@ -172,7 +175,14 @@ class TestStageEvidenceEmptyStringErrorIsNotDroppedAsAbsent(unittest.TestCase):
     the same empty-string producer-side risk gnomAD had before `d1128ee`
     is, as of this writing, still live for at least these two.
 
-    Pre-fix: both tests below are RED. The fix touches two sites in
+    Both tests below are RED at `8612e45^` and GREEN from `8612e45`
+    onward. Reconstructed 2026-08-31 by loading `8612e45^`'s
+    `stage_schemas.py` under this test module and re-running this class
+    against it: with `found=False` the status came back `NOT_FOUND`,
+    with `found=True` it came back `FOUND` -- both instead of `ERROR`,
+    which is exactly the misclassification described above. They pass
+    at HEAD, and a green run here is the fix holding, not the claim
+    being empty. The fix touches two sites in
     tandem, not one -- fixing `from_raw`'s `if error:` alone (to
     `is not None`) without also fixing the validator's `not self.error`
     (to `is None`) would convert today's silent misclassification into a

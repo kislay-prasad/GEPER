@@ -187,8 +187,12 @@ class LiveAPIUniProtProvider(UniProtProviderBase):
         try:
             payload = self._get(f"{self.api_base}/search", params)
         except ExternalAPIError as exc:
-            logger.warning(f"UniProt REST API query failed for gene '{gene}': {exc}")
-            return UniProtAnnotation.from_error(gene_symbol, str(exc))
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- fall back to the exception's type name
+            # rather than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            logger.warning(f"UniProt REST API query failed for gene '{gene}': {detail}")
+            return UniProtAnnotation.from_error(gene_symbol, detail)
 
         results = payload.get("results") or []
         if not results:

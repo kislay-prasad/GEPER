@@ -2407,7 +2407,11 @@ class GeperPipeline:
             with self._timer("blast"):
                 return self.blast_client.search(sequence_context.alt_sequence)
         except ExternalAPIError as exc:
-            errors.append(f"BLAST stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"BLAST stage failed: {detail}")
             logger.error(errors[-1])
             # `skipped: True` stays True (no downstream reader gates on
             # it, but this keeps the shape consistent with the
@@ -2421,7 +2425,7 @@ class GeperPipeline:
             # clinician "BLAST failed" apart from "BLAST found nothing"
             # before this fix; see report/clinical_report_builder.py
             # and report/report_generator.py for where this now surfaces.
-            return {"hits": [], "hit_count": 0, "skipped": True, "reason": str(exc), "error": str(exc)}
+            return {"hits": [], "hit_count": 0, "skipped": True, "reason": detail, "error": detail}
 
     def _run_dbsnp_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         # `sequence_context_gen.assembly` holds the build resolved by the
@@ -2569,9 +2573,13 @@ class GeperPipeline:
                 errors.append(f"1000 Genomes SAS stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"1000 Genomes SAS stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"1000 Genomes SAS stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_conservation_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """
@@ -2614,9 +2622,13 @@ class GeperPipeline:
                 errors.append(f"ClinGen stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"ClinGen stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"ClinGen stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_hpo_stage(self, clingen_result: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
         """
@@ -2794,9 +2806,13 @@ class GeperPipeline:
                 errors.append(f"Transcript-structure stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"Transcript-structure stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"Transcript-structure stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc), "transcript": None}
+            return {"found": False, "skipped": False, "error": detail, "transcript": None}
 
     def _run_clinvar_codon_stage(
         self, variant: Variant, transcript_result: Dict[str, Any], errors: List[str]
@@ -2918,9 +2934,13 @@ class GeperPipeline:
                 errors.append(f"UniProt stage: {result['error']}")
             return self._with_gene_resolution_context(result, clingen_result)
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"UniProt stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"UniProt stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_interpro_stage(
         self, uniprot_result: Dict[str, Any], protein_position: Optional[int], errors: List[str]
@@ -2939,9 +2959,13 @@ class GeperPipeline:
                 errors.append(f"InterPro stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"InterPro stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"InterPro stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}
 
     def _run_alphafold_stage(
         self, uniprot_result: Dict[str, Any], protein_position: Optional[int], errors: List[str]
@@ -2961,6 +2985,10 @@ class GeperPipeline:
                 errors.append(f"AlphaFold stage: {result['error']}")
             return result
         except Exception as exc:  # noqa: BLE001 - final defense-in-depth
-            errors.append(f"AlphaFold stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- one variable feeds both the log line and
+            # the returned field so they cannot diverge.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"AlphaFold stage failed: {detail}")
             logger.error(errors[-1])
-            return {"found": False, "skipped": False, "error": str(exc)}
+            return {"found": False, "skipped": False, "error": detail}

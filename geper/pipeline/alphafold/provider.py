@@ -148,8 +148,12 @@ class LiveAPIAlphaFoldProvider(AlphaFoldProviderBase):
         try:
             entries = self._get_json(f"{self.api_base}/{normalized}")
         except ExternalAPIError as exc:
-            logger.warning(f"AlphaFold DB summary query failed for accession '{normalized}': {exc}")
-            return AlphaFoldAnnotation.from_error(accession, str(exc))
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- fall back to the exception's type name
+            # rather than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            logger.warning(f"AlphaFold DB summary query failed for accession '{normalized}': {detail}")
+            return AlphaFoldAnnotation.from_error(accession, detail)
 
         if not entries:
             return AlphaFoldAnnotation.not_found(accession, self.name)

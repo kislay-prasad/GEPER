@@ -333,8 +333,12 @@ class ThousandGenomesSASLookup:
 
             frequencies = _fetch_population_frequencies(rsid, variant.alt)
         except ExternalAPIError as exc:
-            logger.warning(f"1000 Genomes SAS lookup failed for {variant.chrom}:{variant.pos}: {exc}")
-            return {"skipped": False, "found": False, "error": str(exc), "reason": str(exc)}
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- fall back to the exception's type name
+            # rather than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            logger.warning(f"1000 Genomes SAS lookup failed for {variant.chrom}:{variant.pos}: {detail}")
+            return {"skipped": False, "found": False, "error": detail, "reason": detail}
 
         pooled = frequencies.get(_POOLED_CODE)
         sub_populations = {code: frequencies[code] for code in _SUB_POPULATION_CODES if code in frequencies}

@@ -126,8 +126,12 @@ class LiveAPIInterProProvider(InterProProviderBase):
         try:
             payload = self._get(url, params)
         except ExternalAPIError as exc:
-            logger.warning(f"InterPro REST API query failed for accession '{normalized}': {exc}")
-            return InterProAnnotation.from_error(accession, str(exc))
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- fall back to the exception's type name
+            # rather than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            logger.warning(f"InterPro REST API query failed for accession '{normalized}': {detail}")
+            return InterProAnnotation.from_error(accession, detail)
 
         annotation = parse_interpro_response(accession, payload, self.name)
         annotation.api_version = self._last_api_version

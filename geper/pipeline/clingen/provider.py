@@ -319,8 +319,12 @@ class LiveAPIClinGenProvider(ClinGenProviderBase):
         try:
             payload = self._get(gene_symbol)
         except ExternalAPIError as exc:
-            logger.warning(f"ClinGen API query failed for gene '{gene_symbol}': {exc}")
-            return ClinGenGeneEvidence.from_error(gene_symbol, str(exc))
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee) -- fall back to the exception's type name
+            # rather than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            logger.warning(f"ClinGen API query failed for gene '{gene_symbol}': {detail}")
+            return ClinGenGeneEvidence.from_error(gene_symbol, detail)
 
         if not payload:
             return ClinGenGeneEvidence.not_found(gene_symbol, self.name)

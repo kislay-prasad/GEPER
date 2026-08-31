@@ -51,6 +51,8 @@ import os
 import subprocess
 from typing import Dict, List, Optional
 
+from pipeline.utils.genome_build import _CHR1_LENGTH_BY_BUILD
+
 logger = logging.getLogger("geper.pipeline.annotation.codon_provider")
 
 # ── Standard genetic code (codon → single-letter AA) ──────────────────────────
@@ -243,6 +245,39 @@ class _FastaReader:
             return seq[s:end].upper()
         return ""
 
+    def chrom_length(self, chrom: str) -> Optional[int]:
+        """Return the contig's length in bases, or None if it can't be
+        determined without extra I/O this reader doesn't already do.
+
+        Used only by FastaCodonContextProvider's genome-build
+        consistency check (FIX #8) -- never for sequence extraction
+        itself (that's `fetch`).
+        """
+        names = [chrom, chrom.lstrip("chr") if chrom.startswith("chr") else f"chr{chrom}"]
+        if self._in_memory is not None:
+            for name in names:
+                seq = self._in_memory.get(name)
+                if seq:
+                    return len(seq)
+            return None
+        # samtools path: read the .fai sidecar directly rather than
+        # shelling out again -- `samtools faidx <path>` with no region
+        # would just (re)create this same file, so reading it is
+        # cheaper and avoids a second subprocess spawn purely to
+        # answer a length question.
+        fai_path = f"{self._path}.fai"
+        if not os.path.isfile(fai_path):
+            return None
+        try:
+            with open(fai_path, "rt", encoding="ascii", errors="replace") as fh:
+                for line in fh:
+                    cols = line.rstrip("\n").split("\t")
+                    if len(cols) >= 2 and cols[0] in names:
+                        return int(cols[1])
+        except (OSError, ValueError):
+            return None
+        return None
+
     def _samtools_fetch(self, chrom: str, start: int, end: int) -> str:
         region = f"{chrom}:{start}-{end}"
         try:
@@ -270,6 +305,40 @@ class _FastaReader:
         except Exception as exc:
             logger.debug("[CodonProvider] samtools faidx failed for %s: %s", region, exc)
             return ""
+
+
+# ── GFF3 genome-build detection ────────────────────────────────────────────────
+
+
+def _detect_gff_chr1_length(gff_path: str, max_header_lines: int = 5000) -> Optional[int]:
+    """Scan a GFF3's ##sequence-region pragma lines (part of the GFF3
+    spec itself -- `##sequence-region seqid start end` -- not a vendor
+    convention) for chr1's declared length.
+
+    Same discriminator pipeline/utils/genome_build.py already uses for
+    a VCF's ##contig length= metadata, applied to GFF3's own equivalent
+    pragma. Returns None (not a guess) when the pragma is absent or
+    doesn't cover chr1 -- an older or minimal GFF3 may not carry it.
+    """
+    names = {"1", "chr1"}
+    open_fn = gzip.open if gff_path.endswith((".gz", ".bgz")) else open
+    try:
+        with open_fn(gff_path, "rt", encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i >= max_header_lines:
+                    break
+                if not line.startswith("#"):
+                    break
+                if line.startswith("##sequence-region"):
+                    parts = line.split()
+                    if len(parts) >= 4 and parts[1] in names:
+                        try:
+                            return int(parts[3])
+                        except ValueError:
+                            continue
+    except OSError:
+        return None
+    return None
 
 
 # ── GFF3 CDS loader ───────────────────────────────────────────────────────────
@@ -360,6 +429,10 @@ class FastaCodonContextProvider:
         self._cds_map: Optional[Dict[str, List[CdsRecord]]] = None
         self._fasta: Optional[_FastaReader] = None
         self._available = False
+        # FIX #8: populated by _check_genome_build_consistency(), None
+        # until then (or if the discriminating signal was unavailable).
+        self.detected_fasta_build: Optional[str] = None
+        self.detected_gff_build: Optional[str] = None
 
         if not os.path.isfile(gff_path):
             logger.warning("[CodonProvider] GFF3 not found: %s", gff_path)
@@ -372,6 +445,7 @@ class FastaCodonContextProvider:
             self._cds_map = _load_cds_from_gff(gff_path)
             self._fasta = _FastaReader(fasta_path)
             self._available = True
+            self._check_genome_build_consistency()
             logger.info(
                 "[CodonProvider] Ready: %d transcripts with CDS from %s",
                 len(self._cds_map),
@@ -379,6 +453,61 @@ class FastaCodonContextProvider:
             )
         except Exception as exc:
             logger.error("[CodonProvider] Initialisation failed: %s", exc)
+
+    def _check_genome_build_consistency(self) -> None:
+        """FIX #8: warn -- never block, matching genome_build.py's own
+        fail-soft philosophy -- when the FASTA and GFF3 disagree about
+        which genome build (GRCh37 vs GRCh38) they're for.
+
+        Neither file declares its build explicitly to this provider;
+        chr1's length is the same reliable discriminator
+        pipeline/utils/genome_build.py already established for VCF
+        headers, applied here to the FASTA (via _FastaReader.chrom_length,
+        its .fai index or the in-memory-loaded sequence) and the GFF3
+        (via its ##sequence-region pragma). Either signal can be
+        legitimately absent -- this only downgrades confidence, never
+        fails the load, and "undetermined" is never read as "matches".
+
+        Does NOT check the VCF: this class never sees the VCF file at
+        all, only already-parsed (chrom, pos, ref, alt, transcript_id)
+        tuples from the orchestrator. A VCF-vs-FASTA/GFF3 cross-check
+        would need runner.py's already-detected build (see its
+        `checkpoint["detected_genome_build"]`, from
+        pipeline/utils/genome_build.py's `warn_if_unsupported_build`)
+        threaded into make_codon_provider_from_cfg -- out of this
+        file's scope, left as a follow-up.
+        """
+        fasta_length = self._fasta.chrom_length("chr1") if self._fasta else None
+        gff_length = _detect_gff_chr1_length(self._gff_path)
+
+        self.detected_fasta_build = (
+            _CHR1_LENGTH_BY_BUILD.get(fasta_length) if fasta_length else None
+        )
+        self.detected_gff_build = _CHR1_LENGTH_BY_BUILD.get(gff_length) if gff_length else None
+
+        if self.detected_fasta_build and self.detected_gff_build:
+            if self.detected_fasta_build != self.detected_gff_build:
+                logger.warning(
+                    "[CodonProvider] Genome build mismatch: FASTA %s looks like %s "
+                    "(chr1 length=%d) but GFF3 %s looks like %s (chr1 length=%d). "
+                    "Codon-level consequences (missense/synonymous/stop_gained/etc.) "
+                    "will be silently wrong for any transcript whose coordinates "
+                    "shifted between builds. Use a matching-build FASTA and GFF3.",
+                    self._fasta_path,
+                    self.detected_fasta_build,
+                    fasta_length,
+                    self._gff_path,
+                    self.detected_gff_build,
+                    gff_length,
+                )
+        else:
+            logger.debug(
+                "[CodonProvider] Could not confirm FASTA/GFF3 genome-build "
+                "consistency (fasta_build=%s, gff_build=%s) -- chr1 length "
+                "signal unavailable from one or both files.",
+                self.detected_fasta_build,
+                self.detected_gff_build,
+            )
 
     # ── CodonContextProvider interface ────────────────────────────────────────
 

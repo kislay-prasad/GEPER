@@ -54,7 +54,7 @@ def _minimal_kwargs():
         interpretation=interpretation,
         merged_variants=merged,
         reference_genome="GRCh38",
-        pipeline_version="GEPER v8",
+        pipeline_version="Bij AI v8",
     )
 
 
@@ -105,7 +105,7 @@ class TestRenderClinicalPdf:
         render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
         text = "".join(p.extract_text() for p in PdfReader(out).pages)
         assert "GRCh38" in text
-        assert "GEPER v8" in text
+        assert "Bij AI v8" in text
 
     def test_lab_disclaimer_present(self, tmp_path):
         from pypdf import PdfReader

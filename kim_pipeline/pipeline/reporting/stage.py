@@ -51,7 +51,7 @@ logger = logging.getLogger("geper.pipeline.reporting.stage")
 
 # Single source of truth for the pipeline version string, shared by the
 # JSON payload, HTML report, and PDF report so they can never disagree.
-PIPELINE_VERSION = "GEPER v8"
+PIPELINE_VERSION = "Bij AI v8"
 
 # Shared ACMG classification -> style mapping. HTML uses the CSS-string
 # values directly; pipeline/reporting/pdf_report.py uses the same keys

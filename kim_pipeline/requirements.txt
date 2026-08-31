@@ -1,4 +1,4 @@
-# GEPER v8 — Python dependencies
+# Bij AI v8 — Python dependencies
 # Install: pip install -r requirements.txt
 # Or with extras: pip install -e ".[all]"
 

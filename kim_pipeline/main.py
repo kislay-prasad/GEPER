@@ -2,7 +2,7 @@
 """
 main.py
 ────────
-GEPER v8 — unified command-line interface.
+Bij AI v8 — unified command-line interface.
 
 Subcommands
 ───────────

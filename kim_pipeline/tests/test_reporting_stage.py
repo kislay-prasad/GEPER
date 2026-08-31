@@ -170,7 +170,7 @@ class TestIssue3ClinicalReportOverhaul:
         html = Path(result.html_path).read_text()
         assert "report-footer" in html
         assert "GRCh38 (test)" in html
-        assert "GEPER v8" in html
+        assert "Bij AI v8" in html
         assert "Generated:" in html
 
     def test_signature_block_not_rendered(self, tmp_path):

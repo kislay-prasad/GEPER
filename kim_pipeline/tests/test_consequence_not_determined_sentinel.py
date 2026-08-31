@@ -128,7 +128,7 @@ class TestPdfRenderSiteUsesTheLabel:
             interpretation=interpretation,
             merged_variants=merged,
             reference_genome="GRCh38",
-            pipeline_version="GEPER v8",
+            pipeline_version="Bij AI v8",
         )
 
     def test_sentinel_absent_and_label_present_in_rendered_pdf(self, tmp_path):

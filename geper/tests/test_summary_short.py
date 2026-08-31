@@ -162,6 +162,56 @@ class TestShortInterpretation(unittest.TestCase):
         self.assertIn("full report", _short_interpretation(_clinical(executive_summary="")))
 
 
+# The real `_executive_summary` (`report/clinical_report_builder.py`)
+# shape that reproduces the truncation Kelly found in the five-variant
+# run: the not-evaluated clause's `e.g.` (from
+# `NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE`'s label) sits inside
+# what is really the third sentence, and the old regex treated the "e.g."
+# period as a sentence end, so `_INTERPRETATION_SENTENCES = 3` cut the
+# excerpt off mid-parenthetical instead of after the real third
+# sentence.
+_ABBREVIATION_BUG_SUMMARY = (
+    "Variant 17:100 A>T in BRCA1 was classified as **Pathogenic** (evidence completeness: High). "
+    "Assigned Urgent review priority. "
+    "Of 28 ACMG/AMP criteria evaluated: 7 triggered, 2 checked but not triggered, 19 could not be "
+    "evaluated (9 no data source GEPER integrates for any variant; 2 inapplicable given this "
+    "variant's own already-determined protein consequence (e.g. a frameshift, nonsense, or canonical "
+    "splice-site change, for which computational predictors are moot); 8 a missing/unavailable "
+    "evidence source for this specific variant). "
+    "Additional follow-up is recommended given the evidence gaps noted above."
+)
+
+
+class TestShortInterpretationAbbreviations(unittest.TestCase):
+    def test_eg_inside_the_third_sentence_does_not_truncate_mid_parenthetical(self):
+        text = _short_interpretation(_clinical(executive_summary=_ABBREVIATION_BUG_SUMMARY))
+        # The bug: the old regex split right after "(e.g." and the
+        # excerpt ended there, with the parenthetical never closed.
+        self.assertNotIn("(e.g. [...]", text)
+        self.assertFalse(text.rstrip().endswith("(e.g."))
+        # The fix: the third real sentence -- the whole ACMG/AMP
+        # accounting clause, parenthetical closed -- is kept whole, and
+        # only the fourth (follow-up) sentence is dropped.
+        self.assertIn(
+            "8 a missing/unavailable evidence source for this specific variant).",
+            text,
+        )
+        self.assertTrue(text.endswith("evidence source for this specific variant). [...]"))
+        self.assertNotIn("Additional follow-up", text)
+
+    def test_ie_etc_cf_vs_approx_do_not_split_sentences_either(self):
+        from report.summary_short import _split_sentences
+
+        second_sentence = (
+            "Second sentence uses several abbreviations: i.e. shorthand forms, e.g. real ones, "
+            "etc. more examples, cf. related shorthand, vs. contrasting cases, and approx. "
+            "estimates, none of which end it."
+        )
+        text = "First sentence stands alone. " + second_sentence
+        sentences = _split_sentences(text)
+        self.assertEqual(sentences, ["First sentence stands alone.", second_sentence])
+
+
 class TestOrdering(unittest.TestCase):
     def test_vcf_order_when_no_case_prioritization(self):
         variants = [_variant_result(pos=1), _variant_result(pos=2)]

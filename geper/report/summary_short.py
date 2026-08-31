@@ -117,6 +117,49 @@ _INTERPRETATION_SENTENCES = 3
 # kept is verbatim.
 _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 
+# Abbreviations that can appear in `_executive_summary`
+# (`report/clinical_report_builder.py`) prose ahead of a
+# `_SENTENCE_END_RE` match, where the period is not really a sentence
+# end. Checked by reading every generator of the text this module
+# excerpts (`_executive_summary` itself, `_NOT_EVALUATED_REASON_LABELS`,
+# and the not-evaluated/limitations clauses it stitches in) rather than
+# guessing a generic list: "e.g." is the one that actually occurs today
+# (`NotEvaluatedReason.CONSEQUENCE_INAPPLICABLE`'s label). "i.e.",
+# "etc.", "cf.", "vs.", and "approx." do not currently appear anywhere
+# reachable from `executive_summary`, but are handled as the same class
+# of problem rather than special-cased, since nothing here should
+# require another truncation bug report the next time someone adds a
+# clause using one of them.
+_ABBREVIATIONS = ("e.g.", "i.e.", "etc.", "cf.", "vs.", "approx.")
+
+
+def _split_sentences(text: str) -> List[str]:
+    """
+    Same rule as the old `_SENTENCE_END_RE.split(text)` -- split on
+    terminal punctuation followed by whitespace -- except a split point
+    immediately after one of `_ABBREVIATIONS` is not a real sentence
+    end and is folded into the sentence being built instead.
+
+    Not done as a single regex with a negative lookbehind alternation
+    (`(?<!e\\.g\\.|i\\.e\\.|...)`) because Python's `re` requires a
+    fixed-width lookbehind and these abbreviations are different
+    lengths; splitting into matches and checking the accumulated prefix
+    with `str.endswith` handles a variable-length exclusion list
+    without that constraint, at the cost of a manual loop instead of
+    one `re.split` call.
+    """
+    parts: List[str] = []
+    pos = 0
+    for match in _SENTENCE_END_RE.finditer(text):
+        boundary = match.start()
+        if text[pos:boundary].lower().endswith(_ABBREVIATIONS):
+            continue
+        parts.append(text[pos:boundary])
+        pos = match.end()
+    parts.append(text[pos:])
+    return [p for p in parts if p.strip()]
+
+
 _COMPANION_NOTE = (
     "This is a summary report. The full detailed Bij AI report for this run -- including the "
     "sequencing QC table, the complete ACMG/AMP criteria applied to each variant with their "
@@ -246,7 +289,7 @@ def _short_interpretation(clinical: Optional[Dict[str, Any]]) -> str:
             "No interpretive summary was generated for this variant; see the full report for the underlying evidence."
         )
 
-    sentences = [s for s in _SENTENCE_END_RE.split(text) if s.strip()]
+    sentences = _split_sentences(text)
     if len(sentences) <= _INTERPRETATION_SENTENCES:
         return text
     return " ".join(sentences[:_INTERPRETATION_SENTENCES]).rstrip() + " [...]"

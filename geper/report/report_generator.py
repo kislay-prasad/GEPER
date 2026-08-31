@@ -1835,7 +1835,7 @@ class ReportGenerator:
         lines.append(f"- **UniProt accession:** {alphafold_result.get('accession', 'n/a')}")
         lines.append(f"- **Source:** {alphafold_result.get('source', 'n/a')}")
 
-        if alphafold_result.get("error"):
+        if alphafold_result.get("error") is not None:
             lines.append(f"- **Status:** query failed ({alphafold_result['error']})")
             lines.append("")
             return lines

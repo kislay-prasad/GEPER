@@ -461,7 +461,7 @@ class ConfidenceEngine:
         if (
             alphafold_result
             and not alphafold_result.get("skipped")
-            and not alphafold_result.get("error")
+            and alphafold_result.get("error") is None
             and alphafold_result.get("found")
         ):
             sources.append("AlphaFold DB")

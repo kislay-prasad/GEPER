@@ -778,6 +778,37 @@ class InterpretationEngine:
                     -2.0,
                 )
             )
+        # FIX #15 (ruling, 2026-08-31): this PM2 branch reads `global_af`
+        # bare while `ba1_bs1_af` two lines up is popmax-aware -- NOT a
+        # bug to make symmetric. `ACMGRuleEngine._pm2` (acmg_rules.py)
+        # is the real, live-reaching PM2 evaluator, and it is
+        # deliberately asymmetric with `_ba1_bs1` for the same reason:
+        # BA1/BS1 and PM2 ask different questions. BA1/BS1 ask "is this
+        # variant common enough to be benign IN ANY population" --
+        # popmax (the highest population AF found anywhere) is the
+        # correct answer to that question. PM2 asks "is this variant
+        # rare in controls" for THIS patient -- popmax would suppress
+        # PM2 credit for a variant that is genuinely rare in the
+        # patient's own relevant population but happens to be common in
+        # some unrelated population gnomAD also samples, which is
+        # backwards. `ACMGRuleEngine._pm2` gets this right by using
+        # `CONFIG.gnomad.POPULATION_PRIORITY` (a configurable,
+        # deployment-target population's own AF) instead of popmax, via
+        # `_population_priority_context`, falling back to global AF only
+        # when the priority population has no data, with an explicit
+        # disclosure rather than a silent substitution.
+        #
+        # This branch is not a faithful mirror of that logic, though --
+        # it is an older, simpler implementation that happens not to
+        # have made the popmax mistake, but it also lacks the
+        # priority-population awareness the real evaluator has. Its
+        # output does not reach any report renderer regardless (see the
+        # `_gnomad_acmg_evidence` docstring and the comment at this
+        # function's call site): `evidence` text from this function is
+        # discarded by its caller, and the `weight` that survives only
+        # feeds the legacy, unread `significance_score` /
+        # `legacy_pre_acmg_significance_score` path. Left as `global_af`
+        # rather than made popmax-aware.
         elif global_af is not None and global_af <= cfg.PM2_AF_THRESHOLD:
             results.append(
                 (
@@ -1025,7 +1056,7 @@ class InterpretationEngine:
         if (
             alphafold_result
             and not alphafold_result.get("skipped")
-            and not alphafold_result.get("error")
+            and alphafold_result.get("error") is None
             and alphafold_result.get("found")
         ):
             band = alphafold_result.get("affected_residue_band")

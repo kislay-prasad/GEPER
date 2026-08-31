@@ -43,6 +43,15 @@ services:
       - GEPER_BLAST_DATABASE=${GEPER_BLAST_DATABASE:-}
       - GEPER_ALPHAMISSENSE_HG38_LOCAL=${GEPER_ALPHAMISSENSE_HG38_LOCAL:-}
       - GEPER_ALPHAMISSENSE_HG19_LOCAL=${GEPER_ALPHAMISSENSE_HG19_LOCAL:-}
+      # kim_pipeline/api/main.py (FIX #3): not started by this compose
+      # file today (this service runs the unrelated geper/ VCF pipeline,
+      # not kim_pipeline's API), documented here anyway for whoever wires
+      # it in later. The server refuses to start without both
+      # GEPER_API_KEYS and GEPER_CORS_ORIGINS set, or GEPER_DEV_INSECURE=1
+      # set instead (dev/test only) -- see kim_pipeline/docs/INSTALL.md.
+      # - GEPER_API_KEYS=${GEPER_API_KEYS:-}
+      # - GEPER_CORS_ORIGINS=${GEPER_CORS_ORIGINS:-}
+      # - GEPER_DEV_INSECURE=${GEPER_DEV_INSECURE:-}
 
     volumes:
       # --- Model weights / bootstrap datasets: named volumes, so they

@@ -109,13 +109,24 @@ sudo apt-get install wkhtmltopdf
 ## Start the API Server
 
 ```bash
-# Development
+# Development (keyless local)
+# The API server requires GEPER_DEV_INSECURE=1 to start without real
+# GEPER_API_KEYS and GEPER_CORS_ORIGINS set (FIX #3 -- it refuses to
+# start with insecure defaults unless this is set explicitly). This is
+# dev-mode only:
+export GEPER_DEV_INSECURE=1
 python main.py serve
 
 # With custom config and port
 python main.py serve --config config/production.yaml --port 8080
 
 # Production (gunicorn + uvicorn workers)
+#
+# REQUIRED first: api/main.py refuses to start without both of these set
+# (FIX #3 -- a dev/test default of no auth + CORS "*" is fine locally,
+# but never in a real deployment):
+#   export GEPER_API_KEYS=key1,key2        # comma-separated, checked against the X-Api-Key header
+#   export GEPER_CORS_ORIGINS=https://your-frontend.example.com
 pip install gunicorn
 gunicorn api.main:app -k uvicorn.workers.UvicornWorker \
   --workers 4 --bind 0.0.0.0:8000

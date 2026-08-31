@@ -124,12 +124,46 @@ def _load_api_keys() -> Optional[Set[str]]:
 
 
 _API_KEYS: Optional[Set[str]] = _load_api_keys()
+_CORS_ORIGINS_ENV: Optional[str] = os.getenv(
+    "GEPER_CORS_ORIGINS"
+)  # None if unset; "*" applied later
+_DEV_INSECURE: bool = os.getenv("GEPER_DEV_INSECURE", "") == "1"
 
 if _API_KEYS is None:
     logger.warning(
         "GEPER_API_KEYS is not set — running in dev mode with no authentication. "
         "Set GEPER_API_KEYS=key1,key2 before deploying to production."
     )
+
+
+def _refuse_insecure_defaults_unless_opted_in() -> None:
+    """FIX #3: a startup warning is not a control -- it arrives after the
+    decision to run without auth/CORS restriction has already been made.
+    Refuse to start with the insecure defaults (no auth, CORS "*") unless
+    GEPER_DEV_INSECURE=1 is set explicitly, so a deployer who simply
+    forgets GEPER_API_KEYS/GEPER_CORS_ORIGINS gets a hard failure instead
+    of a log line that's easy to miss on a deploy console.
+    """
+    if _DEV_INSECURE:
+        return
+    missing = [
+        name
+        for name, value in (
+            ("GEPER_API_KEYS", _API_KEYS),
+            ("GEPER_CORS_ORIGINS", _CORS_ORIGINS_ENV),
+        )
+        if value is None
+    ]
+    if missing:
+        sys.stderr.write(
+            "ERROR: refusing to start with insecure defaults -- "
+            f"{' and '.join(missing)} not set. Set them before a real deployment, "
+            "or set GEPER_DEV_INSECURE=1 to run insecurely on purpose (dev/test only).\n"
+        )
+        sys.exit(1)
+
+
+_refuse_insecure_defaults_unless_opted_in()
 
 
 async def _require_api_key(x_api_key: str = Header(default="")) -> None:
@@ -172,7 +206,7 @@ app = FastAPI(
 )
 
 # CORS — restrict origins in production via GEPER_CORS_ORIGINS env var
-_cors_origins = os.getenv("GEPER_CORS_ORIGINS", "*").split(",")
+_cors_origins = (_CORS_ORIGINS_ENV or "*").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,

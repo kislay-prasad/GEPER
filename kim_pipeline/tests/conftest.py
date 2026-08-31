@@ -3,9 +3,22 @@ tests/conftest.py
 ──────────────────
 Project-wide pytest fixtures.
 """
-from unittest.mock import patch
+
+import os
 
 import pytest
+
+# FIX #3: api/main.py now refuses to import (sys.exit(1)) if
+# GEPER_API_KEYS/GEPER_CORS_ORIGINS are both unset and GEPER_DEV_INSECURE
+# isn't set -- test_api.py imports `api.main` at MODULE level (`from
+# api.main import app, _RUNS`), before any fixture runs, so this has to be
+# a module-level env write here, not an autouse fixture: conftest.py is
+# imported before the test modules in this directory are collected, a
+# fixture would run too late for a module-level import to see it.
+# setdefault, not a plain assignment, so a real GEPER_API_KEYS/
+# GEPER_CORS_ORIGINS/GEPER_DEV_INSECURE already in the environment (e.g. a
+# developer intentionally testing the auth-enabled path) is not clobbered.
+os.environ.setdefault("GEPER_DEV_INSECURE", "1")
 
 
 @pytest.fixture(autouse=True)

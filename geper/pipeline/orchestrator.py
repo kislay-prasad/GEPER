@@ -2437,9 +2437,14 @@ class GeperPipeline:
             with self._timer("dbsnp"):
                 return self.dbsnp_client.lookup_variant(variant, assembly=assembly)
         except ExternalAPIError as exc:
-            errors.append(f"dbSNP stage failed: {exc}")
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee, which fixed the identical mechanism for
+            # gnomAD) -- fall back to the exception's type name rather
+            # than reporting a failure with nothing said about it.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"dbSNP stage failed: {detail}")
             logger.error(errors[-1])
-            return {"rsid": None, "found": False, "error": str(exc)}
+            return {"rsid": None, "found": False, "error": detail}
 
     def _run_clinvar_stage(self, variant: Variant, dbsnp_result: Dict[str, Any], errors: List[str]) -> Dict[str, Any]:
         rsid = dbsnp_result.get("rsid") if dbsnp_result else None
@@ -2448,9 +2453,11 @@ class GeperPipeline:
             with self._timer("clinvar"):
                 return self.clinvar_client.query_variant(variant, rsid=rsid, assembly=assembly)
         except ExternalAPIError as exc:
-            errors.append(f"ClinVar stage failed: {exc}")
+            # See `_run_dbsnp_stage`'s matching comment / d1128ee.
+            detail = str(exc) or type(exc).__name__
+            errors.append(f"ClinVar stage failed: {detail}")
             logger.error(errors[-1])
-            return {"query": None, "found": False, "error": str(exc)}
+            return {"query": None, "found": False, "error": detail}
 
     def _run_gnomad_stage(self, variant: Variant, errors: List[str]) -> Dict[str, Any]:
         """

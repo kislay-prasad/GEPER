@@ -865,7 +865,14 @@ def capture_ensembl_release(endpoint: str = "https://rest.ensembl.org", timeout_
         version = f"Ensembl release {releases[0]}" if releases else None
         return {"version": version, "releases": releases, "endpoint": endpoint, "error": None}
     except Exception as exc:  # noqa: BLE001 -- a provenance capture must never break pipeline startup
-        return {"version": None, "releases": [], "endpoint": endpoint, "error": str(exc)}
+        # `str(exc)` is "" for any exception raised without a message
+        # (see d1128ee / FIX #10) -- and this value is interpolated
+        # directly into the reader-facing provenance notes line
+        # (`orchestrator.py::_capture_startup_provenance`), so an empty
+        # string renders as a garbled, unfinished sentence rather than
+        # simply being absent.
+        detail = str(exc) or type(exc).__name__
+        return {"version": None, "releases": [], "endpoint": endpoint, "error": detail}
 
 
 def capture_blast_local_tool_versions() -> Dict[str, Any]:
@@ -890,4 +897,10 @@ def capture_blast_local_tool_versions() -> Dict[str, Any]:
         version = "; ".join(f"{tool} {v}" for tool, v in sorted(found.items()))
         return {"version": version, "tools": versions, "error": None}
     except Exception as exc:  # noqa: BLE001 -- a provenance capture must never break pipeline startup
-        return {"version": None, "tools": {}, "error": str(exc)}
+        # See `capture_ensembl_release`'s matching comment / d1128ee.
+        # No current consumer reads this key (orchestrator.py's BLAST
+        # notes text is a fixed string), but this matches the class
+        # rather than leaving the return shape's most-likely-empty
+        # field inconsistent with its sibling.
+        detail = str(exc) or type(exc).__name__
+        return {"version": None, "tools": {}, "error": detail}

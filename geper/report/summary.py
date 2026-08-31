@@ -469,7 +469,7 @@ def _derive_run_id(document: Dict[str, Any], run_id: Optional[str]) -> str:
         return run_id
     generated_at = document.get("generated_at") or datetime.now(timezone.utc).isoformat()
     compact = "".join(ch for ch in generated_at if ch.isalnum())
-    return f"GEPER-RUN-{compact[:14]}"
+    return f"BIJ-RUN-{compact[:14]}"
 
 
 # ---------------------------------------------------------------------------

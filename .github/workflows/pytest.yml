@@ -110,6 +110,20 @@ jobs:
           fi
           python -c "import torch; print('torch', torch.__version__, '| cuda build:', torch.version.cuda)"
 
+      # WHAT CI DOES NOT COVER: this workflow never sets GEPER_CACHE_DIR
+      # (or GEPER_PLUGIN_CACHE_DIR) and never downloads any plugin
+      # checkpoint, so CONFIG.splicing.PLUGIN_CACHE_DIR falls back to its
+      # "./plugin_model_cache" default (config.py), which is always empty
+      # on a fresh checkout. tests/test_splicebert_loader_live.py's real-
+      # checkpoint regression test
+      # (TestSpliceBertLoaderDoesNotHang) is unittest.skipUnless-gated on
+      # config.json + pytorch_model.bin already existing under that path,
+      # so it SKIPS on every CI run -- pytest reports it green, not
+      # absent, and no run of this workflow has ever exercised the real
+      # SpliceBERT checkpoint load. Whether to set GEPER_CACHE_DIR or add
+      # a download step here (cost: a ~208MB Zenodo archive, real model
+      # weights loaded on every run) is a human decision; this comment
+      # only documents the current gap.
       - name: Run pytest
         run: python -m pytest tests/ -v
 

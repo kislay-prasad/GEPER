@@ -523,7 +523,14 @@ def build_interpretation_result(
     # `ConfidenceEngine`/`PrioritizationEngine`'s sequence-context
     # factor, so all three engines now agree on what "ran".
     ai_context_models = list(dna_models_used or [])
-    if rna_result and not rna_result.get("skipped") and not rna_result.get("error"):
+    # INERT (2026-08-31): truthiness on `error`, not `is not None`, but
+    # `_run_rna_stage` (orchestrator.py) keeps `skipped: True` on every
+    # failure path -- `not rna_result.get("skipped")` already excludes
+    # a failed run regardless of how `error` is read. Fixed to
+    # `is not None` for consistency only; same check duplicated (and
+    # fixed alongside this one) in confidence_engine.py,
+    # interpretation.py, and prioritization_engine.py.
+    if rna_result and not rna_result.get("skipped") and rna_result.get("error") is None:
         ai_context_models.append("RNA-FM")
     if protein_result and protein_result.get("esm2"):
         ai_context_models.append("ESM2")

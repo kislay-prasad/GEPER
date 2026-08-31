@@ -141,7 +141,28 @@ class TranscriptLookup:
                 return result
 
         result = self._fetch(gene_symbol, build)
-        if self.cache is not None and not result.get("error"):
+        # NOT INERT THE SAME WAY THIS SWEEP'S OTHER CONSUMER SITES ARE
+        # (2026-08-31): this gate decides whether a FAILED lookup gets
+        # CACHED, not what text a reader sees -- if `result["error"]`
+        # were ever an empty string, the old `not result.get("error")`
+        # WOULD wrongly cache the failure (confirmed by a direct test:
+        # it fails on the pre-fix code), and a transient failure would
+        # then be served from cache to every subsequent query for this
+        # gene until the entry expired -- not merely a misleading
+        # sentence, the harm class this sweep's other consumer sites
+        # share. It is IMMUNE today (same class as Batch 2's four
+        # "structurally immune" sites) for a producer-side reason, not
+        # a behavioural one: `result["error"]` only ever reaches here
+        # from `_fetch_local` (never sets "error" at all) or
+        # `_fetch_live`, whose sole "error" assignment is
+        # f"Ensembl transcript lookup failed for {gene_symbol} after
+        # {N} attempts: {last_error}" -- a string with a non-empty
+        # prefix that can never collapse to "" even when the underlying
+        # `last_error` has no message of its own. Fixed to `is not
+        # None` because the immunity is a fact about today's producer,
+        # not the code -- a future second producer of this key could
+        # reopen the class silently otherwise.
+        if self.cache is not None and result.get("error") is None:
             self.cache.put(key, result)
         return result
 

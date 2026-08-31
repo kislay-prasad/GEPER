@@ -426,7 +426,15 @@ class PrioritizationEngine:
         # Completeness-only, exactly as in Phase 3 -- these models
         # inform routing/context, not a per-variant priority verdict.
         ran = len(dna_models_used or [])
-        if rna_result and not rna_result.get("skipped") and not rna_result.get("error"):
+        # INERT (2026-08-31): truthiness on `error`, not `is not None`,
+        # but `_run_rna_stage` (orchestrator.py) keeps `skipped: True`
+        # on every failure path -- `not rna_result.get("skipped")`
+        # already excludes a failed run regardless of how `error` is
+        # read. Fixed to `is not None` for consistency only; same check
+        # duplicated (and fixed alongside this one) in
+        # confidence_engine.py, interpretation.py, and
+        # interpretation_result.py.
+        if rna_result and not rna_result.get("skipped") and rna_result.get("error") is None:
             ran += 1
         if protein_result and protein_result.get("esm2"):
             ran += 1

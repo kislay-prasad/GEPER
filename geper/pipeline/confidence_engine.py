@@ -206,7 +206,16 @@ class ConfidenceEngine:
         if (
             clingen_result
             and not clingen_result.get("skipped")
-            and not clingen_result.get("error")
+            # INERT (2026-08-31): truthiness here, not `is not None`, but
+            # `clingen_result.get("found")` two lines below already
+            # requires True, and a failed lookup always returns
+            # found=False alongside its error -- so this sub-condition
+            # never changes which branch fires; a genuinely failed
+            # lookup with error="" already fails the AND at `found`
+            # regardless of how `error` itself is read. Fixed to
+            # `is not None` anyway for consistency with the rest of this
+            # module, not because today's score or rationale changes.
+            and clingen_result.get("error") is None
             and clingen_result.get("found")
         ):
             sources.append("ClinGen")
@@ -374,7 +383,16 @@ class ConfidenceEngine:
         if (
             uniprot_result
             and not uniprot_result.get("skipped")
-            and not uniprot_result.get("error")
+            # INERT (2026-08-31): truthiness here, not `is not None`, but
+            # `uniprot_result.get("found")` two lines below already
+            # requires True, and a failed lookup always returns
+            # found=False alongside its error -- so this sub-condition
+            # never changes which branch fires. Confirmed EXECUTED: a
+            # failure with error="" also lacks the "reason" key the elif
+            # below checks, so it falls to the same final `else` either
+            # way. Fixed to `is not None` for consistency, not because
+            # today's score or rationale changes.
+            and uniprot_result.get("error") is None
             and uniprot_result.get("found")
         ):
             sources.append("UniProt")
@@ -393,7 +411,14 @@ class ConfidenceEngine:
         if (
             interpro_result
             and not interpro_result.get("skipped")
-            and not interpro_result.get("error")
+            # INERT (2026-08-31): same reasoning as UniProt above --
+            # `found` two lines below already gates this branch, and a
+            # failure's shape carries no "reason" key either, so it
+            # falls to the same shared final `else` regardless of how
+            # `error` is read. Confirmed EXECUTED alongside UniProt's
+            # case in the same probe. Fixed to `is not None` for
+            # consistency only.
+            and interpro_result.get("error") is None
             and interpro_result.get("found")
         ):
             sources.append("InterPro")
@@ -512,7 +537,15 @@ class ConfidenceEngine:
         sources = list(dna_models_used or [])
         ran = len(sources)
         total_expected = 5  # HyenaDNA/Evo2 (routed, one runs) + RNA-FM + ESM2
-        if rna_result and not rna_result.get("skipped") and not rna_result.get("error"):
+        # INERT (2026-08-31): truthiness on `error`, not `is not None`,
+        # but `_run_rna_stage` (orchestrator.py) keeps `skipped: True`
+        # on every failure path -- `not rna_result.get("skipped")`
+        # already excludes a failed run regardless of how `error` is
+        # read. Fixed to `is not None` for consistency only; this
+        # mirrors the identical check duplicated in interpretation.py,
+        # interpretation_result.py, and prioritization_engine.py, all
+        # fixed alongside this one for the same reason.
+        if rna_result and not rna_result.get("skipped") and rna_result.get("error") is None:
             sources.append("RNA-FM")
             ran += 1
         if protein_result and protein_result.get("esm2"):

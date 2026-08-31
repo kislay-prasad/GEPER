@@ -328,7 +328,15 @@ class InterpretationEngine:
         # result), so all three now agree on what "ran" rather than
         # "routed to" vs. "ran for" silently meaning different things.
         sequence_context_models = list(dna_models_used or [])
-        if rna_result and not rna_result.get("skipped") and not rna_result.get("error"):
+        # INERT (2026-08-31): truthiness on `error`, not `is not None`,
+        # but `_run_rna_stage` (orchestrator.py) keeps `skipped: True`
+        # on every failure path -- `not rna_result.get("skipped")`
+        # already excludes a failed run regardless of how `error` is
+        # read. Fixed to `is not None` for consistency only; same check
+        # duplicated (and fixed alongside this one) in
+        # confidence_engine.py, interpretation_result.py, and
+        # prioritization_engine.py.
+        if rna_result and not rna_result.get("skipped") and rna_result.get("error") is None:
             sequence_context_models.append("RNA-FM")
         if protein_result and protein_result.get("esm2"):
             sequence_context_models.append("ESM2")
@@ -1010,7 +1018,14 @@ class InterpretationEngine:
         if (
             uniprot_result
             and not uniprot_result.get("skipped")
-            and not uniprot_result.get("error")
+            # INERT (2026-08-31): truthiness here, not `is not None`, but
+            # `found` two lines below already gates this branch, and a
+            # failure has no fallback text produced here at all (this
+            # function just appends nothing) -- so a genuine failure
+            # with error="" already produces the same silent-omission
+            # outcome, truthiness or not. Fixed to `is not None` for
+            # consistency only.
+            and uniprot_result.get("error") is None
             and uniprot_result.get("found")
         ):
             protein_name = uniprot_result.get("protein_name")
@@ -1028,7 +1043,11 @@ class InterpretationEngine:
         if (
             interpro_result
             and not interpro_result.get("skipped")
-            and not interpro_result.get("error")
+            # INERT (2026-08-31): same reasoning as UniProt above --
+            # `found` two lines below already gates this branch, and a
+            # failure produces no fallback text here either way. Fixed
+            # to `is not None` for consistency only.
+            and interpro_result.get("error") is None
             and interpro_result.get("found")
         ):
             affected = interpro_result.get("affected_domains")

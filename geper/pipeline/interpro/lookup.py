@@ -138,7 +138,13 @@ class InterProLookup:
         result.setdefault("accession", accession)
         result["protein_position"] = protein_position
 
-        if protein_position is not None and result.get("found") and not result.get("error"):
+        # INERT (2026-08-31): truthiness on `error`, not `is not None`,
+        # but `result.get("found")` immediately to its left already
+        # requires True, and a failed `query_accession` call always
+        # returns found=False alongside its error -- so this
+        # sub-condition never changes which branch fires. Fixed to
+        # `is not None` for consistency only.
+        if protein_position is not None and result.get("found") and result.get("error") is None:
             domains = result.get("domains") or []
             affected = [
                 d

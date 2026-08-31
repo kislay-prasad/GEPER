@@ -1,6 +1,18 @@
 """
-Extends the `PackageCheckStatus` guarantee to the three older status
-enums: `StageStatus`, `VersionStatus`, `ClinVarMatchStatus`.
+Extends the `PackageCheckStatus` guarantee to the five older status
+enums: `StageStatus`, `VersionStatus`, `ClinVarMatchStatus`,
+`DbSNPMatchStatus`, `GeneResolutionStatus`.
+
+FIX #12 (2026-08-31): `DbSNPMatchStatus` and `GeneResolutionStatus`
+were found, alongside `ClinVarMatchStatus`, as the same tri-state
+pattern by Andy while designing `PackageCheckStatus` -- explicitly
+scoped OUT of that card and out of the original three-enum sweep
+(different blast radius), then carded separately by the human's
+ruling ("add to all three, close at three, sweep the two siblings as
+a separate card"). This file's own parameterized-over-`_ENUMS` design
+is what makes that sweep a one-line addition rather than new tests:
+adding them to the tuple below extends every test in this file to
+both without writing anything new.
 
 WHY. Each of these exists to keep states that look alike from
 collapsing into one. `provenance.py`'s own docstring says it outright --
@@ -34,10 +46,12 @@ import json
 import unittest
 
 from database.clinvar_client import ClinVarMatchStatus
+from database.dbsnp_client import DbSNPMatchStatus
+from pipeline.clingen.utils import GeneResolutionStatus
 from pipeline.provenance import VersionStatus
 from pipeline.stage_schemas import StageStatus
 
-_ENUMS = (StageStatus, VersionStatus, ClinVarMatchStatus)
+_ENUMS = (StageStatus, VersionStatus, ClinVarMatchStatus, DbSNPMatchStatus, GeneResolutionStatus)
 
 
 class TestNoneOfThemHasATruthValue(unittest.TestCase):

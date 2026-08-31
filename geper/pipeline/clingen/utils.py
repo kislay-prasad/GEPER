@@ -111,6 +111,14 @@ class GeneResolutionStatus(str, enum.Enum):
     AMBIGUOUS = "ambiguous"  # multiple candidate genes overlap and could not be disambiguated
     RESOLVED = "resolved"  # exactly one gene determined
 
+    def __bool__(self):
+        raise TypeError(
+            "GeneResolutionStatus has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:`/`if not x:` silently collapses NOT_FOUND, AMBIGUOUS and RESOLVED "
+            "into one answer, which is exactly the distinction this type exists to "
+            "keep. Compare explicitly, e.g. `x is GeneResolutionStatus.RESOLVED`."
+        )
+
 
 @dataclass(frozen=True)
 class GeneResolution:

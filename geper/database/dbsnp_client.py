@@ -77,6 +77,14 @@ class DbSNPMatchStatus(str, enum.Enum):
     POSITION_ONLY = "position_only"  # rsID(s) exist at this position, but none match this allele
     MATCHED = "matched"  # at least one rsID's allele (and position) matches the query variant
 
+    def __bool__(self):
+        raise TypeError(
+            "DbSNPMatchStatus has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:`/`if not x:` silently collapses NOT_FOUND, POSITION_ONLY and MATCHED "
+            "into one answer, which is exactly the distinction this type exists to "
+            "keep. Compare explicitly, e.g. `x is DbSNPMatchStatus.MATCHED`."
+        )
+
 
 class DbSNPClient:
     """Fetches rsID and variant annotation from NCBI dbSNP."""

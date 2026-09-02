@@ -180,7 +180,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1
 
-    from pipeline.orchestration.runner import PipelineRunner
+    from pipeline.orchestration.runner import NO_KILL_TRACKING, PipelineRunner
     from pipeline.fastq.errors import FastqPipelineError
     from pipeline.config_validator import ConfigValidationError
 
@@ -209,6 +209,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         )
 
     runner = PipelineRunner(cfg=cfg, resume=not args.no_resume)
+    # CLI run, no API/DELETE endpoint involved -- explicitly opt out of
+    # cancellation tracking rather than leaving it unregistered (run()
+    # refuses to proceed with neither, see NO_KILL_TRACKING's docstring).
+    runner.register_kill_callback(NO_KILL_TRACKING)
     try:
         result = runner.run(
             fastq_r1=args.r1,

@@ -63,6 +63,22 @@ from pipeline.vep.stage import VEPAnnotationStage
 logger = logging.getLogger("geper.pipeline.orchestration.runner")
 
 
+def NO_KILL_TRACKING(popen_obj) -> None:  # noqa: N802 (reads as a named constant, not a verb)
+    """Pass to register_kill_callback() to explicitly opt a run out of
+    cancellation tracking (standalone CLI/script use with no DELETE
+    endpoint in the picture -- see main()/run_pipeline.py below).
+
+    A real no-op function object, not None, on purpose: run() below treats
+    an *unregistered* callback (self._kill_callback is None) as a bug --
+    silently proceeding with no cancellation path is exactly the failure
+    mode this whole mechanism exists to prevent. Passing this constant is
+    how a caller says "I've considered it and killability genuinely
+    doesn't apply here," which is different from never having considered
+    it at all.
+    """
+    return None
+
+
 # ─── Checkpoint helpers ───────────────────────────────────────────────────────
 
 _STAGES_IN_ORDER = [
@@ -220,6 +236,17 @@ class PipelineRunner:
 
         The API layer uses this to store popen objects keyed by run_id so
         it can kill the subprocess group on DELETE.
+
+        run() below REQUIRES this to have been called (with a real callback
+        or an explicit no-op -- see the module-level NO_KILL_TRACKING
+        comment) before it will execute at all. This is deliberate: the
+        original defect here (2026-09-02 "Windows process killing" dispatch)
+        was a callback that was silently never invoked, so a run had no
+        working cancellation path and nothing said so. Making the absence
+        of a registered callback a loud failure at run() entry, instead of
+        a silent one discovered only when someone tries DELETE, is the fix
+        for that specific shape of bug, not just for this one instance of
+        it -- ruled 2026-09-02, "silence must fail, not pass silently."
         """
         self._kill_callback = callback
 
@@ -279,6 +306,29 @@ class PipelineRunner:
             )
         if mode == "vcf_only":
             stop_after = stop_after or "variant_calling"
+
+        # "Silence must fail, not pass silently" (ruled 2026-09-02): the
+        # original Windows-process-killing defect was a callback that
+        # simply never fired, with nothing to say so -- a run with no
+        # working cancellation path looked identical to one with a working
+        # one, right up until someone tried DELETE. Refuse to proceed if
+        # register_kill_callback() was never called, instead of silently
+        # running an unkillable pipeline. A caller that has deliberately
+        # decided killability doesn't apply (standalone CLI/script use, no
+        # DELETE endpoint in the picture) must say so explicitly via
+        # register_kill_callback(NO_KILL_TRACKING) -- see that constant's
+        # docstring.
+        if self._kill_callback is None:
+            raise RuntimeError(
+                "PipelineRunner.run() called without register_kill_callback() "
+                "having been called first. A run with no registered kill "
+                "callback cannot be cancelled via DELETE, and that must be a "
+                "loud failure here, not a silent gap discovered later. Call "
+                "register_kill_callback(<callback>) before run(), or "
+                "register_kill_callback(NO_KILL_TRACKING) if this run "
+                "genuinely doesn't need to be cancellable (e.g. a "
+                "standalone CLI/script run with no API/DELETE involved)."
+            )
 
         # Make self._kill_callback reachable from every subprocess spawned
         # anywhere below in this call -- pipeline/fastq/errors.py::_run()
@@ -1126,6 +1176,10 @@ def main() -> None:
             sys.exit(1)
 
     runner = PipelineRunner(cfg=cfg, resume=not args.no_resume)
+    # CLI run, no API/DELETE endpoint involved -- explicitly opt out of
+    # cancellation tracking rather than leaving it unregistered (run()
+    # refuses to proceed with neither, see NO_KILL_TRACKING's docstring).
+    runner.register_kill_callback(NO_KILL_TRACKING)
     try:
         result = runner.run(
             fastq_r1=args.r1,

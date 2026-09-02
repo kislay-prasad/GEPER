@@ -21,6 +21,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.orchestration.runner import (
+    NO_KILL_TRACKING,
     PipelineRunner,
     _load_checkpoint,
     _save_checkpoint,
@@ -34,6 +35,7 @@ HAVE_FREEBAYES = shutil.which("freebayes") is not None
 
 
 # ─── Checkpoint helpers ───────────────────────────────────────────────────────
+
 
 class TestCheckpoint:
     def test_checkpoint_round_trip(self, tmp_path):
@@ -61,6 +63,7 @@ class TestCheckpoint:
 
 # ─── FastqValidation stage (no external tools needed) ────────────────────────
 
+
 class TestFastqValidationStage:
     def _make_fastq(self, path: Path, n: int = 5) -> None:
         with open(path, "w") as f:
@@ -72,6 +75,7 @@ class TestFastqValidationStage:
         self._make_fastq(r1)
 
         runner = PipelineRunner(cfg={}, resume=True)
+        runner.register_kill_callback(NO_KILL_TRACKING)
 
         # Patch downstream stages so we don't need tools
         with patch.object(runner, "run") as mock_run:
@@ -91,6 +95,7 @@ class TestFastqValidationStage:
 
 
 # ─── Config validation integration ───────────────────────────────────────────
+
 
 class TestConfigValidation:
     def test_default_config_file_is_valid(self):
@@ -116,6 +121,7 @@ class TestConfigValidation:
 
 # ─── Full pipeline integration (tools required) ───────────────────────────────
 
+
 @pytest.mark.skipif(
     not (HAVE_BWA and HAVE_SAMTOOLS and HAVE_BCFTOOLS),
     reason="bwa, samtools, and bcftools required for full pipeline test",
@@ -131,6 +137,7 @@ class TestFullPipelineIntegration:
     @pytest.fixture(scope="class")
     def fixtures(self, tmp_path_factory):
         from tests.fixtures.generate_synthetic_reads import build_fixture_set
+
         out = tmp_path_factory.mktemp("pipeline_integration")
         return build_fixture_set(str(out))
 
@@ -140,11 +147,14 @@ class TestFullPipelineIntegration:
 
         # Step 1: Align
         from pipeline.alignment.stage import AlignmentStage
+
         align = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})
         align_result = align.run(
-            fixtures["fastq_r1"], fixtures["reference_fasta"],
+            fixtures["fastq_r1"],
+            fixtures["reference_fasta"],
             str(tmp_path / "alignment"),
-            fastq_r2=fixtures["fastq_r2"], sample_id="INTTEST",
+            fastq_r2=fixtures["fastq_r2"],
+            sample_id="INTTEST",
         )
         assert Path(align_result.sorted_bam_path).exists()
 
@@ -153,38 +163,55 @@ class TestFullPipelineIntegration:
         vc_dir.mkdir()
         vcf_path = str(vc_dir / "variants.vcf")
         mpileup = subprocess.run(
-            ["bcftools", "mpileup", "-f", fixtures["reference_fasta"],
-             align_result.sorted_bam_path],
-            capture_output=True, text=True, check=True,
+            [
+                "bcftools",
+                "mpileup",
+                "-f",
+                fixtures["reference_fasta"],
+                align_result.sorted_bam_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         )
         subprocess.run(
             ["bcftools", "call", "-mv", "-Ov", "-o", vcf_path],
-            input=mpileup.stdout, capture_output=True, text=True, check=True,
+            input=mpileup.stdout,
+            capture_output=True,
+            text=True,
+            check=True,
         )
 
         # Step 3: Filter
         from pipeline.variant_calling.filtering import apply_pass_filter
+
         filtered_vcf = str(vc_dir / "filtered_variants.vcf")
         filter_summary = apply_pass_filter(vcf_path, filtered_vcf)
         assert Path(filtered_vcf).exists()
 
         # Step 4: Annotate (without GFF3)
         from pipeline.annotation.stage import AnnotationStage
+
         ann_stage = AnnotationStage({"annotation": {"require_gff": False}})
         ann_result = ann_stage.run(
-            filtered_vcf, str(tmp_path / "annotation"), sample_id="INTTEST",
+            filtered_vcf,
+            str(tmp_path / "annotation"),
+            sample_id="INTTEST",
         )
         assert ann_result.total_variants == filter_summary.total_pass
 
         # Step 5: Report
         from pipeline.reporting.stage import ReportingStage
+
         rep_stage = ReportingStage({"reporting": {"generate_pdf": False}})
         rep_result = rep_stage.run(
             sample_id="INTTEST",
             output_dir=str(tmp_path / "report"),
             alignment_stats=align_result,
-            variant_stats={"total_variants": filter_summary.total_input,
-                           "pass_variants": filter_summary.total_pass},
+            variant_stats={
+                "total_variants": filter_summary.total_input,
+                "pass_variants": filter_summary.total_pass,
+            },
             annotation_result=ann_result,
         )
         assert Path(rep_result.json_path).exists()

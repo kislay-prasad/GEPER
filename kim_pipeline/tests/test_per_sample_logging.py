@@ -9,6 +9,7 @@ Verifies:
 - log_path is set on PipelineResult
 - Mock all stages so no real binaries are needed
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from pipeline.orchestration.runner import PipelineRunner, PipelineResult
+from pipeline.orchestration.runner import NO_KILL_TRACKING, PipelineRunner, PipelineResult
 
 
 def _make_mock_stages():
@@ -44,7 +45,15 @@ def _run_mocked_pipeline(output_dir: str, sample_id: str = "TEST01") -> Pipeline
 
     try:
         # Configure mock return values
-        mock_validate, mock_fq_cls, mock_qc_cls, mock_align_cls, mock_vc_cls, mock_ann_cls, mock_rep_cls = mocks
+        (
+            mock_validate,
+            mock_fq_cls,
+            mock_qc_cls,
+            mock_align_cls,
+            mock_vc_cls,
+            mock_ann_cls,
+            mock_rep_cls,
+        ) = mocks
 
         # FastqValidator
         fq_stats = MagicMock()
@@ -83,15 +92,19 @@ def _run_mocked_pipeline(output_dir: str, sample_id: str = "TEST01") -> Pipeline
         mock_rep_cls.return_value.run.return_value = rep_result
 
         # Also mock ACMG imports
-        with patch.dict("sys.modules", {
-            "pipeline.acmg": MagicMock(),
-            "pipeline.acmg.classifier": MagicMock(),
-            "pipeline.evidence": MagicMock(),
-            "pipeline.evidence.aggregator": MagicMock(),
-            "pipeline.hotspot": MagicMock(),
-            "pipeline.hotspot.lookup": MagicMock(),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "pipeline.acmg": MagicMock(),
+                "pipeline.acmg.classifier": MagicMock(),
+                "pipeline.evidence": MagicMock(),
+                "pipeline.evidence.aggregator": MagicMock(),
+                "pipeline.hotspot": MagicMock(),
+                "pipeline.hotspot.lookup": MagicMock(),
+            },
+        ):
             runner = PipelineRunner(cfg={}, resume=False)
+            runner.register_kill_callback(NO_KILL_TRACKING)
             result = runner.run(
                 fastq_r1="/fake/r1.fastq",
                 reference_fasta="/fake/ref.fa",
@@ -111,7 +124,7 @@ class TestPerSampleLogFile(unittest.TestCase):
     def test_log_file_exists_after_run(self):
         """pipeline.log must be present in work_dir after run() returns."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = _run_mocked_pipeline(tmpdir, sample_id="S001")
+            _run_mocked_pipeline(tmpdir, sample_id="S001")
             log_file = Path(tmpdir) / "S001" / "pipeline.log"
             self.assertTrue(
                 log_file.exists(),
@@ -155,7 +168,8 @@ class TestHandlerCleanup(unittest.TestCase):
             for h in geper_logger.handlers:
                 if isinstance(h, logging.FileHandler):
                     self.assertNotEqual(
-                        h.baseFilename, pipeline_log,
+                        h.baseFilename,
+                        pipeline_log,
                         "FileHandler for pipeline.log still attached to geper logger",
                     )
 
@@ -165,9 +179,12 @@ class TestHandlerCleanup(unittest.TestCase):
         handler_count_before = len(geper_logger.handlers)
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("pipeline.orchestration.runner.validate_config", side_effect=RuntimeError("boom")):
+            with patch(
+                "pipeline.orchestration.runner.validate_config", side_effect=RuntimeError("boom")
+            ):
                 try:
                     runner = PipelineRunner(cfg={}, resume=False)
+                    runner.register_kill_callback(NO_KILL_TRACKING)
                     runner.run(
                         fastq_r1="/fake/r1.fastq",
                         reference_fasta="/fake/ref.fa",

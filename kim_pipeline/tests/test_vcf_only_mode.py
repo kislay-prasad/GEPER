@@ -26,7 +26,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.orchestration.runner import PipelineRunner
+from pipeline.orchestration.runner import NO_KILL_TRACKING, PipelineRunner
 
 
 def _make_fastq(path: Path, n: int = 5) -> None:
@@ -89,6 +89,7 @@ class TestVcfOnlyMode:
             MockVC.return_value.run.return_value = mock_vc_result
 
             runner = PipelineRunner(cfg={}, resume=False)
+            runner.register_kill_callback(NO_KILL_TRACKING)
             result = runner.run(
                 fastq_r1=str(r1),
                 reference_fasta="/dev/null",
@@ -130,6 +131,7 @@ class TestVcfOnlyMode:
             MockVC.return_value.run.return_value = mock_vc_result
 
             runner = PipelineRunner(cfg={}, resume=False)
+            runner.register_kill_callback(NO_KILL_TRACKING)
             result = runner.run(
                 fastq_r1=str(r1),
                 reference_fasta="/dev/null",
@@ -143,6 +145,7 @@ class TestVcfOnlyMode:
 
     def test_invalid_mode_raises_before_any_stage(self, tmp_path):
         runner = PipelineRunner(cfg={}, resume=False)
+        runner.register_kill_callback(NO_KILL_TRACKING)
         with pytest.raises(ValueError):
             runner.run(
                 fastq_r1="whatever.fastq",
@@ -154,6 +157,7 @@ class TestVcfOnlyMode:
 
     def test_invalid_stop_after_raises_before_any_stage(self, tmp_path):
         runner = PipelineRunner(cfg={}, resume=False)
+        runner.register_kill_callback(NO_KILL_TRACKING)
         with pytest.raises(ValueError):
             runner.run(
                 fastq_r1="whatever.fastq",
@@ -196,6 +200,7 @@ class TestVcfOnlyMode:
             MockReporting.return_value.run.return_value = mock_report_result
 
             runner = PipelineRunner(cfg={}, resume=False)
+            runner.register_kill_callback(NO_KILL_TRACKING)
             result = runner.run(
                 fastq_r1=str(r1),
                 reference_fasta="/dev/null",
@@ -274,6 +279,7 @@ class TestNoBlastDataLeavesAnnotationUnmerged:
             # blast.enabled left unset -> False, so blast_result_data
             # stays None exactly as a real unconfigured run has it.
             runner = PipelineRunner(cfg={}, resume=False)
+            runner.register_kill_callback(NO_KILL_TRACKING)
             result = runner.run(
                 fastq_r1=str(r1),
                 reference_fasta="/dev/null",

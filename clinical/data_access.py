@@ -208,6 +208,39 @@ class User:
 ORG_SCOPED_TABLES = ("users", "role_assignments", "sessions", "totp_backup_codes")
 
 
+# ─── Transaction decorator ───────────────────────────────────────────────────
+
+
+def transactional(func):
+    """
+    Decorator that wraps a DataAccess method in explicit transaction management.
+    Each decorated method commits on success or on expected exceptions, and rolls
+    back only on unexpected errors. Nested calls within a transaction pass through.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if hasattr(self, "_in_transaction") and self._in_transaction:
+            return func(self, *args, **kwargs)
+        self._in_transaction = True
+        try:
+            result = func(self, *args, **kwargs)
+            self._DataAccess__connection.commit()
+            return result
+        except (AuthenticationError, AuthorizationError, NotFoundError):
+            # Expected exceptions: commit work done before the exception was raised
+            # (e.g., audit log entry for failed login attempt, incremented counter)
+            self._DataAccess__connection.commit()
+            raise
+        except Exception:
+            # Unexpected errors: rollback the transaction
+            self._DataAccess__connection.rollback()
+            raise
+        finally:
+            self._in_transaction = False
+
+    return wrapper
+
+
 class DataAccess:
     """
     The whole identity surface. No SQL leaves this class and no connection
@@ -229,6 +262,7 @@ class DataAccess:
         self._hasher: PasswordHasher = password_hasher or BcryptHasher()
         self._totp: Optional[TotpVerifier] = totp_verifier
         self._cipher: Optional[SecretCipher] = secret_cipher
+        self._in_transaction = False
 
     # ── internals ────────────────────────────────────────────────────────────
 
@@ -273,6 +307,7 @@ class DataAccess:
 
     # ── authentication ───────────────────────────────────────────────────────
 
+    @transactional
     def log_failed_login(
         self,
         email: str,
@@ -294,6 +329,7 @@ class DataAccess:
             ip_address=ip_address,
         )
 
+    @transactional
     def login(
         self,
         email: str,
@@ -470,6 +506,7 @@ class DataAccess:
 
     # ── sessions ─────────────────────────────────────────────────────────────
 
+    @transactional
     def session_valid(self, session_id: uuid.UUID) -> Session:
         """
         Validate a session id and refresh its idle window.
@@ -512,6 +549,7 @@ class DataAccess:
         )
         return Session(session_id=session_id, user_id=user_id, org_id=org_id)
 
+    @transactional
     def terminate_session(self, session: Session, target_session_id: uuid.UUID) -> None:
         """
         End another session now. Administrator only -- this is the capability
@@ -537,6 +575,7 @@ class DataAccess:
 
     # ── roles ────────────────────────────────────────────────────────────────
 
+    @transactional
     def assign_role(
         self,
         session: Session,
@@ -585,6 +624,7 @@ class DataAccess:
         )
         return assignment_id
 
+    @transactional
     def get_user_roles(self, session: Session, target_user_id: Optional[uuid.UUID] = None) -> List[RoleAssignment]:
         """
         Active role assignments, scoped to the session's organisation.
@@ -607,6 +647,7 @@ class DataAccess:
 
     # ── users ────────────────────────────────────────────────────────────────
 
+    @transactional
     def get_user(self, session: Session, user_id: uuid.UUID) -> User:
         """
         Read one user BY ID, within the session's organisation.
@@ -629,6 +670,7 @@ class DataAccess:
 
     # ── provisioning helpers (used by administrators and by the tests) ───────
 
+    @transactional
     def create_organisation(self, name: str) -> uuid.UUID:
         org_id = uuid.uuid4()
         now = self._clock.now()
@@ -639,6 +681,7 @@ class DataAccess:
         self._audit("organisation_created", org_id, None, {"name": name})
         return org_id
 
+    @transactional
     def create_user(self, org_id: uuid.UUID, email: str, password: str) -> uuid.UUID:
         """
         Provisioning entry point. Takes org_id directly rather than a Session
@@ -658,6 +701,7 @@ class DataAccess:
         self._audit("user_created", org_id, user_id, {"email": email})
         return user_id
 
+    @transactional
     def set_user_disabled(self, session: Session, target_user_id: uuid.UUID, disabled: bool) -> None:
         """Offboarding. Never a DELETE -- that would orphan the audit chain."""
         self._require_role(session, "Administrator")
@@ -673,6 +717,7 @@ class DataAccess:
             {"target_user_id": str(target_user_id)},
         )
 
+    @transactional
     def enrol_totp(self, session: Session, target_user_id: uuid.UUID, secret: str) -> List[str]:
         """
         Administrator-initiated TOTP enrolment. Returns the backup codes in
@@ -711,6 +756,7 @@ class DataAccess:
 
     # ── audit reads ──────────────────────────────────────────────────────────
 
+    @transactional
     def read_audit(
         self,
         session: Session,

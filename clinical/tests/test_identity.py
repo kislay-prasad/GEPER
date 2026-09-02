@@ -104,11 +104,12 @@ def conn():
     # silent non-result the fail-not-skip guard exists to prevent. Ten seconds
     # is long enough for a service container that is still starting and short
     # enough that "the database is not there" arrives as an error.
-    connection = psycopg.connect(DSN, autocommit=True, connect_timeout=10)
+    connection = psycopg.connect(DSN, autocommit=False, connect_timeout=10)
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         cur.execute("DO $$ BEGIN CREATE ROLE clinical_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
         cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
+    connection.commit()
     yield connection
     connection.close()
 
@@ -365,19 +366,23 @@ class TestAudit:
         psycopg = pytest.importorskip("psycopg")
         with conn.cursor() as cur:
             cur.execute("SET ROLE clinical_app")
-            try:
-                with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                    cur.execute("UPDATE audit_log SET action = 'tampered'")
-            finally:
-                cur.execute("RESET ROLE")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                cur.execute("UPDATE audit_log SET action = 'tampered'")
+            # Transaction entered error state; must rollback before continuing
+            conn.rollback()
+            cur.execute("RESET ROLE")
+
+        conn.commit()
 
         with conn.cursor() as cur:
             cur.execute("SET ROLE clinical_app")
-            try:
-                with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                    cur.execute("DELETE FROM audit_log")
-            finally:
-                cur.execute("RESET ROLE")
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                cur.execute("DELETE FROM audit_log")
+            # Transaction entered error state; must rollback before continuing
+            conn.rollback()
+            cur.execute("RESET ROLE")
+
+        conn.commit()
 
 
 # ─── sessions ────────────────────────────────────────────────────────────────

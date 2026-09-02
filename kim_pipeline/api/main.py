@@ -23,6 +23,8 @@ Configuration via environment variables:
   GEPER_CONFIG_PATH     Path to YAML config (default: config/default.yaml)
   GEPER_OUTPUT_DIR      Root directory for pipeline outputs (default: /tmp/geper_runs)
   GEPER_UPLOAD_DIR      Directory for uploaded files (default: /tmp/geper_uploads)
+  GEPER_DB_PATH         Path to SQLite run database (default: {GEPER_OUTPUT_DIR}/../geper_runs.db)
+                        MUST be on persistent storage for run history to survive restarts.
   GEPER_MAX_UPLOAD_MB   Max upload size in MB (default: 2048)
   GEPER_LOG_LEVEL       Logging level (default: INFO)
 """

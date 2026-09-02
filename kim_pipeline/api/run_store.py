@@ -7,8 +7,11 @@ All PipelineRunner run state is written here so that API restarts
 do not lose run history.
 
 Config:
-    GEPER_DB_PATH  — path to SQLite db file (default: /tmp/geper_runs.db)
+    GEPER_OUTPUT_DIR   — root directory for pipeline outputs (default: /tmp/geper_runs)
+    GEPER_DB_PATH      — path to SQLite db file (default: {GEPER_OUTPUT_DIR}/geper_runs.db)
+                         MUST be on a persistent mount for run history to survive restarts
 """
+
 from __future__ import annotations
 
 import json
@@ -17,11 +20,17 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("geper.api.run_store")
 
-_DB_PATH = os.getenv("GEPER_DB_PATH", "/tmp/geper_runs.db")
+# Default: store DB alongside pipeline outputs so both survive together.
+# If GEPER_OUTPUT_DIR is on ephemeral storage (e.g., /tmp without mount),
+# override GEPER_DB_PATH to a persistent location before starting the API.
+_OUTPUT_DIR = Path(os.getenv("GEPER_OUTPUT_DIR", "/tmp/geper_runs"))
+_DEFAULT_DB_PATH = str(_OUTPUT_DIR.parent / "geper_runs.db")
+_DB_PATH = os.getenv("GEPER_DB_PATH", _DEFAULT_DB_PATH)
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -47,10 +56,24 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 _COLUMNS = [
-    "run_id", "sample_id", "status", "stage", "progress_pct",
-    "stages_completed", "stages_failed", "started_at", "finished_at",
-    "elapsed_seconds", "error", "report_json_path", "report_html_path",
-    "log_path", "fastq_r1", "fastq_r2", "reference_fasta", "created_at",
+    "run_id",
+    "sample_id",
+    "status",
+    "stage",
+    "progress_pct",
+    "stages_completed",
+    "stages_failed",
+    "started_at",
+    "finished_at",
+    "elapsed_seconds",
+    "error",
+    "report_json_path",
+    "report_html_path",
+    "log_path",
+    "fastq_r1",
+    "fastq_r2",
+    "reference_fasta",
+    "created_at",
 ]
 
 _JSON_COLS = {"stages_completed", "stages_failed"}
@@ -154,9 +177,7 @@ class RunStore:
     def get(self, run_id: str) -> Optional[Dict]:
         """Return run dict or None if not found."""
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         if row is None:
             return None
         return _decode_row(row)

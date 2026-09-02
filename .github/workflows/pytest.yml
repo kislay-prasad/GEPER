@@ -28,6 +28,8 @@ jobs:
     defaults:
       run:
         working-directory: geper
+    env:
+      GEPER_DEV_INSECURE: "1"
     steps:
       - uses: actions/checkout@v4
 

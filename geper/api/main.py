@@ -10,9 +10,19 @@ GET /structures/{accession}  — AlphaFold DB structural annotation for one
                                  data endpoint)
 
 Scope, deliberately narrow: this app exists to serve the one endpoint above.
-No auth, CORS, or health-check surface has been added beyond what that
-endpoint itself needs to run -- those are open, separately-owned questions
-(see the 2026-08-23 hive design/implementation dispatch), not decided here.
+No health-check surface has been added beyond what that endpoint itself
+needs to run -- still an open, separately-owned question (see the
+2026-08-23 hive design/implementation dispatch).
+
+Auth/CORS (2026-09-02): ported from kim_pipeline/api/main.py's fail-to-start
+control (that app's GAP 2 / FIX #3) so both FastAPI apps in this monorepo
+share one posture -- refuses to start without GEPER_API_KEYS +
+GEPER_CORS_ORIGINS unless GEPER_DEV_INSECURE=1 is set explicitly. This app
+had been left fail-open since the 2026-08-23 dispatch above: when this app
+was split out as Option A, auth/CORS were deferred as an open question here
+rather than reusing the control kim_pipeline had already shipped -- nobody
+revisited it when this app was stood up, not a considered decision to run
+without one.
 
 Architecture note (why this lives in geper/, not kim_pipeline/api/): ruled
 2026-08-23 as Option A. kim_pipeline/api/main.py is the monorepo's only
@@ -50,14 +60,110 @@ stayed the non-None value, never collapsed to `None`). See
 from __future__ import annotations
 
 import enum
-from typing import Any, Dict, Optional
+import logging
+import os
+import sys
+from typing import Any, Dict, Optional, Set
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from pipeline.alphafold.lookup import AlphaFoldLookup
 
+logger = logging.getLogger("geper.structures_api")
+
+# ─── API key authentication (ported from kim_pipeline/api/main.py's fail-to-
+# start control -- see that module's GAP 2 / FIX #3 for the original) ────────
+
+
+def _load_api_keys() -> Optional[Set[str]]:
+    """Load valid API keys from GEPER_API_KEYS env var.
+
+    Returns None if not set (dev mode — allow all requests).
+    """
+    raw = os.getenv("GEPER_API_KEYS", "")
+    if not raw:
+        return None
+    keys = {k.strip() for k in raw.split(",") if k.strip()}
+    return keys if keys else None
+
+
+_API_KEYS: Optional[Set[str]] = _load_api_keys()
+_CORS_ORIGINS_ENV: Optional[str] = os.getenv("GEPER_CORS_ORIGINS")  # None if unset; "*" applied later
+_DEV_INSECURE: bool = os.getenv("GEPER_DEV_INSECURE", "") == "1"
+
+if _API_KEYS is None:
+    logger.warning(
+        "GEPER_API_KEYS is not set — running in dev mode with no authentication. "
+        "Set GEPER_API_KEYS=key1,key2 before deploying to production."
+    )
+
+
+def _refuse_insecure_defaults_unless_opted_in() -> None:
+    """A startup warning is not a control -- it arrives after the decision to
+    run without auth/CORS restriction has already been made. Refuse to start
+    with the insecure defaults (no auth, CORS "*") unless GEPER_DEV_INSECURE=1
+    is set explicitly, so a deployer who simply forgets GEPER_API_KEYS/
+    GEPER_CORS_ORIGINS gets a hard failure instead of a log line that's easy
+    to miss on a deploy console.
+
+    Same control kim_pipeline/api/main.py has shipped (FIX #3); this app
+    never had it because its own docstring deferred auth/CORS as an "open
+    question" when it was stood up (2026-08-23) rather than porting
+    kim_pipeline's already-shipped fix -- see the divergence note sent to
+    god alongside this diff.
+    """
+    if _DEV_INSECURE:
+        return
+    missing = [
+        name
+        for name, value in (
+            ("GEPER_API_KEYS", _API_KEYS),
+            ("GEPER_CORS_ORIGINS", _CORS_ORIGINS_ENV),
+        )
+        if value is None
+    ]
+    if missing:
+        sys.stderr.write(
+            "ERROR: refusing to start with insecure defaults -- "
+            f"{' and '.join(missing)} not set. Set them before a real deployment, "
+            "or set GEPER_DEV_INSECURE=1 to run insecurely on purpose (dev/test only).\n"
+        )
+        sys.exit(1)
+
+
+_refuse_insecure_defaults_unless_opted_in()
+
+
+async def _require_api_key(x_api_key: str = Header(default="")) -> None:
+    """FastAPI dependency: validate X-Api-Key header against GEPER_API_KEYS.
+
+    If GEPER_API_KEYS is not set, allows all requests (dev mode).
+    Raises HTTP 401 if an invalid or missing key is supplied in protected mode.
+    """
+    if _API_KEYS is None:
+        # Dev mode — no auth required
+        return
+    if not x_api_key or x_api_key not in _API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key. Provide a valid key in the X-Api-Key header.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
+
 app = FastAPI(title="Bij AI Structures API")
+
+# CORS — restrict origins in production via GEPER_CORS_ORIGINS env var
+_cors_origins = (_CORS_ORIGINS_ENV or "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class EntryStatus(str, enum.Enum):
@@ -225,6 +331,7 @@ def get_structure_annotation(
     accession: str,
     protein_position: Optional[int] = None,
     lookup: AlphaFoldLookup = Depends(get_alphafold_lookup),
+    _auth: None = Depends(_require_api_key),
 ) -> StructureAnnotationResponse:
     """
     `protein_position` is optional: omitting it is a valid request (the

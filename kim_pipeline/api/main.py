@@ -760,6 +760,38 @@ async def download_log(run_id: str, _auth: None = Depends(_require_api_key)) -> 
     return {"run_id": run_id, "log": "", "message": "No log file found"}
 
 
+def _other_runs_sharing_sample_id(sample_id: str, exclude_run_id: str) -> list:
+    """Return run_ids (other than exclude_run_id) that still reference
+    sample_id, across both the in-memory cache and the persistent store.
+
+    ARCHITECTURAL BOUNDARY: PipelineRunner keys its work_dir by sample_id
+    alone (pipeline/orchestration/runner.py) -- deliberately, so that
+    re-running the same sample_id resumes from its checkpoint.json instead
+    of starting over. That design choice, made purely for resumability,
+    means distinct runs (distinct run_ids) can legitimately share one
+    on-disk directory whenever they share a sample_id -- which happens by
+    default, since sample_id defaults to the literal "SAMPLE" for any
+    caller that doesn't set it.
+
+    DELETE's contract, however, is per-run_id ({run_id} in the route, "Cancel
+    or delete a run" in its summary). Nothing in the runner's checkpoint/
+    resume design anticipated that contract, and nothing here should ever
+    change the runner's directory layout -- this function exists solely to
+    keep DELETE from acting past its own boundary. Before rmtree-ing a
+    sample_id's work_dir, we must confirm no other run_id still depends on
+    it; if one does, the run_id being deleted loses its registry entry but
+    the shared directory is left alone for the survivor.
+    """
+    others = {
+        rid for rid, r in _RUNS.items() if rid != exclude_run_id and r.get("sample_id") == sample_id
+    }
+    for r in _RUN_STORE.list_all(limit=1000):
+        rid = r.get("run_id")
+        if rid and rid != exclude_run_id and r.get("sample_id") == sample_id:
+            others.add(rid)
+    return sorted(others)
+
+
 @app.delete(
     "/api/v1/pipeline/{run_id}",
     tags=["pipeline"],
@@ -799,10 +831,22 @@ async def delete_run(run_id: str, _auth: None = Depends(_require_api_key)) -> Di
         run["finished_at"] = datetime.now(timezone.utc).isoformat()
         _RUN_STORE.update(run_id, status="cancelled", finished_at=run["finished_at"])
 
-    # Remove output artefacts
-    work_dir = _OUTPUT_DIR / run["sample_id"]
-    if work_dir.exists():
-        shutil.rmtree(work_dir, ignore_errors=True)
+    # Remove output artefacts -- but only if no other live run still shares
+    # this sample_id's work_dir (see _other_runs_sharing_sample_id).
+    sample_id = run["sample_id"]
+    survivors = _other_runs_sharing_sample_id(sample_id, run_id)
+    if survivors:
+        logger.warning(
+            "Run %s deleted, but work_dir for sample_id=%s preserved: "
+            "still referenced by run(s) %s",
+            run_id,
+            sample_id,
+            ", ".join(survivors),
+        )
+    else:
+        work_dir = _OUTPUT_DIR / sample_id
+        if work_dir.exists():
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     _RUN_STORE.delete(run_id)
     _RUNS.pop(run_id, None)

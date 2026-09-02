@@ -500,6 +500,51 @@ class TestDeleteRun:
         client.delete(f"/api/v1/pipeline/{run_id}")
         assert run_id not in _RUNS
 
+    def test_delete_preserves_other_runs_sharing_sample_id(self, client_with_tmp):
+        """Two runs sharing the same sample_id (e.g. both left at the
+        "SAMPLE" default) share one work_dir. Deleting run_id_a must not
+        destroy run_id_b's still-live artefacts or registry entry."""
+        client, tmp_path = client_with_tmp
+
+        sample_id = "SAMPLE"
+        work_dir = tmp_path / sample_id
+        (work_dir / "reporting").mkdir(parents=True)
+        report_a = work_dir / "reporting" / "report_a.json"
+        report_b = work_dir / "reporting" / "report_b.json"
+        report_a.write_text('{"run": "a"}')
+        report_b.write_text('{"run": "b"}')
+
+        run_id_a, run_id_b = "run-a", "run-b"
+        for rid, report_path in ((run_id_a, report_a), (run_id_b, report_b)):
+            _RUNS[rid] = {
+                "run_id": rid,
+                "sample_id": sample_id,
+                "status": "completed",
+                "stage": "reporting",
+                "progress_pct": 100.0,
+                "stages_completed": ["reporting"],
+                "stages_failed": [],
+                "started_at": None,
+                "finished_at": None,
+                "elapsed_seconds": 1.0,
+                "error": None,
+                "report_json_path": str(report_path),
+                "report_html_path": None,
+            }
+
+        r = client.delete(f"/api/v1/pipeline/{run_id_a}")
+        assert r.status_code == 200
+
+        # run_id_b's artefacts and shared work_dir must survive.
+        assert work_dir.exists()
+        assert report_b.exists()
+
+        # run_id_b must still be queryable and its report still fetchable.
+        status_r = client.get(f"/api/v1/pipeline/{run_id_b}/status")
+        assert status_r.status_code == 200
+        report_r = client.get(f"/api/v1/pipeline/{run_id_b}/report?format=json")
+        assert report_r.status_code == 200
+
 
 # ─── List runs endpoint ───────────────────────────────────────────────────────
 

@@ -222,6 +222,50 @@ app.add_middleware(
 )
 
 
+# ─── Divergence 1: Startup reconciliation ───────────────────────────────────────
+
+
+@app.on_event("startup")
+async def _reconcile_runs_on_startup():
+    """
+    Reconcile _RUNS dict with SQLite store on startup.
+
+    A crash while a run is executing leaves it marked status='running' in SQLite.
+    When the process restarts, the worker thread that was updating it is gone.
+    This handler marks any run still 'running' after startup as 'interrupted'
+    to indicate the process died (distinct from 'failed', which means the
+    pipeline ran and hit an error). This allows the operator to clean up
+    and re-submit without being stuck in an unrecoverable state.
+
+    SAFETY NOTE: This handler is only safe at startup because on_event("startup")
+    runs before any worker thread can exist. If moved to any other location,
+    it would incorrectly mark live, actively-running jobs as interrupted.
+    Moving this handler elsewhere breaks the assumption that status="running"
+    at this point is always a stale artifact of a prior crash, not a real
+    active run.
+    """
+    stale_runs = []
+    for row in _RUN_STORE.list_all(limit=10000):
+        run_id = row.get("run_id")
+        if row.get("status") == "running":
+            stale_runs.append((run_id, row.get("sample_id")))
+
+    if stale_runs:
+        for run_id, sample_id in stale_runs:
+            reason = (
+                "Process restart detected: run was marked 'running' at shutdown. "
+                "No active worker found. Marked interrupted to allow cleanup and re-submission."
+            )
+            _RUN_STORE.update(run_id, status="interrupted", error=reason)
+            if run_id in _RUNS:
+                _RUNS[run_id]["status"] = "interrupted"
+                _RUNS[run_id]["error"] = reason
+            logger.warning(
+                f"Reconciled stale run {run_id} (sample_id={sample_id}): "
+                f"marked interrupted due to process restart"
+            )
+
+
 # ─── Exception handlers ───────────────────────────────────────────────────────
 
 

@@ -766,7 +766,7 @@ def finalize_model_checkpoint_provenance(
             enriched[name] = identifier
         else:
             status = status_entry.get("status", "unknown")
-            enriched[name] = {
+            entry: Dict[str, Any] = {
                 "identifier": identifier,
                 "status": status,
                 "reason": status_entry.get("reason", ""),
@@ -777,6 +777,16 @@ def finalize_model_checkpoint_provenance(
                 # model that did not run reports no version.
                 "resolved_version": _resolved_version(name, status),
             }
+            # Only present for the five models `pipeline/models/
+            # status.py::_CALIBRATION_MODEL_KEYS` tracks it for
+            # (Enformer, Borzoi, SpliceFormer, SpliceBERT, MMSplice) --
+            # `status_entry` simply has no "calibration_status" key for
+            # any other model, so this stays absent for those rather
+            # than fabricating a value.
+            calibration_status = status_entry.get("calibration_status")
+            if calibration_status is not None:
+                entry["calibration_status"] = calibration_status
+            enriched[name] = entry
     return enriched
 
 

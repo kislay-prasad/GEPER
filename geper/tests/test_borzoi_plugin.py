@@ -364,6 +364,23 @@ class TestBorzoiMetadataAndAvailability(unittest.TestCase):
         # it return True. The mock is required in an environment where
         # the package is absent, and its removal was proven safe only
         # against a warm cache CI does not have.
+        #
+        # AMENDMENT 2026-09-02: this is the ONLY test in this file that
+        # is not gated on _HAS_BORZOI_PYTORCH. Its structurally similar
+        # siblings -- TestBorzoiLoadImpl's test_successful_load_calls_to_
+        # and_eval, test_network_failure_is_sanitized, test_license_
+        # guard_allows_johahi_repo, and every test in
+        # TestBorzoiAllTiedWeightsKeysShim -- are skipUnless-gated on the
+        # same flag. Because those six SKIP when borzoi-pytorch is
+        # absent, they never execute on CI and cannot fail there;
+        # restoring mocks inside them would not make them run, since
+        # skipUnless is resolved at import time against the real import,
+        # not by anything a mock can reach. This test runs unconditionally
+        # and is therefore the only one of the seven exposed to the
+        # value this mock supplies. Whether an ungated test naming an
+        # "installed" precondition should instead be gated like its
+        # siblings is an open question under separate investigation --
+        # not resolved here.
         with (
             mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config,
             mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),

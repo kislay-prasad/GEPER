@@ -331,12 +331,15 @@ without saying so would let a production-grade-looking report imply a
 rigor the underlying evidence doesn't have.
 
 **What's disclosed, and where.** Implemented in
-`pipeline/acmg_rules.py::ACMGRuleEngine._bp7`: each evidence line now
-reads `"{model} (uncalibrated; not clinically validated)"` bound ahead
-of the score it qualifies — applied to both the damaging-effect branch
-(feeds `conflicting_evidence`) and the no-disruption branch (feeds
-`supporting_evidence`, which is what actually lets BP7 trigger, and so
-carries at least as much clinical weight as the damaging branch). The
+`pipeline/acmg_rules.py::ACMGRuleEngine._bp7`: each evidence line reads
+the model's own `details.calibration_status` value from its `predict()`
+output, rather than restating a fixed phrase — applied to both the
+damaging-effect branch (feeds `conflicting_evidence`) and the
+no-disruption branch (feeds `supporting_evidence`, which is what
+actually lets BP7 trigger, and so carries at least as much clinical
+weight as the damaging branch). When a model does not report a
+calibration status, _bp7 supplies an honest absence statement rather
+than an invented default. The
 caveat renders directly alongside the BP7 evidence itself in both the
 Markdown and PDF report formats — not relegated to a general
 limitations section a reader might skip. This is the same

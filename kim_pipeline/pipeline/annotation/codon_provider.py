@@ -658,7 +658,7 @@ class FastaCodonContextProvider:
         # Validate reference base matches FASTA
         actual_ref_base = ref_codon[codon_index]
         if actual_ref_base != ref:
-            logger.debug(
+            logger.warning(
                 "[CodonProvider] Ref mismatch at %s:%d: VCF=%s FASTA=%s (codon=%s idx=%d)",
                 chrom,
                 pos,

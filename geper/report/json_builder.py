@@ -49,6 +49,10 @@ class JSONResultBuilder:
         # Sample ID instead of a fabricated placeholder.
         self.vcf_samples = vcf_samples or []
         self.variant_results: List[Dict[str, Any]] = []
+        # One entry per prior run whose variants this run reused --
+        # see `note_carried_forward_provenance`. Empty on a fresh
+        # run, which is the honest reading: nothing was carried.
+        self.carried_forward_provenance: List[Dict[str, Any]] = []
         # New, additive: data-source version pinning / run provenance
         # (pipeline/provenance.py) -- what makes a report reproducible
         # later. `provenance_collector` is the orchestrator's live
@@ -137,6 +141,71 @@ class JSONResultBuilder:
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
 
+    def note_carried_forward_provenance(self, prior_document: Dict[str, Any], variant_count: int) -> None:
+        """
+        Records the provenance of a run whose variants this one is
+        REUSING rather than recomputing (`pipeline/orchestrator.py`'s
+        resume-from-checkpoint path).
+
+        Why this exists: resume merges a prior document's variant
+        results into this run's builder, but every run-level field on
+        that builder -- `model_checkpoints`, `code_version`,
+        `service_health`, `generated_at` -- is this run's. So a resumed
+        document stated a model set, a code version and a timestamp
+        under which the carried-forward variants were never processed,
+        and nothing marked the difference: a merged document was
+        indistinguishable from a clean one. That is a false claim, not
+        a gap, and no amount of scanning the output could detect it.
+
+        The prior values were never missing. The resume path already
+        loads the whole prior document and reads only its `variants`
+        key; everything below was sitting in that same object and was
+        being dropped. This keeps it instead of collecting anything new.
+
+        THREE STATES, NOT TWO -- a resumed run has stages that ran now,
+        stages carried forward from a prior run, and stages whose prior
+        value is unknowable:
+
+        * `carried_forward` -- the prior document recorded its
+          checkpoints and they are preserved here verbatim. An
+          empty-but-present map stays `carried_forward`: that run DID
+          answer the question, and demoting it to unknown would discard
+          a real answer.
+        * `prior_value_unknown` -- the prior document has no
+          `model_checkpoints` key at all, because it was written before
+          this field existed. Every document already on disk when this
+          shipped is in this state. Rendering it as `carried_forward`
+          with an empty map would claim the earlier run recorded
+          nothing, when the truth is that it was never asked -- the
+          same absent-vs-unrecorded distinction `report/summary.py`'s
+          QC handling and the tri-state VAF work both turn on.
+
+        A list, not a single entry: resume can chain (a run resumed
+        from a run that was itself resumed), and each link is its own
+        provenance record. Appending is additive for every consumer.
+        """
+        checkpoints = prior_document.get("model_checkpoints")
+        known = "model_checkpoints" in prior_document and checkpoints is not None
+        self.carried_forward_provenance.append(
+            {
+                "state": "carried_forward" if known else "prior_value_unknown",
+                "variant_count": variant_count,
+                "generated_at": prior_document.get("generated_at"),
+                "code_version": prior_document.get("code_version"),
+                "model_checkpoints": checkpoints if known else None,
+                "service_health": prior_document.get("service_health") if known else None,
+                "reason": (
+                    ""
+                    if known
+                    else (
+                        "The prior run's document records no model_checkpoints -- it was written "
+                        "before this field existed, so which model versions produced these "
+                        "variants cannot be recovered from it."
+                    )
+                ),
+            }
+        )
+
     def build(self) -> Dict[str, Any]:
         return {
             "geper_version": "1.0.0",
@@ -161,6 +230,12 @@ class JSONResultBuilder:
             # the DATA each variant's evidence came from).
             "code_version": self.code_version,
             "model_checkpoints": self.model_checkpoints,
+            # Provenance of the runs whose variants this one reused
+            # rather than recomputed. `model_checkpoints` above
+            # describes THIS run only; on a resumed run it does not
+            # describe every variant in `variants`, and this is what
+            # says so. Always present, `[]` on a fresh run.
+            "carried_forward_provenance": self.carried_forward_provenance,
             # Round 17 -- see this class's own `self.run_complete` comment.
             "run_complete": self.run_complete,
             # Governance control (round 30, part 2): review/sign-off state.

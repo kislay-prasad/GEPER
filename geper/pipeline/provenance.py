@@ -117,6 +117,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict
 
 from config import CONFIG
+from pipeline.models.status import USED
+from utils.auto_install import installed_package_version
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -541,6 +543,109 @@ def get_runtime_environment_provenance() -> Dict[str, Any]:
     return result
 
 
+def _with_pin(base: str, pin: Optional[str], label: str) -> str:
+    """
+    `"<base> (<label> <pin>)"`, or `base` unchanged when no pin is
+    available. Never invents a placeholder: a model whose pin could not
+    be read records exactly what it recorded before, which is a
+    visible gap rather than a fabricated identifier.
+    """
+    return f"{base} ({label} {pin})" if pin else base
+
+
+def _checkpoint_pins() -> Dict[str, Optional[str]]:
+    """
+    The pinned upstream identifiers each model's own loader already
+    holds, read from the modules that own them.
+
+    Imported inside the function rather than at module scope so that
+    importing `pipeline/provenance.py` on its own (an audit script, a
+    test) does not drag in torch/transformers. In any process that has
+    a `PipelineOrchestrator` -- the only caller -- all four modules are
+    already imported by the time this runs, measured 2026-09-02, so
+    this costs nothing there and `get_model_checkpoint_identifiers`
+    keeps the "safe to call unconditionally at pipeline startup"
+    property its docstring promises: reading a module constant loads no
+    model and touches no network.
+
+    Any failure degrades to `None` for that one pin. Provenance capture
+    must never be the thing that stops a run, and a missing pin is a
+    gap the caller renders honestly.
+    """
+    pins: Dict[str, Optional[str]] = dict.fromkeys(
+        (
+            "esm2_revision",
+            "hyenadna_revision",
+            "splicebert_record",
+            "splicebert_checkpoint",
+            "spliceformer_ref",
+            "spliceformer_checkpoint",
+            "enformer_repo",
+            "enformer_revision",
+            "borzoi_repo",
+            "borzoi_revision",
+        )
+    )
+
+    try:
+        from models.esm2 import _ESM2_REVISION
+
+        pins["esm2_revision"] = _ESM2_REVISION
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not read the ESM-2 revision pin: {exc}")
+
+    try:
+        from models.hyenadna import _HYENADNA_CHECKPOINT_REVISIONS
+
+        # Keyed by model name because each checkpoint repo has its own
+        # revision -- see that dict's own comment. A configured model
+        # with no pinned revision is a real gap, not an error.
+        pins["hyenadna_revision"] = _HYENADNA_CHECKPOINT_REVISIONS.get(CONFIG.models.HYENADNA_MODEL_NAME)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not read the HyenaDNA revision pin: {exc}")
+
+    try:
+        from pipeline.models.splicebert.loader import DEFAULT_CHECKPOINT, DEFAULT_ZENODO_RECORD
+
+        pins["splicebert_record"] = DEFAULT_ZENODO_RECORD
+        pins["splicebert_checkpoint"] = DEFAULT_CHECKPOINT
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not read the SpliceBERT pins: {exc}")
+
+    try:
+        from pipeline.models.spliceformer.loader import DEFAULT_CHECKPOINT, DEFAULT_SOURCE_REF
+
+        # The release tag alone is NOT sufficient here: ten replicate
+        # checkpoints ship under it and GEPER runs one, so which
+        # replicate ran is part of the identity of the result.
+        pins["spliceformer_ref"] = DEFAULT_SOURCE_REF
+        pins["spliceformer_checkpoint"] = DEFAULT_CHECKPOINT
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not read the SpliceFormer pins: {exc}")
+
+    try:
+        from pipeline.models.borzoi_plugin import _BORZOI_REVISION
+        from pipeline.models.enformer_plugin import _ENFORMER_REVISION
+
+        pins["enformer_repo"] = CONFIG.splicing.ENFORMER_HF_REPO
+        pins["enformer_revision"] = _ENFORMER_REVISION
+        pins["borzoi_repo"] = CONFIG.splicing.BORZOI_HF_REPO
+        pins["borzoi_revision"] = _BORZOI_REVISION
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not read the Enformer/Borzoi revision pins: {exc}")
+
+    return pins
+
+
+# Distributions whose INSTALLED version is a meaningful answer to
+# "which version produced this result" and is not already pinned in
+# GEPER's own source. Only `mmsplice` qualifies today: every other
+# model either pins an immutable upstream identifier (handled by
+# `_checkpoint_pins` above) or is loaded through a package whose own
+# version says nothing about the weights that were used.
+_RESOLVABLE_DISTRIBUTIONS: Dict[str, str] = {"mmsplice": "mmsplice"}
+
+
 def get_model_checkpoint_identifiers() -> Dict[str, str]:
     """
     The AI model checkpoint identifiers GEPER's own config already
@@ -561,20 +666,49 @@ def get_model_checkpoint_identifiers() -> Dict[str, str]:
     entirely rather than reporting it as disabled.
     """
     mc = CONFIG.models
+    pins = _checkpoint_pins()
     return {
         "hyenadna_checkpoint_dir": mc.HYENADNA_CHECKPOINT_DIR,
-        "hyenadna_model_name": mc.HYENADNA_MODEL_NAME,
+        "hyenadna_model_name": _with_pin(mc.HYENADNA_MODEL_NAME, pins["hyenadna_revision"], "revision"),
         "rna_fm": mc.RNA_FM,
-        "esm2": mc.ESM2,
+        "esm2": _with_pin(mc.ESM2, pins["esm2_revision"], "revision"),
         "evo2_variant": mc.EVO2_VARIANT,
-        "mmsplice": "mmsplice==2.4.0 (pinned, see requirements.txt)",
+        # NOT a version claim, deliberately. The only code path that
+        # installs this package shells out to a BARE `pip install
+        # --no-deps mmsplice` (see `pipeline/models/mmsplice/loader.py::
+        # _ensure_mmsplice_package_files_available`), so no version is
+        # pinned anywhere and none can be known at startup -- the
+        # install happens lazily on first use, which may be after this
+        # runs or not at all. What the run actually loaded is resolved
+        # later by `finalize_model_checkpoint_provenance`, which is the
+        # only point at which it is knowable.
+        #
+        # The string this replaced read "mmsplice==2.4.0 (pinned, see
+        # requirements.txt)". Both halves were false: nothing enforced
+        # 2.4.0, and requirements.txt carries no mmsplice requirement
+        # line and explicitly instructs the reader not to add one. A
+        # citation is a claim like any other -- naming a file that
+        # appears to corroborate a version it does not contain is worse
+        # than recording no version at all, because a reader who
+        # follows it finds prose about mmsplice and stops looking.
+        "mmsplice": "mmsplice (unpinned: auto-installed with --no-deps at first use; see resolved_version)",
         "alphamissense_catalogue_source": (
             "see 'AlphaMissense catalogue' in the data-source provenance list, not a model checkpoint"
         ),
-        "spliceformer": "spliceformer (see pipeline/models/spliceformer_plugin.py for checkpoint URL)",
-        "splicebert": "splicebert (HuggingFace BertForMaskedLM, see pipeline/models/splicebert_plugin.py)",
-        "enformer": "enformer-pytorch (see pipeline/models/ensemble.py)",
-        "borzoi": "borzoi-pytorch (see pipeline/models/ensemble.py)",
+        # The three below all had a real, immutable upstream identifier
+        # sitting in the loader that uses it, and recorded a pointer to
+        # the source file instead. Carried, not newly obtained: each
+        # value is still owned by the module that loads with it, and is
+        # read from that module rather than restated here, so a pin
+        # change cannot leave the provenance record behind.
+        "spliceformer": _with_pin(
+            f"spliceformer {pins['spliceformer_checkpoint']}", pins["spliceformer_ref"], "release"
+        ),
+        "splicebert": _with_pin(
+            f"splicebert {pins['splicebert_checkpoint']}", pins["splicebert_record"], "zenodo record"
+        ),
+        "enformer": _with_pin(f"enformer-pytorch {pins['enformer_repo']}", pins["enformer_revision"], "revision"),
+        "borzoi": _with_pin(f"borzoi-pytorch {pins['borzoi_repo']}", pins["borzoi_revision"], "revision"),
     }
 
 
@@ -631,12 +765,48 @@ def finalize_model_checkpoint_provenance(
         if status_entry is None:
             enriched[name] = identifier
         else:
+            status = status_entry.get("status", "unknown")
             enriched[name] = {
                 "identifier": identifier,
-                "status": status_entry.get("status", "unknown"),
+                "status": status,
                 "reason": status_entry.get("reason", ""),
+                # What actually loaded, as opposed to what was
+                # configured. `None` wherever that cannot be known, and
+                # `None` is a real answer here rather than a missing
+                # one -- see this function's own note below on why a
+                # model that did not run reports no version.
+                "resolved_version": _resolved_version(name, status),
             }
     return enriched
+
+
+def _resolved_version(name: str, status: str) -> Optional[str]:
+    """
+    The installed version of the distribution behind checkpoint `name`,
+    for models that actually ran.
+
+    Two deliberate `None`s, and they mean different things to a reader
+    who also has `status` in front of them:
+
+    * The model did not run this run (DISABLED/SKIPPED/FAILED). The
+      record's question is "which version produced this result", and a
+      model that produced no result has no version to report. Filling
+      this in from the environment would assert a load that never
+      happened -- the same defect, one field over, as a resumed run
+      stamping carried-forward variants with this run's checkpoints.
+    * The model ran but its distribution has no readable metadata.
+      Genuinely unknown, and recorded as unknown.
+
+    Only distributions in `_RESOLVABLE_DISTRIBUTIONS` are consulted; a
+    model whose identity is already pinned in GEPER's own source
+    carries that pin in `identifier` and has nothing to resolve.
+    """
+    if status != USED:
+        return None
+    distribution = _RESOLVABLE_DISTRIBUTIONS.get(name)
+    if distribution is None:
+        return None
+    return installed_package_version(distribution)
 
 
 # ---------------------------------------------------------------------------

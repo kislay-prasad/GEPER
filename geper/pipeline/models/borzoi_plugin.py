@@ -64,6 +64,20 @@ BORZOI_SEQUENCE_LENGTH = 524_288
 # Calico's original GCS `.h5` checkpoints are never referenced here.
 _ALLOWED_BORZOI_HF_NAMESPACE = "johahi/"
 
+# Pinned HuggingFace revision (commit SHA) for CONFIG.splicing.BORZOI_HF_REPO,
+# verified live via `git ls-remote https://huggingface.co/johahi/
+# borzoi-replicate-0 HEAD`, 2026-09-02. Same pattern and rationale as
+# `models/esm2.py::_ESM2_REVISION` and this plugin's Enformer
+# counterpart -- see `pipeline/models/enformer_plugin.py::
+# _ENFORMER_REVISION` for why pinning the repo id alone leaves the
+# weights unpinned.
+#
+# Independent of, and no substitute for, the namespace guard above:
+# that guard is a LICENSE control (which weights may be loaded at
+# all), this pin is a PROVENANCE control (which revision of the
+# permitted weights was loaded). Neither implies the other.
+_BORZOI_REVISION = "521db103372769581b8d1d616e6a3b496da490c5"
+
 _BASE_TO_INDEX = {"A": 0, "C": 1, "G": 2, "T": 3}
 
 # `borzoi_pytorch.Borzoi.from_pretrained` is transformers'
@@ -260,7 +274,7 @@ class BorzoiPlugin(PluginModel):
         cache_dir = self._weight_cache.ensure_dir("borzoi")
 
         try:
-            model = borzoi_pytorch.Borzoi.from_pretrained(repo_id, cache_dir=str(cache_dir))
+            model = borzoi_pytorch.Borzoi.from_pretrained(repo_id, cache_dir=str(cache_dir), revision=_BORZOI_REVISION)
         except _NETWORK_ERROR_TYPES as exc:
             # Promoted from `debug` to `warning` 2026-08-21: this line is
             # the only place the real exception class/message survives --

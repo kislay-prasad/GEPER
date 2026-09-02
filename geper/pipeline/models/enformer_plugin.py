@@ -59,6 +59,23 @@ from utils.auto_install import PackageCheckStatus, check_pip_package_availabilit
 # zeros").
 ENFORMER_SEQUENCE_LENGTH = 196_608
 
+# Pinned HuggingFace revision (commit SHA) for CONFIG.splicing.ENFORMER_HF_REPO,
+# verified live via `git ls-remote https://huggingface.co/EleutherAI/
+# enformer-official-rough HEAD`, 2026-09-02. Same pattern, and the same
+# reason, as `models/esm2.py::_ESM2_REVISION`.
+#
+# Pinning the REPO ID (which this plugin already did) is not pinning
+# the WEIGHTS: without a revision, `from_pretrained` resolves whatever
+# the repo's default branch holds that day. That failure mode is
+# quieter than a missing field -- two runs a month apart could load
+# different weights with every recorded provenance field byte-identical,
+# so the record did not omit the difference, it asserted sameness.
+# `REPRODUCIBILITY_PROTOCOL.md` S1b already lists
+# `model_checkpoints[*].identifier` as a field that must match between
+# two runs called reproducible; until this pin existed, that check
+# could not detect the drift it describes.
+_ENFORMER_REVISION = "affe5713ae9017460706a44108289b13c5fee16c"
+
 # Errors from `from_pretrained` that indicate "couldn't reach the
 # model host" (as opposed to a real bug in GEPER's own code) --
 # sanitized the same way models/rna_fm.py sanitizes its own network
@@ -244,7 +261,7 @@ class EnformerPlugin(PluginModel):
         cache_dir = self._weight_cache.ensure_dir("enformer")
 
         try:
-            model = enformer_pytorch.from_pretrained(repo_id, cache_dir=str(cache_dir))
+            model = enformer_pytorch.from_pretrained(repo_id, cache_dir=str(cache_dir), revision=_ENFORMER_REVISION)
         except _NETWORK_ERROR_TYPES as exc:
             # Promoted from `debug` to `warning` 2026-08-21: this line is
             # the only place the real exception class/message survives --

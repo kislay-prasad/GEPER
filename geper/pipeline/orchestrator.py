@@ -845,6 +845,7 @@ class GeperPipeline:
                     stats["processed"] += 1
                     stats[self._classify_variant_result(prior_result)] += 1
                 if completed_keys:
+                    self._carry_forward_prior_provenance(result_builder, prior_document, completed_keys)
                     logger.info(
                         f"Resuming previous run: {len(completed_keys)} variant(s) already completed in '{json_path}'."
                     )
@@ -1238,6 +1239,46 @@ class GeperPipeline:
         return (variant.chrom, variant.pos, variant.ref, variant.alt)
 
     @staticmethod
+    @staticmethod
+    def _carry_forward_prior_provenance(result_builder, prior_document, completed_keys) -> None:
+        """
+        Keep the prior run's provenance alongside the variants this run
+        is reusing from it.
+
+        Every run-level field on `result_builder` is THIS run's, so
+        without this the carried-forward variants are stamped with a
+        model set, code version, service-health snapshot and timestamp
+        under which they were never processed -- and the merged
+        document is indistinguishable from a clean run, which makes it
+        a false claim rather than a gap.
+
+        `prior_document` is already fully loaded by the resume path,
+        which reads only its `variants` key: this stops discarding what
+        that object already holds rather than collecting anything new.
+        The count is the number of DISTINCT variants carried, the same
+        value the resume log line reports, so the two cannot disagree.
+
+        DO NOT INLINE THIS BACK INTO `run()`. It is a one-line body and
+        it will look like pointless indirection to a future tidy-up
+        sweep -- that is exactly why this paragraph exists. It was
+        extracted so the resume WIRING is drivable by a test:
+        `tests/test_model_version_provenance.py::ResumeWiringTests`
+        calls it directly, because nothing in the suite constructs a
+        `GeperPipeline` (verified 2026-09-02: zero test files do) and
+        building the first orchestrator harness was out of scope for
+        the change this fix shipped in. Production behaviour is
+        IDENTICAL to the inline call it replaced -- the seam buys
+        testability and nothing else.
+
+        Inlining it would silently un-test the wiring on the precise
+        defect this method exists to fix, which is the failure mode
+        that reached the human as a false claim in the first place.
+
+        See `report/json_builder.py::note_carried_forward_provenance`
+        for the three states a resumed run actually has.
+        """
+        result_builder.note_carried_forward_provenance(prior_document, len(completed_keys))
+
     def _variant_key_from_dict(variant_dict: Dict[str, Any]) -> Tuple[str, int, str, str]:
         return (
             variant_dict.get("chrom"),

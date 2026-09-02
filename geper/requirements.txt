@@ -242,6 +242,22 @@ Pillow>=9.0
 #   pip install tensorflow "mmsplice==2.4.0" --no-deps
 # (installing plain `tensorflow` first/separately, since --no-deps on
 # the mmsplice line means pip will not pull it in automatically).
+#
+# THIS FILE IS NOT A VERSION AUTHORITY FOR mmsplice. The 2.4.0 above is
+# a suggested pre-provisioning command, not a pin this file enforces --
+# per the IMPORTANT note above there is deliberately no mmsplice
+# requirement line here, so nothing in this file constrains what the
+# runtime auto-install fetches. The two paths can therefore disagree:
+# pre-provisioning gives you 2.4.0, the auto-install gives you whatever
+# PyPI serves that day.
+#
+# Which version a given run ACTUALLY used is recorded per run, resolved
+# from the installed distribution, in `geper_results.json`'s
+# `model_checkpoints.mmsplice.resolved_version` (see
+# `pipeline/provenance.py`). Until 2026-09-02 that field instead
+# asserted "mmsplice==2.4.0 (pinned, see requirements.txt)" and cited
+# this file as its authority -- a pin this file does not contain and,
+# above, explicitly tells you not to add.
 tensorflow>=2.16.0,<3.0.0
 
 # --- Test-only dependencies (not imported by pipeline/ at runtime) -----------

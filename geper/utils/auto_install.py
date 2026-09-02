@@ -20,6 +20,7 @@ Also provides the same shape for small, common *system* CLI tools
 
 import enum
 import importlib
+import importlib.metadata
 import importlib.util
 import os
 import shutil
@@ -121,6 +122,36 @@ class PackageCheckStatus(str, enum.Enum):
 def is_pip_package_installed(import_name: str) -> bool:
     """Cheap, import-free check for whether `import_name` is importable."""
     return importlib.util.find_spec(import_name) is not None
+
+
+def installed_package_version(dist_name: str) -> Optional[str]:
+    """
+    The version of the INSTALLED distribution `dist_name`, or `None`
+    when it is not installed / has no readable metadata.
+
+    Import-free, the same way `is_pip_package_installed` above is:
+    `importlib.metadata` reads the distribution's metadata off disk
+    and never imports the package itself. That matters for the one
+    caller this was added for -- GEPER deliberately never imports
+    `mmsplice`'s own Python code (it uses only the bundled weight
+    files; see `pipeline/models/mmsplice/loader.py`), so asking it for
+    `__version__` would mean importing something the pipeline is
+    designed not to import.
+
+    `None` is a real answer and callers must record it as one. The
+    package this exists for is auto-installed lazily on first use, so
+    "not installed" is the correct reading at any point before a
+    variant has needed it -- and a provenance record that substituted
+    a configured or expected version there would be reasserting the
+    exact false claim this function was added to remove.
+    """
+    try:
+        return importlib.metadata.version(dist_name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001 -- provenance must never break a run
+        logger.debug(f"Could not read installed version for '{dist_name}': {exc}")
+        return None
 
 
 def _auto_install_disabled_for_tests() -> bool:

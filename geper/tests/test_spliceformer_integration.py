@@ -180,7 +180,23 @@ class TestSpliceFormerEnabledAlongsideEnformerAndBorzoiThroughManager(unittest.T
     def test_four_available_keys_reported_by_registry(self):
         # Was "three" before SpliceBERT's own addition; see
         # test_all_five_keys_registered's own comment above.
-        with mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True):
+        #
+        # RESTORED 2026-09-02 (borzoi patch): deleted 2026-08-31
+        # (cd46378) as decorative -- "real: borzoi_pytorch installed ->
+        # True" -- which was true only in this sandbox. This test is
+        # NOT skipUnless-gated (unlike the enformer/borzoi combination
+        # tests elsewhere in this file), so it runs unconditionally on
+        # CI, where borzoi-pytorch is genuinely absent (not pinned in
+        # requirements.txt): ensure_pip_package_available("borzoi-
+        # pytorch", ...) there returns False, which would drop "borzoi"
+        # from available_keys() and fail this assertion. The enformer
+        # patch below is the test's own control, kept the whole time --
+        # enformer-pytorch is equally absent on CI, so mocking it to
+        # True is equally load-bearing there, for the identical reason.
+        with (
+            mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+        ):
             self.assertEqual(
                 sorted(self.registry.available_keys()),
                 ["borzoi", "enformer", "splicebert", "spliceformer"],

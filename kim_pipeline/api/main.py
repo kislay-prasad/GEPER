@@ -416,7 +416,12 @@ def _run_pipeline_sync(run_id: str, req: PipelineStartRequest) -> None:
         run["status"] = "failed"
         run["error"] = str(exc)
         run["stages_failed"].append(run.get("stage", "unknown"))
-        _RUN_STORE.update(run_id, status="failed", error=str(exc))
+        _RUN_STORE.update(
+            run_id,
+            status="failed",
+            error=str(exc),
+            stages_failed=run["stages_failed"],
+        )
     finally:
         run["finished_at"] = datetime.now(timezone.utc).isoformat()
         run["elapsed_seconds"] = round(time.time() - t0, 2)
@@ -780,6 +785,7 @@ async def start_pipeline(
             if exc and run_id in _RUNS:
                 _RUNS[run_id]["status"] = "failed"
                 _RUNS[run_id]["error"] = str(exc)
+                _RUN_STORE.update(run_id, status="failed", error=str(exc))
         except Exception:
             pass
 

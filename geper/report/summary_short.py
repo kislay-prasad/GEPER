@@ -635,7 +635,10 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
             ]
         ),
         Spacer(1, 3 * mm),
-        Paragraph(_DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER, styles["Footnote"]),
+        Paragraph(
+            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>"),
+            styles["Footnote"],
+        ),
     ]
 
 

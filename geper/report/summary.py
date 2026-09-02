@@ -2206,7 +2206,10 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     if limitations:
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Limitations:</b>", styles["BodyText"]))
-        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in limitations)
+        flow.extend(
+            Paragraph(f"• {esc(item).replace(chr(10) + chr(10), '<br/><br/>')}", styles["BulletText"])
+            for item in limitations
+        )
 
     # `clinical["references"]` (see `report/clinical_report_builder.py
     # ::_references`) was already computed for the Markdown report's own

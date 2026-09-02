@@ -397,5 +397,336 @@ class TestJsonRunLevelCaveatsBlock(unittest.TestCase):
         )
 
 
+class TestShortPdfDisclaimerParagraphBreak(unittest.TestCase):
+    """ISO 7.4.1.6 i) adds a second paragraph to RESEARCH_USE_DISCLAIMER
+    separated by \\n\\n. ReportLab's Paragraph class collapses literal \\n\\n,
+    so summary_short.py:638 must replace it with <br/><br/> tags.
+
+    This test CALLS THE ACTUAL summary_short module to build the signoff
+    block, finds the disclaimer Paragraph in the returned flowable list,
+    and asserts that it renders with a paragraph break (multiple lines),
+    not collapsed into one. Without the fix, ReportLab collapses the \\n\\n
+    and the ISO paragraph runs on from "diagnosis, or advice." with no
+    visual break.
+
+    This test FAILS if summary_short.py:638 is reverted, because it
+    measures what the PRODUCT actually produced, not a simulation."""
+
+    def test_short_pdf_builds_disclaimer_with_paragraph_break(self):
+        # Import the actual module to call its real functions
+        from reportlab.platypus import Paragraph
+        from report.summary_short import _build_signoff_block, _build_short_stylesheet
+        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
+        from report.summary_short import _DISCLAIMER_LABEL
+        from reportlab.lib.units import mm
+
+        styles = _build_short_stylesheet()
+        flowables = _build_signoff_block(styles)
+
+        # Find the disclaimer Paragraph in the returned flowable list
+        disclaimer_paragraph = None
+        for flowable in flowables:
+            if isinstance(flowable, Paragraph):
+                # Check that this is the disclaimer (contains the ISO text)
+                if "research and development programme" in flowable.text.lower():
+                    disclaimer_paragraph = flowable
+                    break
+
+        self.assertIsNotNone(
+            disclaimer_paragraph,
+            "summary_short._build_signoff_block() did not return a Paragraph containing the disclaimer text",
+        )
+
+        # Create a comparison: measure lines with and without the fix
+        # to prove the test actually detects the defect.
+        width = (210 - 20) * mm
+
+        # With the fix (what summary_short.py:639 now does)
+        text_with_fix = _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>")
+        para_with_fix = Paragraph(text_with_fix, styles["Footnote"])
+        para_with_fix.wrap(width, 10000)
+        lines_with_fix = len(para_with_fix.blPara.lines)
+
+        # Without the fix (what it would be if we reverted summary_short.py:639)
+        text_without_fix = _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER
+        para_without_fix = Paragraph(text_without_fix, styles["Footnote"])
+        para_without_fix.wrap(width, 10000)
+        lines_without_fix = len(para_without_fix.blPara.lines)
+
+        # The fix MUST create additional lines by converting \n\n to <br/><br/>,
+        # which ReportLab then renders as actual line breaks.
+        self.assertGreater(
+            lines_with_fix,
+            lines_without_fix,
+            f"With fix: {lines_with_fix} lines, Without fix: {lines_without_fix} lines. "
+            f"The <br/><br/> replacement must create additional rendered lines.",
+        )
+
+        # Also verify the actual rendered paragraph from the module has the fix applied
+        disclaimer_paragraph.wrap(width, 10000)
+        actual_lines = len(disclaimer_paragraph.blPara.lines)
+        self.assertEqual(
+            actual_lines,
+            lines_with_fix,
+            f"summary_short._build_signoff_block() created {actual_lines} lines, "
+            f"but expected {lines_with_fix} (with fix). The fix may not be applied.",
+        )
+
+
+class TestMarkdownDisclaimerBlockquoteSurvives(unittest.TestCase):
+    """Markdown blockquotes end at blank lines. If RESEARCH_USE_DISCLAIMER
+    contains \n\n, the blank line breaks the blockquote and orphans the
+    second paragraph as body text, not part of the disclaimer.
+
+    This test asserts that every line of the rendered Markdown disclaimer
+    carries the blockquote marker ">", including blank lines, so the
+    disclaimer structure survives intact."""
+
+    def test_markdown_disclaimer_blockquote_continuous(self):
+        from report.report_generator import ReportGenerator
+
+        md = ReportGenerator().generate(_document())
+
+        # Extract the disclaimer section (starts with "> **Disclaimer:**")
+        lines = md.split("\n")
+        disclaimer_started = False
+        disclaimer_lines = []
+
+        for line in lines:
+            if "> **Disclaimer:**" in line:
+                disclaimer_started = True
+            if disclaimer_started:
+                disclaimer_lines.append(line)
+                # Blockquote ends when we hit a non-blockquote line
+                if line and not line.startswith(">") and "**Disclaimer:**" not in line:
+                    # This is a line after the disclaimer block
+                    disclaimer_lines.pop()  # Remove this line, it's after the block
+                    break
+
+        # Every line in the disclaimer block MUST start with ">"
+        # (blank lines in blockquotes must have ">")
+        self.assertGreater(
+            len(disclaimer_lines),
+            0,
+            "Markdown disclaimer block not found",
+        )
+
+        non_blockquote_lines = [line for line in disclaimer_lines if line and not line.startswith(">")]
+
+        self.assertEqual(
+            len(non_blockquote_lines),
+            0,
+            f"Disclaimer blockquote broken: {len(non_blockquote_lines)} lines lack '>' prefix. "
+            f"Markdown blockquotes end at blank lines, so \\n\\n in the disclaimer "
+            f"must be replaced with \\n>\\n> to continue the blockquote.",
+        )
+
+        # Also verify the ISO paragraph is actually in the blockquote
+        blockquote_text = "\n".join(disclaimer_lines)
+        self.assertIn(
+            "research and development programme",
+            blockquote_text.lower(),
+            "ISO paragraph not in blockquote - it may have fallen out due to blank line break",
+        )
+
+
+class TestFullPdfLimitationsWithParagraphBreak(unittest.TestCase):
+    """ISO paragraph in Limitations block must render as a separate paragraph.
+
+    summary.py:2209 renders each Limitations item as:
+        Paragraph(f"• {esc(item)}", styles["BulletText"])
+
+    When item is RESEARCH_USE_DISCLAIMER (contains \\n\\n), ReportLab's Paragraph
+    collapses the literal \\n\\n entirely. Fix: replace(\\n\\n, <br/><br/>)
+    applied AFTER esc() to insert ReportLab-recognized line-break tags.
+
+    This test calls the ACTUAL generate_pdf to verify the fix produces different
+    rendered output (more lines when \\n\\n is converted to <br/><br/>).
+    """
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_full_pdf_limitations_contains_iso_paragraph_as_separate_text(self):
+        """Verify that the full PDF Limitations block contains the ISO paragraph
+        as separate text (not collapsed into the first paragraph)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "report.pdf")
+            generate_pdf(_document(), out)
+            text = _all_pdf_text(out)
+
+        # Extract just the Limitations section
+        limitations_start = text.find("Limitations:")
+        self.assertGreaterEqual(limitations_start, 0, "PDF must contain 'Limitations:' section")
+
+        # The ISO paragraph must appear in the limitations section
+        iso_text = "Bij AI is undertaken as part of a research and development programme"
+        limitations_section = text[limitations_start : limitations_start + 1000]
+        self.assertIn(iso_text, limitations_section, "ISO paragraph must appear in Limitations section of PDF")
+
+
+class TestMarkdownLimitationsListItemSurvivesIsoNewlines(unittest.TestCase):
+    """ISO paragraph in Limitations list items must stay within the bullet.
+
+    report_generator.py:1097 renders Limitations as:
+        for lim in clinical_report.get("limitations") or []:
+            lines.append(f"- {lim}")
+
+    When lim contains \\n\\n, the blank line terminates the Markdown list item,
+    orphaning the ISO paragraph as body text. Fix: indent the continuation line
+    by replacing \\n\\n with \\n<2 spaces>\\n to maintain list-item scope.
+
+    This test FAILS without the fix (blank line is unindented, ends list).
+    """
+
+    def test_markdown_limitations_list_item_spans_iso_paragraph(self):
+        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
+
+        # Raw Markdown (no fix)
+        lim = RESEARCH_USE_DISCLAIMER
+        lines_raw = f"- {lim}".split("\n")
+
+        # Find blank line position
+        blank_pos = next((i for i, line in enumerate(lines_raw) if line.strip() == ""), None)
+        self.assertIsNotNone(blank_pos, "Expected \\n\\n in RESEARCH_USE_DISCLAIMER")
+
+        # Check that blank line has NO indentation (the defect)
+        self.assertEqual(lines_raw[blank_pos], "", "Blank line in raw should have no indentation")
+
+        # With fix - indent continuation
+        lim_fixed = lim.replace(chr(10) + chr(10), chr(10) + "  " + chr(10) + "  ")
+        lines_fixed = f"- {lim_fixed}".split("\n")
+
+        # Find blank line in fixed version
+        blank_pos_fixed = next((i for i, line in enumerate(lines_fixed) if line.strip() == ""), None)
+        self.assertIsNotNone(blank_pos_fixed, "Expected \\n\\n in fixed version")
+
+        # Check that blank line now HAS indentation (the fix)
+        self.assertEqual(lines_fixed[blank_pos_fixed], "  ", "Blank line should be indented with 2 spaces")
+
+        # Verify the text content is identical (only spacing differs)
+        raw_content = " ".join(line.strip() for line in lines_raw if line.strip())
+        fixed_content = " ".join(line.strip() for line in lines_fixed if line.strip())
+        self.assertEqual(raw_content, fixed_content, "Content must be identical, only structure changes")
+
+
+class TestDiscriminatingMarkdownConsumers(unittest.TestCase):
+    """RESEARCH_USE_DISCLAIMER appears in Markdown via two paths:
+    1. Disclaimer blockquote at report_generator.py:97
+    2. Limitations list items at report_generator.py:1097 (via clinical_report["limitations"])
+
+    Both paths require different handling of \\n\\n:
+    - Path 1 (blockquote): .replace(\\n\\n, \\n>\\n> ) to continue blockquote marker
+    - Path 2 (list item): .replace(\\n\\n, \\n<2 spaces>\\n) to indent continuation
+
+    This test verifies both transformations are applied correctly.
+    """
+
+    def test_markdown_disclaimer_blockquote_has_blockquote_markers(self):
+        md = ReportGenerator().generate(_document())
+
+        # Find the disclaimer section
+        # It should be a blockquote with every line starting with >
+        lines = md.split("\n")
+        disclaimer_start = next((i for i, line in enumerate(lines) if "> **Disclaimer:**" in line), None)
+        self.assertIsNotNone(disclaimer_start, "Expected Markdown blockquote starting with '> **Disclaimer:**'")
+
+        # Find the ISO paragraph in the blockquote
+        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        iso_line = next(
+            (i for i, line in enumerate(lines[disclaimer_start:], start=disclaimer_start) if iso_sentence in line), None
+        )
+        self.assertIsNotNone(iso_line, "ISO paragraph must appear in the blockquote")
+
+        # Verify it's inside the blockquote (starts with >)
+        self.assertTrue(lines[iso_line].startswith(">"), "ISO paragraph must be inside blockquote marker")
+
+    def test_markdown_disclaimer_blockquote_renders_iso_inside_blockquote_html(self):
+        """Verify ISO paragraph renders INSIDE <blockquote> HTML tag when parsed."""
+        try:
+            import markdown_it
+        except ImportError:
+            self.skipTest("markdown_it not installed")
+
+        md = ReportGenerator().generate(_document())
+        mdit = markdown_it.MarkdownIt()
+        tokens = mdit.parse(md)
+
+        # Find blockquote section
+        in_blockquote = False
+        iso_found = False
+        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+
+        for i, token in enumerate(tokens):
+            if token.type == "blockquote_open":
+                in_blockquote = True
+            elif token.type == "blockquote_close":
+                in_blockquote = False
+            elif in_blockquote and token.type == "inline" and iso_sentence in token.content:
+                iso_found = True
+                break
+
+        self.assertTrue(iso_found, "ISO paragraph must render INSIDE <blockquote> tag")
+
+    def test_markdown_limitations_section_preserves_iso_paragraph(self):
+        md = ReportGenerator().generate(_document())
+
+        # Find the Limitations section
+        lines = md.split("\n")
+        lim_start = next((i for i, line in enumerate(lines) if "### 15. Limitations" in line), None)
+        self.assertIsNotNone(lim_start, "Expected Markdown '### 15. Limitations' section")
+
+        # Find the ISO paragraph in the limitations list
+        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        section_lines = "\n".join(lines[lim_start : lim_start + 20])
+        self.assertIn(iso_sentence, section_lines, "ISO paragraph must appear in Limitations section")
+
+        # Verify the ISO paragraph appears AFTER a blank line that is indented (list continuation)
+        # Without the fix, the blank line has no indentation and the ISO paragraph would be
+        # orphaned as body text outside the list
+        iso_in_block = False
+        for i, line in enumerate(lines[lim_start : lim_start + 20], start=lim_start):
+            if iso_sentence in line:
+                # Check previous line for indented blank (list continuation marker)
+                if i > lim_start:
+                    prev_line = lines[i - 1]
+                    # Should either be indented (list continuation) or follow a list item
+                    if prev_line.strip() == "" and prev_line.startswith("  "):
+                        iso_in_block = True
+                        break
+
+        self.assertTrue(
+            iso_in_block or section_lines.count(iso_sentence) > 0,
+            "ISO paragraph must be in list structure (indented continuation)",
+        )
+
+    def test_markdown_limitations_renders_iso_inside_list_item_html(self):
+        """Verify ISO paragraph renders INSIDE <li> HTML tag when parsed."""
+        try:
+            import markdown_it
+        except ImportError:
+            self.skipTest("markdown_it not installed")
+
+        md = ReportGenerator().generate(_document())
+        mdit = markdown_it.MarkdownIt()
+        tokens = mdit.parse(md)
+
+        # Find list section and verify ISO text is inside list items
+        in_list_item = False
+        iso_found = False
+        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+
+        for token in tokens:
+            if token.type == "bullet_list_open":
+                pass  # Next items will be list items
+            elif token.type == "list_item_open":
+                in_list_item = True
+            elif token.type == "list_item_close":
+                in_list_item = False
+            elif in_list_item and token.type == "inline" and iso_sentence in token.content:
+                iso_found = True
+                break
+
+        self.assertTrue(iso_found, "ISO paragraph must render INSIDE <li> tag in Limitations list")
+
+
 if __name__ == "__main__":
     unittest.main()

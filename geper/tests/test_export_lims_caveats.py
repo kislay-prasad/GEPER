@@ -84,7 +84,14 @@ class TestCaveatsPresentInLimsExport(unittest.TestCase):
             export_lims_json(_document(caveats=caveats), out)
             with open(out, encoding="utf-8") as fh:
                 written = fh.read()
-        self.assertIn(RESEARCH_USE_DISCLAIMER, written)
+        # Parse the JSON and compare Python string to parsed document,
+        # not raw serialized text. The exported JSON correctly escapes \n
+        # as \\n, so substring matching against raw JSON will fail when
+        # the disclaimer contains newlines. Compare the parsed referent.
+        import json
+
+        parsed = json.loads(written)
+        self.assertIn(RESEARCH_USE_DISCLAIMER, parsed["run"]["caveats"])
 
 
 class TestCaveatsCarryTheRightContent(unittest.TestCase):

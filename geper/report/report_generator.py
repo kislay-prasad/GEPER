@@ -94,7 +94,10 @@ def _render_1000_genomes_sas_markdown(ipf: Dict[str, Any]) -> List[str]:
 # constant, which is what makes importing it possible at all -- the
 # previous fork existed because the other copy carried its formatting
 # with it.
-_DISCLAIMER = f"> **Disclaimer:** {RESEARCH_USE_DISCLAIMER}"
+# Markdown blockquotes end at blank lines, so \n\n in the disclaimer
+# would break the blockquote and orphan the ISO paragraph as body text.
+# Replace \n\n with \n>\n> to continue the blockquote across the break.
+_DISCLAIMER = f"> **Disclaimer:** {RESEARCH_USE_DISCLAIMER.replace(chr(10) + chr(10), chr(10) + '>' + chr(10) + '> ')}"
 
 # Governance control (round 30 part 2): a one-line review-status banner,
 # sourced from `geper_results.json`'s own `review_status` field (see
@@ -1090,7 +1093,7 @@ class ReportGenerator:
         lines.append("### 15. Limitations")
         lines.append("")
         for lim in clinical_report.get("limitations") or []:
-            lines.append(f"- {lim}")
+            lines.append(f"- {lim.replace(chr(10) + chr(10), chr(10) + '  ' + chr(10) + '  ')}")
         lines.append("")
 
         lines.append("### 16. References")

@@ -79,6 +79,43 @@ and does NOT cover):
     cheap now -- there is exactly one caller today; that window closes
     the moment a second one exists.
 
+THE GATING RULE (spelled out, not left implicit, since the whole point
+of extracting `require_reviewed` was to give future callers one place
+to find it): any code path that hands a run's data to a CONSUMER --
+something that acts on the data without a human first reading the
+DRAFT/OVERRIDDEN banner in front of them -- must call
+`require_reviewed()` before producing that consumer-facing artifact.
+`report/export_lims.py::export_lims_json()` and
+`::export_lims_csv()` are today's two examples (both delegate to
+`require_reviewed` via their own `_require_reviewed` wrapper, which
+re-raises as `LIMSExportBlockedError` to preserve that module's
+existing public contract). A future EHR push, a second LIMS
+integration, a webhook, an API endpoint that serves `geper_results.json`
+directly -- anything of that shape -- is in scope for this same call,
+not a new bespoke check.
+
+This is the PRODUCTION vs DELIVERY boundary this module draws: writing
+`geper_results.json`/the PDFs/the Markdown report into a run's
+`--output-dir` is production -- unconditional, happens for every run,
+gated on nothing (a clinician still has to open the file and read the
+DRAFT banner before acting on it; see `report/summary.py::
+_icmr_ai_disclosure_footer_text` and `report/report_generator.py::
+_render_review_status_banner` for that human-facing control). Handing
+that data to an automated CONSUMER -- a system that will act on it
+without a human reading the banner first -- is delivery, and delivery
+is what `require_reviewed()` gates. Writing the artifact is not the
+same event as delivering it to something that will act on it
+unsupervised; only the latter needs this gate.
+
+Truthiness trap, since it has bitten adjacent code before (see
+`pipeline/models/status.py`'s `calibration_status` work for the same
+shape of bug): `document["review_status"]` is ALWAYS a non-empty
+string -- `"draft"`, `"reviewed"`, `"overridden"`, or a reviewer's own
+name in some older/malformed record -- so `if review_status:` is true
+in every one of those cases, including the unreviewed ones. Every
+read site, this module's own `require_reviewed()` included, must
+compare by equality (`== "reviewed"`), never by truthiness.
+
 Neither addition closes the harder, unfalsifiable half of this
 module's central problem (a manifest's SHA-256 digests are still
 write-once and never re-verified; `--clinician-name`/`--reg-number`

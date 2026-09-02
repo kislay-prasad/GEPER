@@ -407,5 +407,48 @@ class TestStructureEndpointRoute(unittest.TestCase):
         self.assertEqual(resp.json()["entry_status"], "not_found")
 
 
+class TestAuthFailsClosedControlExists(unittest.TestCase):
+    """
+    Verify that api/main.py's _refuse_insecure_defaults_unless_opted_in()
+    control actually refuses when GEPER_API_KEYS and GEPER_CORS_ORIGINS are
+    both unset and GEPER_DEV_INSECURE is not set. This control runs at module
+    import and calls sys.exit(1), so it must be tested in a subprocess.
+    """
+
+    def test_import_fails_when_keys_and_dev_insecure_unset(self):
+        """Subprocess import of api/main with all three env vars unset should
+        exit with code 1 and log the error to stderr."""
+        import subprocess
+        import sys
+
+        script = f"""
+import sys
+sys.path.insert(0, {repr(str(_ROOT))})
+import os
+os.environ.pop("GEPER_API_KEYS", None)
+os.environ.pop("GEPER_CORS_ORIGINS", None)
+os.environ.pop("GEPER_DEV_INSECURE", None)
+import api.main
+"""
+        proc = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(proc.returncode, 1, "Expected sys.exit(1) from import")
+        self.assertIn(
+            "refusing to start with insecure defaults",
+            proc.stderr,
+            "Expected error message in stderr",
+        )
+        self.assertIn(
+            "GEPER_API_KEYS",
+            proc.stderr,
+            "Error message should name GEPER_API_KEYS",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

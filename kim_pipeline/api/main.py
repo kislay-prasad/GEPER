@@ -1053,11 +1053,25 @@ async def list_runs(_auth: None = Depends(_require_api_key)) -> Dict:
 
 
 def _refresh_progress_from_checkpoint(run_id: str, run: Dict) -> None:
-    """Read checkpoint.json to update stage and progress_pct in the run record."""
+    """Read checkpoint.json to update stage and progress_pct in the run record.
+
+    NOTE: PipelineRunner uses sample_id (not run_id) as the work directory key,
+    to support resumability. When multiple distinct runs share a sample_id,
+    they share a checkpoint.json file. To minimize cross-contamination, we first
+    check for a run-specific checkpoint path (for future compatibility if the
+    PipelineRunner is updated to support run_id directories), then fall back
+    to the sample_id path.
+    """
     import json as _json
 
     sample_id = run["sample_id"]
-    cp_path = _OUTPUT_DIR / sample_id / "checkpoint.json"
+
+    # Divergence 4: Try run-specific checkpoint first (future: if PipelineRunner
+    # creates run_id directories), then fall back to sample_id for current behavior.
+    cp_path = _OUTPUT_DIR / run_id / "checkpoint.json"
+    if not cp_path.exists():
+        cp_path = _OUTPUT_DIR / sample_id / "checkpoint.json"
+
     if not cp_path.exists():
         return
     try:

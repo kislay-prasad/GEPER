@@ -401,56 +401,149 @@ async def ready() -> Dict:
 # ─── Config endpoint ──────────────────────────────────────────────────────────
 
 
-# The original (pre-fix) version of this redaction only inspected keys one
-# level inside a dict-valued top-level section. That depth-1 assumption was
-# never a deliberate security boundary -- it happened to work only because
-# every top-level key in config/default.yaml is itself a dict (clinvar,
-# gnomad, api, vep, ...), so nobody noticed it was depth-limited rather than
-# recursive. A design choice implied by one file's shape became an implicit
-# contract for a different API surface (redaction depth) that nobody
-# actually reviewed. Fixed to recurse to any depth (see _redact_secrets).
+# History: this redaction was originally a name-based DENYLIST (redact keys
+# containing "key"/"token"/"secret"/"password"), first applied one dict-level
+# deep only, then made recursive. Both versions were default-ALLOW: an
+# unrecognised field name leaked by default. Confirmed leaking under the
+# denylist: auth_credential, oauth_bearer, private_cert -- none matched the
+# keyword list. That's an unbounded failure mode (anything not yet thought of
+# leaks), so the model is inverted here to an explicit, per-field ALLOWLIST
+# (default-DENY): only fields named in _CONFIG_ALLOWLIST are ever returned;
+# everything else is "***REDACTED***", including fields added to
+# config/default.yaml in the future that nobody remembers to allowlist.
 #
-# CARD (not fixed here -- ticket owed, see hive dispatch 2026-09-02
-# RULING: Split 500-leak and config-redaction commits): this is still a
-# name-based DENYLIST, not an allowlist. A secret-named key that doesn't
-# contain "key"/"token"/"secret"/"password" leaks in full. Confirmed
-# leaking as of this fix: auth_credential, oauth_bearer, private_cert.
-# Preferred long-term fix (per god's ruling) is to invert the model:
-# config sections/keys become opt-in for EXPOSURE rather than opt-out for
-# redaction (default-deny beats default-allow for anything that might be a
-# credential). That is a larger change (requires enumerating every field
-# genuinely safe to expose across every existing config section) and is
-# deliberately out of scope for this commit.
-_SECRET_KEY_WORDS = ("key", "token", "secret", "password")
+# The allowlist is deliberately per-FIELD, not per-section: a section-level
+# allow would silently expose any field later added under that section,
+# reinstating the exact defect this inversion exists to remove.
+#
+# Filesystem paths (tsv_gz_path, vcf_path, cache_dir, refseq_gff, index_dir,
+# db_path, vep.cache_dir/dir_plugins/cadd_data/revel_data/alphamissense_data/
+# fasta, reporting.output_dir, api.host, ...) are deliberately NOT allowlisted
+# even though they aren't secrets: they reveal server deployment structure,
+# the same leak class the original 500-handler information-disclosure fix
+# addressed (str(request.url)). config_path/output_dir/upload_dir below (the
+# three fields returned alongside "config", not inside it) are the same
+# category and are redacted for the same reason -- see hive dispatch
+# 2026-09-02 "PART 1 APPROVED: Allowlist rulings" for the bucket-by-bucket
+# policy decision this list encodes.
+_CONFIG_ALLOWLIST: Dict[str, Any] = {
+    "clinvar": {"enabled": True},
+    "gnomad": {
+        "enabled": True,
+        "graphql_dataset": True,
+        "timeout": True,
+        "max_retries": True,
+        "retry_backoff_secs": True,
+        "max_concurrent": True,
+        "cache_ttl_hours": True,
+    },
+    "rna_analysis": {"enabled": True, "auto_fetch_mt_gff3": True},
+    "acmg_thresholds": {
+        "ba1_af": True,
+        "bs1_af": True,
+        "pm2_af_max": True,
+        "pp3_cadd_phred": True,
+        "pp3_revel": True,
+        "pp3_spliceai": True,
+        "pp3_alphamissense": True,
+        "bp4_cadd_phred": True,
+        "bp4_revel": True,
+        "bp4_spliceai": True,
+    },
+    "evidence_engine": {
+        "weight_acmg": True,
+        "weight_clinvar": True,
+        "weight_computational": True,
+        "weight_ai": True,
+    },
+    "reporting": {"generate_pdf": True},
+    "api": {"log_level": True, "cors_origins": True, "port": True},
+    "dnabert2": {"model_name": True, "device": True, "batch_size": True},
+    "esm2": {"model_name": True, "device": True, "batch_size": True},
+    "alignment": {"aligner": True, "threads": True, "preset": True},
+    "variant_calling": {
+        "threads": True,
+        "min_base_quality": True,
+        "min_mapping_quality": True,
+        "min_alternate_fraction": True,
+        "min_alternate_count": True,
+        "filter_min_qual": True,
+        "filter_min_depth": True,
+    },
+    "qc": {
+        "stop_on_failure": True,
+        "max_dup_sample": True,
+        "thresholds": {
+            "min_mean_quality": True,
+            "max_n_fraction": True,
+            "min_gc_fraction": True,
+            "max_gc_fraction": True,
+            "max_adapter_fraction": True,
+            "max_duplicate_fraction": True,
+            "min_total_reads": True,
+            "min_read_length": True,
+        },
+    },
+    "blast": {
+        "enabled": True,
+        "evalue": True,
+        "max_target_seqs": True,
+        "word_size": True,
+        "timeout": True,
+        "output_format": True,
+        "threads": True,
+    },
+    "gnomad_constraint": {"loeuf_threshold": True, "pli_threshold": True},
+    "clingen": {
+        "enabled": True,
+        "api_enabled": True,
+        "api_endpoint": True,
+        "timeout": True,
+        "max_retries": True,
+    },
+    "hotspot": {"enabled": True, "min_stars": True},
+    "vep": {"enabled": True, "timeout": True},
+}
 
 
-def _redact_secrets(cfg: Dict) -> Dict:
-    """Recursively redact keys that look like secrets, at any nesting depth.
+def _apply_config_allowlist(cfg: Dict, allowed: Dict) -> Dict:
+    """Recursively redact everything not explicitly named in `allowed`.
 
-    KNOWN GAP: denylist by keyword substring, not an allowlist -- see the
-    module-level comment above _SECRET_KEY_WORDS for what still leaks and
-    why (auth_credential, oauth_bearer, private_cert are not caught).
+    `allowed[k] is True` exposes a scalar leaf as-is. `allowed[k]` being a
+    dict descends into `cfg[k]` (also a dict) under that nested allowlist.
+    Anything else -- a key absent from `allowed`, or a shape mismatch
+    between `cfg` and `allowed` at that key -- redacts to "***REDACTED***".
+    Default-deny: an unrecognised field, including one added to the config
+    file after this list was written, is never exposed.
     """
-    redacted: Dict = {}
+    result: Dict = {}
     for k, v in cfg.items():
+        spec = allowed.get(k)
         if isinstance(v, dict):
-            redacted[k] = _redact_secrets(v)
-        elif any(word in k.lower() for word in _SECRET_KEY_WORDS):
-            redacted[k] = "***REDACTED***"
+            result[k] = (
+                _apply_config_allowlist(v, spec) if isinstance(spec, dict) else "***REDACTED***"
+            )
         else:
-            redacted[k] = v
-    return redacted
+            result[k] = v if spec is True else "***REDACTED***"
+    return result
 
 
 @app.get("/api/v1/config", tags=["config"], summary="Return active configuration")
 async def get_config(_auth: None = Depends(_require_api_key)) -> Dict:
-    """Return the active pipeline configuration with sensitive keys redacted."""
-    safe_cfg = _redact_secrets(_PIPELINE_CONFIG)
+    """Return the active pipeline configuration, allowlisted field-by-field.
+
+    Only fields named in _CONFIG_ALLOWLIST are returned as-is; everything
+    else -- secrets, filesystem paths, and any future/unrecognised field --
+    is redacted. config_path/output_dir/upload_dir are themselves
+    filesystem paths (deployment structure) and are redacted for the same
+    reason, not exposed just because they sit outside the "config" dict.
+    """
+    safe_cfg = _apply_config_allowlist(_PIPELINE_CONFIG, _CONFIG_ALLOWLIST)
     return {
         "config": safe_cfg,
-        "config_path": _CONFIG_PATH,
-        "output_dir": str(_OUTPUT_DIR),
-        "upload_dir": str(_UPLOAD_DIR),
+        "config_path": "***REDACTED***",
+        "output_dir": "***REDACTED***",
+        "upload_dir": "***REDACTED***",
     }
 
 

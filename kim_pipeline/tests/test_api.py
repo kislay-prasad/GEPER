@@ -135,12 +135,17 @@ class TestConfig:
 
 
 class TestConfigRedactionAppliesAtAllLevels:
-    """Redaction must catch secret-named keys regardless of nesting depth.
+    """/api/v1/config is an explicit, per-field ALLOWLIST (default-deny).
 
-    The redaction logic only ever inspected keys one level inside a
-    dict-valued top-level section. A secret-named key at the top level
-    (not nested in any section) or nested two levels deep sailed through
-    verbatim.
+    History: this started as a name-based denylist (redact keys containing
+    "key"/"token"/"secret"/"password"), first one dict-level deep only, then
+    made recursive. Both were default-ALLOW: an unrecognised field name
+    leaked by default (confirmed for auth_credential, oauth_bearer,
+    private_cert -- none matched the keyword list). Inverted to an explicit
+    allowlist so an unrecognised field -- including one added to
+    config/default.yaml after this list was written -- is redacted by
+    default instead of exposed by default. See _CONFIG_ALLOWLIST in
+    api/main.py.
     """
 
     def test_top_level_scalar_secret_is_redacted(self, client, monkeypatch):
@@ -156,7 +161,9 @@ class TestConfigRedactionAppliesAtAllLevels:
         assert "REAL-SECRET-TOP-LEVEL" not in raw
         assert r.json()["config"]["db_password"] == "***REDACTED***"
 
-    def test_two_levels_deep_secret_is_redacted(self, client, monkeypatch):
+    def test_unallowlisted_section_is_redacted_wholesale(self, client, monkeypatch):
+        """A section with no entry in _CONFIG_ALLOWLIST redacts entirely --
+        it is not recursed into, even if it happens to contain nested dicts."""
         import api.main as main_mod
 
         monkeypatch.setattr(
@@ -167,7 +174,32 @@ class TestConfigRedactionAppliesAtAllLevels:
         r = client.get("/api/v1/config")
         raw = json.dumps(r.json())
         assert "REAL-SECRET-NESTED" not in raw
-        assert r.json()["config"]["nested"]["deeper"]["api_key"] == "***REDACTED***"
+        assert r.json()["config"]["nested"] == "***REDACTED***"
+
+    def test_two_levels_deep_field_within_allowlisted_section_is_redacted(
+        self, client, monkeypatch
+    ):
+        """Within an allowlisted section, a field two levels deep that isn't
+        itself named in the nested allowlist is redacted -- allowlisting
+        qc.thresholds.min_mean_quality doesn't implicitly allow every other
+        key someone adds under qc.thresholds."""
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {
+                "qc": {
+                    "thresholds": {"min_mean_quality": 20.0, "secret_bonus": "REAL-SECRET-TWO-DEEP"}
+                }
+            },
+        )
+        r = client.get("/api/v1/config")
+        raw = json.dumps(r.json())
+        assert "REAL-SECRET-TWO-DEEP" not in raw
+        cfg = r.json()["config"]
+        assert cfg["qc"]["thresholds"]["min_mean_quality"] == 20.0
+        assert cfg["qc"]["thresholds"]["secret_bonus"] == "***REDACTED***"
 
     def test_one_level_deep_secret_still_redacted(self, client, monkeypatch):
         """Guard against regressing the existing one-level redaction."""
@@ -184,17 +216,12 @@ class TestConfigRedactionAppliesAtAllLevels:
         assert r.json()["config"]["clinvar"]["ncbi_api_key"] == "***REDACTED***"
         assert r.json()["config"]["clinvar"]["enabled"] is True
 
-    def test_KNOWN_GAP_non_matching_secret_names_still_leak(self, client, monkeypatch):
-        """Documents an open gap -- CARDED, not fixed by the recursive-only fix.
-
-        _redact_secrets() is a keyword denylist ("key"/"token"/"secret"/
-        "password"). A secret-named key that doesn't contain one of those
-        words leaks in full, at any nesting depth. This test pins today's
-        (still-leaking) behavior on purpose so it fails loudly -- forcing an
-        update -- the day the allowlist inversion lands, instead of silently
-        going stale. See the module comment above _SECRET_KEY_WORDS in
-        api/main.py.
-        """
+    def test_previously_known_gap_now_redacted(self, client, monkeypatch):
+        """Regression pin for the gap the denylist model had (see class
+        docstring): auth_credential, oauth_bearer, private_cert used to leak
+        because they didn't match the keyword list. Under the allowlist they
+        redact for the same reason every other unnamed field does -- they
+        were never named, keyword or not."""
         import api.main as main_mod
 
         monkeypatch.setattr(
@@ -207,13 +234,42 @@ class TestConfigRedactionAppliesAtAllLevels:
             },
         )
         r = client.get("/api/v1/config")
+        raw = json.dumps(r.json())
         cfg = r.json()["config"]
-        # KNOWN GAP: these SHOULD be redacted and are NOT. If this assertion
-        # starts failing, the gap has been fixed -- update this test to
-        # assert redaction instead of deleting it.
-        assert cfg["auth_credential"] == "REAL-SECRET-AUTH-CRED"
-        assert cfg["oauth_bearer"] == "REAL-SECRET-OAUTH"
-        assert cfg["clinvar"]["private_cert"] == "REAL-SECRET-CERT"
+        assert "REAL-SECRET-AUTH-CRED" not in raw
+        assert "REAL-SECRET-OAUTH" not in raw
+        assert "REAL-SECRET-CERT" not in raw
+        assert cfg["auth_credential"] == "***REDACTED***"
+        assert cfg["oauth_bearer"] == "***REDACTED***"
+        assert cfg["clinvar"]["private_cert"] == "***REDACTED***"
+
+    def test_allowlisted_fields_are_still_exposed(self, client, monkeypatch):
+        """Positive control: the allowlist doesn't degenerate into redacting
+        everything -- a real, explicitly-named field still comes through."""
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {
+                "acmg_thresholds": {"ba1_af": 0.05},
+                "clinvar": {"tsv_gz_path": "/data/clinvar/x.tsv.gz"},
+            },
+        )
+        r = client.get("/api/v1/config")
+        cfg = r.json()["config"]
+        assert cfg["acmg_thresholds"]["ba1_af"] == 0.05
+        assert cfg["clinvar"]["tsv_gz_path"] == "***REDACTED***"
+
+    def test_sibling_path_fields_are_redacted(self, client):
+        """config_path/output_dir/upload_dir are filesystem paths returned
+        alongside "config", not inside it -- same deployment-structure leak
+        class as bucket-3 config paths, redacted for the same reason."""
+        r = client.get("/api/v1/config")
+        body = r.json()
+        assert body["config_path"] == "***REDACTED***"
+        assert body["output_dir"] == "***REDACTED***"
+        assert body["upload_dir"] == "***REDACTED***"
 
 
 # ─── Upload endpoints ─────────────────────────────────────────────────────────

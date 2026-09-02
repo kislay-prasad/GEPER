@@ -230,6 +230,10 @@ async def _reconcile_runs_on_startup():
     """
     Reconcile _RUNS dict with SQLite store on startup.
 
+    Two tasks:
+    1. Load all SQLite runs into _RUNS (Divergence 5: list_runs horizon)
+    2. Mark any "running" runs as "interrupted" (Divergence 1: stale restart)
+
     A crash while a run is executing leaves it marked status='running' in SQLite.
     When the process restarts, the worker thread that was updating it is gone.
     This handler marks any run still 'running' after startup as 'interrupted'
@@ -244,8 +248,17 @@ async def _reconcile_runs_on_startup():
     at this point is always a stale artifact of a prior crash, not a real
     active run.
     """
+    # Divergence 5 fix: Load all SQLite runs into _RUNS so list_runs sees them.
+    # This ensures runs created in a prior process instance are visible.
+    all_rows = _RUN_STORE.list_all(limit=10000)
+    for row in all_rows:
+        run_id = row.get("run_id")
+        if run_id and run_id not in _RUNS:
+            _RUNS[run_id] = row
+
+    # Divergence 1 fix: Mark stale running rows as interrupted
     stale_runs = []
-    for row in _RUN_STORE.list_all(limit=10000):
+    for row in all_rows:
         run_id = row.get("run_id")
         if row.get("status") == "running":
             stale_runs.append((run_id, row.get("sample_id")))
@@ -967,7 +980,9 @@ def _other_runs_sharing_sample_id(sample_id: str, exclude_run_id: str) -> list:
     others = {
         rid for rid, r in _RUNS.items() if rid != exclude_run_id and r.get("sample_id") == sample_id
     }
-    for r in _RUN_STORE.list_all(limit=1000):
+    # Divergence 6 fix: scan ALL rows in SQLite, not just first 1000.
+    # The old limit=1000 could miss runs beyond 1000 rows, allowing unsafe deletion.
+    for r in _RUN_STORE.list_all():
         rid = r.get("run_id")
         if rid and rid != exclude_run_id and r.get("sample_id") == sample_id:
             others.add(rid)

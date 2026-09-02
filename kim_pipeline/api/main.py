@@ -221,13 +221,20 @@ app.add_middleware(
 
 @app.exception_handler(Exception)
 async def _generic_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled exception on %s %s", request.method, request.url)
+    error_id = str(uuid.uuid4())
+    logger.exception(
+        "Unhandled exception [%s] on %s %s: %s",
+        error_id,
+        request.method,
+        request.url,
+        str(exc),
+    )
     return JSONResponse(
         status_code=500,
         content={
             "error": "InternalServerError",
-            "detail": str(exc),
-            "path": str(request.url),
+            "error_id": error_id,
+            "detail": "An internal error occurred. Contact support with error ID if the problem persists.",
         },
     )
 

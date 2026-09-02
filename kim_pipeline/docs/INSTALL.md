@@ -11,7 +11,7 @@
 
 ```bash
 git clone https://github.com/your-org/geper.git
-cd geper_v8
+cd kim_pipeline
 pip install -r requirements.txt
 ```
 
@@ -143,10 +143,10 @@ docker run -p 8000:8000 \
 
 ```bash
 # All tests
-pytest tests/test_geper_v8.py -v
+pytest tests/ -v
 
 # With coverage report (target >80%)
-pytest tests/test_geper_v8.py -v --cov=geper --cov-report=term-missing
+pytest tests/ -v --cov=geper --cov-report=term-missing
 
 # Via main.py
 python main.py test --coverage

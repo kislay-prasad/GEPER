@@ -27,6 +27,7 @@ from __future__ import annotations
 import io
 import json
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 try:
     from fastapi.testclient import TestClient
     from api.main import app, _RUNS
+
     _API_AVAILABLE = True
 except ImportError:
     _API_AVAILABLE = False
@@ -68,6 +70,7 @@ def client_with_tmp(tmp_path):
     inside the approved roots, which are now validated in start_pipeline().
     """
     import api.main as main_mod
+
     orig_upload = main_mod._UPLOAD_DIR
     orig_output = main_mod._OUTPUT_DIR
     main_mod._UPLOAD_DIR = tmp_path
@@ -79,8 +82,8 @@ def client_with_tmp(tmp_path):
 
 # ─── Health endpoints ─────────────────────────────────────────────────────────
 
-class TestHealth:
 
+class TestHealth:
     def test_health_returns_200(self, client):
         r = client.get("/health")
         assert r.status_code == 200
@@ -112,8 +115,8 @@ class TestHealth:
 
 # ─── Config endpoint ──────────────────────────────────────────────────────────
 
-class TestConfig:
 
+class TestConfig:
     def test_config_returns_200(self, client):
         r = client.get("/api/v1/config")
         assert r.status_code == 200
@@ -133,8 +136,8 @@ class TestConfig:
 
 # ─── Upload endpoints ─────────────────────────────────────────────────────────
 
-class TestUploadFASTQ:
 
+class TestUploadFASTQ:
     def _fastq_bytes(self, n: int = 5) -> bytes:
         lines = []
         for i in range(n):
@@ -161,6 +164,7 @@ class TestUploadFASTQ:
 
     def test_upload_fastq_gz_accepted(self, client):
         import gzip
+
         data = gzip.compress(self._fastq_bytes())
         r = client.post(
             "/api/v1/upload/fastq",
@@ -184,7 +188,6 @@ class TestUploadFASTQ:
 
 
 class TestUploadFASTA:
-
     def _fasta_bytes(self) -> bytes:
         return b">chr1\nACGTACGTACGT\n>chr2\nTTTTGGGGAAAA\n"
 
@@ -219,8 +222,8 @@ class TestUploadFASTA:
 
 # ─── Pipeline start endpoint ──────────────────────────────────────────────────
 
-class TestPipelineStart:
 
+class TestPipelineStart:
     def _make_real_files(self, tmp_path: Path) -> tuple:
         r1 = tmp_path / "r1.fastq"
         ref = tmp_path / "ref.fasta"
@@ -232,10 +235,13 @@ class TestPipelineStart:
         client, tmp_path = client_with_tmp
         ref = tmp_path / "ref.fasta"
         ref.write_text(">chr1\nACGT\n")
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": "/nonexistent/r1.fastq",
-            "reference_fasta_path": str(ref),
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": "/nonexistent/r1.fastq",
+                "reference_fasta_path": str(ref),
+            },
+        )
         # Either 400 (path outside root) or 400 (file not found) — both correct
         assert r.status_code == 400
 
@@ -243,39 +249,51 @@ class TestPipelineStart:
         client, tmp_path = client_with_tmp
         r1 = tmp_path / "r1.fastq"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": "/nonexistent/ref.fasta",
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": "/nonexistent/ref.fasta",
+            },
+        )
         assert r.status_code == 400
 
     def test_invalid_sample_id_returns_422(self, client_with_tmp):
         client, tmp_path = client_with_tmp
         r1, ref = self._make_real_files(tmp_path)
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": r1,
-            "reference_fasta_path": ref,
-            "sample_id": "invalid sample id with spaces!",
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": r1,
+                "reference_fasta_path": ref,
+                "sample_id": "invalid sample id with spaces!",
+            },
+        )
         assert r.status_code == 422
 
     def test_valid_request_returns_202(self, client_with_tmp):
         client, tmp_path = client_with_tmp
         r1, ref = self._make_real_files(tmp_path)
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": r1,
-            "reference_fasta_path": ref,
-            "sample_id": "SAMPLE01",
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": r1,
+                "reference_fasta_path": ref,
+                "sample_id": "SAMPLE01",
+            },
+        )
         assert r.status_code == 202
 
     def test_valid_request_returns_run_id(self, client_with_tmp):
         client, tmp_path = client_with_tmp
         r1, ref = self._make_real_files(tmp_path)
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": r1,
-            "reference_fasta_path": ref,
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": r1,
+                "reference_fasta_path": ref,
+            },
+        )
         body = r.json()
         assert "run_id" in body
         assert len(body["run_id"]) == 32  # hex UUID
@@ -283,39 +301,48 @@ class TestPipelineStart:
     def test_valid_request_returns_status_url(self, client_with_tmp):
         client, tmp_path = client_with_tmp
         r1, ref = self._make_real_files(tmp_path)
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": r1,
-            "reference_fasta_path": ref,
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": r1,
+                "reference_fasta_path": ref,
+            },
+        )
         body = r.json()
         assert "status_url" in body
 
     def test_config_overrides_accepted(self, client_with_tmp):
         client, tmp_path = client_with_tmp
         r1, ref = self._make_real_files(tmp_path)
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": r1,
-            "reference_fasta_path": ref,
-            "config_overrides": {"qc": {"stop_on_failure": False}},
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": r1,
+                "reference_fasta_path": ref,
+                "config_overrides": {"qc": {"stop_on_failure": False}},
+            },
+        )
         assert r.status_code == 202
 
 
 # ─── Status / progress endpoints ─────────────────────────────────────────────
 
-class TestStatusAndProgress:
 
+class TestStatusAndProgress:
     def _queue_run(self, client_with_tmp) -> str:
         client, tmp_path = client_with_tmp
         r1 = tmp_path / "r1.fastq"
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-            "sample_id": "TESTRUN",
-        })
+        r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+                "sample_id": "TESTRUN",
+            },
+        )
         return r.json()["run_id"], client
 
     def test_status_unknown_run_returns_404(self, client):
@@ -354,8 +381,8 @@ class TestStatusAndProgress:
 
 # ─── Report download endpoint ─────────────────────────────────────────────────
 
-class TestReportDownload:
 
+class TestReportDownload:
     def test_report_unknown_run_returns_404(self, client):
         r = client.get("/api/v1/pipeline/deadbeef/report")
         assert r.status_code == 404
@@ -366,10 +393,13 @@ class TestReportDownload:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        start_r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-        })
+        start_r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+            },
+        )
         run_id = start_r.json()["run_id"]
         # Manually set status to pending so we can test 409
         _RUNS[run_id]["status"] = "pending"
@@ -403,8 +433,8 @@ class TestReportDownload:
 
 # ─── Log endpoint ─────────────────────────────────────────────────────────────
 
-class TestLogDownload:
 
+class TestLogDownload:
     def test_log_unknown_run_returns_404(self, client):
         r = client.get("/api/v1/pipeline/deadbeef/log")
         assert r.status_code == 404
@@ -415,10 +445,13 @@ class TestLogDownload:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        start_r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-        })
+        start_r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+            },
+        )
         run_id = start_r.json()["run_id"]
         r = client.get(f"/api/v1/pipeline/{run_id}/log")
         assert r.status_code == 200
@@ -427,8 +460,8 @@ class TestLogDownload:
 
 # ─── Delete endpoint ──────────────────────────────────────────────────────────
 
-class TestDeleteRun:
 
+class TestDeleteRun:
     def test_delete_unknown_run_returns_404(self, client):
         r = client.delete("/api/v1/pipeline/deadbeef")
         assert r.status_code == 404
@@ -439,10 +472,13 @@ class TestDeleteRun:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        start_r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-        })
+        start_r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+            },
+        )
         run_id = start_r.json()["run_id"]
         r = client.delete(f"/api/v1/pipeline/{run_id}")
         assert r.status_code == 200
@@ -453,10 +489,13 @@ class TestDeleteRun:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        start_r = client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-        })
+        start_r = client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+            },
+        )
         run_id = start_r.json()["run_id"]
         client.delete(f"/api/v1/pipeline/{run_id}")
         assert run_id not in _RUNS
@@ -464,8 +503,8 @@ class TestDeleteRun:
 
 # ─── List runs endpoint ───────────────────────────────────────────────────────
 
-class TestListRuns:
 
+class TestListRuns:
     def test_list_returns_200(self, client):
         r = client.get("/api/v1/pipeline")
         assert r.status_code == 200
@@ -481,10 +520,13 @@ class TestListRuns:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-        })
+        client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+            },
+        )
         r = client.get("/api/v1/pipeline")
         assert r.json()["total"] == 1
 
@@ -494,11 +536,14 @@ class TestListRuns:
         ref = tmp_path / "ref.fasta"
         r1.write_text("@r1\nACGT\n+\nIIII\n")
         ref.write_text(">chr1\nACGT\n")
-        client.post("/api/v1/pipeline/start", json={
-            "fastq_r1_path": str(r1),
-            "reference_fasta_path": str(ref),
-            "sample_id": "LISTSAMPLE",
-        })
+        client.post(
+            "/api/v1/pipeline/start",
+            json={
+                "fastq_r1_path": str(r1),
+                "reference_fasta_path": str(ref),
+                "sample_id": "LISTSAMPLE",
+            },
+        )
         r = client.get("/api/v1/pipeline")
         run = r.json()["runs"][0]
         assert "run_id" in run
@@ -509,8 +554,8 @@ class TestListRuns:
 
 # ─── OpenAPI docs sanity check ────────────────────────────────────────────────
 
-class TestOpenAPI:
 
+class TestOpenAPI:
     def test_openapi_json_available(self, client):
         r = client.get("/openapi.json")
         assert r.status_code == 200
@@ -523,3 +568,39 @@ class TestOpenAPI:
     def test_swagger_ui_available(self, client):
         r = client.get("/docs")
         assert r.status_code == 200
+
+
+# ─── Generic exception handler: information disclosure ───────────────────────
+
+
+class TestExceptionHandlerDoesNotLeakDetails:
+    """The catch-all 500 handler must not leak exception text or request URLs.
+
+    str(exc) can carry filesystem paths, model names, config values, or
+    third-party API errors. request.url can carry internal deployment
+    structure. Neither belongs in a response body sent to a client.
+    """
+
+    def test_500_does_not_leak_exception_detail_or_request_url(self, client, monkeypatch):
+        leaked_path = "/var/secrets/geper/db_credentials.yaml"
+
+        class _ExplodingConfig(dict):
+            def items(self):
+                raise RuntimeError(f"failed to read config file at {leaked_path}")
+
+        import api.main as main_mod
+
+        monkeypatch.setattr(main_mod, "_PIPELINE_CONFIG", _ExplodingConfig({"a": 1}))
+
+        r = client.get("/api/v1/config")
+
+        assert r.status_code == 500
+        body = r.json()
+        raw = json.dumps(body)
+
+        assert body["error"] == "InternalServerError"
+        assert "error_id" in body
+        uuid.UUID(body["error_id"])  # must be a valid uuid4, raises ValueError otherwise
+
+        assert leaked_path not in raw
+        assert "/api/v1/config" not in raw

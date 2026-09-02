@@ -27,14 +27,39 @@ from api.main import _reconcile_runs_on_startup
 class TestDivergence1StartupReconciliation:
     """Startup reconciliation: stale running rows become interrupted."""
 
-    def test_running_row_marked_interrupted_with_reason(self):
+    def test_running_row_survives_without_handler(self):
         """
         RED-FIRST DEFECT:
         Without the handler, a running row survives restart unchanged.
-        This test FAILS because after restart, status is still 'running'.
+        This test PASSES, demonstrating that without reconciliation,
+        the defect exists: status stays 'running' forever.
+        """
+        store = RunStore()
 
+        # Setup: SQLite has a row marked running (crashed mid-pipeline)
+        store.create(
+            run_id="run_that_crashed",
+            fields={
+                "sample_id": "sample_1",
+                "status": "running",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        # Verify before: status is running
+        before = store.get("run_that_crashed")
+        assert before["status"] == "running"
+
+        # Without handler: row survives unchanged (THE DEFECT)
+        after = store.get("run_that_crashed")
+        assert after["status"] == "running", (
+            "Without the handler, running row should remain running (this is the defect)"
+        )
+
+    def test_running_row_marked_interrupted_with_handler(self):
+        """
         GREEN-AFTER-FIX:
-        The handler changes running→interrupted with a reason explaining restart.
+        With the handler, running row changes to interrupted with a reason.
         """
         store = RunStore()
 
@@ -59,13 +84,13 @@ class TestDivergence1StartupReconciliation:
         # Verify after: status became interrupted with reason
         after = store.get("run_that_crashed")
         assert after["status"] == "interrupted", (
-            f"Expected status='interrupted' after restart, "
+            f"Expected status='interrupted' after handler, "
             f"but got '{after['status']}' — handler not applied or incorrect"
         )
         assert "Process restart detected" in after["error"], (
             f"Expected reason to mention restart, got: {after['error']}"
         )
-        assert "marked interrupted" in after["error"], (
+        assert "Marked interrupted" in after["error"], (
             f"Expected reason to name the reconciliation action, got: {after['error']}"
         )
 

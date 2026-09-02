@@ -61,6 +61,8 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
+from pipeline.utils.process_control import spawn_tracked
+
 logger = logging.getLogger("geper.pipeline.utils.reference_cache")
 
 _BWA_INDEX_SUFFIXES = (".bwt", ".pac", ".sa", ".amb", ".ann")
@@ -224,9 +226,14 @@ def _stream_subprocess_with_heartbeat(cmd: List[str], stage_label: str) -> None:
     `subprocess.run(capture_output=True)`, which produces *zero* visible
     output until the entire command completes -- for a multi-hour index
     build, that is indistinguishable from a hang in a notebook cell.
+
+    Spawns via `spawn_tracked` (not a bare `subprocess.Popen`) so this
+    build -- often the single longest-running subprocess in the whole
+    pipeline -- can be found and killed by DELETE mid-build, the same as
+    every other stage. See `pipeline/utils/process_control.py`.
     """
     t0 = time.time()
-    proc = subprocess.Popen(
+    proc = spawn_tracked(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

@@ -58,9 +58,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from pipeline.utils.process_control import kill_process_tree_now, spawn_tracked
+
 logger = logging.getLogger("geper.pipeline.blast.stage")
 
 # ─── Errors ───────────────────────────────────────────────────────────────────
+
 
 class BLASTError(Exception):
     """General BLAST stage failure."""
@@ -94,9 +97,11 @@ class BLASTTimeoutError(BLASTError):
 
 # ─── Data models ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class BLASTHit:
     """Single high-scoring pair (HSP) hit from BLAST."""
+
     query_id: str = ""
     query_length: int = 0
     subject_id: str = ""
@@ -122,6 +127,7 @@ class BLASTHit:
 @dataclass
 class BLASTResult:
     """Aggregated result of a BLASTStage.run() call."""
+
     db_path: str = ""
     blast_version: str = ""
     query_count: int = 0
@@ -138,6 +144,7 @@ class BLASTResult:
 
 # ─── XML parser ───────────────────────────────────────────────────────────────
 
+
 def _parse_blast_xml(xml_text: str) -> List[BLASTHit]:
     """Parse BLAST XML output (outfmt 5) into BLASTHit objects."""
     hits: List[BLASTHit] = []
@@ -149,11 +156,17 @@ def _parse_blast_xml(xml_text: str) -> List[BLASTHit]:
 
     for iteration in root.iter("Iteration"):
         query_def_el = iteration.find("Iteration_query-def")
-        query_def = query_def_el.text.strip() if query_def_el is not None and query_def_el.text else "unknown"
+        query_def = (
+            query_def_el.text.strip()
+            if query_def_el is not None and query_def_el.text
+            else "unknown"
+        )
         query_id = query_def.split()[0]
 
         query_len_el = iteration.find("Iteration_query-len")
-        query_length = int(query_len_el.text) if query_len_el is not None and query_len_el.text else 0
+        query_length = (
+            int(query_len_el.text) if query_len_el is not None and query_len_el.text else 0
+        )
 
         for hit_el in iteration.iter("Hit"):
             hit_id_el = hit_el.find("Hit_id")
@@ -162,10 +175,13 @@ def _parse_blast_xml(xml_text: str) -> List[BLASTHit]:
 
             subject_id = (hit_id_el.text or "").strip() if hit_id_el is not None else ""
             subject_title = (hit_def_el.text or "").strip() if hit_def_el is not None else ""
-            subject_length = int(hit_len_el.text) if hit_len_el is not None and hit_len_el.text else 0
+            subject_length = (
+                int(hit_len_el.text) if hit_len_el is not None and hit_len_el.text else 0
+            )
 
             # Take the first (best) HSP
             for hsp_el in hit_el.iter("Hsp"):
+
                 def _int(tag: str) -> int:
                     el = hsp_el.find(tag)
                     return int(el.text) if el is not None and el.text else 0
@@ -178,24 +194,26 @@ def _parse_blast_xml(xml_text: str) -> List[BLASTHit]:
                 identity = _int("Hsp_identity")
                 pct_id = (identity / aln_len * 100) if aln_len else 0.0
 
-                hits.append(BLASTHit(
-                    query_id=query_id,
-                    query_length=query_length,
-                    subject_id=subject_id,
-                    subject_title=subject_title,
-                    subject_length=subject_length,
-                    pct_identity=round(pct_id, 2),
-                    alignment_length=aln_len,
-                    mismatches=aln_len - identity,
-                    gap_opens=_int("Hsp_gaps"),
-                    query_start=_int("Hsp_query-from"),
-                    query_end=_int("Hsp_query-to"),
-                    subject_start=_int("Hsp_hit-from"),
-                    subject_end=_int("Hsp_hit-to"),
-                    evalue=_float("Hsp_evalue"),
-                    bitscore=_float("Hsp_bit-score"),
-                    score=_float("Hsp_score"),
-                ))
+                hits.append(
+                    BLASTHit(
+                        query_id=query_id,
+                        query_length=query_length,
+                        subject_id=subject_id,
+                        subject_title=subject_title,
+                        subject_length=subject_length,
+                        pct_identity=round(pct_id, 2),
+                        alignment_length=aln_len,
+                        mismatches=aln_len - identity,
+                        gap_opens=_int("Hsp_gaps"),
+                        query_start=_int("Hsp_query-from"),
+                        query_end=_int("Hsp_query-to"),
+                        subject_start=_int("Hsp_hit-from"),
+                        subject_end=_int("Hsp_hit-to"),
+                        evalue=_float("Hsp_evalue"),
+                        bitscore=_float("Hsp_bit-score"),
+                        score=_float("Hsp_score"),
+                    )
+                )
                 break  # only best HSP per hit
 
     return hits
@@ -203,6 +221,7 @@ def _parse_blast_xml(xml_text: str) -> List[BLASTHit]:
 
 # ─── Tabular parser (outfmt 6) ────────────────────────────────────────────────
 # qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore
+
 
 def _parse_blast_tabular(tab_text: str) -> List[BLASTHit]:
     """Parse BLAST tabular output (outfmt 6) into BLASTHit objects."""
@@ -215,25 +234,28 @@ def _parse_blast_tabular(tab_text: str) -> List[BLASTHit]:
         if len(parts) < 12:
             logger.warning("Ignoring short tabular BLAST line: %s", line[:80])
             continue
-        hits.append(BLASTHit(
-            query_id=parts[0],
-            subject_id=parts[1],
-            subject_title=parts[1],
-            pct_identity=float(parts[2]),
-            alignment_length=int(parts[3]),
-            mismatches=int(parts[4]),
-            gap_opens=int(parts[5]),
-            query_start=int(parts[6]),
-            query_end=int(parts[7]),
-            subject_start=int(parts[8]),
-            subject_end=int(parts[9]),
-            evalue=float(parts[10]),
-            bitscore=float(parts[11]),
-        ))
+        hits.append(
+            BLASTHit(
+                query_id=parts[0],
+                subject_id=parts[1],
+                subject_title=parts[1],
+                pct_identity=float(parts[2]),
+                alignment_length=int(parts[3]),
+                mismatches=int(parts[4]),
+                gap_opens=int(parts[5]),
+                query_start=int(parts[6]),
+                query_end=int(parts[7]),
+                subject_start=int(parts[8]),
+                subject_end=int(parts[9]),
+                evalue=float(parts[10]),
+                bitscore=float(parts[11]),
+            )
+        )
     return hits
 
 
 # ─── FASTA writer ─────────────────────────────────────────────────────────────
+
 
 def _write_fasta(sequences: Dict[str, str], path: Path) -> None:
     """Write a dict of {id: sequence} to a FASTA file."""
@@ -242,10 +264,11 @@ def _write_fasta(sequences: Dict[str, str], path: Path) -> None:
             # Wrap at 80 bp
             fh.write(f">{seq_id}\n")
             for i in range(0, len(seq), 80):
-                fh.write(seq[i:i + 80] + "\n")
+                fh.write(seq[i : i + 80] + "\n")
 
 
 # ─── BLAST stage ──────────────────────────────────────────────────────────────
+
 
 class BLASTStage:
     """Real BLASTN integration against a local BLAST+ database.
@@ -310,7 +333,10 @@ class BLASTStage:
         blast_version = self._get_version(blastn)
         logger.info(
             "[%s] BLAST Stage: %s seqs → db=%s (version=%s)",
-            sample_id, len(sequences), effective_db, blast_version,
+            sample_id,
+            len(sequences),
+            effective_db,
+            blast_version,
         )
 
         with tempfile.TemporaryDirectory(prefix="geper_blast_") as tmpdir:
@@ -321,34 +347,51 @@ class BLASTStage:
             outfmt, use_xml = self._outfmt_args()
             cmd = [
                 blastn,
-                "-query", str(query_fasta),
-                "-db", effective_db,
-                "-out", str(out_file),
-                "-outfmt", outfmt,
-                "-evalue", str(self._evalue),
-                "-max_target_seqs", str(self._max_target_seqs),
-                "-word_size", str(self._word_size),
-                "-num_threads", str(self._threads),
-                "-dust", "no",  # disable masking for short-read genomic sequences
+                "-query",
+                str(query_fasta),
+                "-db",
+                effective_db,
+                "-out",
+                str(out_file),
+                "-outfmt",
+                outfmt,
+                "-evalue",
+                str(self._evalue),
+                "-max_target_seqs",
+                str(self._max_target_seqs),
+                "-word_size",
+                str(self._word_size),
+                "-num_threads",
+                str(self._threads),
+                "-dust",
+                "no",  # disable masking for short-read genomic sequences
             ]
             logger.debug("[%s] BLAST cmd: %s", sample_id, " ".join(cmd))
 
+            # Spawned via spawn_tracked (not a bare subprocess.run) so a
+            # BLAST search in progress -- which can run for minutes against
+            # a large database -- is reachable by DELETE, same as every
+            # other stage's subprocess. See pipeline/utils/process_control.py.
+            proc = spawn_tracked(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
             try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=self._timeout,
-                )
+                _stdout, stderr = proc.communicate(timeout=self._timeout)
             except subprocess.TimeoutExpired:
+                kill_process_tree_now(proc)
+                try:
+                    proc.communicate(timeout=1)
+                except Exception:
+                    pass
                 raise BLASTTimeoutError(
                     f"BLAST timed out after {self._timeout}s for {len(sequences)} sequences"
                 )
 
             if proc.returncode != 0:
-                raise BLASTError(
-                    f"blastn exited {proc.returncode}:\n{proc.stderr[:2000]}"
-                )
+                raise BLASTError(f"blastn exited {proc.returncode}:\n{(stderr or '')[:2000]}")
 
             out_text = out_file.read_text(errors="replace") if out_file.exists() else ""
 
@@ -375,7 +418,11 @@ class BLASTStage:
         )
         logger.info(
             "[%s] BLAST done in %.1fs — %d hits for %d queries (%d no-hit)",
-            sample_id, result.elapsed_seconds, len(hits), len(sequences), len(no_hit),
+            sample_id,
+            result.elapsed_seconds,
+            len(hits),
+            len(sequences),
+            len(no_hit),
         )
         return result
 
@@ -398,7 +445,9 @@ class BLASTStage:
         try:
             proc = subprocess.run(
                 [binary, "-version"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             for line in proc.stdout.splitlines():
                 if "blastn" in line.lower():
@@ -415,9 +464,7 @@ class BLASTStage:
         prefix = Path(db_path)
         # Check common extensions for nucleotide databases
         extensions = [".nin", ".nhr", ".nsq", ".nal"]
-        found = any(
-            (Path(str(prefix) + ext)).exists() for ext in extensions
-        )
+        found = any((Path(str(prefix) + ext)).exists() for ext in extensions)
         if not found:
             raise BLASTDatabaseError(db_path)
 

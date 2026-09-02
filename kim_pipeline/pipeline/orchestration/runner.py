@@ -55,6 +55,7 @@ from pipeline.fastq.errors import FastqPipelineError
 from pipeline.fastq.validator import FastqValidator
 from pipeline.qc.stage import QCStage, QCThresholdError
 from pipeline.reporting.stage import ReportingStage
+from pipeline.utils.process_control import _CURRENT_KILL_CALLBACK
 from pipeline.utils.reference_cache import ReferenceCacheError, resolve_reference
 from pipeline.variant_calling.stage import VariantCallingStage
 from pipeline.vep.stage import VEPAnnotationStage
@@ -278,6 +279,19 @@ class PipelineRunner:
             )
         if mode == "vcf_only":
             stop_after = stop_after or "variant_calling"
+
+        # Make self._kill_callback reachable from every subprocess spawned
+        # anywhere below in this call -- pipeline/fastq/errors.py::_run()
+        # and pipeline/utils/reference_cache.py's index-build helper read
+        # this contextvar via spawn_tracked() without needing a callback
+        # parameter threaded through either of their own many call sites.
+        # Not reset in a finally: this run() call executes entirely inside
+        # one dedicated thread-pool worker thread (api/main.py's
+        # ThreadPoolExecutor), and every run() call sets this again at its
+        # own entry, so a stale value between runs on a reused thread is
+        # never read by anything (nothing spawns a subprocess outside an
+        # active run() call in that thread).
+        _CURRENT_KILL_CALLBACK.set(self._kill_callback)
 
         t_total = time.time()
         work_dir = Path(output_dir) / sample_id

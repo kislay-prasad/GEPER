@@ -17,6 +17,13 @@ python-multipart>=0.0.9   # required for FastAPI file uploads (UploadFile/Form p
 # Pure-Python helpers:
 biopython>=1.83           # Sequence utilities (optional — used by RNA analysis)
 
+# ── Process management ────────────────────────────────────────────────────────
+psutil>=5.9.0              # Cross-platform process-tree termination for DELETE
+                            # /api/v1/pipeline/{run_id} — kills subprocess
+                            # descendants (e.g. bwa spawned via a shell wrapper)
+                            # on both POSIX and Windows without hand-rolled
+                            # Windows Job Objects.
+
 # ── AI models (optional — pip install -e ".[ai]") ────────────────────────────
 # torch>=2.2.0
 # transformers>=4.40.0

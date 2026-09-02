@@ -15,7 +15,6 @@ GAP 7 — anyio / pytest-anyio available
 from __future__ import annotations
 
 import os
-import signal
 import sys
 import threading
 import time
@@ -122,12 +121,16 @@ def test_gap1_vep_checkpoint_written(tmp_path):
 
     stage = VEPAnnotationStage(cfg={"vep": {"enabled": True}})
 
-    # Mock the subprocess to return success with empty VCF output
+    # Mock the subprocess to return success with empty VCF output. vep/
+    # stage.py now routes through the shared _run() helper (not a direct
+    # subprocess.run) so DELETE can find and kill it mid-run -- see
+    # pipeline/utils/process_control.py -- so that's what's mocked here;
+    # vep/stage.py doesn't use _run()'s return value (output comes from
+    # parsing the annotated VCF file on disk), so a bare success is enough.
     with (
         patch("pipeline.vep.stage._require", return_value="/usr/bin/vep"),
-        patch("subprocess.run") as mock_run,
+        patch("pipeline.vep.stage._run", return_value=None),
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         # Create empty output VCF
         out_dir = tmp_path / "vep_out"
         out_dir.mkdir()
@@ -485,7 +488,7 @@ def test_gap4_delete_sets_status_cancelled(tmp_path):
     client = TestClient(api_main.app, raise_server_exceptions=False)
     api_main._API_KEYS = None  # dev mode
 
-    with patch("os.killpg"), patch("shutil.rmtree"):
+    with patch("shutil.rmtree"):
         resp = client.delete(f"/api/v1/pipeline/{run_id}")
 
     assert resp.status_code == 200
@@ -493,8 +496,13 @@ def test_gap4_delete_sets_status_cancelled(tmp_path):
     assert run_id not in api_main._RUNS
 
 
-def test_gap4_killpg_called_with_sigterm():
-    """os.killpg is called with SIGTERM when a running run is deleted."""
+def test_gap4_termination_requested_for_active_process():
+    """The currently-active subprocess for a running run is handed to
+    request_termination_async() when that run is deleted -- the
+    cross-platform replacement for the old POSIX-only os.killpg/SIGTERM
+    call (see pipeline/utils/process_control.py; os.killpg doesn't exist
+    on Windows at all, so a test asserting on it directly can never pass
+    there)."""
     from fastapi.testclient import TestClient
     from api import main as api_main
 
@@ -519,17 +527,21 @@ def test_gap4_killpg_called_with_sigterm():
         "reference_fasta": "/tmp/ref.fasta",
     }
     api_main._RUN_STORE.create(run_id, api_main._RUNS[run_id])
-    api_main._PROCESS_GROUPS[run_id] = 99999  # fake pgid
+    fake_proc = MagicMock()
+    api_main._ACTIVE_PROCESSES[run_id] = fake_proc
     api_main._API_KEYS = None
 
     client = TestClient(api_main.app, raise_server_exceptions=False)
-    with patch("os.killpg") as mock_kill, patch("shutil.rmtree"):
+    with (
+        patch("api.main.request_termination_async") as mock_terminate,
+        patch("shutil.rmtree"),
+    ):
         resp = client.delete(f"/api/v1/pipeline/{run_id}")
 
     assert resp.status_code == 200
-    mock_kill.assert_called()
-    first_call_args = mock_kill.call_args_list[0]
-    assert first_call_args[0][1] == signal.SIGTERM
+    mock_terminate.assert_called_once_with(fake_proc)
+    # The registry entry is cleared once termination has been requested.
+    assert run_id not in api_main._ACTIVE_PROCESSES
 
 
 def test_gap4_delete_completed_no_kill():
@@ -561,11 +573,14 @@ def test_gap4_delete_completed_no_kill():
     api_main._API_KEYS = None
 
     client = TestClient(api_main.app, raise_server_exceptions=False)
-    with patch("os.killpg") as mock_kill, patch("shutil.rmtree"):
+    with (
+        patch("api.main.request_termination_async") as mock_terminate,
+        patch("shutil.rmtree"),
+    ):
         resp = client.delete(f"/api/v1/pipeline/{run_id}")
 
     assert resp.status_code == 200
-    mock_kill.assert_not_called()
+    mock_terminate.assert_not_called()
 
 
 def test_gap4_delete_unknown_run_returns_404():

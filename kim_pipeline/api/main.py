@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -64,6 +64,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from pipeline.orchestration.runner import PipelineRunner
+from pipeline.utils.process_control import request_termination_async
 from api.run_store import RunStore
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -105,8 +106,13 @@ _RUN_STORE = RunStore()
 _RUNS: Dict[str, Dict[str, Any]] = {}
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="geper_worker")
 
-# GAP 4: process group registry for cancellation
-_PROCESS_GROUPS: Dict[str, int] = {}  # run_id → pgid
+# GAP 4 / Windows process killing (2026-09-02): registry of the currently
+# live subprocess.Popen for each run, so DELETE can find and terminate it.
+# Stores the raw Popen object (not a POSIX pgid) -- see
+# pipeline/utils/process_control.py for why: process-group semantics don't
+# exist on Windows, and the kill logic below is fully cross-platform via
+# that module instead of doing platform-specific work here.
+_ACTIVE_PROCESSES: Dict[str, subprocess.Popen] = {}  # run_id → live Popen
 
 # ─── API key authentication (GAP 2) ──────────────────────────────────────────
 
@@ -312,13 +318,16 @@ def _run_pipeline_sync(run_id: str, req: PipelineStartRequest) -> None:
 
         runner = PipelineRunner(cfg=cfg)
 
-        # GAP 4: register kill callback so DELETE can send SIGTERM/SIGKILL
+        # GAP 4 / Windows process killing: register a callback so DELETE can
+        # find and terminate whatever subprocess is currently running for
+        # this run_id. Fired once per subprocess spawned anywhere during
+        # runner.run() (each stage's external tool call, in sequence) -- the
+        # registry always holds the CURRENTLY live one; overwriting a
+        # finished stage's entry with the next stage's is intentional and
+        # harmless (killing an already-exited process is a safe no-op, see
+        # pipeline/utils/process_control.py).
         def _kill_cb(popen_obj):
-            try:
-                pgid = os.getpgid(popen_obj.pid)
-                _PROCESS_GROUPS[run_id] = pgid
-            except Exception:
-                pass
+            _ACTIVE_PROCESSES[run_id] = popen_obj
 
         runner.register_kill_callback(_kill_cb)
 
@@ -372,7 +381,7 @@ def _run_pipeline_sync(run_id: str, req: PipelineStartRequest) -> None:
             finished_at=run["finished_at"],
             elapsed_seconds=run["elapsed_seconds"],
         )
-        _PROCESS_GROUPS.pop(run_id, None)
+        _ACTIVE_PROCESSES.pop(run_id, None)
 
 
 # ─── Health endpoints ─────────────────────────────────────────────────────────
@@ -924,31 +933,21 @@ def _other_runs_sharing_sample_id(sample_id: str, exclude_run_id: str) -> list:
 async def delete_run(run_id: str, _auth: None = Depends(_require_api_key)) -> Dict:
     """Cancel a pending/running run or delete artefacts of a finished run.
 
-    For running runs, sends SIGTERM to the pipeline process group,
-    waits 5 seconds, then SIGKILL if still alive.
+    For running runs, sends a graceful stop to the currently-active
+    subprocess (and its descendants) now, escalating to a hard kill a few
+    seconds later if it's still alive -- cross-platform, see
+    pipeline/utils/process_control.py. Does not block waiting for the
+    process to actually exit; the escalation runs on a background thread.
     """
     run = _get_run(run_id)
 
     if run["status"] in ("pending", "running"):
-        # GAP 4: kill the subprocess group
-        pgid = _PROCESS_GROUPS.get(run_id)
-        if pgid is not None:
-            try:
-                os.killpg(pgid, signal.SIGTERM)
-                # Brief wait, then SIGKILL if still alive
-                import threading as _threading
-
-                def _sigkill_after():
-                    time.sleep(5)
-                    try:
-                        os.killpg(pgid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-
-                _threading.Thread(target=_sigkill_after, daemon=True).start()
-            except ProcessLookupError:
-                pass
-            _PROCESS_GROUPS.pop(run_id, None)
+        # GAP 4 / Windows process killing: terminate whatever subprocess is
+        # currently running for this run_id.
+        proc = _ACTIVE_PROCESSES.get(run_id)
+        if proc is not None:
+            request_termination_async(proc)
+            _ACTIVE_PROCESSES.pop(run_id, None)
 
         run["status"] = "cancelled"
         run["finished_at"] = datetime.now(timezone.utc).isoformat()

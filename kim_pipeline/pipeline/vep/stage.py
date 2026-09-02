@@ -56,12 +56,11 @@ from __future__ import annotations
 
 import gzip
 import logging
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pipeline.fastq.errors import FastqPipelineError, _require
+from pipeline.fastq.errors import FastqPipelineError, _require, _run
 
 logger = logging.getLogger("geper.pipeline.vep.stage")
 
@@ -189,26 +188,25 @@ class VEPAnnotationStage:
         cmd = self._build_vep_cmd(vep_bin, filtered_vcf_path, annotated_vcf)
         timeout = int(self._vep_cfg.get("timeout", 600))
 
+        # Routed through the shared _run() helper (not a direct
+        # subprocess.run) so a VEP annotation in progress -- which can run
+        # for minutes on a large VCF -- is reachable by DELETE the same way
+        # every other stage's subprocess is. See
+        # pipeline/utils/process_control.py.
         try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired:
+            _run(cmd, stage=_STAGE, timeout_seconds=timeout)
+        except FastqPipelineError as exc:
+            if "timed out" in exc.message:
+                raise FastqPipelineError(
+                    f"vep timed out after {timeout}s on {filtered_vcf_path}",
+                    stage=_STAGE,
+                    tool="vep",
+                ) from exc
             raise FastqPipelineError(
-                f"vep timed out after {timeout}s on {filtered_vcf_path}",
+                f"vep failed: {exc.message}",
                 stage=_STAGE,
                 tool="vep",
-            )
-
-        if proc.returncode != 0:
-            raise FastqPipelineError(
-                f"vep failed (exit {proc.returncode}).\nstderr: {proc.stderr.strip()[:2000]}",
-                stage=_STAGE,
-                tool="vep",
-            )
+            ) from exc
 
         variants = self._parse_vep_vcf(annotated_vcf)
         logger.info("[%s] VEP annotated %d variants", sample_id, len(variants))

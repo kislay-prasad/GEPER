@@ -32,8 +32,10 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
+
+from pipeline.utils.process_control import kill_process_tree_now, spawn_tracked
 
 logger = logging.getLogger("geper.pipeline")
 
@@ -50,6 +52,7 @@ _DEFAULT_TIMEOUT_SECONDS = 60 * 60  # 60 minutes
 
 
 # ─── Exception ────────────────────────────────────────────────────────────────
+
 
 class FastqPipelineError(Exception):
     """Raised by any pipeline stage when a non-recoverable error occurs.
@@ -81,6 +84,7 @@ class FastqPipelineError(Exception):
 
 
 # ─── Subprocess helpers ───────────────────────────────────────────────────────
+
 
 @dataclass
 class _RunResult:
@@ -138,14 +142,19 @@ def _run(
             or ``None`` to wait indefinitely (the previous, unbounded
             behavior). Every existing call site keeps working
             unchanged and now gets the 60-minute default automatically.
+
+    Spawns via ``spawn_tracked`` (not a bare ``subprocess.run``) so a run in
+    progress can be found and killed by ``DELETE /api/v1/pipeline/{run_id}``
+    -- see ``pipeline/utils/process_control.py``. External behavior
+    (exceptions raised, ``_RunResult`` shape) is unchanged from before.
     """
     try:
-        proc = subprocess.run(
+        proc = spawn_tracked(
             cmd,
-            capture_output=capture_output,
+            stdout=subprocess.PIPE if capture_output else None,
+            stderr=subprocess.PIPE if capture_output else None,
+            stdin=subprocess.PIPE if input_text is not None else None,
             text=True,
-            input=input_text,
-            timeout=timeout_seconds,
         )
     except FileNotFoundError as exc:
         raise FastqPipelineError(
@@ -153,10 +162,17 @@ def _run(
             stage=stage,
             tool=cmd[0],
         ) from exc
+
+    try:
+        stdout, stderr = proc.communicate(input=input_text, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
+        kill_process_tree_now(proc)
+        try:
+            proc.communicate(timeout=1)  # drain pipes / reap after kill, best-effort
+        except Exception:
+            pass
         raise FastqPipelineError(
-            f"Command {' '.join(cmd)!r} timed out after "
-            f"{timeout_seconds:.0f}s and was killed.",
+            f"Command {' '.join(cmd)!r} timed out after {timeout_seconds:.0f}s and was killed.",
             stage=stage,
             tool=cmd[0],
         ) from exc
@@ -164,13 +180,13 @@ def _run(
     if proc.returncode != 0:
         raise FastqPipelineError(
             f"Command {' '.join(cmd[:3])!r} failed (exit {proc.returncode}).\n"
-            f"stderr: {proc.stderr.strip()[:2000]}",
+            f"stderr: {(stderr or '').strip()[:2000]}",
             stage=stage,
             tool=cmd[0],
         )
 
     return _RunResult(
-        stdout=proc.stdout or "",
-        stderr=proc.stderr or "",
+        stdout=stdout or "",
+        stderr=stderr or "",
         returncode=proc.returncode,
     )

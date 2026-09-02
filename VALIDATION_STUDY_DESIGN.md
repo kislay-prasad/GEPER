@@ -220,7 +220,10 @@ clause-by-clause comparisons, and the standard's indexed table of contents — n
 standard's own text. That is weaker than the CLIA and journal verifications, which were
 read directly, and it is marked **[VERIFIED (secondary)]** rather than [VERIFIED] wherever
 it applies. **An assessor holding the actual standard can overturn any ISO verdict in this
-document, and should be invited to.**
+document, and should be invited to.** (One narrower worry this paywall raised is now closed:
+NABL 112A §7.8.5, the NGS clause EJ-18 (§5.7/5.8) cites, turned out to be free — confirmed
+2026-08-31, see EJ-18's guidance — so ISO 15189:2022 remaining unpurchased is irrelevant to
+that particular citation, though the paywall stands for every ISO clause verdict elsewhere.)
 
 This remains a weaker standard than the one `geper/GROUND_TRUTH_DATASET_AUDIT.md` met for
 datasets, which fetched primary sources directly throughout. Citations corroborated by an
@@ -1869,9 +1872,24 @@ assessor.
              [VERIFIED — **this was flagged as the document's lowest-confidence citation and
              it checks out**: NABL 112 is "Specific Criteria for Accreditation of Medical
              Laboratories", published by the National Accreditation Board for Testing and
-             Calibration Laboratories and hosted at nabl-india.org. Note a **NABL 112A**
-             also exists and is the one aligned to ISO 15189:2022 — confirm which applies
-             before citing externally]. CLIA 42 CFR §493.1445, laboratory director
+             Calibration Laboratories and hosted at nabl-india.org. A **NABL 112A** also exists;
+             **confirmed (2026-08-31) to be the applicable document**: "Specific Criteria
+             for Accreditation of Medical Laboratories", Issue No. 01, Issue Date
+             18-Dec-2024, freely downloadable from nabl-india.org — no purchase, no
+             paywall (SHA256
+             dafc1404d019b8258b434a8baf45f26c5392933a73a597b6230e880704212e13, 110 pp.).
+             Clause 7.8.5 "Next Generation Sequencing" (pp.83–88) is NABL's own bespoke
+             NGS content, not a renumbered ISO clause: siblings 7.8.1–7.8.4 and 7.9 each
+             tag their lettered items with an explicit ISO cross-reference (e.g. "Cl. 6.3
+             of ISO 15189:2022"); none of 7.8.5's four items carry any such tag. **This is
+             a confirmation, not certainty**: confidence that this is the document the
+             original "NABL 7.8.5(b)" citation meant is high but not absolute — it rests
+             on content match (the four sub-item headings map 1:1 onto the four topics)
+             and notation match, not on chain of custody, since whoever wrote the original
+             citation could not be asked. The same principle §0.3 states for a corrected
+             citation applies to a confirmed one: the basis is given explicitly rather than
+             left to be inferred, because a confirmation that hides its basis is
+             indistinguishable from an assertion]. CLIA 42 CFR §493.1445, laboratory director
              responsibilities [VERIFIED — heading is "Standard; Laboratory director
              responsibilities"; opens "The laboratory director is responsible for the
              overall operation and administration of the laboratory..."].

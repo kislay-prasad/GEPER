@@ -69,6 +69,7 @@ from report.clinical_report_builder import (
     candidate_interpretation_of,
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
+    ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
     _consent_value_label,
     _offline_sources_caveat_text,
@@ -636,7 +637,12 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
         ),
         Spacer(1, 3 * mm),
         Paragraph(
-            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>"),
+            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER,
+            styles["Footnote"],
+        ),
+        Spacer(1, 2 * mm),
+        Paragraph(
+            ISO_RESEARCH_ELEMENT,
             styles["Footnote"],
         ),
     ]

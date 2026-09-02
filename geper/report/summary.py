@@ -64,6 +64,7 @@ from report.clinical_report_builder import (
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
     DOCUMENT_POSITIONING_STATEMENT,
+    ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
     # Moved out of this module on 2026-08-21 so the Markdown renderer and
     # the JSON run-level block could reach them without importing from a
@@ -2206,10 +2207,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     if limitations:
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>Limitations:</b>", styles["BodyText"]))
-        flow.extend(
-            Paragraph(f"• {esc(item).replace(chr(10) + chr(10), '<br/><br/>')}", styles["BulletText"])
-            for item in limitations
-        )
+        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in limitations)
 
     # `clinical["references"]` (see `report/clinical_report_builder.py
     # ::_references`) was already computed for the Markdown report's own
@@ -2290,7 +2288,12 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
         ),
         Spacer(1, 8 * mm),
         Paragraph(
-            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>"),
+            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER,
+            styles["Disclaimer"],
+        ),
+        Spacer(1, 3 * mm),
+        Paragraph(
+            ISO_RESEARCH_ELEMENT,
             styles["Disclaimer"],
         ),
     ]

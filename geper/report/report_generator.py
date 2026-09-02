@@ -19,6 +19,7 @@ from report.clinical_report_builder import (
     _qc_threshold_pass_min,
     ACMG_METHODOLOGY_STATEMENT,
     EVIDENCE_COMPLETENESS_CAPTION,
+    ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
     _consent_value_label,
     _offline_sources_caveat_text,
@@ -85,19 +86,11 @@ def _render_1000_genomes_sas_markdown(ipf: Dict[str, Any]) -> List[str]:
 
 
 # Markdown presentation only -- the claim itself lives in
-# `report/clinical_report_builder.py::RESEARCH_USE_DISCLAIMER`, shared
-# with both PDFs and the per-finding limitations. This used to be an
-# independently-worded copy of the same statement, which is how the
-# PDF's own version drifted into asserting the opposite ("intended for
-# clinical use") without anything catching it. The blockquote marker
-# and bold label are applied here rather than baked into the shared
-# constant, which is what makes importing it possible at all -- the
-# previous fork existed because the other copy carried its formatting
-# with it.
-# Markdown blockquotes end at blank lines, so \n\n in the disclaimer
-# would break the blockquote and orphan the ISO paragraph as body text.
-# Replace \n\n with \n>\n> to continue the blockquote across the break.
-_DISCLAIMER = f"> **Disclaimer:** {RESEARCH_USE_DISCLAIMER.replace(chr(10) + chr(10), chr(10) + '>' + chr(10) + '> ')}"
+# Design ruling 2026-09-03: ISO statement is now a separate element.
+# Each renderer composes the two pieces independently, eliminating per-renderer
+# transformations that had no enforcement. This is the same fix as the shared-function
+# ruling: one definition, consumers that cannot diverge.
+_DISCLAIMER = f"> **Disclaimer:** {RESEARCH_USE_DISCLAIMER}\n>\n> {ISO_RESEARCH_ELEMENT}"
 
 # Governance control (round 30 part 2): a one-line review-status banner,
 # sourced from `geper_results.json`'s own `review_status` field (see
@@ -1093,7 +1086,7 @@ class ReportGenerator:
         lines.append("### 15. Limitations")
         lines.append("")
         for lim in clinical_report.get("limitations") or []:
-            lines.append(f"- {lim.replace(chr(10) + chr(10), chr(10) + '  ' + chr(10) + '  ')}")
+            lines.append(f"- {lim}")
         lines.append("")
 
         lines.append("### 16. References")

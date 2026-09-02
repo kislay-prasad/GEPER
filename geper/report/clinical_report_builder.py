@@ -156,11 +156,14 @@ RESEARCH_USE_DISCLAIMER = (
     "prioritisation system that assists qualified clinicians and pathologists. It produces a "
     "draft classification requiring qualified human review and final sign-off before any "
     "clinical use. It does not independently provide final clinical interpretation. It is not "
-    "a substitute for professional clinical genetic interpretation, diagnosis, or advice.\n\n"
+    "a substitute for professional clinical genetic interpretation, diagnosis, or advice."
+)
+
+ISO_RESEARCH_ELEMENT = (
     "Bij AI is undertaken as part of a research and development programme for which no specific "
     "claims on measurement performance are available."
 )
-# This second paragraph uses ISO 15189:2022 7.4.1.6 i)'s exact wording
+# This paragraph uses ISO 15189:2022 7.4.1.6 i)'s exact wording
 # ("research or development programme" + "no specific claims on measurement performance are
 # available") deliberately, not paraphrased. The standard recognises this category; inventing
 # our own phrasing would require an assessor to evaluate our prose rather than recognise a
@@ -299,7 +302,9 @@ _TOOL_LIMITATIONS = (
     # and the PDF's own closing text drifted into contradicting each
     # other. Appearing both per finding and once at the end is
     # placement, not duplication.
+    # ISO statement split to separate element per design ruling 2026-09-03.
     RESEARCH_USE_DISCLAIMER,
+    ISO_RESEARCH_ELEMENT,
     ACMG_METHODOLOGY_STATEMENT,
     "Protein-residue positions used for domain (InterPro/Pfam) and structural (AlphaFold DB) "
     "overlap checks are transcript-verified (computed from the variant's real, strand- and "

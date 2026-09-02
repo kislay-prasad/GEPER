@@ -398,78 +398,54 @@ class TestJsonRunLevelCaveatsBlock(unittest.TestCase):
 
 
 class TestShortPdfDisclaimerParagraphBreak(unittest.TestCase):
-    """ISO 7.4.1.6 i) adds a second paragraph to RESEARCH_USE_DISCLAIMER
-    separated by \\n\\n. ReportLab's Paragraph class collapses literal \\n\\n,
-    so summary_short.py:638 must replace it with <br/><br/> tags.
+    """Design ruling 2026-09-03: ISO statement is now a separate element.
+    Each renderer composes two pieces independently. This test verifies that
+    both paragraphs render correctly as separate Paragraph objects."""
 
-    This test CALLS THE ACTUAL summary_short module to build the signoff
-    block, finds the disclaimer Paragraph in the returned flowable list,
-    and asserts that it renders with a paragraph break (multiple lines),
-    not collapsed into one. Without the fix, ReportLab collapses the \\n\\n
-    and the ISO paragraph runs on from "diagnosis, or advice." with no
-    visual break.
-
-    This test FAILS if summary_short.py:638 is reverted, because it
-    measures what the PRODUCT actually produced, not a simulation."""
-
-    def test_short_pdf_builds_disclaimer_with_paragraph_break(self):
-        # Import the actual module to call its real functions
+    def test_short_pdf_builds_disclaimer_with_separate_iso_element(self):
         from reportlab.platypus import Paragraph
         from report.summary_short import _build_signoff_block, _build_short_stylesheet
-        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
         from report.summary_short import _DISCLAIMER_LABEL
-        from reportlab.lib.units import mm
 
         styles = _build_short_stylesheet()
         flowables = _build_signoff_block(styles)
 
-        # Find the disclaimer Paragraph in the returned flowable list
-        disclaimer_paragraph = None
+        # Find both disclaimer paragraphs in the returned flowable list
+        first_para = None
+        iso_para = None
         for flowable in flowables:
             if isinstance(flowable, Paragraph):
-                # Check that this is the disclaimer (contains the ISO text)
-                if "research and development programme" in flowable.text.lower():
-                    disclaimer_paragraph = flowable
-                    break
+                if _DISCLAIMER_LABEL in flowable.text and "research pipeline" in flowable.text.lower():
+                    first_para = flowable
+                elif "research and development programme" in flowable.text.lower():
+                    iso_para = flowable
 
         self.assertIsNotNone(
-            disclaimer_paragraph,
-            "summary_short._build_signoff_block() did not return a Paragraph containing the disclaimer text",
+            first_para,
+            "summary_short._build_signoff_block() did not return a Paragraph with the first disclaimer paragraph",
+        )
+        self.assertIsNotNone(
+            iso_para,
+            "summary_short._build_signoff_block() did not return a Paragraph with the ISO statement",
         )
 
-        # Create a comparison: measure lines with and without the fix
-        # to prove the test actually detects the defect.
-        width = (210 - 20) * mm
+        # Verify both paragraphs render without line collapse
+        width = 170
+        first_para.wrap(width, 10000)
+        iso_para.wrap(width, 10000)
+        first_lines = len(first_para.blPara.lines) if hasattr(first_para, "blPara") else 0
+        iso_lines = len(iso_para.blPara.lines) if hasattr(iso_para, "blPara") else 0
 
-        # With the fix (what summary_short.py:639 now does)
-        text_with_fix = _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>")
-        para_with_fix = Paragraph(text_with_fix, styles["Footnote"])
-        para_with_fix.wrap(width, 10000)
-        lines_with_fix = len(para_with_fix.blPara.lines)
-
-        # Without the fix (what it would be if we reverted summary_short.py:639)
-        text_without_fix = _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER
-        para_without_fix = Paragraph(text_without_fix, styles["Footnote"])
-        para_without_fix.wrap(width, 10000)
-        lines_without_fix = len(para_without_fix.blPara.lines)
-
-        # The fix MUST create additional lines by converting \n\n to <br/><br/>,
-        # which ReportLab then renders as actual line breaks.
+        # Both must render and neither should be collapsed into zero lines
         self.assertGreater(
-            lines_with_fix,
-            lines_without_fix,
-            f"With fix: {lines_with_fix} lines, Without fix: {lines_without_fix} lines. "
-            f"The <br/><br/> replacement must create additional rendered lines.",
+            first_lines,
+            0,
+            f"First paragraph rendered {first_lines} lines (should be > 0)",
         )
-
-        # Also verify the actual rendered paragraph from the module has the fix applied
-        disclaimer_paragraph.wrap(width, 10000)
-        actual_lines = len(disclaimer_paragraph.blPara.lines)
-        self.assertEqual(
-            actual_lines,
-            lines_with_fix,
-            f"summary_short._build_signoff_block() created {actual_lines} lines, "
-            f"but expected {lines_with_fix} (with fix). The fix may not be applied.",
+        self.assertGreater(
+            iso_lines,
+            0,
+            f"ISO paragraph rendered {iso_lines} lines (should be > 0)",
         )
 
 
@@ -577,35 +553,32 @@ class TestMarkdownLimitationsListItemSurvivesIsoNewlines(unittest.TestCase):
     This test FAILS without the fix (blank line is unindented, ends list).
     """
 
-    def test_markdown_limitations_list_item_spans_iso_paragraph(self):
-        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER
+    def test_markdown_limitations_list_item_renders_both_pieces(self):
+        from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER, ISO_RESEARCH_ELEMENT
 
-        # Raw Markdown (no fix)
-        lim = RESEARCH_USE_DISCLAIMER
-        lines_raw = f"- {lim}".split("\n")
+        # Design ruling 2026-09-03: ISO statement is now a separate element.
+        # It no longer contains \\n\\n, so each piece is self-contained.
+        # Verify both pieces render correctly when placed in limitations list.
 
-        # Find blank line position
-        blank_pos = next((i for i, line in enumerate(lines_raw) if line.strip() == ""), None)
-        self.assertIsNotNone(blank_pos, "Expected \\n\\n in RESEARCH_USE_DISCLAIMER")
+        # RESEARCH_USE_DISCLAIMER should have no embedded \\n\\n
+        self.assertNotIn(
+            "\n\n", RESEARCH_USE_DISCLAIMER, "RESEARCH_USE_DISCLAIMER should not have embedded paragraph break"
+        )
 
-        # Check that blank line has NO indentation (the defect)
-        self.assertEqual(lines_raw[blank_pos], "", "Blank line in raw should have no indentation")
+        # ISO_RESEARCH_ELEMENT should render as a separate list item
+        self.assertIn(
+            "research and development programme",
+            ISO_RESEARCH_ELEMENT,
+            "ISO_RESEARCH_ELEMENT should contain the ISO statement",
+        )
 
-        # With fix - indent continuation
-        lim_fixed = lim.replace(chr(10) + chr(10), chr(10) + "  " + chr(10) + "  ")
-        lines_fixed = f"- {lim_fixed}".split("\n")
+        # Verify both can be rendered as list items without structural issues
+        first_item = f"- {RESEARCH_USE_DISCLAIMER}"
+        iso_item = f"- {ISO_RESEARCH_ELEMENT}"
 
-        # Find blank line in fixed version
-        blank_pos_fixed = next((i for i, line in enumerate(lines_fixed) if line.strip() == ""), None)
-        self.assertIsNotNone(blank_pos_fixed, "Expected \\n\\n in fixed version")
-
-        # Check that blank line now HAS indentation (the fix)
-        self.assertEqual(lines_fixed[blank_pos_fixed], "  ", "Blank line should be indented with 2 spaces")
-
-        # Verify the text content is identical (only spacing differs)
-        raw_content = " ".join(line.strip() for line in lines_raw if line.strip())
-        fixed_content = " ".join(line.strip() for line in lines_fixed if line.strip())
-        self.assertEqual(raw_content, fixed_content, "Content must be identical, only structure changes")
+        # Neither should have an internal blank line that breaks the list structure
+        self.assertNotIn("\n\n", first_item, "First item should not have blank lines")
+        self.assertNotIn("\n\n", iso_item, "ISO item should not have blank lines")
 
 
 class TestDiscriminatingMarkdownConsumers(unittest.TestCase):

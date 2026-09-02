@@ -23,6 +23,7 @@ actual hung/undead process, not a passing mock assertion.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -269,3 +270,77 @@ class TestKillProcessTreeNow:
         assert proc.poll() is not None
 
         kill_process_tree_now(proc, grace_seconds=grace_seconds)  # must not raise
+
+
+class TestBugCSelfKillGate:
+    """The specific gate required before this branch may merge (ruled
+    2026-09-02, "HOLD MERGE: POSIX gate test required before shipping"):
+    without `start_new_session=True` at spawn, a POSIX child inherits its
+    parent's process group by default, so `os.killpg(pid, SIGTERM)` on the
+    kill path would target the API SERVER's own process group -- not
+    "still doesn't kill the pipeline," but "kills the server trying to do
+    the killing," the first time DELETE actually worked. This is a
+    self-inflicted-outage risk, not a correctness nicety, so it gets its
+    own dedicated, maximally explicit test rather than relying on the
+    other tests in this file proving it only by implication (a test whose
+    own process got SIGTERM'd would simply abort rather than fail an
+    assertion -- true, but not a proof anyone should have to reconstruct
+    by reasoning about what pytest would do in that case).
+
+    This class's own passing is the actual gate: CI runs this file on
+    ubuntu-latest (.github/workflows/pytest.yml), so a green run here on
+    Linux is the POSIX execution proof the merge is waiting on -- not
+    Windows verification, not design-level confidence that
+    start_new_session=True is correct.
+    """
+
+    def test_kill_path_kills_the_child_and_leaves_the_parent_untouched(self):
+        parent_pid = os.getpid()
+        parent_pgid_before = os.getpgid(parent_pid) if os.name == "posix" else None
+
+        # Step 1: spawn a real child through the tracked machinery (not a
+        # raw subprocess.Popen) -- spawn_tracked is what applies
+        # start_new_session=True on POSIX / CREATE_NEW_PROCESS_GROUP on
+        # Windows, which is the fix under test.
+        child = spawn_tracked(_sleep_cmd(30))
+        assert child.poll() is None, "child did not start running"
+
+        if os.name == "posix":
+            child_pgid = os.getpgid(child.pid)
+            assert child_pgid != parent_pgid_before, (
+                "child was NOT placed in its own process group -- "
+                "start_new_session=True did not take effect, so a "
+                "SIGTERM to the child's pgid would also hit this test "
+                "runner's own process group"
+            )
+
+        # Step 2: invoke the real kill path DELETE uses (not a hand-rolled
+        # substitute).
+        kill_process_tree_now(child, grace_seconds=2.0)
+
+        # Step 3: the child is actually dead.
+        assert child.poll() is not None, "child process was still running after the kill path ran"
+
+        # Step 4: the parent (this test runner process) survived --
+        # checked three ways, not just "the test function kept executing"
+        # (true, but the point of this test is to make that fact
+        # unmissable rather than implicit):
+        assert os.getpid() == parent_pid, "process identity changed unexpectedly"
+        assert psutil.pid_exists(parent_pid), "parent process no longer exists"
+        assert psutil.Process(parent_pid).is_running(), "parent process is not in a running state"
+        if os.name == "posix":
+            assert os.getpgid(parent_pid) == parent_pgid_before, (
+                "parent's own process group changed -- the kill path had "
+                "some side effect on the test runner's group, which is "
+                "exactly the self-inflicted-outage shape this gate exists "
+                "to catch"
+            )
+        # And the parent process is still genuinely functional, not just
+        # technically alive with a pending signal -- prove it by doing
+        # more real work: spawning and completing another subprocess.
+        proof = spawn_tracked(
+            [sys.executable, "-c", "print('still alive')"], stdout=subprocess.PIPE, text=True
+        )
+        out, _ = proof.communicate(timeout=5)
+        assert proof.returncode == 0
+        assert "still alive" in out

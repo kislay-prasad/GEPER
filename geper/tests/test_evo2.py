@@ -96,9 +96,30 @@ class TestEvo2LoadImpl(unittest.TestCase):
 
     def test_load_impl_raises_when_package_install_fails(self):
         model = Evo2Model.__new__(Evo2Model)
+        # RESTORED 2026-09-02: CI evidence, not the removal sweep's
+        # per-package model, is why this mock is back. This exact test
+        # FAILED in CI after the 2026-08-31 deletion below --
+        # `ModuleNotFoundError: No module named flash_attn_2_cuda`. This
+        # is NOT a PackageCheckStatus mismatch: `evo2` IS pinned in
+        # requirements.txt and genuinely importable on CI, so
+        # check_pip_package_availability("evo2") really does return
+        # PRESENT there -- the code proceeds past the early-raise
+        # guards below to the real `from evo2 import Evo2` (models/
+        # evo2.py:181), which constructs the package's own C extension
+        # and raises a raw, unwrapped ModuleNotFoundError when
+        # flash_attn_2_cuda (a compiled CUDA extension evo2 needs
+        # internally) isn't buildable on CI's hardware -- an exception
+        # this test's assertRaises(ModelLoadError) does not match.
+        # Mocking check_pip_package_availability to ABSENT forces
+        # _load_impl to take its own clean, wrapped early-raise path
+        # (models/evo2.py:172-179) instead of reaching the real import
+        # that blows up unwrapped. Its removal was proven safe only
+        # against a sandbox where nobody had exercised evo2's actual
+        # C-extension build path.
         with (
             mock.patch("torch.cuda.is_available", return_value=True),
             mock.patch("models.evo2.get_cuda_compute_capability", return_value=(8, 0)),
+            mock.patch("models.evo2.check_pip_package_availability", return_value=PackageCheckStatus.ABSENT),
         ):
             with self.assertRaises(ModelLoadError):
                 model._load_impl()

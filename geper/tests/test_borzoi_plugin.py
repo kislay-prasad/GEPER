@@ -353,18 +353,21 @@ class TestBorzoiMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_BORZOI", BorzoiPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_package_installed(self):
-        # Sweep 2026-08-31 (decorative-mock fix): the
-        # ensure_pip_package_available mock this comment used to
-        # describe was deleted -- it patched a return_value (True) that
-        # is exactly what the real, unpatched call returns in every
-        # environment where borzoi_pytorch is genuinely importable
-        # (check_pip_package_availability short-circuits via
-        # importlib.util.find_spec before any subprocess/pip call, so
-        # this never risks the real unconstrained `pip install`
-        # 47748b6's comment warned about -- confirmed by reading that
-        # function before deleting this mock). The mock was decorative:
-        # this test passed identically with it removed.
-        with mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config:
+        # RESTORED 2026-09-02: CI evidence, not the removal sweep's
+        # per-package model, is why this mock is back. This exact test
+        # FAILED in CI after the 2026-08-31 deletion below --
+        # `AssertionError: False is not true` -- because CI has no
+        # warm cache: borzoi-pytorch is not pinned in requirements.txt
+        # (deliberate omission, see that file), so on a fresh checkout
+        # ensure_pip_package_available("borzoi-pytorch", ...) genuinely
+        # returns False there, where this sandbox's cached install made
+        # it return True. The mock is required in an environment where
+        # the package is absent, and its removal was proven safe only
+        # against a warm cache CI does not have.
+        with (
+            mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+        ):
             mock_config.splicing.ENABLE_BORZOI = True
             self.assertTrue(BorzoiPlugin.is_available())
 

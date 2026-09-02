@@ -97,7 +97,14 @@ def conn():
     psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
     if not DSN:
         pytest.skip("CLINICAL_TEST_DSN not set")
-    connection = psycopg.connect(DSN, autocommit=True)
+    # connect_timeout is not tuning. Without it, a DSN pointing at nothing
+    # makes this fixture BLOCK rather than raise -- measured: the run hung past
+    # two minutes against a closed port. In CI that is a job that sits until the
+    # workflow timeout and reports neither pass nor fail, which is the same
+    # silent non-result the fail-not-skip guard exists to prevent. Ten seconds
+    # is long enough for a service container that is still starting and short
+    # enough that "the database is not there" arrives as an error.
+    connection = psycopg.connect(DSN, autocommit=True, connect_timeout=10)
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         cur.execute("DO $$ BEGIN CREATE ROLE clinical_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$;")

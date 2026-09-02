@@ -97,6 +97,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install tabix
+        run: sudo apt-get update && sudo apt-get install -y tabix
+
       # Fails loudly if the CUDA stack came back -- the pins above drifting
       # from requirements.txt is the expected way for that to happen, and it
       # would otherwise show up as an intermittent out-of-disk error whose
@@ -110,20 +113,45 @@ jobs:
           fi
           python -c "import torch; print('torch', torch.__version__, '| cuda build:', torch.version.cuda)"
 
-      # WHAT CI DOES NOT COVER: this workflow never sets GEPER_CACHE_DIR
-      # (or GEPER_PLUGIN_CACHE_DIR) and never downloads any plugin
-      # checkpoint, so CONFIG.splicing.PLUGIN_CACHE_DIR falls back to its
-      # "./plugin_model_cache" default (config.py), which is always empty
-      # on a fresh checkout. tests/test_splicebert_loader_live.py's real-
-      # checkpoint regression test
-      # (TestSpliceBertLoaderDoesNotHang) is unittest.skipUnless-gated on
-      # config.json + pytorch_model.bin already existing under that path,
-      # so it SKIPS on every CI run -- pytest reports it green, not
-      # absent, and no run of this workflow has ever exercised the real
-      # SpliceBERT checkpoint load. Whether to set GEPER_CACHE_DIR or add
-      # a download step here (cost: a ~208MB Zenodo archive, real model
-      # weights loaded on every run) is a human decision; this comment
-      # only documents the current gap.
+      # WHAT CI DOES NOT COVER:
+      #
+      # 1. Optional integration tests (opt-in markers):
+      #    - real_pip: tests that shell out to real `pip install/uninstall`.
+      #      Excluded by addopts in pytest.ini because running against a
+      #      shared interpreter risks collision/removal. ~20 tests deselected.
+      #    - live_network: tests that make real HTTP calls to third-party APIs
+      #      (Ensembl REST, etc.). Excluded because infrastructure outages are
+      #      indistinguishable from regressions. ~9 tests deselected.
+      #    Both require explicit `-m real_pip` / `-m live_network` to run.
+      #
+      # 2. Heavy optional model packages (unittest.skipUnless-gated):
+      #    - enformer-pytorch: ~12 tests. Enformer inference, load, and
+      #      device-placement tests are skipped when not installed.
+      #    - borzoi-pytorch: involved in ~3 integration tests (both enformer
+      #      and borzoi must be present for these to run).
+      #    - spliceformer: ~1 integration test (requires enformer/borzoi).
+      #    - evo2: inference and configuration tests skip if not installed
+      #      (used in variant effect prediction pipelines).
+      #    Total: approximately 22 tests skip due to absent model packages.
+      #
+      # 3. SpliceBERT checkpoint cache:
+      #    This workflow never sets GEPER_CACHE_DIR (or
+      #    GEPER_PLUGIN_CACHE_DIR), so CONFIG.splicing.PLUGIN_CACHE_DIR
+      #    falls back to "./plugin_model_cache" (config.py), which is always
+      #    empty on a fresh checkout. tests/test_splicebert_loader_live.py's
+      #    real-checkpoint regression test (TestSpliceBertLoaderDoesNotHang) is
+      #    unittest.skipUnless-gated on config.json + pytorch_model.bin
+      #    existing under that path, so it SKIPS on every CI run -- pytest
+      #    reports it green, not absent. Whether to set GEPER_CACHE_DIR or add
+      #    a download step (cost: ~208MB Zenodo archive, real weights loaded
+      #    every run) is a human decision; this comment documents the current
+      #    gap.
+      #
+      # Summary: a passing CI run means GEPER's logic handles expected inputs
+      # correctly; model inference, device placement, real-network calls, and
+      # package-management safety are NOT exercised. To validate those, run
+      # tests locally with model packages installed, or explicitly via
+      # `pytest -m live_network` or `pytest -m real_pip`.
       - name: Run pytest
         run: python -m pytest tests/ -v
 

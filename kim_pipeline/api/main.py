@@ -401,21 +401,51 @@ async def ready() -> Dict:
 # ─── Config endpoint ──────────────────────────────────────────────────────────
 
 
+# The original (pre-fix) version of this redaction only inspected keys one
+# level inside a dict-valued top-level section. That depth-1 assumption was
+# never a deliberate security boundary -- it happened to work only because
+# every top-level key in config/default.yaml is itself a dict (clinvar,
+# gnomad, api, vep, ...), so nobody noticed it was depth-limited rather than
+# recursive. A design choice implied by one file's shape became an implicit
+# contract for a different API surface (redaction depth) that nobody
+# actually reviewed. Fixed to recurse to any depth (see _redact_secrets).
+#
+# CARD (not fixed here -- ticket owed, see hive dispatch 2026-09-02
+# RULING: Split 500-leak and config-redaction commits): this is still a
+# name-based DENYLIST, not an allowlist. A secret-named key that doesn't
+# contain "key"/"token"/"secret"/"password" leaks in full. Confirmed
+# leaking as of this fix: auth_credential, oauth_bearer, private_cert.
+# Preferred long-term fix (per god's ruling) is to invert the model:
+# config sections/keys become opt-in for EXPOSURE rather than opt-out for
+# redaction (default-deny beats default-allow for anything that might be a
+# credential). That is a larger change (requires enumerating every field
+# genuinely safe to expose across every existing config section) and is
+# deliberately out of scope for this commit.
+_SECRET_KEY_WORDS = ("key", "token", "secret", "password")
+
+
+def _redact_secrets(cfg: Dict) -> Dict:
+    """Recursively redact keys that look like secrets, at any nesting depth.
+
+    KNOWN GAP: denylist by keyword substring, not an allowlist -- see the
+    module-level comment above _SECRET_KEY_WORDS for what still leaks and
+    why (auth_credential, oauth_bearer, private_cert are not caught).
+    """
+    redacted: Dict = {}
+    for k, v in cfg.items():
+        if isinstance(v, dict):
+            redacted[k] = _redact_secrets(v)
+        elif any(word in k.lower() for word in _SECRET_KEY_WORDS):
+            redacted[k] = "***REDACTED***"
+        else:
+            redacted[k] = v
+    return redacted
+
+
 @app.get("/api/v1/config", tags=["config"], summary="Return active configuration")
 async def get_config(_auth: None = Depends(_require_api_key)) -> Dict:
     """Return the active pipeline configuration with sensitive keys redacted."""
-    safe_cfg = {}
-    for k, v in _PIPELINE_CONFIG.items():
-        if isinstance(v, dict):
-            # Redact keys that look like secrets
-            safe_cfg[k] = {
-                sk: "***REDACTED***"
-                if any(word in sk.lower() for word in ("key", "token", "secret", "password"))
-                else sv
-                for sk, sv in v.items()
-            }
-        else:
-            safe_cfg[k] = v
+    safe_cfg = _redact_secrets(_PIPELINE_CONFIG)
     return {
         "config": safe_cfg,
         "config_path": _CONFIG_PATH,

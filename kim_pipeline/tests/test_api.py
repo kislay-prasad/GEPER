@@ -134,6 +134,88 @@ class TestConfig:
         assert "upload_dir" in r.json()
 
 
+class TestConfigRedactionAppliesAtAllLevels:
+    """Redaction must catch secret-named keys regardless of nesting depth.
+
+    The redaction logic only ever inspected keys one level inside a
+    dict-valued top-level section. A secret-named key at the top level
+    (not nested in any section) or nested two levels deep sailed through
+    verbatim.
+    """
+
+    def test_top_level_scalar_secret_is_redacted(self, client, monkeypatch):
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {"db_password": "REAL-SECRET-TOP-LEVEL"},
+        )
+        r = client.get("/api/v1/config")
+        raw = json.dumps(r.json())
+        assert "REAL-SECRET-TOP-LEVEL" not in raw
+        assert r.json()["config"]["db_password"] == "***REDACTED***"
+
+    def test_two_levels_deep_secret_is_redacted(self, client, monkeypatch):
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {"nested": {"deeper": {"api_key": "REAL-SECRET-NESTED"}}},
+        )
+        r = client.get("/api/v1/config")
+        raw = json.dumps(r.json())
+        assert "REAL-SECRET-NESTED" not in raw
+        assert r.json()["config"]["nested"]["deeper"]["api_key"] == "***REDACTED***"
+
+    def test_one_level_deep_secret_still_redacted(self, client, monkeypatch):
+        """Guard against regressing the existing one-level redaction."""
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {"clinvar": {"enabled": True, "ncbi_api_key": "REAL-SECRET-ONE-LEVEL"}},
+        )
+        r = client.get("/api/v1/config")
+        raw = json.dumps(r.json())
+        assert "REAL-SECRET-ONE-LEVEL" not in raw
+        assert r.json()["config"]["clinvar"]["ncbi_api_key"] == "***REDACTED***"
+        assert r.json()["config"]["clinvar"]["enabled"] is True
+
+    def test_KNOWN_GAP_non_matching_secret_names_still_leak(self, client, monkeypatch):
+        """Documents an open gap -- CARDED, not fixed by the recursive-only fix.
+
+        _redact_secrets() is a keyword denylist ("key"/"token"/"secret"/
+        "password"). A secret-named key that doesn't contain one of those
+        words leaks in full, at any nesting depth. This test pins today's
+        (still-leaking) behavior on purpose so it fails loudly -- forcing an
+        update -- the day the allowlist inversion lands, instead of silently
+        going stale. See the module comment above _SECRET_KEY_WORDS in
+        api/main.py.
+        """
+        import api.main as main_mod
+
+        monkeypatch.setattr(
+            main_mod,
+            "_PIPELINE_CONFIG",
+            {
+                "auth_credential": "REAL-SECRET-AUTH-CRED",
+                "oauth_bearer": "REAL-SECRET-OAUTH",
+                "clinvar": {"private_cert": "REAL-SECRET-CERT"},
+            },
+        )
+        r = client.get("/api/v1/config")
+        cfg = r.json()["config"]
+        # KNOWN GAP: these SHOULD be redacted and are NOT. If this assertion
+        # starts failing, the gap has been fixed -- update this test to
+        # assert redaction instead of deleting it.
+        assert cfg["auth_credential"] == "REAL-SECRET-AUTH-CRED"
+        assert cfg["oauth_bearer"] == "REAL-SECRET-OAUTH"
+        assert cfg["clinvar"]["private_cert"] == "REAL-SECRET-CERT"
+
+
 # ─── Upload endpoints ─────────────────────────────────────────────────────────
 
 

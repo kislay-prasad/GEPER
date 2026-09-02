@@ -156,8 +156,16 @@ RESEARCH_USE_DISCLAIMER = (
     "prioritisation system that assists qualified clinicians and pathologists. It produces a "
     "draft classification requiring qualified human review and final sign-off before any "
     "clinical use. It does not independently provide final clinical interpretation. It is not "
-    "a substitute for professional clinical genetic interpretation, diagnosis, or advice."
+    "a substitute for professional clinical genetic interpretation, diagnosis, or advice.\n\n"
+    "Bij AI is undertaken as part of a research and development programme for which no specific "
+    "claims on measurement performance are available."
 )
+# This second paragraph uses ISO 15189:2022 7.4.1.6 i)'s exact wording
+# ("research or development programme" + "no specific claims on measurement performance are
+# available") deliberately, not paraphrased. The standard recognises this category; inventing
+# our own phrasing would require an assessor to evaluate our prose rather than recognise a
+# defined slot. Do not paraphrase this text or harmonise it with other disclaimers -- the ISO
+# language is the point.
 
 # The same positioning claim as `RESEARCH_USE_DISCLAIMER` above, in the
 # short form a document can lead with. NOT an independent statement --

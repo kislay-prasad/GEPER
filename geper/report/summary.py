@@ -2286,7 +2286,10 @@ def _build_signoff_block(styles: Dict[str, ParagraphStyle]) -> List[Any]:
             ]
         ),
         Spacer(1, 8 * mm),
-        Paragraph(_DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER, styles["Disclaimer"]),
+        Paragraph(
+            _DISCLAIMER_LABEL + RESEARCH_USE_DISCLAIMER.replace("\n\n", "<br/><br/>"),
+            styles["Disclaimer"],
+        ),
     ]
 
 

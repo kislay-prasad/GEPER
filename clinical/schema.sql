@@ -368,7 +368,8 @@ CREATE TABLE samples (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
     CONSTRAINT samples_order_fk
-        FOREIGN KEY (order_id, org_id) REFERENCES orders (order_id, org_id)
+        FOREIGN KEY (order_id, org_id) REFERENCES orders (order_id, org_id),
+    CONSTRAINT samples_org_sample_unique UNIQUE (org_id, sample_id)
 );
 
 CREATE INDEX samples_order ON samples (org_id, order_id);
@@ -386,7 +387,8 @@ CREATE TABLE sequencing_runs (
     CONSTRAINT fk_sequ_run_sample
         FOREIGN KEY (org_id, sample_id) REFERENCES samples (org_id, sample_id),
     CONSTRAINT fk_sequ_run_creator
-        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_sequ_run_org_id UNIQUE (org_id, id)
 );
 
 CREATE INDEX idx_sequ_runs_org_sample ON sequencing_runs (org_id, sample_id);
@@ -404,7 +406,8 @@ CREATE TABLE vcfs (
     CONSTRAINT fk_vcf_sequ_run
         FOREIGN KEY (org_id, sequencing_run_id) REFERENCES sequencing_runs (org_id, id),
     CONSTRAINT fk_vcf_creator
-        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_vcf_org_id UNIQUE (org_id, id)
 );
 
 CREATE INDEX idx_vcfs_org_sequ_run ON vcfs (org_id, sequencing_run_id);
@@ -423,7 +426,8 @@ CREATE TABLE interpretations (
         FOREIGN KEY (org_id, vcf_id) REFERENCES vcfs (org_id, id),
     CONSTRAINT fk_interp_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
-    CONSTRAINT uk_interp_submission UNIQUE (org_id, submission_key)
+    CONSTRAINT uk_interp_submission UNIQUE (org_id, submission_key),
+    CONSTRAINT uk_interp_org_id UNIQUE (org_id, id)
 );
 
 CREATE INDEX idx_interp_org_vcf ON interpretations (org_id, vcf_id);

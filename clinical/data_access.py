@@ -3713,16 +3713,103 @@ class DataAccess:
     #     before handing content to a consumer; it is the structural
     #     enforcement, not a convention documented in a docstring.
     #
-    # NOT in this section, and not an oversight: nothing here transitions a
-    # report from 'draft' to 'under_review'. No method anywhere in this file
-    # does -- there is no submit-for-review action yet. _approve_report
-    # therefore only ever accepts a report already in 'under_review', which
-    # today can only be reached by a test or an operator writing the state
-    # directly. That gap is real and is reported alongside this commit rather
-    # than closed here: adding a fourth method to backfill it would be
-    # deciding the missing transition's shape (who may submit, what
-    # precondition it enforces) unasked, which is a different-sized decision
-    # than "implement the three methods this commit was scoped for".
+    # The draft -> under_review transition that this section originally lacked
+    # is now submit_for_review below (commit 4). Until it existed,
+    # _approve_report's 'under_review' precondition could only be satisfied by
+    # a test or an operator writing the state directly; that gap was reported
+    # rather than backfilled, because deciding who may submit and under what
+    # precondition was a different-sized decision than commit 3's three
+    # methods. It has since been decided, and submit_for_review is where it
+    # lives.
+
+    @auditable(
+        action="report_submitted_for_review",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="report enters review (spec 13.1: draft -> under_review)",
+    )
+    @transactional
+    def submit_for_review(self, session: Session, report_id: uuid.UUID) -> None:
+        """
+        Submit a draft report for review: draft -> under_review (spec 13.1).
+
+        The workflow entry point. _approve_report accepts only 'under_review',
+        so without this method no report could legitimately reach approval at
+        all -- this is the transition that makes the rest of the state machine
+        reachable rather than an operator writing `state` by hand.
+
+        Three preconditions, each refusing rather than silently proceeding:
+
+        1. THE INTERPRETER ROLE, on the session invoking this. Reading a draft
+           and adding the clinical interpretation is the Interpreter's work, so
+           declaring that work finished is theirs. The Approver role is
+           deliberately not accepted as a substitute: approving is the
+           downstream check on this submission, and letting one identity do
+           both without holding both roles would collapse the two-person
+           control spec 13.3 rests on.
+
+           Unlike _approve_report, this method takes no separate actor_id and
+           so needs no second per-actor role check: there is no identity
+           recorded here for anything downstream to read as an authority
+           claim. The session gate is the whole of it.
+
+        2. THE REPORT IS IN 'draft'. Any other state is refused with the state
+           it actually found named in the message -- including 'under_review'
+           itself, so a double submission is a refusal rather than a silent
+           no-op that would leave a caller believing it had just submitted.
+
+        3. AT LEAST ONE REVIEWER CLAIM against the report's interpretation.
+           This is the substantive one. Zero claims means no review happened,
+           and submitting then would put raw engine output into the approval
+           queue with a human's submission standing behind it. The claim is
+           checked against THIS report's interpretation and within THIS org:
+           another interpretation's review, or another organisation's, is not
+           this report's review.
+
+           This precondition is what makes the explicit 'accept' claim
+           load-bearing rather than ceremonial. A reviewer who agrees with
+           every call still leaves rows, so "I read it and concurred" and "I
+           never looked" stop being indistinguishable in the record -- which
+           is the whole reason spec 13.2 made accept an action rather than the
+           absence of one.
+
+        Writes nothing but `state`. approver_id, approved_at and content_hash
+        stay NULL: submission is not approval, and the schema's
+        reports_approval_complete CHECK holds precisely because this method
+        does not touch them.
+        """
+        self._require_role(session, "Interpreter")
+
+        report = self._query_one(
+            "SELECT interpretation_id, state FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        interpretation_id, state = report
+
+        if state != "draft":
+            raise ValueError(
+                f"Report is in '{state}' state, cannot submit for review -- spec 13.1: only a draft may be submitted."
+            )
+
+        claim = self._query_one(
+            "SELECT 1 FROM reviewer_claims WHERE org_id = %s AND interpretation_id = %s LIMIT 1",
+            (session.org_id, interpretation_id),
+        )
+        if claim is None:
+            raise ValueError(
+                f"Report {report_id} has no reviewer claim against its interpretation and "
+                "cannot be submitted for review: submitting with zero claims would present "
+                "unreviewed engine output as reviewed. Record at least one claim first "
+                "(spec 13.2) -- an explicit 'accept' counts, and is the point of it."
+            )
+
+        self._execute(
+            "UPDATE reports SET state = 'under_review' WHERE org_id = %s AND id = %s",
+            (session.org_id, report_id),
+        )
 
     @auditable(
         action="report_approved",

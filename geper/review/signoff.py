@@ -202,7 +202,7 @@ def _require_results(output_dir: str) -> str:
     return results_path
 
 
-def require_reviewed(document: Dict[str, Any], consumer: str = "This system") -> None:
+def require_reviewed(document: Dict[str, Any], consumer: str = "This system", output_dir: Optional[str] = None) -> None:
     """
     The general gate: raises `SignoffError` unless
     `document["review_status"] == "reviewed"`. Extracted (2026-08-22)
@@ -226,6 +226,11 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system") ->
     state. Export refuses and audit entry records mismatch for
     investigation.
 
+    When `output_dir` is provided, audit entries distinguish verification paths:
+    - 'content_verified': hash present and matches (new Phase 6 reports)
+    - 'content_not_verified_no_hash_predates_phase_6': hash absent (pre-Phase 6 reports)
+    Both paths allow export (backward compatibility), but audit trail is clear.
+
     `"overridden"` is deliberately NOT treated as good enough -- same
     reasoning as `export_lims.py`'s original check: a run a clinician has
     changed since it was last (or ever) approved must stay blocked from
@@ -244,6 +249,8 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system") ->
     `consumer`: an optional name for the calling system, folded into the
     error message so a blocked caller's error is self-explanatory (e.g.
     "LIMS export refused" rather than a bare "refused").
+    `output_dir`: optional directory for audit log. If provided, verification
+    path is recorded in audit trail for compliance review.
     """
     status = document.get("review_status")
     if status != "reviewed":
@@ -254,16 +261,39 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system") ->
         )
 
     # Phase 6: Verify clinical content hash (ISO 15189 7.5 nonconformance detection)
-    # Only verify if hash is present (new reports approved with Phase 6 will have it)
+    # Distinguish between verified (hash present + matches) and not-verified (hash absent, predates Phase 6)
     stored_hash = document.get("content_hash")
-    if stored_hash and not verify_content_hash(document, stored_hash):
-        raise SignoffError(
-            f"{consumer} refused: content hash verification failed. Report's clinical content "
-            f"has changed since approval (ISO 15189 7.5 nonconformance). "
-            f"Stored hash: {stored_hash!r}. "
-            f"This indicates the approved report was modified after sign-off. "
-            f"A fresh approval (review/signoff.py::approve()) is required before export."
-        )
+    if stored_hash:
+        # Hash present: verify it matches
+        if not verify_content_hash(document, stored_hash):
+            raise SignoffError(
+                f"{consumer} refused: content hash verification failed. Report's clinical content "
+                f"has changed since approval (ISO 15189 7.5 nonconformance). "
+                f"Stored hash: {stored_hash!r}. "
+                f"This indicates the approved report was modified after sign-off. "
+                f"A fresh approval (review/signoff.py::approve()) is required before export."
+            )
+        # Hash verified - write audit entry if output_dir provided
+        if output_dir:
+            _append_audit_log(
+                output_dir,
+                {
+                    "action": "content_verified",
+                    "consumer": consumer,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+    else:
+        # Hash absent (pre-Phase 6 report) - allow export but audit distinction for compliance
+        if output_dir:
+            _append_audit_log(
+                output_dir,
+                {
+                    "action": "content_not_verified_no_hash_predates_phase_6",
+                    "consumer": consumer,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
 
 
 def _withdraw_manifest(output_dir: str, reason: str, actor: str) -> bool:

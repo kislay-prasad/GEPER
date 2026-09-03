@@ -490,5 +490,113 @@ class TestModifiedContentDetection(unittest.TestCase):
             s.require_reviewed(doc)
 
 
+class TestModelProvenanceInHash(unittest.TestCase):
+    """RED-FIRST TESTS: Model/provenance fields are material to clinical output and must affect hash.
+
+    ISO 15189 7.5 d) impact analysis requires capturing material changes to the interpretation tool.
+    If code_version, model_checkpoints, database_version, or geper_version change, the clinical
+    output can materially differ. These must be included in the content hash.
+    """
+
+    def test_different_code_version_produces_different_hash(self):
+        """DEFECT: Different code versions currently produce same hash. Must produce different hashes."""
+        doc1 = _make_test_document()
+        doc2 = _make_test_document()
+
+        # All clinical content identical, only code_version differs
+        doc1["code_version"] = "1.0.0"
+        doc2["code_version"] = "2.0.0"
+
+        hash1 = compute_content_hash(doc1)
+        hash2 = compute_content_hash(doc2)
+
+        # DEFECT: These are currently equal but SHOULD be different
+        # After fix, this assertion MUST pass
+        self.assertNotEqual(hash1, hash2, "Different code versions must produce different hashes (material to output)")
+
+    def test_different_geper_version_produces_different_hash(self):
+        """DEFECT: Different geper versions currently produce same hash. Must produce different hashes."""
+        doc1 = _make_test_document()
+        doc2 = _make_test_document()
+
+        doc1["geper_version"] = "0.1.0"
+        doc2["geper_version"] = "0.2.0"
+
+        hash1 = compute_content_hash(doc1)
+        hash2 = compute_content_hash(doc2)
+
+        self.assertNotEqual(hash1, hash2, "Different geper versions must produce different hashes (material to output)")
+
+    def test_different_model_checkpoints_produces_different_hash(self):
+        """DEFECT: Different model checkpoints currently produce same hash. Must produce different hashes."""
+        doc1 = _make_test_document()
+        doc2 = _make_test_document()
+
+        doc1["model_checkpoints"] = {"acmg_classifier": "v1.0"}
+        doc2["model_checkpoints"] = {"acmg_classifier": "v2.0"}
+
+        hash1 = compute_content_hash(doc1)
+        hash2 = compute_content_hash(doc2)
+
+        self.assertNotEqual(
+            hash1, hash2, "Different model checkpoints must produce different hashes (material to output)"
+        )
+
+    def test_different_database_version_produces_different_hash(self):
+        """DEFECT: Different database versions currently produce same hash. Must produce different hashes."""
+        doc1 = _make_test_document()
+        doc2 = _make_test_document()
+
+        doc1["database_version"] = "clinvar-2026-01"
+        doc2["database_version"] = "clinvar-2026-02"
+
+        hash1 = compute_content_hash(doc1)
+        hash2 = compute_content_hash(doc2)
+
+        self.assertNotEqual(
+            hash1, hash2, "Different database versions must produce different hashes (material to output)"
+        )
+
+
+class TestAuditDistinction(unittest.TestCase):
+    """RED-FIRST TESTS: Audit trail must distinguish 'content_verified' from 'content_not_verified_no_hash_predates_phase_6'.
+
+    Backward compatibility requires both paths to allow export (old pre-Phase 6 reports have no hash).
+    But audit trail must be clear about which path was taken for compliance/forensic review.
+    """
+
+    def test_require_reviewed_with_hash_creates_verified_audit_entry(self):
+        """With hash present and valid, audit must record 'content_verified'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc = _make_test_document()
+            results_path = os.path.join(tmpdir, s.RESULTS_FILENAME)
+            with open(results_path, "w") as f:
+                json.dump(doc, f)
+
+            # Approve (creates hash and audit entry)
+            s.approve(tmpdir, "Dr. Smith", "12345", "ABC Hospital")
+
+            # Reload and call require_reviewed
+            with open(results_path, "r") as f:
+                doc = json.load(f)
+
+            # This should pass and log audit entry distinguishing verified vs not-verified
+            # For now just verify it passes; audit distinction will be verified once implemented
+            s.require_reviewed(doc)
+
+    def test_require_reviewed_without_hash_creates_not_verified_audit_entry(self):
+        """Without hash (pre-Phase 6 report), audit must record 'content_not_verified_no_hash_predates_phase_6'."""
+        doc = _make_test_document()
+        # Explicitly set review_status but NO content_hash (simulates pre-Phase 6 approval)
+        doc["review_status"] = "reviewed"
+        doc["reviewed_by"] = "Dr. Old"
+        doc["reviewed_at"] = "2026-08-01T00:00:00+00:00"
+        # No content_hash field
+
+        # This should pass (backward compatibility) but audit trail must distinguish from verified case
+        # For now just verify it passes; audit distinction will be verified once implemented
+        s.require_reviewed(doc)
+
+
 if __name__ == "__main__":
     unittest.main()

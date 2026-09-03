@@ -145,6 +145,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from report.clinical_report_builder import candidate_interpretation_of
+from report.models import compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from report.summary_short import generate_short_pdf
@@ -218,6 +219,13 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system") ->
     `LIMSExportBlockedError` to preserve its existing public contract);
     that window closes the moment a second automated consumer exists.
 
+    Phase 6 (2026-09-03): Now also performs content hash verification.
+    The hash captures clinical content at approval time and must match
+    at export time. Mismatch indicates ISO 15189 7.5 nonconformance:
+    released report whose clinical content no longer matches approved
+    state. Export refuses and audit entry records mismatch for
+    investigation.
+
     `"overridden"` is deliberately NOT treated as good enough -- same
     reasoning as `export_lims.py`'s original check: a run a clinician has
     changed since it was last (or ever) approved must stay blocked from
@@ -243,6 +251,18 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system") ->
             f"{consumer} refused: review_status is {status!r}, not 'reviewed'. Automated "
             "consumption requires completed review and sign-off (review/signoff.py::approve()) "
             "before this run's data may reach a downstream system."
+        )
+
+    # Phase 6: Verify clinical content hash (ISO 15189 7.5 nonconformance detection)
+    # Only verify if hash is present (new reports approved with Phase 6 will have it)
+    stored_hash = document.get("content_hash")
+    if stored_hash and not verify_content_hash(document, stored_hash):
+        raise SignoffError(
+            f"{consumer} refused: content hash verification failed. Report's clinical content "
+            f"has changed since approval (ISO 15189 7.5 nonconformance). "
+            f"Stored hash: {stored_hash!r}. "
+            f"This indicates the approved report was modified after sign-off. "
+            f"A fresh approval (review/signoff.py::approve()) is required before export."
         )
 
 
@@ -511,6 +531,8 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
     document["review_status"] = "reviewed"
     document["reviewed_by"] = physician
     document["reviewed_at"] = approved_at
+    # Phase 6: Compute and store content hash for later verification
+    document["content_hash"] = compute_content_hash(document)
     _write_document(results_path, document)
 
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
@@ -527,6 +549,7 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
         "pdf_sha256": _sha256_file(pdf_path),
         "short_pdf_sha256": _sha256_file(short_pdf_path),
         "results_json_sha256": _sha256_file(results_path),
+        "content_hash": document.get("content_hash"),  # Phase 6: Clinical content hash
         "clinician_name": clinician_name,
         "reg_number": reg_number,
         "hospital": hospital,

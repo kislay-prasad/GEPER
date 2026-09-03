@@ -47,7 +47,10 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Protocol, Sequence
+
+if TYPE_CHECKING:
+    from clinical.models.exception import ExceptionDTO
 
 # ─── Policy constants ────────────────────────────────────────────────────────
 
@@ -2696,6 +2699,193 @@ class DataAccess:
         """
         vcf_hash = hashlib.sha256(vcf_content).hexdigest()
         return f"{vcf_hash}|{sample_id}"
+
+    # ── Phase 5d: Exception workflow ──
+
+    @auditable(
+        action="read_exception",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="read order exceptions; orders are org-scoped",
+    )
+    def get_exceptions_for_order(self, session: Session, order_id: uuid.UUID) -> list[ExceptionDTO]:
+        """Get all exceptions (open + resolved) for one order with event history."""
+        from clinical.models.exception import (
+            ExceptionDTO,
+            ExceptionEventDTO,
+        )
+
+        # Query all exceptions for this order, org-scoped
+        exceptions = self._fetch_all(
+            "SELECT id, category, reason_code, error_message, status, owner, "
+            "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
+            "       resolution_note "
+            "FROM exceptions "
+            "WHERE org_id = %s AND order_id = %s "
+            "ORDER BY created_at DESC",
+            (session.org_id, order_id),
+        )
+
+        result = []
+        for exc_row in exceptions:
+            exc_id = exc_row[0]
+
+            # Get events for this exception
+            events = self._fetch_all(
+                "SELECT id, action, actor, timestamp, action_note "
+                "FROM exception_events "
+                "WHERE exception_id = %s "
+                "ORDER BY timestamp ASC",
+                (exc_id,),
+            )
+
+            event_dtos = [
+                ExceptionEventDTO(
+                    id=str(ev[0]),
+                    action=ev[1],
+                    actor=ev[2],
+                    timestamp=ev[3].isoformat() if isinstance(ev[3], _datetime.datetime) else ev[3],
+                    action_note=ev[4],
+                )
+                for ev in events
+            ]
+
+            result.append(
+                ExceptionDTO(
+                    id=str(exc_id),
+                    order_id=str(order_id),
+                    category=exc_row[1],
+                    reason_code=exc_row[2],
+                    error_message=exc_row[3],
+                    status=exc_row[4],
+                    owner=exc_row[5],
+                    created_at=exc_row[6].isoformat() if isinstance(exc_row[6], _datetime.datetime) else exc_row[6],
+                    last_resolved_by=exc_row[7],
+                    last_resolved_at=exc_row[8].isoformat()
+                    if isinstance(exc_row[8], _datetime.datetime)
+                    else exc_row[8],
+                    resolution_action=exc_row[9],
+                    resolution_note=exc_row[10],
+                    events=event_dtos,
+                )
+            )
+
+        return result
+
+    @auditable(
+        action="read_worklist",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="read open exceptions for owner; worklist is clinically relevant",
+    )
+    def get_open_exceptions_by_owner(self, session: Session, owner: str) -> list[ExceptionDTO]:
+        """Get open work items by owner (org-scoped)."""
+        from clinical.models.exception import (
+            ExceptionDTO,
+            ExceptionEventDTO,
+        )
+
+        # Query open exceptions owned by this role, org-scoped
+        exceptions = self._fetch_all(
+            "SELECT id, order_id, category, reason_code, error_message, status, owner, "
+            "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
+            "       resolution_note "
+            "FROM exceptions "
+            "WHERE org_id = %s AND owner = %s AND status = 'open' "
+            "ORDER BY created_at ASC",
+            (session.org_id, owner),
+        )
+
+        result = []
+        for exc_row in exceptions:
+            exc_id = exc_row[0]
+            order_id = exc_row[1]
+
+            # Get events for this exception
+            events = self._fetch_all(
+                "SELECT id, action, actor, timestamp, action_note "
+                "FROM exception_events "
+                "WHERE exception_id = %s "
+                "ORDER BY timestamp ASC",
+                (exc_id,),
+            )
+
+            event_dtos = [
+                ExceptionEventDTO(
+                    id=str(ev[0]),
+                    action=ev[1],
+                    actor=ev[2],
+                    timestamp=ev[3].isoformat() if isinstance(ev[3], _datetime.datetime) else ev[3],
+                    action_note=ev[4],
+                )
+                for ev in events
+            ]
+
+            result.append(
+                ExceptionDTO(
+                    id=str(exc_id),
+                    order_id=str(order_id),
+                    category=exc_row[2],
+                    reason_code=exc_row[3],
+                    error_message=exc_row[4],
+                    status=exc_row[5],
+                    owner=exc_row[6],
+                    created_at=exc_row[7].isoformat() if isinstance(exc_row[7], _datetime.datetime) else exc_row[7],
+                    last_resolved_by=exc_row[8],
+                    last_resolved_at=exc_row[9].isoformat()
+                    if isinstance(exc_row[9], _datetime.datetime)
+                    else exc_row[9],
+                    resolution_action=exc_row[10],
+                    resolution_note=exc_row[11],
+                    events=event_dtos,
+                )
+            )
+
+        return result
+
+    @transactional
+    @auditable(
+        action="resolve_exception",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="resolve work item; updates order state",
+    )
+    def resolve_exception(
+        self,
+        session: Session,
+        exception_id: uuid.UUID,
+        resolution_action: str,
+        resolution_note: str,
+        actor: str,
+    ) -> None:
+        """Resolve an exception, recording the resolution event and updating status."""
+        now = self._clock.now()
+
+        # Update exception status and resolution
+        self._execute(
+            "UPDATE exceptions "
+            "SET status = 'resolved', last_resolved_by = %s, last_resolved_at = %s, "
+            "    resolution_action = %s, resolution_note = %s "
+            "WHERE id = %s AND org_id = %s",
+            (actor, now, resolution_action, resolution_note, exception_id, session.org_id),
+        )
+
+        # Record the resolution event (transactional with status update)
+        self._execute(
+            "INSERT INTO exception_events (id, exception_id, actor, timestamp, action, action_note) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                uuid.uuid4(),
+                exception_id,
+                actor,
+                now,
+                "resolve",
+                resolution_note,
+            ),
+        )
 
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification

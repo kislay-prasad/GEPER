@@ -458,6 +458,46 @@ CREATE TABLE reports (
 CREATE INDEX idx_reports_org_interp ON reports (org_id, interpretation_id);
 
 
+-- ─── Phase 5d: Exception workflow (order exceptions and resolution tracking) ─
+
+CREATE TABLE exceptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organisations (org_id),
+    order_id UUID NOT NULL,
+    category TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    error_message TEXT,
+    status TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+    owner TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    last_resolved_by TEXT,
+    last_resolved_at TIMESTAMPTZ,
+    resolution_action TEXT,
+    resolution_note TEXT,
+
+    CONSTRAINT exceptions_order_fk
+        FOREIGN KEY (org_id, order_id) REFERENCES orders (org_id, order_id),
+    CONSTRAINT exceptions_org_exception_unique UNIQUE (org_id, id)
+);
+
+CREATE INDEX idx_exceptions_org_order ON exceptions (org_id, order_id);
+CREATE INDEX idx_exceptions_org_owner_status ON exceptions (org_id, owner, status)
+    WHERE status = 'open';
+CREATE INDEX idx_exceptions_reason_code ON exceptions (org_id, reason_code);
+
+
+CREATE TABLE exception_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    exception_id UUID NOT NULL REFERENCES exceptions (id),
+    actor TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('open', 'resolve', 'reopen')),
+    action_note TEXT
+);
+
+CREATE INDEX idx_exception_events_exception ON exception_events (exception_id, timestamp);
+
+
 -- ─── append-only enforcement ────────────────────────────────────────────────
 --
 -- A comment saying "append-only" is not a control. These statements are.
@@ -489,5 +529,6 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
        patients, external_identifiers, consents, tests, test_genes, orders, samples,
-       sequencing_runs, vcfs, interpretations, reports
+       sequencing_runs, vcfs, interpretations, reports,
+       exceptions, exception_events
     TO clinical_app;

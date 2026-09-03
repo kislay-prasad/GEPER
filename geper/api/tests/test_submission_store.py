@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from geper.api.submission_store import SubmissionStore
+from api.submission_store import SubmissionStore
 
 
 class TestSubmissionStore:

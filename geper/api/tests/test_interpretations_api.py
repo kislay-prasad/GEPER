@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from geper.api.main import app, get_submission_store
-from geper.api.submission_store import SubmissionStore
+from api.main import app, get_submission_store
+from api.submission_store import SubmissionStore
 
 
 @pytest.fixture

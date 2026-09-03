@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from geper.api.submission_store import SubmissionStore
-from geper.api.submission_worker import InterpretationWorker
+from api.submission_store import SubmissionStore
+from api.submission_worker import InterpretationWorker
 
 
 @pytest.fixture
@@ -59,7 +59,7 @@ class TestInterpretationWorker:
             }
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = (bij_output, "")
             mock_proc.returncode = 0
@@ -85,8 +85,8 @@ class TestInterpretationWorker:
             consent_ref="consent-1",
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
-            with patch("geper.api.submission_worker.kill_process_tree_now") as mock_kill:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
+            with patch("api.submission_worker.kill_process_tree_now") as mock_kill:
                 mock_proc = MagicMock()
                 mock_proc.communicate.side_effect = subprocess.TimeoutExpired("cmd", 1800)
                 mock_spawn.return_value = mock_proc
@@ -112,7 +112,7 @@ class TestInterpretationWorker:
             consent_ref="consent-1",
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = ("", "Error message from CLI")
             mock_proc.returncode = 1
@@ -145,7 +145,7 @@ class TestInterpretationWorker:
             }
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = (bij_output, "")
             mock_proc.returncode = 0
@@ -171,7 +171,7 @@ class TestInterpretationWorker:
             consent_ref="consent-1",
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = ("not valid json", "")
             mock_proc.returncode = 0
@@ -197,7 +197,7 @@ class TestInterpretationWorker:
             consent_ref="consent-1",
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_spawn.side_effect = FileNotFoundError("bij-interpret not found")
 
             result = worker.process_queued_submission(sub)
@@ -230,7 +230,7 @@ class TestInterpretationWorker:
             }
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = (bij_output, "")
             mock_proc.returncode = 0
@@ -266,7 +266,7 @@ class TestInterpretationWorker:
             }
         )
 
-        with patch("geper.api.submission_worker.spawn_tracked") as mock_spawn:
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
             mock_proc = MagicMock()
             mock_proc.communicate.return_value = (bij_output, "")
             mock_proc.returncode = 0

@@ -739,6 +739,16 @@ class TestVcfCreation:
         with pytest.raises(ValueError, match="VCF file not found"):
             dao.create_vcf(session_admin, run_id, "/nonexistent/path/file.vcf")
 
+    def test_create_vcf_invalid_sequencing_run(self, dao, session_admin, tmp_path):
+        """Creating a VCF for nonexistent sequencing run raises error."""
+        # Create a temp VCF file
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+
+        invalid_run_id = uuid.uuid4()
+        with pytest.raises(Exception):  # NotFoundError or similar
+            dao.create_vcf(session_admin, invalid_run_id, str(vcf_file))
+
     def test_create_vcf_hash_computed(self, dao, session_admin, sample_for_lineage, tmp_path):
         """VCF hash is computed correctly and matches file content."""
         import hashlib

@@ -588,7 +588,15 @@ CREATE TABLE reviewer_claims (
     -- did not surface THIS variant" -- while the original table gave them no
     -- column to name the variant by. The gap was inside this table, and it
     -- surfaced the moment anything first had to write those rows.
-    variant_id          UUID,
+
+    -- Variants are not rows in this platform; they live inside
+    -- interpretations.run_document JSONB, identified by the engine's key
+    -- (chrom-pos-ref-alt as produced by parse_variant_key). Reviewer claims
+    -- reference them by that key rather than a foreign key. The system does
+    -- not maintain a variant table; this column holds the key the engine
+    -- assigned. NULLABLE: 'accept' is interpretation-scoped and names no
+    -- variant; the other three claim types are variant-scoped.
+    variant_key         TEXT,
 
     -- Spec 13.2's four reviewer actions, closed. 'disagree' does not remove
     -- the classification it disagrees with; 'variant_added' names a variant

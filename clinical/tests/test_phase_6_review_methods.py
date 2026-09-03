@@ -173,7 +173,7 @@ class TestRecordAccept:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT org_id, interpretation_id, claim_type, actor_id, reason, "
-                "       evidence_json, supersedes, variant_id, classification "
+                "       evidence_json, supersedes, variant_key, classification "
                 "FROM reviewer_claims WHERE id = %s",
                 (claim_id,),
             )
@@ -265,7 +265,7 @@ class TestRecordAccept:
 def _claim_row(conn, claim_id):
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT org_id, interpretation_id, variant_id, claim_type, classification, "
+            "SELECT org_id, interpretation_id, variant_key, claim_type, classification, "
             "       actor_id, reason, evidence_json, supersedes "
             "FROM reviewer_claims WHERE id = %s",
             (claim_id,),
@@ -277,11 +277,11 @@ class TestRecordDisagreement:
     """_record_disagreement: spec 13.2's 'disagree' -- appended, never an edit."""
 
     def test_inserts_disagree_claim_with_variant_and_classification(self, dao, conn, session_a, interp_a):
-        variant_id = uuid.uuid4()
+        variant_key = "chr1-1000-A-T"
         claim_id = dao._record_disagreement(
             session_a,
             interpretation_id=interp_a,
-            variant_id=variant_id,
+            variant_key=variant_key,
             actor_id=session_a.user_id,
             new_classification="Likely Benign",
             reason="Population frequency in gnomAD SAS is too high for a pathogenic call.",
@@ -291,7 +291,7 @@ class TestRecordDisagreement:
         assert row is not None
         assert row[0] == session_a.org_id
         assert row[1] == interp_a
-        assert row[2] == variant_id
+        assert row[2] == variant_key
         assert row[3] == "disagree"
         assert row[4] == "Likely Benign"
         assert row[5] == session_a.user_id
@@ -300,11 +300,11 @@ class TestRecordDisagreement:
         assert row[8] is None, "an original claim supersedes nothing"
 
     def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
-        with pytest.raises(ValueError, match="variant_id"):
+        with pytest.raises(ValueError, match="variant_key"):
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=None,
+                variant_key=None,
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="Reason.",
@@ -315,7 +315,7 @@ class TestRecordDisagreement:
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="",
                 reason="Reason.",
@@ -326,7 +326,7 @@ class TestRecordDisagreement:
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="   ",
@@ -337,7 +337,7 @@ class TestRecordDisagreement:
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_b,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="Reason.",
@@ -351,7 +351,7 @@ class TestRecordDisagreement:
         dao._record_disagreement(
             session_a,
             interpretation_id=interp_a,
-            variant_id=uuid.uuid4(),
+            variant_key="chr1-1000-A-T",
             actor_id=session_a.user_id,
             new_classification="Benign",
             reason="On reflection, benign.",
@@ -371,28 +371,28 @@ class TestAddVariantByReviewer:
     """_add_variant_by_reviewer: spec 13.2's 'variant_added'."""
 
     def test_inserts_variant_added_claim(self, dao, conn, session_a, interp_a):
-        variant_id = uuid.uuid4()
+        variant_key = "chr1-1000-A-T"
         claim_id = dao._add_variant_by_reviewer(
             session_a,
             interpretation_id=interp_a,
-            variant_id=variant_id,
+            variant_key=variant_key,
             actor_id=session_a.user_id,
             acmg_classification="Pathogenic",
             reason="Known founder variant absent from the pipeline's panel.",
         )
 
         row = _claim_row(conn, claim_id)
-        assert row[2] == variant_id
+        assert row[2] == variant_key
         assert row[3] == "variant_added"
         assert row[4] == "Pathogenic"
         assert row[6].startswith("Known founder variant")
 
     def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
-        with pytest.raises(ValueError, match="variant_id"):
+        with pytest.raises(ValueError, match="variant_key"):
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=None,
+                variant_key=None,
                 actor_id=session_a.user_id,
                 acmg_classification="Pathogenic",
                 reason="Reason.",
@@ -404,7 +404,7 @@ class TestAddVariantByReviewer:
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 acmg_classification=None,
                 reason="Reason.",
@@ -415,7 +415,7 @@ class TestAddVariantByReviewer:
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_b.user_id,
                 acmg_classification="Pathogenic",
                 reason="Reason.",
@@ -426,17 +426,17 @@ class TestMarkVariantNotRelevant:
     """_mark_variant_not_relevant: scoped out against the indication, not deleted."""
 
     def test_inserts_variant_not_relevant_claim(self, dao, conn, session_a, interp_a):
-        variant_id = uuid.uuid4()
+        variant_key = "chr1-1000-A-T"
         claim_id = dao._mark_variant_not_relevant(
             session_a,
             interpretation_id=interp_a,
-            variant_id=variant_id,
+            variant_key=variant_key,
             actor_id=session_a.user_id,
             reason="Cardiac gene; this indication is hereditary breast cancer.",
         )
 
         row = _claim_row(conn, claim_id)
-        assert row[2] == variant_id
+        assert row[2] == variant_key
         assert row[3] == "variant_not_relevant"
         assert row[6].startswith("Cardiac gene")
 
@@ -445,18 +445,18 @@ class TestMarkVariantNotRelevant:
         claim_id = dao._mark_variant_not_relevant(
             session_a,
             interpretation_id=interp_a,
-            variant_id=uuid.uuid4(),
+            variant_key="chr1-1000-A-T",
             actor_id=session_a.user_id,
             reason="Out of scope for this indication.",
         )
         assert _claim_row(conn, claim_id)[4] is None
 
     def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
-        with pytest.raises(ValueError, match="variant_id"):
+        with pytest.raises(ValueError, match="variant_key"):
             dao._mark_variant_not_relevant(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=None,
+                variant_key=None,
                 actor_id=session_a.user_id,
                 reason="Reason.",
             )
@@ -466,7 +466,7 @@ class TestMarkVariantNotRelevant:
             dao._mark_variant_not_relevant(
                 session_a,
                 interpretation_id=interp_a,
-                variant_id=uuid.uuid4(),
+                variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 reason=None,
             )
@@ -480,7 +480,7 @@ class TestAllFourClaimTypes:
         dao._record_disagreement(
             session,
             interpretation_id=interp,
-            variant_id=uuid.uuid4(),
+            variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             new_classification="Benign",
             reason="Disagree.",
@@ -488,7 +488,7 @@ class TestAllFourClaimTypes:
         dao._add_variant_by_reviewer(
             session,
             interpretation_id=interp,
-            variant_id=uuid.uuid4(),
+            variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             acmg_classification="Pathogenic",
             reason="Missed.",
@@ -496,7 +496,7 @@ class TestAllFourClaimTypes:
         dao._mark_variant_not_relevant(
             session,
             interpretation_id=interp,
-            variant_id=uuid.uuid4(),
+            variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             reason="Out of scope.",
         )

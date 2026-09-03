@@ -3480,7 +3480,7 @@ class DataAccess:
             raise NotFoundError(f"No such user in this organisation: {actor_id}")
 
     @staticmethod
-    def _require_variant_scope(variant_id: Any, claim_type: str) -> None:
+    def _require_variant_scope(variant_key: Optional[str], claim_type: str) -> None:
         """
         Three of the four claim types are about one specific variant and are
         meaningless without naming it: a 'disagree' that does not say which
@@ -3494,8 +3494,8 @@ class DataAccess:
         supersession uniqueness in the state-transition commit, for the reason
         all three share. A row constraint cannot see what it would need to see.
         """
-        if variant_id is None:
-            raise ValueError(f"A '{claim_type}' claim is about one variant and must name it: variant_id is required.")
+        if variant_key is None:
+            raise ValueError(f"A '{claim_type}' claim is about one variant and must name it: variant_key is required.")
 
     @staticmethod
     def _require_classification(classification: Optional[str], claim_type: str) -> None:
@@ -3519,7 +3519,7 @@ class DataAccess:
         actor_id: Any,
         reason: str,
         claim_type: str,
-        variant_id: Any = None,
+        variant_key: Optional[str] = None,
         classification: Optional[str] = None,
     ) -> Any:
         """
@@ -3532,14 +3532,14 @@ class DataAccess:
         claim_id = uuid.uuid4()
         self._execute(
             "INSERT INTO reviewer_claims "
-            "(org_id, id, interpretation_id, variant_id, claim_type, classification, "
+            "(org_id, id, interpretation_id, variant_key, claim_type, classification, "
             ' actor_id, "timestamp", reason) '
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 session.org_id,
                 claim_id,
                 interpretation_id,
-                variant_id,
+                variant_key,
                 claim_type,
                 classification,
                 actor_id,
@@ -3592,7 +3592,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
-        variant_id: Any,
+        variant_key: str,
         actor_id: Any,
         new_classification: str,
         reason: str,
@@ -3607,7 +3607,7 @@ class DataAccess:
         disagreement as a claim rather than as an edit.
         """
         self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
-        self._require_variant_scope(variant_id, "disagree")
+        self._require_variant_scope(variant_key, "disagree")
         self._require_classification(new_classification, "disagree")
         return self._insert_claim(
             session,
@@ -3615,7 +3615,7 @@ class DataAccess:
             actor_id,
             reason,
             claim_type="disagree",
-            variant_id=variant_id,
+            variant_key=variant_key,
             classification=new_classification,
         )
 
@@ -3631,7 +3631,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
-        variant_id: Any,
+        variant_key: str,
         actor_id: Any,
         acmg_classification: str,
         reason: str,
@@ -3646,7 +3646,7 @@ class DataAccess:
         call attached says a variant matters without saying what it means.
         """
         self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
-        self._require_variant_scope(variant_id, "variant_added")
+        self._require_variant_scope(variant_key, "variant_added")
         self._require_classification(acmg_classification, "variant_added")
         return self._insert_claim(
             session,
@@ -3654,7 +3654,7 @@ class DataAccess:
             actor_id,
             reason,
             claim_type="variant_added",
-            variant_id=variant_id,
+            variant_key=variant_key,
             classification=acmg_classification,
         )
 
@@ -3670,7 +3670,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
-        variant_id: Any,
+        variant_key: str,
         actor_id: Any,
         reason: str,
     ) -> Any:
@@ -3684,14 +3684,14 @@ class DataAccess:
         reviewer has not said.
         """
         self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
-        self._require_variant_scope(variant_id, "variant_not_relevant")
+        self._require_variant_scope(variant_key, "variant_not_relevant")
         return self._insert_claim(
             session,
             interpretation_id,
             actor_id,
             reason,
             claim_type="variant_not_relevant",
-            variant_id=variant_id,
+            variant_key=variant_key,
         )
 
 

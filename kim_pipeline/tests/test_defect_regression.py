@@ -1185,20 +1185,26 @@ class TestBcftoolsNormIntegration:
 
         captured: Dict = {}
 
-        def _fake_subprocess_run(cmd, *args, **kwargs):
+        def _fake_spawn_tracked(cmd, *args, **kwargs):
             if cmd[:2] == ["bcftools", "--version"]:
-                return MagicMock(returncode=0)
+                proc = MagicMock()
+                proc.returncode = 0
+                proc.communicate = MagicMock(return_value=("", ""))
+                return proc
             if cmd[:2] == ["bcftools", "norm"]:
                 captured["cmd"] = cmd
-                return MagicMock(returncode=0, stdout="", stderr="")
-            raise AssertionError(f"unexpected subprocess.run call in this probe: {cmd!r}")
+                proc = MagicMock()
+                proc.returncode = 0
+                proc.communicate = MagicMock(return_value=("", ""))
+                return proc
+            raise AssertionError(f"unexpected spawn_tracked call in this probe: {cmd!r}")
 
         with (
             patch(
                 "pipeline.variant_calling.stage.freebayes_runner.is_available", return_value=True
             ),
             patch("pipeline.variant_calling.stage.freebayes_runner.run_freebayes"),
-            patch("subprocess.run", side_effect=_fake_subprocess_run),
+            patch("pipeline.variant_calling.stage.spawn_tracked", side_effect=_fake_spawn_tracked),
             patch("pipeline.variant_calling.stage.apply_pass_filter", return_value=FilterSummary()),
         ):
             stage = VariantCallingStage({"variant_calling": {"threads": 1}})

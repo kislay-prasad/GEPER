@@ -11,12 +11,15 @@ and the other sibling `<Name>Stage` classes in this package.
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
 from geper.pipeline.fastq.pipeline import FastqPipelineError
+
+from shared.process_control import spawn_tracked, kill_process_tree_now
 
 from . import freebayes_runner
 from .filtering import FilterThresholds, apply_pass_filter
@@ -89,7 +92,8 @@ class VariantCallingStage:
                 "https://github.com/freebayes/freebayes) before running "
                 "the variant_calling stage — no other caller is "
                 "substituted automatically.",
-                stage="variant_calling", tool="freebayes",
+                stage="variant_calling",
+                tool="freebayes",
             )
 
         out = Path(output_dir)
@@ -105,11 +109,15 @@ class VariantCallingStage:
 
         logger.info(
             "[%s] VariantCallingStage: caller=freebayes threads=%d bam=%s",
-            sample_id, threads, bam_path,
+            sample_id,
+            threads,
+            bam_path,
         )
 
         freebayes_runner.run_freebayes(
-            bam_path, reference_fasta, raw_vcf_path,
+            bam_path,
+            reference_fasta,
+            raw_vcf_path,
             sample_id=sample_id,
             threads=threads,
             min_base_quality=int(self._cfg.get("min_base_quality", 20)),
@@ -124,37 +132,64 @@ class VariantCallingStage:
         normalised_vcf_path = str(out / "variants.norm.vcf")
         _norm_performed = False
         try:
-            import subprocess as _sp
-            _bcftools_check = _sp.run(
+            _bcftools_check = spawn_tracked(
                 ["bcftools", "--version"], capture_output=True, timeout=5
             )
-            if _bcftools_check.returncode == 0:
-                _norm_cmd = [
-                    "bcftools", "norm",
-                    "--fasta-ref", reference_fasta,  # left-align against reference
-                    "--multiallelics", "-",           # split multi-allelic records
-                    "--output-type", "v",             # uncompressed VCF output
-                    "--output", normalised_vcf_path,
-                    raw_vcf_path,
-                ]
-                _norm_result = _sp.run(
-                    _norm_cmd, capture_output=True, text=True, timeout=300
+            try:
+                _bcftools_check.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                kill_process_tree_now(_bcftools_check)
+                # Version check timed out; skip normalization
+                logger.warning(
+                    "[%s] bcftools version check timed out — skipping normalisation",
+                    sample_id,
                 )
-                if _norm_result.returncode == 0:
-                    logger.info(
-                        "[%s] bcftools norm complete: left-aligned and trimmed indels → %s",
-                        sample_id, normalised_vcf_path,
+            else:
+                if _bcftools_check.returncode == 0:
+                    _norm_cmd = [
+                        "bcftools",
+                        "norm",
+                        "--fasta-ref",
+                        reference_fasta,  # left-align against reference
+                        "--multiallelics",
+                        "-",  # split multi-allelic records
+                        "--output-type",
+                        "v",  # uncompressed VCF output
+                        "--output",
+                        normalised_vcf_path,
+                        raw_vcf_path,
+                    ]
+                    _norm_result = spawn_tracked(
+                        _norm_cmd, capture_output=True, text=True, timeout=300
                     )
-                    _norm_performed = True
-                else:
-                    logger.warning(
-                        "[%s] bcftools norm failed (rc=%d): %s — using raw VCF",
-                        sample_id, _norm_result.returncode, _norm_result.stderr[:200],
-                    )
+                    try:
+                        _norm_result.communicate(timeout=300)
+                    except subprocess.TimeoutExpired:
+                        kill_process_tree_now(_norm_result)
+                        logger.warning(
+                            "[%s] bcftools norm timed out after 300s",
+                            sample_id,
+                        )
+                    else:
+                        if _norm_result.returncode == 0:
+                            logger.info(
+                                "[%s] bcftools norm complete: left-aligned and trimmed indels → %s",
+                                sample_id,
+                                normalised_vcf_path,
+                            )
+                            _norm_performed = True
+                        else:
+                            logger.warning(
+                                "[%s] bcftools norm failed (rc=%d): %s — using raw VCF",
+                                sample_id,
+                                _norm_result.returncode,
+                                _norm_result.stderr[:200] if _norm_result.stderr else "(no stderr)",
+                            )
         except (FileNotFoundError, Exception) as _norm_exc:
             logger.warning(
                 "[%s] bcftools norm unavailable (%s) — skipping normalisation",
-                sample_id, _norm_exc,
+                sample_id,
+                _norm_exc,
             )
 
         # Use normalised VCF if available, else fall back to raw FreeBayes output
@@ -179,7 +214,11 @@ class VariantCallingStage:
 
         logger.info(
             "[%s] Variant calling complete: %d/%d PASS (%d SNVs, %d indels) in %.2fs",
-            sample_id, result.pass_variants, result.total_variants,
-            result.snvs_pass, result.indels_pass, result.elapsed_seconds,
+            sample_id,
+            result.pass_variants,
+            result.total_variants,
+            result.snvs_pass,
+            result.indels_pass,
+            result.elapsed_seconds,
         )
         return result

@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,6 +34,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from geper.pipeline.fastq.pipeline import FastqPipelineError
+
+from shared.process_control import spawn_tracked
 
 from pipeline.reporting.clinical_sections import (
     normalize_patient_metadata,
@@ -858,15 +859,18 @@ class ReportingStage:
         # Try wkhtmltopdf (system binary)
         if shutil.which("wkhtmltopdf"):
             try:
-                subprocess.run(
+                proc = spawn_tracked(
                     ["wkhtmltopdf", html_path, pdf_path],
                     capture_output=True,
-                    check=True,
                 )
-                logger.info("[%s] PDF written via wkhtmltopdf: %s", sample_id, pdf_path)
-                return pdf_path
-            except subprocess.CalledProcessError as exc:
-                logger.warning("[%s] wkhtmltopdf failed: %s", sample_id, exc.stderr[:500])
+                proc.communicate()
+                if proc.returncode == 0:
+                    logger.info("[%s] PDF written via wkhtmltopdf: %s", sample_id, pdf_path)
+                    return pdf_path
+                else:
+                    logger.warning("[%s] wkhtmltopdf failed (rc=%d)", sample_id, proc.returncode)
+            except Exception as exc:
+                logger.warning("[%s] wkhtmltopdf failed: %s", sample_id, exc)
 
         logger.warning(
             "[%s] PDF generation skipped: neither ReportLab, WeasyPrint, nor "

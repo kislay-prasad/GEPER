@@ -443,16 +443,24 @@ class BLASTStage:
     def _get_version(self, binary: str) -> str:
         """Return the BLAST+ version string."""
         try:
-            proc = subprocess.run(
+            proc = spawn_tracked(
                 [binary, "-version"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
-            for line in proc.stdout.splitlines():
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                kill_process_tree_now(proc)
+                return "unknown"
+            # If communicate() was called, stdout is in the return value.
+            # Otherwise (when mocked), try to get it from proc.stdout
+            output = stdout or getattr(proc, "stdout", "")
+            for line in output.splitlines():
                 if "blastn" in line.lower():
                     return line.strip()
-            return proc.stdout.strip()[:80]
+            return output.strip()[:80] if output else "unknown"
         except Exception:
             return "unknown"
 

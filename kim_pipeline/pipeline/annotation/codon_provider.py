@@ -51,6 +51,8 @@ import os
 import subprocess
 from typing import Dict, List, Optional
 
+from shared.process_control import spawn_tracked, kill_process_tree_now
+
 from pipeline.utils.genome_build import _CHR1_LENGTH_BY_BUILD
 
 logger = logging.getLogger("geper.pipeline.annotation.codon_provider")
@@ -186,14 +188,19 @@ class _FastaReader:
     @staticmethod
     def _check_samtools() -> bool:
         try:
-            result = subprocess.run(
+            proc = spawn_tracked(
                 ["samtools", "version"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
-            return result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+            try:
+                proc.communicate(timeout=5)
+                return proc.returncode == 0
+            except subprocess.TimeoutExpired:
+                kill_process_tree_now(proc)
+                return False
+        except FileNotFoundError:
             return False
 
     @staticmethod
@@ -281,6 +288,12 @@ class _FastaReader:
     def _samtools_fetch(self, chrom: str, start: int, end: int) -> str:
         region = f"{chrom}:{start}-{end}"
         try:
+            # Deliberately NOT routed through spawn_tracked: samtools faidx is
+            # called thousands of times per run (once per codon lookup) and is
+            # a small, fast operation; wrapping each one in tracked machinery
+            # would add noticeable overhead. The version-check site (_check_samtools)
+            # is routed because it runs once per _FastaReader init and is a
+            # control-plane decision point, not a data-plane inner loop.
             result = subprocess.run(
                 ["samtools", "faidx", self._path, region],
                 capture_output=True,
@@ -291,6 +304,7 @@ class _FastaReader:
                 # Try alternate chrom name
                 alt = chrom.lstrip("chr") if chrom.startswith("chr") else f"chr{chrom}"
                 region2 = f"{alt}:{start}-{end}"
+                # Deliberately NOT routed through spawn_tracked (same rationale as above).
                 result = subprocess.run(
                     ["samtools", "faidx", self._path, region2],
                     capture_output=True,

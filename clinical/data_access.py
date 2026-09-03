@@ -2264,7 +2264,12 @@ class DataAccess:
 
         return "identity_resolved"
 
-    @auditable(action="check_order", resource_type="order")
+    @auditable(
+        auditable=False,
+        action="check_order",
+        resource_type="order",
+        reason="precondition results are recorded in the submission audit entry",
+    )
     def check_order_data(self, session: Session, order_id: uuid.UUID) -> str:
         """
         Check required order data present.
@@ -2295,7 +2300,12 @@ class DataAccess:
 
         return "order_ok"
 
-    @auditable(action="check_qc", resource_type="sample")
+    @auditable(
+        auditable=False,
+        action="check_qc",
+        resource_type="sample",
+        reason="precondition results are recorded in the submission audit entry",
+    )
     def check_qc_passed(self, session: Session, order_id: uuid.UUID) -> str:
         """
         Check sample QC status.

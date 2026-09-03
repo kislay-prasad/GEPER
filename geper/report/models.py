@@ -70,9 +70,6 @@ def _extract_clinical_content(document: Dict[str, Any]) -> Dict[str, Any]:
     - Evidence and recommendations
     - conflict_resolution
     - overrides (clinician classification changes)
-    - model/provenance fields (geper_version, code_version, model_checkpoints, database_version)
-      These are material to clinical interpretation and must be included per ISO 15189 7.5 d)
-      impact analysis. If any change, interpretation output can materially differ.
 
     EXCLUDES:
     - timestamps (generated_at, reviewed_at, reviewed_by, created, exported, etc.)
@@ -249,18 +246,6 @@ def _extract_clinical_content(document: Dict[str, Any]) -> Dict[str, Any]:
     # Assembly matters for variant interpretation
     if "assembly" in document:
         clinical_content["assembly"] = document["assembly"]
-
-    # Model/provenance fields are material to clinical interpretation.
-    # ISO 15189 7.5 d) impact analysis requires capturing when the interpretation tool
-    # (code, model, databases) changes, as output can materially differ.
-    if "geper_version" in document:
-        clinical_content["geper_version"] = document["geper_version"]
-    if "code_version" in document:
-        clinical_content["code_version"] = document["code_version"]
-    if "model_checkpoints" in document:
-        clinical_content["model_checkpoints"] = document["model_checkpoints"]
-    if "database_version" in document:
-        clinical_content["database_version"] = document["database_version"]
 
     return clinical_content
 

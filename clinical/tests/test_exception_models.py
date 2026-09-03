@@ -1,12 +1,10 @@
 """
 tests/test_exception_models.py
 ──────────────────────────────
-Unit tests for exception workflow models.
+Unit tests for exception workflow vocabulary and enums.
 """
 
 from clinical.models.exception import (
-    Exception,
-    ExceptionEvent,
     ExceptionCategory,
     ExceptionReasonCode,
     ExceptionStatus,
@@ -45,202 +43,89 @@ class TestExceptionReasonCodeToOwnerMapping:
             assert REASON_CODE_TO_OWNER[reason] == "lab_operator", f"{reason} should be lab_operator"
 
 
-class TestExceptionModel:
-    """Tests for Exception model."""
-
-    def test_exception_creation(self):
-        """Create an exception with all required fields."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.PRECONDITION_FAILURE,
-            reason_code=ExceptionReasonCode.CONSENT_MISSING,
-            error_message="Consent not provided",
-            status=ExceptionStatus.OPEN,
-            owner="orderer",
-        )
-
-        assert exc.org_id == "org-1"
-        assert exc.order_id == "order-uuid-123"
-        assert exc.category == ExceptionCategory.PRECONDITION_FAILURE
-        assert exc.reason_code == ExceptionReasonCode.CONSENT_MISSING
-        assert exc.error_message == "Consent not provided"
-        assert exc.status == ExceptionStatus.OPEN
-        assert exc.owner == "orderer"
-        assert exc.created_at is not None
-
-    def test_exception_owner_immutable(self):
-        """Owner is set at creation and should not change."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.PRECONDITION_FAILURE,
-            reason_code=ExceptionReasonCode.CONSENT_MISSING,
-            status=ExceptionStatus.OPEN,
-            owner="orderer",
-        )
-
-        # Owner should not be modified after creation
-        assert exc.owner == "orderer"
-
-    def test_exception_resolution(self):
-        """Resolve an exception with action and note."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.PRECONDITION_FAILURE,
-            reason_code=ExceptionReasonCode.CONSENT_MISSING,
-            status=ExceptionStatus.OPEN,
-            owner="orderer",
-        )
-
-        # Resolve it
-        exc.status = ExceptionStatus.RESOLVED
-        exc.last_resolved_by = "orderer-user-1"
-        exc.resolution_action = ResolutionAction.RETRY_CHECK
-        exc.resolution_note = "Consent provided by patient"
-
-        assert exc.status == ExceptionStatus.RESOLVED
-        assert exc.last_resolved_by == "orderer-user-1"
-        assert exc.resolution_action == ResolutionAction.RETRY_CHECK
-
-    def test_exception_accept_failure(self):
-        """Accept an interpretation failure as terminal."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.INTERPRETATION_FAILURE,
-            reason_code=ExceptionReasonCode.BIJ_AI_ERROR_OTHER,
-            error_message="Bij AI service unavailable",
-            status=ExceptionStatus.OPEN,
-            owner="lab_operator",
-        )
-
-        # Accept the failure
-        exc.status = ExceptionStatus.RESOLVED
-        exc.last_resolved_by = "lab-operator-user-2"
-        exc.resolution_action = ResolutionAction.ACCEPT_FAILURE
-        exc.resolution_note = "Bij AI service down for maintenance, accepting failure"
-
-        assert exc.resolution_action == ResolutionAction.ACCEPT_FAILURE
-
-
-class TestExceptionEventModel:
-    """Tests for ExceptionEvent model."""
-
-    def test_event_creation(self):
-        """Create an exception event."""
-        event = ExceptionEvent(
-            exception_id="exc-uuid-123",
-            actor="system",
-            action=ExceptionEventAction.OPEN,
-            action_note="Exception created by validation check",
-        )
-
-        assert event.exception_id == "exc-uuid-123"
-        assert event.actor == "system"
-        assert event.action == ExceptionEventAction.OPEN
-        assert event.action_note == "Exception created by validation check"
-        assert event.timestamp is not None
-
-    def test_event_resolve(self):
-        """Create a resolve event."""
-        event = ExceptionEvent(
-            exception_id="exc-uuid-123",
-            actor="orderer-user-1",
-            action=ExceptionEventAction.RESOLVE,
-            action_note="Consent obtained from patient",
-        )
-
-        assert event.action == ExceptionEventAction.RESOLVE
-        assert event.actor == "orderer-user-1"
-
-    def test_event_reopen(self):
-        """Create a reopen event."""
-        event = ExceptionEvent(
-            exception_id="exc-uuid-123",
-            actor="system",
-            action=ExceptionEventAction.REOPEN,
-            action_note="Precondition re-check still fails: consent_missing",
-        )
-
-        assert event.action == ExceptionEventAction.REOPEN
-        assert "consent_missing" in event.action_note
-
-
 class TestExceptionCategories:
-    """Tests for exception categories and their semantics."""
+    """Tests for exception categories."""
 
-    def test_precondition_failure_category(self):
-        """Precondition failures block order, visible to orderer+lab, not auto-retried."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.PRECONDITION_FAILURE,
-            reason_code=ExceptionReasonCode.CONSENT_MISSING,
-            status=ExceptionStatus.OPEN,
-            owner="orderer",
-        )
+    def test_precondition_failure_exists(self):
+        """Precondition failure category exists."""
+        assert ExceptionCategory.PRECONDITION_FAILURE.value == "precondition_failure"
 
-        assert exc.category == ExceptionCategory.PRECONDITION_FAILURE
+    def test_validation_failure_exists(self):
+        """Validation failure category exists."""
+        assert ExceptionCategory.VALIDATION_FAILURE.value == "validation_failure"
 
-    def test_validation_failure_category(self):
-        """Validation failures block order, visible to orderer+lab, not auto-retried."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.VALIDATION_FAILURE,
-            reason_code=ExceptionReasonCode.VCF_INVALID,
-            status=ExceptionStatus.OPEN,
-            owner="lab_operator",
-        )
+    def test_transient_submission_failure_exists(self):
+        """Transient submission failure category exists."""
+        assert ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE.value == "transient_submission_failure"
 
-        assert exc.category == ExceptionCategory.VALIDATION_FAILURE
-
-    def test_transient_failure_category(self):
-        """Transient failures are auto-retried, escalate to exception if exhausted."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
-            reason_code=ExceptionReasonCode.BIJ_AI_TIMEOUT,
-            error_message="Timeout after 3 retries",
-            status=ExceptionStatus.OPEN,
-            owner="lab_operator",
-        )
-
-        assert exc.category == ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE
-
-    def test_interpretation_failure_category(self):
-        """Interpretation failures block order, retryable by operator."""
-        exc = Exception(
-            org_id="org-1",
-            order_id="order-uuid-123",
-            category=ExceptionCategory.INTERPRETATION_FAILURE,
-            reason_code=ExceptionReasonCode.BIJ_AI_ERROR_OTHER,
-            error_message="Bij AI internal error",
-            status=ExceptionStatus.OPEN,
-            owner="lab_operator",
-        )
-
-        assert exc.category == ExceptionCategory.INTERPRETATION_FAILURE
+    def test_interpretation_failure_exists(self):
+        """Interpretation failure category exists."""
+        assert ExceptionCategory.INTERPRETATION_FAILURE.value == "interpretation_failure"
 
 
-class TestExceptionEnums:
-    """Test all enum values are correct."""
+class TestExceptionReasonCodes:
+    """Tests for all exception reason codes."""
 
-    def test_exception_status_values(self):
-        """Exception status enum has correct values."""
+    def test_consent_missing_exists(self):
+        """Consent missing reason code exists."""
+        assert ExceptionReasonCode.CONSENT_MISSING.value == "consent_missing"
+
+    def test_consent_withdrawn_exists(self):
+        """Consent withdrawn reason code exists."""
+        assert ExceptionReasonCode.CONSENT_WITHDRAWN.value == "consent_withdrawn"
+
+    def test_sample_not_found_exists(self):
+        """Sample not found reason code exists."""
+        assert ExceptionReasonCode.SAMPLE_NOT_FOUND.value == "sample_not_found"
+
+    def test_vcf_invalid_exists(self):
+        """VCF invalid reason code exists."""
+        assert ExceptionReasonCode.VCF_INVALID.value == "vcf_invalid"
+
+    def test_bij_ai_timeout_exists(self):
+        """Bij AI timeout reason code exists."""
+        assert ExceptionReasonCode.BIJ_AI_TIMEOUT.value == "bij_ai_timeout"
+
+    def test_bij_ai_error_other_exists(self):
+        """Bij AI error (other) reason code exists."""
+        assert ExceptionReasonCode.BIJ_AI_ERROR_OTHER.value == "bij_ai_error_other"
+
+
+class TestExceptionStatus:
+    """Tests for exception status enum."""
+
+    def test_open_status_exists(self):
+        """Open status exists."""
         assert ExceptionStatus.OPEN.value == "open"
+
+    def test_resolved_status_exists(self):
+        """Resolved status exists."""
         assert ExceptionStatus.RESOLVED.value == "resolved"
 
-    def test_exception_event_action_values(self):
-        """Exception event action enum has correct values."""
+
+class TestExceptionEventAction:
+    """Tests for exception event action enum."""
+
+    def test_open_action_exists(self):
+        """Open action exists."""
         assert ExceptionEventAction.OPEN.value == "open"
+
+    def test_resolve_action_exists(self):
+        """Resolve action exists."""
         assert ExceptionEventAction.RESOLVE.value == "resolve"
+
+    def test_reopen_action_exists(self):
+        """Reopen action exists."""
         assert ExceptionEventAction.REOPEN.value == "reopen"
 
-    def test_resolution_action_values(self):
-        """Resolution action enum has correct values."""
+
+class TestResolutionAction:
+    """Tests for resolution action enum."""
+
+    def test_retry_check_action_exists(self):
+        """Retry check action exists."""
         assert ResolutionAction.RETRY_CHECK.value == "retry_check"
+
+    def test_accept_failure_action_exists(self):
+        """Accept failure action exists."""
         assert ResolutionAction.ACCEPT_FAILURE.value == "accept_failure"

@@ -1,26 +1,48 @@
 """
 clinical/models/exception.py
 ────────────────────────────
-Exception workflow — clinical records for blocked orders.
+Exception workflow — vocabulary and enums for blocked orders.
 
 Exceptions are work items (owned, stateful, visible), not log lines.
 Each exception tracks why an order is blocked, who owns resolution, and the
 resolution history. Reason codes map to owners; reopening on same reason is
 tracked per exception to show repeated failures.
+
+Schema:
+  CREATE TABLE exceptions (
+    id UUID PRIMARY KEY,
+    org_id TEXT NOT NULL,
+    order_id UUID NOT NULL REFERENCES orders(id),
+    category TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    error_message TEXT,
+    status TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    last_resolved_by TEXT,
+    last_resolved_at TIMESTAMPTZ,
+    resolution_action TEXT,
+    resolution_note TEXT
+  );
+
+  CREATE TABLE exception_events (
+    id UUID PRIMARY KEY,
+    exception_id UUID NOT NULL REFERENCES exceptions(id),
+    actor TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    action TEXT NOT NULL,
+    action_note TEXT
+  );
+
+Exception methods belong in clinical/data_access.py following the existing
+org-isolation pattern (Session-based, org_id from session, no raw queries).
 """
 
 from __future__ import annotations
 
 import enum
-import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
-
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, String, Text, UUID
-from sqlalchemy.orm import declarative_base, relationship
-
-Base = declarative_base()
 
 
 class ExceptionCategory(str, enum.Enum):
@@ -52,7 +74,7 @@ class ExceptionReasonCode(str, enum.Enum):
     BIJ_AI_ERROR_OTHER = "bij_ai_error_other"
 
 
-# Reason code to owner mapping
+# Reason code to owner mapping (immutable after creation)
 REASON_CODE_TO_OWNER = {
     ExceptionReasonCode.CONSENT_MISSING: "orderer",
     ExceptionReasonCode.CONSENT_WITHDRAWN: "orderer",
@@ -87,65 +109,6 @@ class ResolutionAction(str, enum.Enum):
 
     RETRY_CHECK = "retry_check"
     ACCEPT_FAILURE = "accept_failure"
-
-
-class Exception(Base):
-    """
-    An exception is a work item: an order blocked on a specific reason,
-    owned by someone, with resolution history.
-
-    Owner is derived from reason_code at creation and immutable.
-    Reopening on the same reason increments the reopen count and logs
-    the event in exception_events.
-    """
-
-    __tablename__ = "exceptions"
-
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    org_id = Column(String(255), nullable=False, index=True)
-    order_id = Column(UUID, ForeignKey("orders.id"), nullable=False, index=True)
-
-    category = Column(Enum(ExceptionCategory), nullable=False)
-    reason_code = Column(Enum(ExceptionReasonCode), nullable=False)
-    error_message = Column(Text, nullable=True)
-
-    status = Column(Enum(ExceptionStatus), nullable=False, default=ExceptionStatus.OPEN)
-    owner = Column(String(50), nullable=False)  # "orderer" or "lab_operator"
-
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    last_resolved_by = Column(String(255), nullable=True)
-    last_resolved_at = Column(DateTime, nullable=True)
-    resolution_action = Column(Enum(ResolutionAction), nullable=True)
-    resolution_note = Column(Text, nullable=True)
-
-    # Relationships
-    events = relationship("ExceptionEvent", back_populates="exception", cascade="all, delete-orphan")
-
-    def __repr__(self):
-        return f"<Exception {self.id} {self.reason_code} owner={self.owner} status={self.status}>"
-
-
-class ExceptionEvent(Base):
-    """
-    Audit trail for an exception: every open, resolve, reopen with actor,
-    timestamp, and note. Tracks who resolved it and what they thought they fixed.
-    """
-
-    __tablename__ = "exception_events"
-
-    id = Column(UUID, primary_key=True, default=uuid.uuid4)
-    exception_id = Column(UUID, ForeignKey("exceptions.id"), nullable=False, index=True)
-
-    actor = Column(String(255), nullable=False)  # "system" or user_id
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
-    action = Column(Enum(ExceptionEventAction), nullable=False)
-    action_note = Column(Text, nullable=True)
-
-    # Relationships
-    exception = relationship("Exception", back_populates="events")
-
-    def __repr__(self):
-        return f"<ExceptionEvent {self.id} {self.action} by {self.actor}>"
 
 
 @dataclass

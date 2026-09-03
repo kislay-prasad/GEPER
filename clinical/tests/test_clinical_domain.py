@@ -757,13 +757,13 @@ class TestVcfCreation:
         sample_id = sample_for_lineage
         run_id = dao.create_sequencing_run(session_admin, sample_id)
 
-        # Create a temp VCF file with known content
+        # Create a temp VCF file with known content (use binary mode to avoid line-ending conversion)
         vcf_file = tmp_path / "test_hash.vcf"
-        content = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\n"
-        vcf_file.write_text(content)
+        content = b"##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\n"
+        vcf_file.write_bytes(content)
 
         # Compute expected hash
-        expected_hash = hashlib.sha256(content.encode()).hexdigest()
+        expected_hash = hashlib.sha256(content).hexdigest()
 
         vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
         vcf = dao.get_vcf(session_admin, vcf_id)
@@ -1358,7 +1358,7 @@ class TestLineageQueries:
         assert resource_type == "report"
         assert outcome == "success"
 
-        details = json.loads(details_json)
+        details = json.loads(details_json) if isinstance(details_json, str) else details_json
         assert details["chain_length"] == 7
         assert "final_patient_id" in details
         assert details["final_patient_id"] == str(chain[-1]["resource_id"])
@@ -1599,7 +1599,7 @@ class TestLineageQueries:
         assert resource_type == "interpretation"
         assert outcome == "success"
 
-        details = json.loads(details_json)
+        details = json.loads(details_json) if isinstance(details_json, str) else details_json
         assert "criteria" in details
         assert details["result_count"] == 1
 

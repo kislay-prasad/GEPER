@@ -366,6 +366,23 @@ def auditable(
     return decorator
 
 
+# DECORATOR IMPLEMENTATION STATUS (Phase 2 audit layer):
+# Methods with side-by-side equivalence proof (old _audit() vs @auditable):
+#  - create_organisation (Method 1): PROVEN ✓
+#  - create_user (Method 2): PROVEN ✓ (fixed email extraction via signature binding)
+#  - terminate_session (Method 3): PROVEN ✓
+#  - assign_role (Method 4): PROVEN ✓
+#
+# Methods decorated without side-by-side proof (equivalence inferred from test coverage):
+#  - log_failed_login (Method 5): UNPROVEN (test suite validates behavior)
+#  - login (Method 6): UNPROVEN (test suite validates behavior)
+#  - set_user_disabled (Method 7): UNPROVEN (test suite validates behavior)
+#  - enrol_totp (Method 8): UNPROVEN (test suite validates behavior)
+#  - session_valid (Method 9): MARKED NON-AUDITABLE (validation read, not a resource action)
+#
+# NOTE: Methods 1–4 found bugs (org_id=None, email=None) that passing tests had missed.
+# Methods 5–9 removed old calls unproven; this is a recorded gap, not validation.
+
 # ─── Transaction decorator ───────────────────────────────────────────────────
 
 
@@ -714,7 +731,7 @@ class DataAccess:
         resource_type="session",
         requires_session=False,
         auditable=False,
-        reason="validation read, not a resource action",
+        reason="validation read on every request; session activity audit trail records only creation and termination, not use",
     )
     @transactional
     def session_valid(self, session_id: uuid.UUID) -> Session:

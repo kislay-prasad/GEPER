@@ -207,7 +207,16 @@ class User:
 # module issues against one of these must bind org_id. The isolation test
 # reads this tuple, so adding a table here without adding the predicate is
 # what makes the test fail.
-ORG_SCOPED_TABLES = ("users", "role_assignments", "sessions", "totp_backup_codes")
+ORG_SCOPED_TABLES = (
+    "users",
+    "role_assignments",
+    "sessions",
+    "totp_backup_codes",
+    "patients",
+    "consents",
+    "orders",
+    "samples",
+)
 
 
 # ─── Audit decorator ────────────────────────────────────────────────────────
@@ -1062,6 +1071,465 @@ class DataAccess:
             'FROM audit_log WHERE org_id = %s ORDER BY "timestamp", log_id LIMIT %s',
             (session.org_id, limit),
         )
+
+    # ── Phase 3: Clinical domain ─────────────────────────────────────────────
+
+    @auditable(
+        action="patient_created",
+        resource_type="patient",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "name": params.get("name"),
+            "dob": str(params.get("dob")) if params.get("dob") else None,
+            "sex": params.get("sex"),
+        },
+    )
+    @transactional
+    def create_patient(
+        self,
+        session: Session,
+        name: str,
+        dob: _datetime.date,
+        sex: str,
+    ) -> uuid.UUID:
+        """Create a patient record in this organisation."""
+        if sex not in ("M", "F", "O", "U"):
+            raise ValueError(f"Sex must be one of M/F/O/U, not {sex!r}")
+
+        patient_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO patients (patient_id, org_id, name, dob, sex, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (patient_id, session.org_id, name, dob, sex, now),
+        )
+        return patient_id
+
+    @auditable(
+        action="consent_recorded",
+        resource_type="consent",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "patient_id": str(params.get("patient_id")),
+            "scope": params.get("scope"),
+            "supersedes": str(params.get("supersedes_id")) if params.get("supersedes_id") else None,
+        },
+    )
+    @transactional
+    def record_consent(
+        self,
+        session: Session,
+        patient_id: uuid.UUID,
+        scope: str,
+        supersedes_id: Optional[uuid.UUID] = None,
+    ) -> uuid.UUID:
+        """Record a new consent. Optionally supersedes an old one."""
+        # Validate patient exists in this org
+        patient = self._query_one(
+            "SELECT patient_id FROM patients WHERE patient_id = %s AND org_id = %s",
+            (patient_id, session.org_id),
+        )
+        if patient is None:
+            raise NotFoundError(f"Patient {patient_id} not found")
+
+        # Create new consent
+        consent_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO consents (consent_id, org_id, patient_id, scope, "
+            "  recorded_by, recorded_at, superseded_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (consent_id, session.org_id, patient_id, scope, session.user_id, now, None),
+        )
+
+        # If superseding an old consent, update its superseded_by pointer
+        if supersedes_id:
+            old = self._query_one(
+                "SELECT consent_id FROM consents WHERE consent_id = %s AND patient_id = %s AND org_id = %s",
+                (supersedes_id, patient_id, session.org_id),
+            )
+            if old:
+                self._execute(
+                    "UPDATE consents SET superseded_by = %s WHERE consent_id = %s AND org_id = %s",
+                    (consent_id, supersedes_id, session.org_id),
+                )
+
+        return consent_id
+
+    # ── Phase 3: Clinical domain — methods 3-12 ──────────────────────────────
+
+    @auditable(
+        action="order_created",
+        resource_type="order",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "patient_id": str(params.get("patient_id")),
+            "test_id": str(params.get("test_id")),
+            "priority": params.get("priority"),
+            "required_scope": params.get("required_scope"),
+        },
+    )
+    @transactional
+    def create_order(
+        self,
+        session: Session,
+        patient_id: uuid.UUID,
+        test_id: uuid.UUID,
+        required_scope: str,
+        consent_id: uuid.UUID,
+        priority: str = "routine",
+        clinical_indication: Optional[str] = None,
+    ) -> uuid.UUID:
+        """Create a new order in draft state. Requires valid patient, test, and consent."""
+        if priority not in ("routine", "urgent"):
+            raise ValueError(f"Priority must be 'routine' or 'urgent', not {priority!r}")
+
+        # Validate patient exists in this org
+        patient = self._query_one(
+            "SELECT patient_id FROM patients WHERE patient_id = %s AND org_id = %s",
+            (patient_id, session.org_id),
+        )
+        if patient is None:
+            raise NotFoundError(f"Patient {patient_id} not found")
+
+        # Validate test exists in this org
+        test = self._query_one(
+            "SELECT test_id FROM tests WHERE test_id = %s AND org_id = %s",
+            (test_id, session.org_id),
+        )
+        if test is None:
+            raise NotFoundError(f"Test {test_id} not found")
+
+        # Validate consent exists, is active, and has the required scope
+        consent = self._query_one(
+            "SELECT consent_id, scope FROM consents "
+            "WHERE consent_id = %s AND patient_id = %s AND org_id = %s "
+            "AND withdrawn_at IS NULL AND superseded_by IS NULL",
+            (consent_id, patient_id, session.org_id),
+        )
+        if consent is None:
+            raise NotFoundError(f"Active consent {consent_id} not found")
+
+        consent_scope = consent[1]
+        if consent_scope != required_scope:
+            raise ValueError(f"Consent scope '{consent_scope}' does not match required scope '{required_scope}'")
+
+        # Create new order
+        order_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO orders "
+            "(order_id, org_id, patient_id, test_id, required_scope, consent_id, "
+            " ordered_by, priority, clinical_indication, state, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                order_id,
+                session.org_id,
+                patient_id,
+                test_id,
+                required_scope,
+                consent_id,
+                session.user_id,
+                priority,
+                clinical_indication,
+                "draft",
+                now,
+            ),
+        )
+        return order_id
+
+    @auditable(
+        action="order_placed",
+        resource_type="order",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "order_id": str(params.get("order_id")),
+        },
+    )
+    @transactional
+    def place_order(self, session: Session, order_id: uuid.UUID) -> None:
+        """Place an order, transitioning it from draft to placed state."""
+        order = self._query_one(
+            "SELECT order_id, state FROM orders WHERE order_id = %s AND org_id = %s",
+            (order_id, session.org_id),
+        )
+        if order is None:
+            raise NotFoundError(f"Order {order_id} not found")
+
+        if order[1] != "draft":
+            raise ValueError(f"Order is in '{order[1]}' state, cannot place non-draft order")
+
+        now = self._clock.now()
+        self._execute(
+            "UPDATE orders SET state = %s, placed_at = %s WHERE order_id = %s AND org_id = %s",
+            ("placed", now, order_id, session.org_id),
+        )
+
+    @auditable(
+        action="order_cancelled",
+        resource_type="order",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "order_id": str(params.get("order_id")),
+        },
+    )
+    @transactional
+    def cancel_order(self, session: Session, order_id: uuid.UUID) -> None:
+        """Cancel an order."""
+        order = self._query_one(
+            "SELECT order_id, state FROM orders WHERE order_id = %s AND org_id = %s",
+            (order_id, session.org_id),
+        )
+        if order is None:
+            raise NotFoundError(f"Order {order_id} not found")
+
+        if order[1] in ("reported", "closed", "cancelled"):
+            raise ValueError(f"Cannot cancel order in '{order[1]}' state")
+
+        now = self._clock.now()
+        self._execute(
+            "UPDATE orders SET state = %s, cancelled_at = %s WHERE order_id = %s AND org_id = %s",
+            ("cancelled", now, order_id, session.org_id),
+        )
+
+    @auditable(
+        action="sample_received",
+        resource_type="sample",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "order_id": str(params.get("order_id")),
+            "type": params.get("type"),
+        },
+    )
+    @transactional
+    def receive_sample(
+        self,
+        session: Session,
+        order_id: uuid.UUID,
+        sample_type: str,
+        condition_on_receipt: Optional[str] = None,
+    ) -> uuid.UUID:
+        """Record receipt of a sample. Transitions order to sample_awaited state if needed."""
+        if sample_type not in ("blood", "saliva", "tissue", "dna"):
+            raise ValueError(f"Sample type must be one of: blood, saliva, tissue, dna; not {sample_type!r}")
+
+        # Validate order exists and is in a state that can receive samples
+        order = self._query_one(
+            "SELECT order_id, state FROM orders WHERE order_id = %s AND org_id = %s",
+            (order_id, session.org_id),
+        )
+        if order is None:
+            raise NotFoundError(f"Order {order_id} not found")
+
+        order_state = order[1]
+        if order_state not in ("placed", "sample_awaited"):
+            raise ValueError(f"Cannot receive sample for order in '{order_state}' state")
+
+        # Create sample
+        sample_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO samples "
+            "(sample_id, org_id, order_id, type, collected_at, collected_by, "
+            " received_at, received_by, condition_on_receipt, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                sample_id,
+                session.org_id,
+                order_id,
+                sample_type,
+                now,
+                session.user_id,
+                now,
+                session.user_id,
+                condition_on_receipt,
+                now,
+            ),
+        )
+
+        # Update order state to sample_awaited if it was in placed state
+        if order_state == "placed":
+            self._execute(
+                "UPDATE orders SET state = %s WHERE order_id = %s AND org_id = %s",
+                ("sample_awaited", order_id, session.org_id),
+            )
+
+        return sample_id
+
+    @auditable(
+        action="qc_recorded",
+        resource_type="sample",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "sample_id": str(params.get("sample_id")),
+            "qc_status": params.get("qc_status"),
+        },
+    )
+    @transactional
+    def record_qc(
+        self,
+        session: Session,
+        sample_id: uuid.UUID,
+        qc_status: str,
+        qc_reason: Optional[str] = None,
+    ) -> None:
+        """Record QC result for a sample."""
+        if qc_status not in ("passed", "failed"):
+            raise ValueError(f"QC status must be 'passed' or 'failed', not {qc_status!r}")
+
+        # Validate sample exists in this org
+        sample = self._query_one(
+            "SELECT sample_id FROM samples WHERE sample_id = %s AND org_id = %s",
+            (sample_id, session.org_id),
+        )
+        if sample is None:
+            raise NotFoundError(f"Sample {sample_id} not found")
+
+        now = self._clock.now()
+        self._execute(
+            "UPDATE samples SET qc_status = %s, qc_reason = %s, qc_recorded_by = %s, "
+            "qc_recorded_at = %s WHERE sample_id = %s AND org_id = %s",
+            (qc_status, qc_reason, session.user_id, now, sample_id, session.org_id),
+        )
+
+    @auditable(
+        action="consent_withdrawn",
+        resource_type="consent",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "consent_id": str(params.get("consent_id")),
+        },
+    )
+    @transactional
+    def withdraw_consent(self, session: Session, consent_id: uuid.UUID) -> None:
+        """Withdraw an active consent."""
+        consent = self._query_one(
+            "SELECT consent_id FROM consents WHERE consent_id = %s AND org_id = %s AND withdrawn_at IS NULL",
+            (consent_id, session.org_id),
+        )
+        if consent is None:
+            raise NotFoundError(f"Active consent {consent_id} not found")
+
+        now = self._clock.now()
+        self._execute(
+            "UPDATE consents SET withdrawn_at = %s, withdrawn_by = %s WHERE consent_id = %s AND org_id = %s",
+            (now, session.user_id, consent_id, session.org_id),
+        )
+
+    @auditable(
+        action="patient_read",
+        resource_type="patient",
+        requires_session=True,
+        auditable=False,
+    )
+    def get_patient(self, session: Session, patient_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a patient record."""
+        row = self._query_one(
+            "SELECT patient_id, name, dob, sex, created_at, disabled FROM patients "
+            "WHERE patient_id = %s AND org_id = %s",
+            (patient_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "patient_id": row[0],
+            "name": row[1],
+            "dob": row[2],
+            "sex": row[3],
+            "created_at": row[4],
+            "disabled": row[5],
+        }
+
+    @auditable(
+        action="order_read",
+        resource_type="order",
+        requires_session=True,
+        auditable=False,
+    )
+    def get_order(self, session: Session, order_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve an order record."""
+        row = self._query_one(
+            "SELECT order_id, patient_id, test_id, required_scope, consent_id, "
+            "ordered_by, priority, clinical_indication, state, placed_at, "
+            "cancelled_at, created_at FROM orders "
+            "WHERE order_id = %s AND org_id = %s",
+            (order_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "order_id": row[0],
+            "patient_id": row[1],
+            "test_id": row[2],
+            "required_scope": row[3],
+            "consent_id": row[4],
+            "ordered_by": row[5],
+            "priority": row[6],
+            "clinical_indication": row[7],
+            "state": row[8],
+            "placed_at": row[9],
+            "cancelled_at": row[10],
+            "created_at": row[11],
+        }
+
+    @auditable(
+        action="consent_read",
+        resource_type="consent",
+        requires_session=True,
+        auditable=False,
+    )
+    def get_consent(self, session: Session, consent_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a consent record."""
+        row = self._query_one(
+            "SELECT consent_id, patient_id, scope, recorded_by, recorded_at, "
+            "withdrawn_at, withdrawn_by, superseded_by FROM consents "
+            "WHERE consent_id = %s AND org_id = %s",
+            (consent_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "consent_id": row[0],
+            "patient_id": row[1],
+            "scope": row[2],
+            "recorded_by": row[3],
+            "recorded_at": row[4],
+            "withdrawn_at": row[5],
+            "withdrawn_by": row[6],
+            "superseded_by": row[7],
+        }
+
+    @auditable(
+        action="sample_read",
+        resource_type="sample",
+        requires_session=True,
+        auditable=False,
+    )
+    def get_sample(self, session: Session, sample_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a sample record."""
+        row = self._query_one(
+            "SELECT sample_id, order_id, type, collected_at, collected_by, "
+            "received_at, received_by, condition_on_receipt, qc_status, "
+            "qc_reason, qc_recorded_by, qc_recorded_at, created_at FROM samples "
+            "WHERE sample_id = %s AND org_id = %s",
+            (sample_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "sample_id": row[0],
+            "order_id": row[1],
+            "type": row[2],
+            "collected_at": row[3],
+            "collected_by": row[4],
+            "received_at": row[5],
+            "received_by": row[6],
+            "condition_on_receipt": row[7],
+            "qc_status": row[8],
+            "qc_reason": row[9],
+            "qc_recorded_by": row[10],
+            "qc_recorded_at": row[11],
+            "created_at": row[12],
+        }
 
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification

@@ -537,6 +537,17 @@ CREATE INDEX idx_reports_org_state ON reports (org_id, state);
 -- older claims are not edited, and the interpretation's own classification is
 -- untouched by any of them.
 --
+-- NOTE ON THE ASYMMETRY WITH consents, WHICH IS DELIBERATE. consents records
+-- supersession with superseded_by, a BACKWARD pointer on the row being
+-- replaced; this table uses supersedes, a FORWARD pointer on the row doing
+-- the replacing. The difference is not an oversight and the two must not be
+-- unified. consents is an ordinary table the application may update, so it
+-- can afford to reach back and annotate the old row. reviewer_claims is
+-- evidentiary and append-only by structure rather than by convention, so
+-- there is no UPDATE with which to annotate anything, and the pointer has to
+-- travel forward. Anyone tempted to make these two consistent should change
+-- consents, never this.
+--
 -- EXPERT-BRANCH DECISION POINTS (spec 13.2, ratify vs re-derive). Six points
 -- are affected and NONE is decided in this commit; they are recorded here so
 -- that a later commit resolves them deliberately rather than by accident:
@@ -589,32 +600,46 @@ CREATE TABLE reviewer_claims (
     -- Nullable pending expert-branch point 6 above. No shape is imposed yet.
     evidence_json       JSONB,
 
-    -- Withdrawal and correction, given that the table is append-only below
-    -- and a claim therefore cannot be deleted or edited. The superseded claim
-    -- stays in the record and points forward at the one that replaced it, so
-    -- a reviewer's first attempt has somewhere to go without vanishing.
-    -- Same shape as consents.superseded_by.
+    -- The claim this claim supersedes, i.e. the earlier claim it corrects or
+    -- replaces. NULL when this is an original claim. Written at INSERT, never
+    -- afterwards -- which is the whole reason the pointer runs in this
+    -- direction.
+    --
+    -- FORWARD, NOT BACKWARD, AND THE DIRECTION IS THE POINT. The obvious
+    -- shape is the one consents uses: superseded_by on the OLD row, naming
+    -- its successor. It cannot be used here. The superseding claim does not
+    -- exist at the moment the old row is inserted, so a backward pointer can
+    -- only ever be filled in by an UPDATE of that old row -- and this table
+    -- is append-only, so there is no UPDATE to give. The available fix was a
+    -- column-level UPDATE grant on that one column, and it was rejected
+    -- deliberately: append-only-except-one-column is a rule with an
+    -- exception, and an exception in an evidentiary table is the thing
+    -- someone later widens. The new row naming what it replaces needs no
+    -- exception at all. Append-only stays absolute: the old row is never
+    -- touched.
+    --
+    -- The cost, stated plainly because it lands on every reader of this
+    -- table: "is this claim superseded" is no longer a column read, it is a
+    -- query.
+    --     EXISTS (SELECT 1 FROM reviewer_claims
+    --              WHERE supersedes = X.id AND org_id = X.org_id)
+    -- And nothing here stops two claims superseding the same one; that a
+    -- superseded claim cannot be superseded again is enforced by the method,
+    -- like transition legality on reports, for the same reason -- a row
+    -- constraint cannot see the rest of the table.
     --
     -- A superseded claim is still a claim that was made, and the read path
-    -- must not quietly drop it: ISO 15189 7.4.1.8's rule for amended reports
+    -- must not quietly drop it. ISO 15189 7.4.1.8's rule for amended reports
     -- -- the original is never modified and never withdrawn from the record
     -- -- is the same rule one level down.
-    --
-    -- NOTE, and this is the one place the append-only grant is relaxed: this
-    -- column is necessarily written by an UPDATE of the OLDER row, because
-    -- the claim that supersedes it does not exist at the moment the older
-    -- one is inserted. The grant block below therefore revokes UPDATE on
-    -- this table and grants it back for THIS COLUMN ALONE. Every evidentiary
-    -- column -- claim_type, actor_id, timestamp, reason, evidence_json --
-    -- remains unalterable.
-    superseded_by       UUID,
+    supersedes          UUID,
 
     CONSTRAINT fk_claim_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
     CONSTRAINT fk_claim_actor
         FOREIGN KEY (org_id, actor_id) REFERENCES users (org_id, user_id),
-    CONSTRAINT fk_claim_superseded
-        FOREIGN KEY (superseded_by, org_id) REFERENCES reviewer_claims (id, org_id),
+    CONSTRAINT fk_claim_supersedes
+        FOREIGN KEY (org_id, supersedes) REFERENCES reviewer_claims (org_id, id),
     CONSTRAINT uk_claim_org_id UNIQUE (org_id, id)
 );
 
@@ -747,21 +772,19 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 -- requirement that the original is never modified and never withdrawn from the
 -- record cannot be met by a table the application is free to rewrite.
 --
--- A wrong claim is corrected by appending a correcting claim and pointing the
--- old one at it, which is what reviewer_claims.superseded_by is for and what
+-- A wrong claim is corrected by appending a correcting claim that names the
+-- one it replaces, which is what reviewer_claims.supersedes is for and what
 -- append-only means, per the audit_log note above.
 --
--- The single, deliberate exception: superseded_by can only be written by an
--- UPDATE of the older row, because the claim that supersedes it does not exist
--- when that row is inserted. UPDATE is revoked on the table and granted back
--- for that one column, by name. claim_type, actor_id, timestamp, reason and
--- evidence_json -- everything evidentiary -- stay unalterable, and a
--- column-level grant means that is enforced by the privilege system rather
--- than by application discipline.
+-- WITH NO EXCEPTION. There is no column-level UPDATE grant here and there
+-- should never be one: the supersedes pointer is written at INSERT by the new
+-- row, so correcting the record never requires touching an existing one.
+-- These two tables have exactly the privileges audit_log has, and a future
+-- change that needs UPDATE on either is a design error rather than a missing
+-- grant.
 GRANT  SELECT, INSERT ON reviewer_claims, release_events TO clinical_app;
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM clinical_app;
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM PUBLIC;
-GRANT  UPDATE (superseded_by) ON reviewer_claims TO clinical_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,

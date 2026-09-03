@@ -2345,3 +2345,55 @@ class TestPreconditionsAndValidation:
 
         result = dao.validate_vcf_variant_count(str(vcf_file))
         assert result == "vcf_no_variants"
+
+    def test_record_qc_failed_order_stays_sample_awaited(self, dao, session_admin, patient_with_consent, conn):
+        """
+        INVARIANT TEST (Phase 3 spec §8.3):
+        Order must remain in sample_awaited throughout QC recording, regardless of result.
+        (Structural: no in_progress state exists before QC passes, so order cannot leave sample_awaited.)
+        """
+        patient_id, consent_id, test_id = patient_with_consent
+
+        # Create and place an order
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            clinical_indication="Test indication",
+            consent_id=consent_id,
+        )
+        dao.place_order(session_admin, order_id)
+
+        # Receive a sample → order transitions to sample_awaited
+        sample_id = dao.receive_sample(session_admin, order_id, "dna")
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT state FROM orders WHERE order_id = %s AND org_id = %s", (order_id, session_admin.org_id)
+            )
+            state_at_receipt = cur.fetchone()[0]
+        assert state_at_receipt == "sample_awaited", "Sample receipt transitions order to sample_awaited"
+
+        # Record QC as failed
+        dao.record_qc(session_admin, sample_id, "failed", "Sample degraded")
+
+        # Invariant: Order must stay in sample_awaited (no state transition out exists until QC passes)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT state FROM orders WHERE order_id = %s AND org_id = %s", (order_id, session_admin.org_id)
+            )
+            state_after_qc_failed = cur.fetchone()[0]
+
+        assert state_after_qc_failed == "sample_awaited", (
+            f"Order must stay in sample_awaited; got {state_after_qc_failed}"
+        )
+
+        # Verify QC result was recorded
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT qc_status, qc_reason FROM samples WHERE sample_id = %s AND org_id = %s",
+                (sample_id, session_admin.org_id),
+            )
+            qc_status, qc_reason = cur.fetchone()
+        assert qc_status == "failed"
+        assert qc_reason == "Sample degraded"

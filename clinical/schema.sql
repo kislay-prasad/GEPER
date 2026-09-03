@@ -449,13 +449,219 @@ CREATE TABLE reports (
     created_at          TIMESTAMPTZ NOT NULL,
     created_by          UUID        NOT NULL,
 
+    -- Phase 6 (spec 13.1). The state machine is draft -> under_review ->
+    -- approved -> released, with returned sending a report back to
+    -- under_review. Enumerated here rather than in application code because a
+    -- report in a state nobody defined is the failure mode this column exists
+    -- to make unrepresentable. Transition legality is NOT a CHECK -- a row
+    -- constraint cannot see the previous value -- and belongs to a later
+    -- commit; what the CHECK guarantees is that whatever state a report is
+    -- in is one of the five.
+    state               TEXT        NOT NULL DEFAULT 'draft'
+        CHECK (state IN ('draft', 'under_review', 'approved', 'released', 'returned')),
+
+    -- Phase 6 (spec 13.3). The three approval facts: who, when, and exactly
+    -- what. content_hash is the hash of the report content AT APPROVAL TIME,
+    -- which is what makes 15.1 immutability checkable afterwards -- without
+    -- it "this report was approved" is a claim about a document that may
+    -- since have changed. VARCHAR(64) sizes a hex-encoded SHA-256.
+    --
+    -- approver_id is a composite FK, as every user reference in this schema
+    -- is: an approver from another organisation must be structurally
+    -- impossible, not merely unlikely.
+    approver_id         UUID,
+    approved_at         TIMESTAMPTZ,
+    content_hash        VARCHAR(64),
+
     CONSTRAINT fk_report_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
     CONSTRAINT fk_report_creator
-        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_report_approver
+        FOREIGN KEY (org_id, approver_id) REFERENCES users (org_id, user_id),
+
+    -- The three approval facts are one fact. A report carrying an approver
+    -- but no hash records an approval of unknown content; a report carrying a
+    -- hash but no approver records content nobody approved. Neither is a
+    -- partial approval, both are corruption, and the row is refused.
+    --
+    -- ISO 15189 7.4.1.5 c) requires the identity of the person who reviewed
+    -- and authorised a report to be RETRIEVABLE, and spec 15.1 requires the
+    -- approved content to be VERIFIABLE afterwards against the hash recorded
+    -- at approval. A row that satisfies one half and not the other satisfies
+    -- neither requirement: an identity attached to unidentified content is
+    -- not a retrievable authorisation of anything, and a hash nobody is
+    -- named against is not a verifiable approval. The two requirements are
+    -- only met together, so the constraint admits the row only together.
+    CONSTRAINT reports_approval_complete CHECK (
+        (approver_id IS NULL) = (approved_at IS NULL)
+        AND (approver_id IS NULL) = (content_hash IS NULL)
+    ),
+
+    -- Spec 13.3: approval is what makes a report releasable, and nothing else
+    -- does. So the two states downstream of approval cannot be reached by a
+    -- row that records no approval. This is the fail-safe as a constraint
+    -- rather than a convention: a path that sets state = 'released' without
+    -- writing the approval facts fails its write instead of releasing an
+    -- unapproved report.
+    --
+    -- ISO 15189 7.4.1.5 c) again: it is the approver's action that releases a
+    -- report for clinical use, and the standard requires that approver's
+    -- identity be retrievable for the report that went out. A released row
+    -- with approver_id NULL is a report in clinical use whose authoriser
+    -- cannot be retrieved, which is the exact condition the clause forbids.
+    -- Same reasoning as role_assignments_approver_needs_basis above, one
+    -- step later in the lifecycle.
+    CONSTRAINT reports_released_states_need_approval CHECK (
+        state NOT IN ('approved', 'released') OR approver_id IS NOT NULL
+    ),
+
+    -- Required for the composite FK from release_events; same reasoning as
+    -- users_org_user_unique. Redundant as uniqueness, not redundant
+    -- structurally.
+    CONSTRAINT uk_report_org_id UNIQUE (org_id, id)
 );
 
 CREATE INDEX idx_reports_org_interp ON reports (org_id, interpretation_id);
+-- The review worklist reads one organisation's reports by state.
+CREATE INDEX idx_reports_org_state ON reports (org_id, state);
+
+
+-- ─── Phase 6: reviewer_claims ─────────────────────────────────────────────
+--
+-- Spec 13.2: the reviewer's claims about an interpretation. The table is
+-- shaped by one rule from that section -- the pipeline's classification is
+-- never silently overwritten, and a disagreement is A SECOND CLAIM RECORDED
+-- ALONGSIDE the first, not a correction of it. Hence a claim table rather
+-- than mutable columns on the interpretation: every claim is its own row,
+-- older claims are not edited, and the interpretation's own classification is
+-- untouched by any of them.
+--
+-- EXPERT-BRANCH DECISION POINTS (spec 13.2, ratify vs re-derive). Six points
+-- are affected and NONE is decided in this commit; they are recorded here so
+-- that a later commit resolves them deliberately rather than by accident:
+--   1. Screen ordering -- whether the review screen leads with the derivation
+--      surface (re-derive) or with the existing classification (ratify).
+--   2. Accept semantics -- whether an 'accept' claim asserts independent
+--      confirmation or agreement with a draft. Same enum value, different
+--      evidentiary weight; see claim_type below.
+--   3. Rendering -- how a claim and the classification it addresses are shown
+--      together on report surfaces.
+--   4. Report claims -- which claims reach the released report, and how they
+--      are attributed there.
+--   5. D1 applicability -- whether the D1 criterion applies to a re-derived
+--      classification on the same terms as to a ratified one.
+--   6. Evidence capture -- what evidence_json must hold per claim_type;
+--      re-derivation implies capturing what the reviewer consulted, ratifying
+--      does not. The column is nullable for exactly this reason and its
+--      contents are unconstrained until the branch is decided.
+
+CREATE TABLE reviewer_claims (
+    org_id              UUID        NOT NULL,
+    id                  UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    interpretation_id   UUID        NOT NULL,
+
+    -- Spec 13.2's four reviewer actions, closed. 'disagree' does not remove
+    -- the classification it disagrees with; 'variant_added' names a variant
+    -- the pipeline did not surface; 'variant_not_relevant' scopes a variant
+    -- out against the indication without deleting it.
+    claim_type          TEXT        NOT NULL
+        CHECK (claim_type IN ('accept', 'disagree', 'variant_added',
+                              'variant_not_relevant')),
+
+    actor_id            UUID        NOT NULL,
+    "timestamp"         TIMESTAMPTZ NOT NULL,
+
+    -- The reasoning. Spec 13.2 requires it recorded for a disagreement and is
+    -- silent on the other three; the column is NOT NULL for ALL FOUR, and the
+    -- reason is the deferred branch rather than symmetry for its own sake.
+    --
+    -- Under re-derive, an 'accept' is not agreement with a draft -- it is an
+    -- INDEPENDENT CONCURRENCE, a second clinician arriving at the same
+    -- classification on their own. That is evidence. Evidence without stated
+    -- grounds is not evidence, so a re-derive reading needs the grounds
+    -- recorded for an accept exactly as much as for a disagreement. Making
+    -- the column nullable now would foreclose that reading before the expert
+    -- branch is decided (point 2 above); making it NOT NULL keeps both
+    -- readings available, at the cost of requiring text on an accept.
+    reason              TEXT        NOT NULL,
+
+    -- Nullable pending expert-branch point 6 above. No shape is imposed yet.
+    evidence_json       JSONB,
+
+    -- Withdrawal and correction, given that the table is append-only below
+    -- and a claim therefore cannot be deleted or edited. The superseded claim
+    -- stays in the record and points forward at the one that replaced it, so
+    -- a reviewer's first attempt has somewhere to go without vanishing.
+    -- Same shape as consents.superseded_by.
+    --
+    -- A superseded claim is still a claim that was made, and the read path
+    -- must not quietly drop it: ISO 15189 7.4.1.8's rule for amended reports
+    -- -- the original is never modified and never withdrawn from the record
+    -- -- is the same rule one level down.
+    --
+    -- NOTE, and this is the one place the append-only grant is relaxed: this
+    -- column is necessarily written by an UPDATE of the OLDER row, because
+    -- the claim that supersedes it does not exist at the moment the older
+    -- one is inserted. The grant block below therefore revokes UPDATE on
+    -- this table and grants it back for THIS COLUMN ALONE. Every evidentiary
+    -- column -- claim_type, actor_id, timestamp, reason, evidence_json --
+    -- remains unalterable.
+    superseded_by       UUID,
+
+    CONSTRAINT fk_claim_interp
+        FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
+    CONSTRAINT fk_claim_actor
+        FOREIGN KEY (org_id, actor_id) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_claim_superseded
+        FOREIGN KEY (superseded_by, org_id) REFERENCES reviewer_claims (id, org_id),
+    CONSTRAINT uk_claim_org_id UNIQUE (org_id, id)
+);
+
+-- The review screen reads every claim on one interpretation, oldest first.
+CREATE INDEX idx_claims_org_interp
+    ON reviewer_claims (org_id, interpretation_id, "timestamp");
+
+
+-- ─── Phase 6: release_events ───────────────────────────────────────────
+--
+-- Release is an EVENT, not a flag. A boolean "released" on reports answers
+-- whether a report left the platform but not when, to whom, or carrying what
+-- content -- and it cannot represent the ordinary case of one approved report
+-- going to a clinician and then to a LIMS. One row per delivery.
+--
+-- content_hash is recorded again here rather than read back from reports at
+-- display time, and the duplication is the point: it states what was actually
+-- handed to THIS consumer. If it ever differs from reports.content_hash, that
+-- difference is the finding (spec 15.1), and a design that read the hash back
+-- from reports could not produce it.
+
+CREATE TABLE release_events (
+    org_id          UUID        NOT NULL,
+    id              UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    report_id       UUID        NOT NULL,
+
+    -- The downstream recipient (spec 13.4: a clinician, a patient, a LIMS,
+    -- any consumer). Free text pending the delivery paths of a later commit;
+    -- enumerating it now would fix a vocabulary before the paths exist.
+    consumer        TEXT        NOT NULL,
+
+    released_at     TIMESTAMPTZ NOT NULL,
+    released_by     UUID        NOT NULL,
+    content_hash    VARCHAR(64) NOT NULL,
+
+    CONSTRAINT fk_release_report
+        FOREIGN KEY (org_id, report_id) REFERENCES reports (org_id, id),
+    CONSTRAINT fk_release_releaser
+        FOREIGN KEY (org_id, released_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_release_org_id UNIQUE (org_id, id)
+);
+
+-- "What left the platform for this report, and when" -- the question asked of
+-- this table both by the audit path and by amendment (spec 15.2), which has
+-- to know who received the original.
+CREATE INDEX idx_release_org_report
+    ON release_events (org_id, report_id, released_at);
 
 
 -- ─── Phase 5d: Exception workflow (order exceptions and resolution tracking) ─
@@ -531,6 +737,31 @@ GRANT  SELECT, INSERT         ON audit_log TO clinical_app;
 REVOKE UPDATE, DELETE         ON audit_log FROM clinical_app;
 REVOKE UPDATE, DELETE         ON audit_log FROM PUBLIC;
 GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
+
+-- reviewer_claims and release_events are evidentiary records, and they are
+-- held to audit_log's rule rather than the ordinary tables' rule for the same
+-- reason audit_log is: both are exactly what someone would want to alter after
+-- the fact. A reviewer's disagreement quietly edited into an agreement, or a
+-- release event's consumer or content_hash rewritten after a report went out,
+-- would leave no trace that anything had changed -- and ISO 15189 7.4.1.8's
+-- requirement that the original is never modified and never withdrawn from the
+-- record cannot be met by a table the application is free to rewrite.
+--
+-- A wrong claim is corrected by appending a correcting claim and pointing the
+-- old one at it, which is what reviewer_claims.superseded_by is for and what
+-- append-only means, per the audit_log note above.
+--
+-- The single, deliberate exception: superseded_by can only be written by an
+-- UPDATE of the older row, because the claim that supersedes it does not exist
+-- when that row is inserted. UPDATE is revoked on the table and granted back
+-- for that one column, by name. claim_type, actor_id, timestamp, reason and
+-- evidence_json -- everything evidentiary -- stay unalterable, and a
+-- column-level grant means that is enforced by the privilege system rather
+-- than by application discipline.
+GRANT  SELECT, INSERT ON reviewer_claims, release_events TO clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM PUBLIC;
+GRANT  UPDATE (superseded_by) ON reviewer_claims TO clinical_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,

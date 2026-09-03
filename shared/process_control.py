@@ -64,8 +64,8 @@ logger = logging.getLogger("geper.pipeline.utils.process_control")
 # outside an active run() call (or for a stage run standalone, e.g. in a
 # script/test, where no run() ever set it) -- spawn_tracked() just skips
 # the notification in that case; the process is still spawned normally.
-_CURRENT_KILL_CALLBACK: contextvars.ContextVar[Optional[Callable[[subprocess.Popen], None]]] = (
-    contextvars.ContextVar("_CURRENT_KILL_CALLBACK", default=None)
+_CURRENT_KILL_CALLBACK: contextvars.ContextVar[Optional[Callable[[subprocess.Popen], None]]] = contextvars.ContextVar(
+    "_CURRENT_KILL_CALLBACK", default=None
 )
 
 

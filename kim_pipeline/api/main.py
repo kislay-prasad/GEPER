@@ -66,7 +66,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from pipeline.orchestration.runner import PipelineRunner
-from pipeline.utils.process_control import request_termination_async
+from shared.process_control import request_termination_async
 from api.run_store import RunStore
 
 # ─── Configuration ────────────────────────────────────────────────────────────

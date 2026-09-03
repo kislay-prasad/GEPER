@@ -55,7 +55,7 @@ from pipeline.fastq.errors import FastqPipelineError
 from pipeline.fastq.validator import FastqValidator
 from pipeline.qc.stage import QCStage, QCThresholdError
 from pipeline.reporting.stage import ReportingStage
-from pipeline.utils.process_control import _CURRENT_KILL_CALLBACK
+from shared.process_control import _CURRENT_KILL_CALLBACK
 from pipeline.utils.reference_cache import ReferenceCacheError, resolve_reference
 from pipeline.variant_calling.stage import VariantCallingStage
 from pipeline.vep.stage import VEPAnnotationStage

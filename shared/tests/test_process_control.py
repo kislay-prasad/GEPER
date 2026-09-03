@@ -27,14 +27,11 @@ import os
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import psutil
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from pipeline.utils.process_control import (
+from ..process_control import (
     _CURRENT_KILL_CALLBACK,
     kill_process_tree_now,
     request_termination_async,
@@ -338,9 +335,7 @@ class TestBugCSelfKillGate:
         # And the parent process is still genuinely functional, not just
         # technically alive with a pending signal -- prove it by doing
         # more real work: spawning and completing another subprocess.
-        proof = spawn_tracked(
-            [sys.executable, "-c", "print('still alive')"], stdout=subprocess.PIPE, text=True
-        )
+        proof = spawn_tracked([sys.executable, "-c", "print('still alive')"], stdout=subprocess.PIPE, text=True)
         out, _ = proof.communicate(timeout=5)
         assert proof.returncode == 0
         assert "still alive" in out

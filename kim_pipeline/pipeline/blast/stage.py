@@ -58,7 +58,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pipeline.utils.process_control import kill_process_tree_now, spawn_tracked
+from shared.process_control import kill_process_tree_now, spawn_tracked
 
 logger = logging.getLogger("geper.pipeline.blast.stage")
 

@@ -192,7 +192,6 @@ class _FastaReader:
                 ["samtools", "version"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
             )
             try:
                 proc.communicate(timeout=5)

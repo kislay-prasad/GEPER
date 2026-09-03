@@ -168,7 +168,7 @@ class VariantCallingStage:
                         text=True,
                     )
                     try:
-                        _norm_result.communicate(timeout=300)
+                        _stdout, _stderr = _norm_result.communicate(timeout=300)
                     except subprocess.TimeoutExpired:
                         kill_process_tree_now(_norm_result)
                         logger.warning(
@@ -188,7 +188,7 @@ class VariantCallingStage:
                                 "[%s] bcftools norm failed (rc=%d): %s — using raw VCF",
                                 sample_id,
                                 _norm_result.returncode,
-                                _norm_result.stderr[:200] if _norm_result.stderr else "(no stderr)",
+                                _stderr[:200] if _stderr else "(no stderr)",
                             )
         except (FileNotFoundError, Exception) as _norm_exc:
             logger.warning(

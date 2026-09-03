@@ -2570,6 +2570,7 @@ class DataAccess:
 
     # ── Phase 5d: Orchestration layer (validates all 5a checks, wires exceptions) ──
 
+    @auditable(action="validate_order_for_submission", resource_type="order")
     def validate_order_for_submission(
         self,
         session: Session,

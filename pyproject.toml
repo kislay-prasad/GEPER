@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geper-platform"
+version = "1.0.0"
+description = "GEPER Clinical Platform — unified workspace for shared utilities, clinical layer, and interpretation engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Workspace setup: all packages (shared, clinical, kim_pipeline) discoverable
+# Install with: pip install -e .
+# This works in CI, locally, Docker, and on customer machines without PYTHONPATH configuration
+
+[tool.setuptools.packages.find]
+# Search in root and subdirectories for packages
+where = ["."]
+include = ["shared*", "clinical*", "pipeline*", "geper*", "api*"]
+
+[tool.setuptools]
+# Explicitly include packages from each subtree
+# setuptools will discover:
+# - shared/ (from repo root)
+# - kim_pipeline/ subtree (pipeline/*, geper/*, api/*)
+# - clinical/ subtree (when present)

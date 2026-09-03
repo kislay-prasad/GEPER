@@ -239,6 +239,141 @@ CREATE INDEX audit_action_timestamp   ON audit_log (action, "timestamp");
 CREATE INDEX audit_outcome_timestamp  ON audit_log (outcome, "timestamp");
 
 
+-- ─── Phase 3: Clinical domain (patients, consents, orders, samples) ──────────
+
+CREATE TABLE patients (
+    patient_id      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID        NOT NULL REFERENCES organisations (org_id),
+    name            TEXT        NOT NULL,
+    dob             DATE        NOT NULL,
+    sex             TEXT        NOT NULL CHECK (sex IN ('M', 'F', 'O', 'U')),
+    created_at      TIMESTAMPTZ NOT NULL,
+    disabled        BOOLEAN     NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT patients_org_patient_unique UNIQUE (org_id, patient_id)
+);
+
+CREATE INDEX patients_org ON patients (org_id);
+
+
+CREATE TABLE external_identifiers (
+    identifier_id   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id      UUID        NOT NULL,
+    org_id          UUID        NOT NULL,
+    id_type         TEXT        NOT NULL,
+    id_value        TEXT        NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT external_identifiers_patient_fk
+        FOREIGN KEY (patient_id, org_id) REFERENCES patients (patient_id, org_id)
+);
+
+CREATE UNIQUE INDEX external_identifiers_unique
+    ON external_identifiers (org_id, id_type, id_value);
+
+
+CREATE TABLE consents (
+    consent_id      UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id      UUID        NOT NULL,
+    org_id          UUID        NOT NULL,
+    scope           TEXT        NOT NULL,
+    recorded_by     UUID        NOT NULL,
+    recorded_at     TIMESTAMPTZ NOT NULL,
+    withdrawn_at    TIMESTAMPTZ,
+    withdrawn_by    UUID,
+    superseded_by   UUID,
+
+    CONSTRAINT consents_withdrawal_complete CHECK (
+        (withdrawn_at IS NULL) = (withdrawn_by IS NULL)
+    ),
+    CONSTRAINT consents_patient_fk
+        FOREIGN KEY (patient_id, org_id) REFERENCES patients (patient_id, org_id),
+    CONSTRAINT consents_superseded_fk
+        FOREIGN KEY (superseded_by, org_id) REFERENCES consents (consent_id, org_id),
+    CONSTRAINT consents_org_unique UNIQUE (org_id, consent_id)
+);
+
+CREATE INDEX consents_patient_active
+    ON consents (org_id, patient_id)
+    WHERE withdrawn_at IS NULL AND superseded_by IS NULL;
+
+
+CREATE TABLE tests (
+    test_id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID        NOT NULL REFERENCES organisations (org_id),
+    name            TEXT        NOT NULL,
+    cdsco_class     TEXT,
+    status          TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
+    approved_at     TIMESTAMPTZ,
+    approved_by     UUID,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX tests_org ON tests (org_id);
+
+
+CREATE TABLE test_genes (
+    gene_id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    test_id         UUID        NOT NULL REFERENCES tests (test_id),
+    gene            TEXT        NOT NULL,
+    added_at        TIMESTAMPTZ NOT NULL,
+    added_by        UUID        NOT NULL
+);
+
+CREATE INDEX test_genes_test ON test_genes (test_id);
+
+
+CREATE TABLE orders (
+    order_id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    patient_id      UUID        NOT NULL,
+    org_id          UUID        NOT NULL,
+    test_id         UUID        NOT NULL REFERENCES tests (test_id),
+    required_scope  TEXT        NOT NULL,
+    clinical_indication TEXT,
+    ordered_by      UUID        NOT NULL,
+    priority        TEXT        NOT NULL DEFAULT 'routine' CHECK (priority IN ('routine', 'urgent')),
+    consent_id      UUID        NOT NULL,
+    state           TEXT        NOT NULL DEFAULT 'draft'
+        CHECK (state IN ('draft', 'placed', 'sample_awaited', 'in_progress', 'reported', 'closed', 'cancelled')),
+    placed_at       TIMESTAMPTZ,
+    cancelled_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT orders_patient_fk
+        FOREIGN KEY (patient_id, org_id) REFERENCES patients (patient_id, org_id),
+    CONSTRAINT orders_consent_fk
+        FOREIGN KEY (consent_id, org_id) REFERENCES consents (consent_id, org_id),
+    CONSTRAINT orders_org_unique UNIQUE (org_id, order_id)
+);
+
+CREATE INDEX orders_patient ON orders (org_id, patient_id);
+CREATE INDEX orders_state ON orders (org_id, state);
+
+
+CREATE TABLE samples (
+    sample_id       UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id        UUID        NOT NULL,
+    org_id          UUID        NOT NULL,
+    type            TEXT        NOT NULL CHECK (type IN ('blood', 'saliva', 'tissue', 'dna')),
+    collected_at    TIMESTAMPTZ NOT NULL,
+    collected_by    UUID        NOT NULL,
+    received_at     TIMESTAMPTZ,
+    received_by     UUID,
+    condition_on_receipt TEXT,
+    qc_status       TEXT        NOT NULL DEFAULT 'pending'
+        CHECK (qc_status IN ('pending', 'passed', 'failed')),
+    qc_reason       TEXT,
+    qc_recorded_by  UUID,
+    qc_recorded_at  TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT samples_order_fk
+        FOREIGN KEY (order_id, org_id) REFERENCES orders (order_id, org_id)
+);
+
+CREATE INDEX samples_order ON samples (org_id, order_id);
+
+
 -- ─── append-only enforcement ────────────────────────────────────────────────
 --
 -- A comment saying "append-only" is not a control. These statements are.
@@ -268,5 +403,6 @@ REVOKE UPDATE, DELETE         ON audit_log FROM PUBLIC;
 GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
-    ON organisations, users, totp_backup_codes, role_assignments, sessions
+    ON organisations, users, totp_backup_codes, role_assignments, sessions,
+       patients, external_identifiers, consents, tests, test_genes, orders, samples
     TO clinical_app;

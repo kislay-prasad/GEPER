@@ -67,14 +67,34 @@ class ExceptionRetryWorker:
     def _process_all_orgs(self) -> None:
         """Process retryable exceptions for all organisations.
 
-        This is a simplified approach. A production system would:
-        - Use a system-level session that can list all orgs
-        - Or use a background task queue instead of polling
-        - Or use a cron job with per-org invocation
+        Iterates each organisation, creates a system session, and runs the retry scheduler.
         """
-        # In a real deployment, this would get all organisations
-        # For now, log that this is a placeholder
-        logger.debug("Exception retry scheduler would process all organisations here")
+
+        # Query all organisations
+        try:
+            with self.data_access._conn.cursor() as cur:
+                cur.execute("SELECT id FROM organisations ORDER BY id")
+                orgs = [row[0] for row in cur.fetchall()]
+        except Exception as e:
+            logger.error(f"Failed to list organisations: {e}")
+            return
+
+        if not orgs:
+            logger.debug("No organisations found")
+            return
+
+        # Process each organisation
+        for org_id in orgs:
+            try:
+                # Create system session for this organisation
+                system_session = self.data_access._create_system_session(org_id)
+
+                # Run retry scheduler for this organisation
+                self.data_access.retry_scheduler(system_session, self.submission_store)
+
+                logger.debug(f"Processed retry queue for org {org_id}")
+            except Exception as e:
+                logger.error(f"Error processing org {org_id}: {e}")
 
 
 def main():

@@ -300,3 +300,127 @@ class TestResolveException:
         assert len(events) == 1
         assert events[0][0] == ExceptionEventAction.RESOLVE.value
         assert events[0][1] == "orderer-1"
+
+
+class TestCreateOrReopenException:
+    """Test exception creation and reopening logic."""
+
+    def test_create_exception_on_precondition_failure(self, dao, session_admin, patient_and_order, conn):
+        """Create new exception for precondition failure."""
+        _, order_id = patient_and_order
+
+        exc_id = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent not provided",
+            "orderer",
+            "orderer-1",
+        )
+
+        # Verify exception created
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT category, reason_code, status, owner FROM exceptions WHERE id = %s AND org_id = %s",
+                (exc_id, session_admin.org_id),
+            )
+            exc = cur.fetchone()
+
+        assert exc[0] == ExceptionCategory.PRECONDITION_FAILURE.value
+        assert exc[1] == ExceptionReasonCode.CONSENT_MISSING.value
+        assert exc[2] == ExceptionStatus.OPEN.value
+        assert exc[3] == "orderer"
+
+        # Verify OPEN event created
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, actor FROM exception_events WHERE exception_id = %s",
+                (exc_id,),
+            )
+            events = cur.fetchall()
+
+        assert len(events) == 1
+        assert events[0][0] == ExceptionEventAction.OPEN.value
+        assert events[0][1] == "orderer-1"
+
+    def test_reopen_exception_on_same_reason_failure(self, dao, session_admin, patient_and_order, conn):
+        """Reopen existing exception when same reason fails again."""
+        _, order_id = patient_and_order
+
+        # Create first exception
+        exc_id_1 = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent not provided",
+            "orderer",
+            "orderer-1",
+        )
+
+        # Try to create same exception again (should reopen)
+        exc_id_2 = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent still missing",
+            "orderer",
+            "orderer-2",
+        )
+
+        # Should return same exception ID
+        assert exc_id_1 == exc_id_2
+
+        # Verify two events: OPEN and REOPEN
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, actor FROM exception_events WHERE exception_id = %s ORDER BY timestamp ASC",
+                (exc_id_1,),
+            )
+            events = cur.fetchall()
+
+        assert len(events) == 2
+        assert events[0][0] == ExceptionEventAction.OPEN.value
+        assert events[1][0] == ExceptionEventAction.REOPEN.value
+        assert events[1][1] == "orderer-2"
+
+    def test_create_separate_exception_for_different_reason(self, dao, session_admin, patient_and_order, conn):
+        """Create separate exception when different reason code fails."""
+        _, order_id = patient_and_order
+
+        # Create first exception
+        exc_id_1 = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent not provided",
+            "orderer",
+            "orderer-1",
+        )
+
+        # Create different exception
+        exc_id_2 = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.VALIDATION_FAILURE.value,
+            ExceptionReasonCode.VCF_INVALID.value,
+            "VCF file invalid",
+            "lab_operator",
+            "lab-1",
+        )
+
+        # Should be different IDs
+        assert exc_id_1 != exc_id_2
+
+        # Verify both exceptions exist
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM exceptions WHERE order_id = %s AND org_id = %s",
+                (order_id, session_admin.org_id),
+            )
+            count = cur.fetchone()[0]
+
+        assert count == 2

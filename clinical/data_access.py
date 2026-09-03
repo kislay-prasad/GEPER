@@ -2887,6 +2887,96 @@ class DataAccess:
             ),
         )
 
+    @transactional
+    @auditable(
+        action="create_or_reopen_exception",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="create/reopen exception on order failure; may retry same failure",
+    )
+    def create_or_reopen_exception(
+        self,
+        session: Session,
+        order_id: uuid.UUID,
+        category: str,
+        reason_code: str,
+        error_message: str | None,
+        owner: str,
+        actor: str,
+    ) -> uuid.UUID:
+        """
+        Create a new exception or reopen an existing one with the same reason_code.
+
+        If an open exception exists for this order with the same reason_code, reopen it
+        (write REOPEN event). Otherwise create a new exception with OPEN event.
+
+        Returns the exception ID (new or reopened).
+        """
+        from clinical.models.exception import ExceptionStatus, ExceptionEventAction
+
+        now = self._clock.now()
+
+        # Query for existing open exception with same reason_code
+        existing = self._query_one(
+            "SELECT id FROM exceptions "
+            "WHERE org_id = %s AND order_id = %s AND reason_code = %s AND status = 'open' "
+            "LIMIT 1",
+            (session.org_id, order_id, reason_code),
+        )
+
+        if existing:
+            exc_id = existing[0]
+            # Reopen: write REOPEN event
+            self._execute(
+                "INSERT INTO exception_events (id, exception_id, actor, timestamp, action, action_note) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (
+                    uuid.uuid4(),
+                    exc_id,
+                    actor,
+                    now,
+                    ExceptionEventAction.REOPEN.value,
+                    f"Reopen: {error_message}",
+                ),
+            )
+            return exc_id
+
+        # Create new exception
+        exc_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO exceptions "
+            "(id, org_id, order_id, category, reason_code, error_message, status, owner, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                exc_id,
+                session.org_id,
+                order_id,
+                category,
+                reason_code,
+                error_message,
+                ExceptionStatus.OPEN.value,
+                owner,
+                now,
+            ),
+        )
+
+        # Write OPEN event
+        self._execute(
+            "INSERT INTO exception_events (id, exception_id, actor, timestamp, action, action_note) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                uuid.uuid4(),
+                exc_id,
+                actor,
+                now,
+                ExceptionEventAction.OPEN.value,
+                error_message,
+            ),
+        )
+
+        return exc_id
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

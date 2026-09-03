@@ -88,6 +88,23 @@ REASON_CODE_TO_OWNER = {
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: "lab_operator",
 }
 
+# Reason code to category mapping (immutable after creation)
+REASON_CODE_TO_CATEGORY = {
+    # Precondition failures (consent-related)
+    ExceptionReasonCode.CONSENT_MISSING: ExceptionCategory.PRECONDITION_FAILURE,
+    ExceptionReasonCode.CONSENT_WITHDRAWN: ExceptionCategory.PRECONDITION_FAILURE,
+    # Validation failures (data quality issues)
+    ExceptionReasonCode.SAMPLE_NOT_FOUND: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.SAMPLE_COLUMN_MISSING: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VARIANT_COUNT_ZERO: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_HEADER_INVALID: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_INVALID: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.ASSEMBLY_MISMATCH: ExceptionCategory.VALIDATION_FAILURE,
+    # Submission failures
+    ExceptionReasonCode.BIJ_AI_TIMEOUT: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
+    ExceptionReasonCode.BIJ_AI_ERROR_OTHER: ExceptionCategory.INTERPRETATION_FAILURE,
+}
+
 
 class ExceptionEventAction(str, enum.Enum):
     """What happened to the exception."""

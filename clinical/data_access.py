@@ -40,11 +40,13 @@ from __future__ import annotations
 
 import datetime as _datetime
 import functools
+import hashlib
 import inspect
 import json
 import secrets
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, List, Optional, Protocol, Sequence
 
 # ─── Policy constants ────────────────────────────────────────────────────────
@@ -216,6 +218,10 @@ ORG_SCOPED_TABLES = (
     "consents",
     "orders",
     "samples",
+    "sequencing_runs",
+    "vcfs",
+    "interpretations",
+    "reports",
 )
 
 
@@ -1529,6 +1535,302 @@ class DataAccess:
             "qc_recorded_by": row[10],
             "qc_recorded_at": row[11],
             "created_at": row[12],
+        }
+
+    # ── Phase 4a: Lineage foundation ─────────────────────────────────────────
+
+    @auditable(
+        action="sequencing_run_created",
+        resource_type="sequencing_run",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "sample_id": str(params.get("sample_id")),
+        },
+    )
+    @transactional
+    def create_sequencing_run(self, session: Session, sample_id: uuid.UUID) -> uuid.UUID:
+        """
+        Create a sequencing run for a sample.
+        Validates that the sample exists in this organisation.
+        """
+        # Validate sample exists in this org
+        sample = self._query_one(
+            "SELECT sample_id FROM samples WHERE sample_id = %s AND org_id = %s",
+            (sample_id, session.org_id),
+        )
+        if sample is None:
+            raise NotFoundError(f"Sample {sample_id} not found")
+
+        run_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO sequencing_runs (org_id, id, sample_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s)",
+            (session.org_id, run_id, sample_id, now, session.user_id),
+        )
+        return run_id
+
+    @auditable(
+        action="vcf_created",
+        resource_type="vcf",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "sequencing_run_id": str(params.get("sequencing_run_id")),
+            "vcf_path": params.get("vcf_path"),
+        },
+    )
+    @transactional
+    def create_vcf(self, session: Session, sequencing_run_id: uuid.UUID, vcf_path: str) -> uuid.UUID:
+        """
+        Create a VCF (variant call format) record for a sequencing run.
+        Reads the VCF file, computes its SHA-256 hash, and stores the path and hash.
+        Raises ValueError if the file cannot be read or hashed.
+        """
+        # Validate sequencing_run exists in this org
+        run = self._query_one(
+            "SELECT id FROM sequencing_runs WHERE id = %s AND org_id = %s",
+            (sequencing_run_id, session.org_id),
+        )
+        if run is None:
+            raise NotFoundError(f"Sequencing run {sequencing_run_id} not found")
+
+        # Read file and compute SHA-256 hash
+        try:
+            file_path = Path(vcf_path)
+            with open(file_path, "rb") as f:
+                hasher = hashlib.sha256()
+                while True:
+                    chunk = f.read(65536)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+            content_hash = hasher.hexdigest()
+        except FileNotFoundError as e:
+            raise ValueError(f"VCF file not found: {vcf_path}") from e
+        except PermissionError as e:
+            raise ValueError(f"Permission denied reading VCF file: {vcf_path}") from e
+        except Exception as e:
+            raise ValueError(f"Error reading or hashing VCF file: {vcf_path}: {e}") from e
+
+        vcf_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO vcfs (org_id, id, sequencing_run_id, vcf_path, content_hash, "
+            "created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (session.org_id, vcf_id, sequencing_run_id, vcf_path, content_hash, now, session.user_id),
+        )
+        return vcf_id
+
+    @auditable(
+        action="interpretation_created",
+        resource_type="interpretation",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "vcf_id": str(params.get("vcf_id")),
+            "platform_sample_id": params.get("platform_sample_id"),
+        },
+    )
+    @transactional
+    def create_interpretation(
+        self,
+        session: Session,
+        vcf_id: uuid.UUID,
+        run_document: dict[str, Any],
+        platform_sample_id: str,
+    ) -> uuid.UUID:
+        """
+        Create an interpretation of a VCF.
+        Validates that the VCF exists and that the platform_sample_id matches the derived sample_id.
+        Raises ValueError if there is a sample_id mismatch.
+        Raises database constraint error (duplicate submission_key) if the submission already exists.
+        """
+        # Validate vcf exists and get its content_hash
+        vcf = self._query_one(
+            "SELECT id, content_hash FROM vcfs WHERE id = %s AND org_id = %s",
+            (vcf_id, session.org_id),
+        )
+        if vcf is None:
+            raise NotFoundError(f"VCF {vcf_id} not found")
+
+        _, content_hash = vcf
+
+        # Get the sample_id by tracing the chain: vcf → sequencing_run → sample
+        # First get the sequencing_run_id from vcf
+        run = self._query_one(
+            "SELECT sequencing_run_id FROM vcfs WHERE id = %s AND org_id = %s",
+            (vcf_id, session.org_id),
+        )
+        if run is None:
+            raise NotFoundError(f"VCF {vcf_id} not found")
+
+        sequencing_run_id = run[0]
+
+        # Then get the sample_id from sequencing_run
+        sample = self._query_one(
+            "SELECT sample_id FROM sequencing_runs WHERE id = %s AND org_id = %s",
+            (sequencing_run_id, session.org_id),
+        )
+        if sample is None:
+            raise NotFoundError(f"Sequencing run {sequencing_run_id} not found")
+
+        derived_sample_id = str(sample[0])
+
+        # Validate platform_sample_id matches derived sample_id
+        if platform_sample_id != derived_sample_id:
+            raise ValueError(
+                f"Platform sample ID mismatch: provided {platform_sample_id}, "
+                f"but derived {derived_sample_id} from VCF chain"
+            )
+
+        # Build submission_key from content_hash and platform_sample_id
+        submission_key = f"{content_hash}|{platform_sample_id}"
+
+        interpretation_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO interpretations (org_id, id, vcf_id, run_document, submission_key, "
+            "created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                interpretation_id,
+                vcf_id,
+                json.dumps(run_document),
+                submission_key,
+                now,
+                session.user_id,
+            ),
+        )
+        return interpretation_id
+
+    @auditable(
+        action="report_created",
+        resource_type="report",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "interpretation_id": str(params.get("interpretation_id")),
+        },
+    )
+    @transactional
+    def create_report(self, session: Session, interpretation_id: uuid.UUID) -> uuid.UUID:
+        """
+        Create a report linked to an interpretation.
+        Validates that the interpretation exists in this organisation.
+        """
+        # Validate interpretation exists in this org
+        interp = self._query_one(
+            "SELECT id FROM interpretations WHERE id = %s AND org_id = %s",
+            (interpretation_id, session.org_id),
+        )
+        if interp is None:
+            raise NotFoundError(f"Interpretation {interpretation_id} not found")
+
+        report_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s)",
+            (session.org_id, report_id, interpretation_id, now, session.user_id),
+        )
+        return report_id
+
+    # Read methods (org-isolated, non-auditable)
+
+    @auditable(
+        action="sequencing_run_read",
+        resource_type="sequencing_run",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_sequencing_run(self, session: Session, run_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a sequencing run by ID, within the session's organisation."""
+        row = self._query_one(
+            "SELECT id, sample_id, created_at, created_by FROM sequencing_runs WHERE id = %s AND org_id = %s",
+            (run_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "sample_id": row[1],
+            "created_at": row[2],
+            "created_by": row[3],
+        }
+
+    @auditable(
+        action="vcf_read",
+        resource_type="vcf",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_vcf(self, session: Session, vcf_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a VCF by ID, within the session's organisation."""
+        row = self._query_one(
+            "SELECT id, sequencing_run_id, vcf_path, content_hash, created_at, created_by "
+            "FROM vcfs WHERE id = %s AND org_id = %s",
+            (vcf_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "sequencing_run_id": row[1],
+            "vcf_path": row[2],
+            "content_hash": row[3],
+            "created_at": row[4],
+            "created_by": row[5],
+        }
+
+    @auditable(
+        action="interpretation_read",
+        resource_type="interpretation",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_interpretation(self, session: Session, interpretation_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve an interpretation by ID, within the session's organisation."""
+        row = self._query_one(
+            "SELECT id, vcf_id, run_document, submission_key, created_at, created_by "
+            "FROM interpretations WHERE id = %s AND org_id = %s",
+            (interpretation_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "vcf_id": row[1],
+            "run_document": json.loads(row[2]) if isinstance(row[2], str) else row[2],
+            "submission_key": row[3],
+            "created_at": row[4],
+            "created_by": row[5],
+        }
+
+    @auditable(
+        action="report_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_report(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Retrieve a report by ID, within the session's organisation."""
+        row = self._query_one(
+            "SELECT id, interpretation_id, created_at, created_by FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "interpretation_id": row[1],
+            "created_at": row[2],
+            "created_by": row[3],
         }
 
 

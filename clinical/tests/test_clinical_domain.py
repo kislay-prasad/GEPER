@@ -648,3 +648,555 @@ class TestReadMethods:
         fake_sample = uuid.uuid4()
         sample = dao.get_sample(session_admin, fake_sample)
         assert sample is None
+
+
+# ─── Phase 4a: Lineage foundation tests ───────────────────────────────────────
+
+
+@pytest.fixture
+def sample_for_lineage(dao, session_admin, patient_with_consent):
+    """Create a complete lineage chain up to a sample for testing."""
+    patient_id, consent_id, test_id = patient_with_consent
+    order_id = dao.create_order(
+        session_admin,
+        patient_id=patient_id,
+        test_id=test_id,
+        required_scope="testing",
+        consent_id=consent_id,
+    )
+    dao.place_order(session_admin, order_id)
+    sample_id = dao.receive_sample(
+        session_admin,
+        order_id=order_id,
+        sample_type="dna",
+    )
+    return sample_id
+
+
+class TestSequencingRunCreation:
+    """Sequencing run creation tests."""
+
+    def test_create_sequencing_run_basic(self, dao, session_admin, sample_for_lineage):
+        """Create a sequencing run for a sample."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+        assert isinstance(run_id, uuid.UUID)
+
+    def test_create_sequencing_run_invalid_sample(self, dao, session_admin):
+        """Creating a run for nonexistent sample raises NotFoundError."""
+        fake_sample = uuid.uuid4()
+        from clinical.data_access import NotFoundError
+
+        with pytest.raises(NotFoundError):
+            dao.create_sequencing_run(session_admin, fake_sample)
+
+    def test_create_sequencing_run_audit(self, dao, session_admin, sample_for_lineage, conn):
+        """Sequencing run creation is audited."""
+        sample_id = sample_for_lineage
+        dao.create_sequencing_run(session_admin, sample_id)
+
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action, resource_type, outcome FROM audit_log "
+            "WHERE action = 'sequencing_run_created' AND org_id = %s",
+            (session_admin.org_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "sequencing_run_created"
+        assert row[1] == "sequencing_run"
+        assert row[2] == "success"
+        cur.close()
+
+
+class TestVcfCreation:
+    """VCF (variant call format) creation tests."""
+
+    def test_create_vcf_basic(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Create a VCF record with a real temp file."""
+
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        # Create a temporary VCF file
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+        vcf_path = str(vcf_file)
+
+        vcf_id = dao.create_vcf(session_admin, run_id, vcf_path)
+        assert isinstance(vcf_id, uuid.UUID)
+
+        # Verify hash was computed
+        vcf = dao.get_vcf(session_admin, vcf_id)
+        assert vcf is not None
+        assert len(vcf["content_hash"]) == 64  # SHA-256 hex is 64 chars
+
+    def test_create_vcf_file_not_found(self, dao, session_admin, sample_for_lineage):
+        """Creating a VCF for nonexistent file raises ValueError."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        with pytest.raises(ValueError, match="VCF file not found"):
+            dao.create_vcf(session_admin, run_id, "/nonexistent/path/file.vcf")
+
+    def test_create_vcf_hash_computed(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """VCF hash is computed correctly and matches file content."""
+        import hashlib
+
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        # Create a temp VCF file with known content
+        vcf_file = tmp_path / "test_hash.vcf"
+        content = "##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\n"
+        vcf_file.write_text(content)
+
+        # Compute expected hash
+        expected_hash = hashlib.sha256(content.encode()).hexdigest()
+
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+        vcf = dao.get_vcf(session_admin, vcf_id)
+        assert vcf["content_hash"] == expected_hash
+
+    def test_create_vcf_audit(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """VCF creation is audited."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_audit.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+
+        dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action, resource_type, outcome FROM audit_log WHERE action = 'vcf_created' AND org_id = %s",
+            (session_admin.org_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "vcf_created"
+        assert row[1] == "vcf"
+        assert row[2] == "success"
+        cur.close()
+
+
+class TestInterpretationCreation:
+    """Interpretation creation tests."""
+
+    def test_create_interpretation_basic(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Create an interpretation for a VCF."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_interp.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {
+            "model_version": "1.0",
+            "database_version": "2024.01",
+            "source_health": True,
+            "run_complete": True,
+        }
+
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+        assert isinstance(interp_id, uuid.UUID)
+
+    def test_create_interpretation_invalid_vcf(self, dao, session_admin):
+        """Creating interpretation for nonexistent VCF raises NotFoundError."""
+        from clinical.data_access import NotFoundError
+
+        fake_vcf = uuid.uuid4()
+        run_document = {"model_version": "1.0"}
+
+        with pytest.raises(NotFoundError):
+            dao.create_interpretation(
+                session_admin,
+                fake_vcf,
+                run_document,
+                "sample123",
+            )
+
+    def test_create_interpretation_sample_mismatch(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Mismatched platform_sample_id raises ValueError."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_mismatch.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        wrong_sample_id = str(uuid.uuid4())  # Different UUID
+
+        with pytest.raises(ValueError, match="Platform sample ID mismatch"):
+            dao.create_interpretation(
+                session_admin,
+                vcf_id,
+                run_document,
+                wrong_sample_id,
+            )
+
+    def test_create_interpretation_submission_key_unique(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """Duplicate submission_key raises database constraint error."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_dup.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+
+        # Create first interpretation
+        interp_id_1 = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+        assert isinstance(interp_id_1, uuid.UUID)
+
+        # Try to create a second interpretation with same submission_key
+        # This should raise a database constraint error (unique violation)
+        import psycopg
+
+        with pytest.raises(psycopg.IntegrityError):
+            dao.create_interpretation(
+                session_admin,
+                vcf_id,
+                run_document,
+                str(sample_id),
+            )
+
+    def test_create_interpretation_audit(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """Interpretation creation is audited."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_interp_audit.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action, resource_type, outcome FROM audit_log "
+            "WHERE action = 'interpretation_created' AND org_id = %s",
+            (session_admin.org_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "interpretation_created"
+        assert row[1] == "interpretation"
+        assert row[2] == "success"
+        cur.close()
+
+
+class TestReportCreation:
+    """Report creation tests."""
+
+    def test_create_report_basic(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Create a report linked to an interpretation."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_report.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        report_id = dao.create_report(session_admin, interp_id)
+        assert isinstance(report_id, uuid.UUID)
+
+    def test_create_report_invalid_interpretation(self, dao, session_admin):
+        """Creating report for nonexistent interpretation raises NotFoundError."""
+        from clinical.data_access import NotFoundError
+
+        fake_interp = uuid.uuid4()
+
+        with pytest.raises(NotFoundError):
+            dao.create_report(session_admin, fake_interp)
+
+    def test_create_report_audit(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """Report creation is audited."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_report_audit.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        dao.create_report(session_admin, interp_id)
+
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT action, resource_type, outcome FROM audit_log WHERE action = 'report_created' AND org_id = %s",
+            (session_admin.org_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "report_created"
+        assert row[1] == "report"
+        assert row[2] == "success"
+        cur.close()
+
+
+class TestOrgIsolationLineage:
+    """Organisation isolation for lineage tables."""
+
+    def test_sequencing_run_cross_org_isolation(self, dao, session_admin, sample_for_lineage, org_a, conn):
+        """Sequencing run query for another org returns nothing."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        # Create second org and session
+        org_b = dao.create_organisation("Org B")
+        user_id = dao.create_user(org_b, "admin@org-b.test", "password")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_id, org_b, user_id, datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)),
+            )
+        conn.commit()
+        session_b = dao.login("admin@org-b.test", org_b, "password")
+
+        # Org B cannot read Org A's run
+        result = dao.get_sequencing_run(session_b, run_id)
+        assert result is None
+
+    def test_vcf_cross_org_isolation(self, dao, session_admin, sample_for_lineage, org_a, tmp_path, conn):
+        """VCF query for another org returns nothing."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_isolation.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create second org and session
+        org_b = dao.create_organisation("Org B")
+        user_id = dao.create_user(org_b, "admin@org-b.test", "password")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_id, org_b, user_id, datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)),
+            )
+        conn.commit()
+        session_b = dao.login("admin@org-b.test", org_b, "password")
+
+        # Org B cannot read Org A's VCF
+        result = dao.get_vcf(session_b, vcf_id)
+        assert result is None
+
+    def test_interpretation_cross_org_isolation(self, dao, session_admin, sample_for_lineage, org_a, tmp_path, conn):
+        """Interpretation query for another org returns nothing."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_iso_interp.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        # Create second org and session
+        org_b = dao.create_organisation("Org B")
+        user_id = dao.create_user(org_b, "admin@org-b.test", "password")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_id, org_b, user_id, datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)),
+            )
+        conn.commit()
+        session_b = dao.login("admin@org-b.test", org_b, "password")
+
+        # Org B cannot read Org A's interpretation
+        result = dao.get_interpretation(session_b, interp_id)
+        assert result is None
+
+    def test_report_cross_org_isolation(self, dao, session_admin, sample_for_lineage, org_a, tmp_path, conn):
+        """Report query for another org returns nothing."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_iso_report.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        report_id = dao.create_report(session_admin, interp_id)
+
+        # Create second org and session
+        org_b = dao.create_organisation("Org B")
+        user_id = dao.create_user(org_b, "admin@org-b.test", "password")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_id, org_b, user_id, datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)),
+            )
+        conn.commit()
+        session_b = dao.login("admin@org-b.test", org_b, "password")
+
+        # Org B cannot read Org A's report
+        result = dao.get_report(session_b, report_id)
+        assert result is None
+
+
+class TestLineageReadMethods:
+    """Read method tests for lineage (retrieval and missing records)."""
+
+    def test_get_sequencing_run_missing(self, dao, session_admin):
+        """Reading nonexistent run returns None."""
+        fake_run = uuid.uuid4()
+        result = dao.get_sequencing_run(session_admin, fake_run)
+        assert result is None
+
+    def test_get_vcf_missing(self, dao, session_admin):
+        """Reading nonexistent VCF returns None."""
+        fake_vcf = uuid.uuid4()
+        result = dao.get_vcf(session_admin, fake_vcf)
+        assert result is None
+
+    def test_get_interpretation_missing(self, dao, session_admin):
+        """Reading nonexistent interpretation returns None."""
+        fake_interp = uuid.uuid4()
+        result = dao.get_interpretation(session_admin, fake_interp)
+        assert result is None
+
+    def test_get_report_missing(self, dao, session_admin):
+        """Reading nonexistent report returns None."""
+        fake_report = uuid.uuid4()
+        result = dao.get_report(session_admin, fake_report)
+        assert result is None
+
+    def test_get_sequencing_run_retrieves_all_fields(self, dao, session_admin, sample_for_lineage):
+        """Sequencing run retrieval returns all fields."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        result = dao.get_sequencing_run(session_admin, run_id)
+        assert result is not None
+        assert result["id"] == run_id
+        assert result["sample_id"] == sample_id
+        assert result["created_by"] == session_admin.user_id
+        assert result["created_at"] is not None
+
+    def test_get_vcf_retrieves_all_fields(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """VCF retrieval returns all fields."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_fields.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_path = str(vcf_file)
+        vcf_id = dao.create_vcf(session_admin, run_id, vcf_path)
+
+        result = dao.get_vcf(session_admin, vcf_id)
+        assert result is not None
+        assert result["id"] == vcf_id
+        assert result["sequencing_run_id"] == run_id
+        assert result["vcf_path"] == vcf_path
+        assert len(result["content_hash"]) == 64
+        assert result["created_by"] == session_admin.user_id
+        assert result["created_at"] is not None
+
+    def test_get_interpretation_retrieves_all_fields(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Interpretation retrieval returns all fields."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_interp_fields.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {
+            "model_version": "1.0",
+            "database_version": "2024.01",
+        }
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        result = dao.get_interpretation(session_admin, interp_id)
+        assert result is not None
+        assert result["id"] == interp_id
+        assert result["vcf_id"] == vcf_id
+        assert result["run_document"] == run_document
+        assert "|" in result["submission_key"]  # hash|sample_id format
+        assert result["created_by"] == session_admin.user_id
+        assert result["created_at"] is not None
+
+    def test_get_report_retrieves_all_fields(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Report retrieval returns all fields."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test_report_fields.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "1.0"}
+        interp_id = dao.create_interpretation(
+            session_admin,
+            vcf_id,
+            run_document,
+            str(sample_id),
+        )
+
+        report_id = dao.create_report(session_admin, interp_id)
+
+        result = dao.get_report(session_admin, report_id)
+        assert result is not None
+        assert result["id"] == report_id
+        assert result["interpretation_id"] == interp_id
+        assert result["created_by"] == session_admin.user_id
+        assert result["created_at"] is not None

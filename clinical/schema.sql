@@ -374,6 +374,78 @@ CREATE TABLE samples (
 CREATE INDEX samples_order ON samples (org_id, order_id);
 
 
+-- ─── Phase 4a: Lineage foundation (sequencing, VCF, interpretation, reports) ─
+
+CREATE TABLE sequencing_runs (
+    org_id      UUID        NOT NULL,
+    id          UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    sample_id   UUID        NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    created_by  UUID        NOT NULL,
+
+    CONSTRAINT fk_sequ_run_sample
+        FOREIGN KEY (org_id, sample_id) REFERENCES samples (org_id, sample_id),
+    CONSTRAINT fk_sequ_run_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+);
+
+CREATE INDEX idx_sequ_runs_org_sample ON sequencing_runs (org_id, sample_id);
+
+
+CREATE TABLE vcfs (
+    org_id          UUID        NOT NULL,
+    id              UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    sequencing_run_id UUID      NOT NULL,
+    vcf_path        TEXT        NOT NULL,
+    content_hash    CHAR(64)    NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL,
+    created_by      UUID        NOT NULL,
+
+    CONSTRAINT fk_vcf_sequ_run
+        FOREIGN KEY (org_id, sequencing_run_id) REFERENCES sequencing_runs (org_id, id),
+    CONSTRAINT fk_vcf_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+);
+
+CREATE INDEX idx_vcfs_org_sequ_run ON vcfs (org_id, sequencing_run_id);
+
+
+CREATE TABLE interpretations (
+    org_id          UUID        NOT NULL,
+    id              UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    vcf_id          UUID        NOT NULL,
+    run_document    JSONB       NOT NULL,
+    submission_key  TEXT        NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL,
+    created_by      UUID        NOT NULL,
+
+    CONSTRAINT fk_interp_vcf
+        FOREIGN KEY (org_id, vcf_id) REFERENCES vcfs (org_id, id),
+    CONSTRAINT fk_interp_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_interp_submission UNIQUE (org_id, submission_key)
+);
+
+CREATE INDEX idx_interp_org_vcf ON interpretations (org_id, vcf_id);
+CREATE INDEX idx_interp_submission ON interpretations (org_id, submission_key);
+
+
+CREATE TABLE reports (
+    org_id              UUID        NOT NULL,
+    id                  UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    interpretation_id   UUID        NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL,
+    created_by          UUID        NOT NULL,
+
+    CONSTRAINT fk_report_interp
+        FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
+    CONSTRAINT fk_report_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+);
+
+CREATE INDEX idx_reports_org_interp ON reports (org_id, interpretation_id);
+
+
 -- ─── append-only enforcement ────────────────────────────────────────────────
 --
 -- A comment saying "append-only" is not a control. These statements are.
@@ -404,5 +476,6 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
-       patients, external_identifiers, consents, tests, test_genes, orders, samples
+       patients, external_identifiers, consents, tests, test_genes, orders, samples,
+       sequencing_runs, vcfs, interpretations, reports
     TO clinical_app;

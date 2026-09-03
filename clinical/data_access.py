@@ -2406,8 +2406,8 @@ class DataAccess:
 
         Returns a reason string (enum):
           - "header_ok": Header present and valid
-          - "header_missing": No header found
-          - "header_malformed": Header parsing fails
+          - "vcf_header_missing": No header found
+          - "vcf_header_malformed": Header parsing fails
         """
         import gzip
 
@@ -2425,14 +2425,14 @@ class DataAccess:
                     if line.startswith("##"):
                         header_found = True
                     elif line.startswith("#CHROM"):
-                        return "header_ok" if header_found else "header_missing"
+                        return "header_ok" if header_found else "vcf_header_missing"
                     elif not line.startswith("#"):
                         break
 
-            return "header_missing"
+            return "vcf_header_missing"
 
         except Exception:
-            return "header_malformed"
+            return "vcf_header_malformed"
 
     @auditable(
         auditable=False,
@@ -2450,9 +2450,9 @@ class DataAccess:
 
         Returns a reason string (enum):
           - "build_ok": Header assembly matches expected (after normalisation)
-          - "build_not_declared": No assembly declared in header
-          - "build_not_recognised": Assembly declared but not in canonical mapping
-          - "build_mismatch": Assembly declared, recognised, but doesn't match expected
+          - "vcf_build_not_declared": No assembly declared in header
+          - "vcf_build_not_recognised": Assembly declared but not in canonical mapping
+          - "vcf_build_mismatch": Assembly declared, recognised, but doesn't match expected
         """
         import gzip
         import re
@@ -2460,7 +2460,7 @@ class DataAccess:
         # Normalise expected assembly
         expected_canonical = ASSEMBLY_CANONICAL.get(expected_assembly)
         if expected_canonical is None:
-            return "build_not_recognised"
+            return "vcf_build_not_recognised"
 
         path = Path(vcf_path)
 
@@ -2478,21 +2478,21 @@ class DataAccess:
                             vcf_assembly = match.group(1)
                             vcf_canonical = ASSEMBLY_CANONICAL.get(vcf_assembly)
                             if vcf_canonical is None:
-                                return "build_not_recognised"
+                                return "vcf_build_not_recognised"
                             if vcf_canonical == expected_canonical:
                                 return "build_ok"
                             else:
-                                return "build_mismatch"
-                        return "build_not_declared"
+                                return "vcf_build_mismatch"
+                        return "vcf_build_not_declared"
                     elif line.startswith("#CHROM"):
-                        return "build_not_declared"
+                        return "vcf_build_not_declared"
                     elif not line.startswith("#"):
                         break
 
-            return "build_not_declared"
+            return "vcf_build_not_declared"
 
         except Exception:
-            return "build_not_declared"
+            return "vcf_build_not_declared"
 
     @auditable(
         auditable=False,
@@ -2507,7 +2507,7 @@ class DataAccess:
 
         Returns a reason string (enum):
           - "sample_column_ok": At least one sample column
-          - "sample_column_missing": No sample columns
+          - "vcf_sample_column_missing": No sample columns
         """
         import gzip
 
@@ -2526,12 +2526,12 @@ class DataAccess:
                         if len(fields) > 9:
                             return "sample_column_ok"
                         else:
-                            return "sample_column_missing"
+                            return "vcf_sample_column_missing"
 
-            return "sample_column_missing"
+            return "vcf_sample_column_missing"
 
         except Exception:
-            return "sample_column_missing"
+            return "vcf_sample_column_missing"
 
     @auditable(
         auditable=False,
@@ -2546,7 +2546,7 @@ class DataAccess:
 
         Returns a reason string (enum):
           - "variants_ok": At least one variant
-          - "no_variants": No variant lines found
+          - "vcf_no_variants": No variant lines found
         """
         import gzip
 
@@ -2563,10 +2563,10 @@ class DataAccess:
                     if not line.startswith("#"):
                         return "variants_ok"
 
-            return "no_variants"
+            return "vcf_no_variants"
 
         except Exception:
-            return "no_variants"
+            return "vcf_no_variants"
 
     # ── Phase 5d: Orchestration layer (validates all 5a checks, wires exceptions) ──
 

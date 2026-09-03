@@ -2279,7 +2279,7 @@ class TestPreconditionsAndValidation:
         vcf_file.write_text("1\t1000\tA\tG\n")
 
         result = dao.validate_vcf_header(str(vcf_file))
-        assert result == "header_missing"
+        assert result == "vcf_header_missing"
 
     def test_validate_vcf_build_ok(self, dao, tmp_path):
         vcf_file = tmp_path / "test.vcf"
@@ -2293,14 +2293,14 @@ class TestPreconditionsAndValidation:
         vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=GRCh37\n#CHROM\tPOS\n")
 
         result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
-        assert result == "build_mismatch"
+        assert result == "vcf_build_mismatch"
 
     def test_validate_vcf_build_not_declared(self, dao, tmp_path):
         vcf_file = tmp_path / "test.vcf"
         vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
 
         result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
-        assert result == "build_not_declared"
+        assert result == "vcf_build_not_declared"
 
     def test_validate_vcf_build_normalisation_hg38_to_grch38(self, dao, tmp_path):
         """Normalisation: hg38 in VCF matches GRCh38 in test (both canonical GRCh38)"""
@@ -2316,7 +2316,7 @@ class TestPreconditionsAndValidation:
         vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=unknown_build_xyz\n#CHROM\tPOS\n")
 
         result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
-        assert result == "build_not_recognised"
+        assert result == "vcf_build_not_recognised"
 
     def test_validate_vcf_sample_column_ok(self, dao, tmp_path):
         vcf_file = tmp_path / "test.vcf"
@@ -2330,7 +2330,7 @@ class TestPreconditionsAndValidation:
         vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
 
         result = dao.validate_vcf_sample_column(str(vcf_file))
-        assert result == "sample_column_missing"
+        assert result == "vcf_sample_column_missing"
 
     def test_validate_vcf_variant_count_ok(self, dao, tmp_path):
         vcf_file = tmp_path / "test.vcf"
@@ -2344,4 +2344,4 @@ class TestPreconditionsAndValidation:
         vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
 
         result = dao.validate_vcf_variant_count(str(vcf_file))
-        assert result == "no_variants"
+        assert result == "vcf_no_variants"

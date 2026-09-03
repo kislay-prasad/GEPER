@@ -98,6 +98,7 @@ def patient_and_order(dao, session_admin, test_catalogue, conn):
 def sample_with_qc(dao, session_admin, patient_and_order, conn):
     """Create a sample with passing QC."""
     _, order_id = patient_and_order
+    dao.place_order(session_admin, order_id)
     sample_id = dao.receive_sample(session_admin, order_id, "blood")
     dao.record_qc(session_admin, sample_id, "passed")
     return sample_id
@@ -118,8 +119,8 @@ class TestValidateOrderForSubmission:
         vcf_file.write_text(
             "##fileformat=VCFv4.2\n"
             "##assembly=GRCh38\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tsample1\n"
-            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\t0/1\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
         )
 
         # All checks should pass
@@ -149,8 +150,8 @@ class TestValidateOrderForSubmission:
         vcf_file.write_text(
             "##fileformat=VCFv4.2\n"
             "##assembly=GRCh38\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tsample1\n"
-            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\t0/1\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
         )
 
         # Call with scope that has no consent
@@ -212,6 +213,7 @@ class TestValidateOrderForSubmission:
         patient_id, order_id = patient_and_order
 
         # Create a sample with failed QC
+        dao.place_order(session_admin, order_id)
         sample_id = dao.receive_sample(session_admin, order_id, "blood")
         dao.record_qc(session_admin, sample_id, "failed")
 
@@ -220,8 +222,8 @@ class TestValidateOrderForSubmission:
         vcf_file.write_text(
             "##fileformat=VCFv4.2\n"
             "##assembly=GRCh38\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tsample1\n"
-            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\t0/1\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
         )
 
         success, exc_id = dao.validate_order_for_submission(
@@ -252,13 +254,16 @@ class TestValidateOrderForSubmission:
         patient_id, _ = patient_and_order
         sample_id = sample_with_qc
 
+        # Record consent for the new order
+        consent_id = dao.record_consent(session_admin, patient_id, "testing")
+
         # Create order without clinical_indication
         order_id = dao.create_order(
             session_admin,
             patient_id=patient_id,
             test_id=test_catalogue,
             required_scope="testing",
-            consent_id=uuid.uuid4(),
+            consent_id=consent_id,
             priority="routine",
             clinical_indication=None,  # Missing indication
         )
@@ -268,8 +273,8 @@ class TestValidateOrderForSubmission:
         vcf_file.write_text(
             "##fileformat=VCFv4.2\n"
             "##assembly=GRCh38\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tsample1\n"
-            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\t0/1\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
         )
 
         success, exc_id = dao.validate_order_for_submission(

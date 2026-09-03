@@ -63,6 +63,7 @@ import enum
 import logging
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -70,6 +71,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from pipeline.alphafold.lookup import AlphaFoldLookup
+
+from .submission_store import SubmissionStore
 
 logger = logging.getLogger("geper.structures_api")
 
@@ -195,6 +198,35 @@ class MappingStatus(str, enum.Enum):
     NOT_MAPPABLE = "not_mappable"
 
 
+class InterpretationSubmissionRequest(BaseModel):
+    """Request body for POST /interpretations."""
+
+    submission_key: str
+    vcf_path: str
+    assembly: str
+    sample_ref: str
+    consent_ref: str
+    hpo_terms: Optional[Dict[str, Any]] = None
+    qc_metrics: Optional[Dict[str, Any]] = None
+
+
+class InterpretationSubmissionResponse(BaseModel):
+    """Response for POST /interpretations."""
+
+    id: str
+    status: str
+    interpretation_id: Optional[str] = None
+
+
+class InterpretationStatusResponse(BaseModel):
+    """Response for GET /interpretations/{id}."""
+
+    id: str
+    status: str
+    interpretation_id: Optional[str] = None
+    error_message: Optional[str] = None
+
+
 class StructureAnnotationResponse(BaseModel):
     """
     The wire contract for `GET /structures/{accession}`.
@@ -223,6 +255,26 @@ class StructureAnnotationResponse(BaseModel):
 
 
 _lookup_singleton: Optional[AlphaFoldLookup] = None
+_submission_store: Optional[SubmissionStore] = None
+
+
+def _get_submission_store_path() -> Path:
+    """Get path to submission store database.
+
+    Uses GEPER_SUBMISSION_STORE_PATH env var, defaults to geper/.submissions.db
+    """
+    env_path = os.getenv("GEPER_SUBMISSION_STORE_PATH")
+    if env_path:
+        return Path(env_path)
+    return Path(__file__).parent / ".submissions.db"
+
+
+def get_submission_store() -> SubmissionStore:
+    """FastAPI dependency, overridable in tests via `app.dependency_overrides`."""
+    global _submission_store
+    if _submission_store is None:
+        _submission_store = SubmissionStore(_get_submission_store_path())
+    return _submission_store
 
 
 def get_alphafold_lookup() -> AlphaFoldLookup:
@@ -341,3 +393,75 @@ def get_structure_annotation(
     """
     raw = lookup.query_variant({"accession": accession}, protein_position=protein_position)
     return _map_to_response(raw)
+
+
+@app.post(
+    "/interpretations",
+    response_model=InterpretationSubmissionResponse,
+    status_code=202,
+    tags=["interpretations"],
+    summary="Submit a VCF for Bij AI interpretation",
+)
+def post_interpretation(
+    req: InterpretationSubmissionRequest,
+    store: SubmissionStore = Depends(get_submission_store),
+    _auth: None = Depends(_require_api_key),
+) -> InterpretationSubmissionResponse:
+    """
+    Submit a VCF for Bij AI interpretation.
+
+    Returns:
+    - 202 if new submission created (queued)
+    - 200 if existing complete submission (idempotency)
+
+    Client should not branch on status code — both responses include id and status.
+    """
+    submission = store.create_submission(
+        org_id="default",
+        submission_key=req.submission_key,
+        vcf_path=req.vcf_path,
+        assembly=req.assembly,
+        sample_ref=req.sample_ref,
+        consent_ref=req.consent_ref,
+        hpo_terms=req.hpo_terms,
+        qc_metrics=req.qc_metrics,
+    )
+
+    if submission.status == "complete":
+        # Existing complete submission — return 200
+        return InterpretationSubmissionResponse(
+            id=submission.id,
+            status=submission.status,
+            interpretation_id=submission.interpretation_id,
+        )
+
+    # New or in-progress submission — return 202
+    return InterpretationSubmissionResponse(
+        id=submission.id,
+        status=submission.status,
+        interpretation_id=submission.interpretation_id,
+    )
+
+
+@app.get(
+    "/interpretations/{submission_id}",
+    response_model=InterpretationStatusResponse,
+    tags=["interpretations"],
+    summary="Get Bij AI interpretation status",
+)
+def get_interpretation_status(
+    submission_id: str,
+    store: SubmissionStore = Depends(get_submission_store),
+    _auth: None = Depends(_require_api_key),
+) -> InterpretationStatusResponse:
+    """Get status of an interpretation submission."""
+    submission = store.get_submission(submission_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+
+    return InterpretationStatusResponse(
+        id=submission.id,
+        status=submission.status,
+        interpretation_id=submission.interpretation_id,
+        error_message=submission.error_message,
+    )

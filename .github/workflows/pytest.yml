@@ -39,6 +39,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: geper/requirements.txt
 
+      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
+        run: pip install -e ../
+
       # DO NOT REVERT THIS AS A TIDY-UP. It is load-bearing.
       #
       # This is not only about removing weight the runner cannot use. It
@@ -172,6 +175,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: kim_pipeline/requirements.txt
 
+      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
+        run: pip install -e ../
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -209,6 +215,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: clinical/requirements.txt
 
+      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
+        run: pip install -e ../
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -227,6 +236,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+
+      - name: Install GEPER root package
+        run: pip install -e .
 
       - name: Install dependencies
         run: pip install psutil pytest

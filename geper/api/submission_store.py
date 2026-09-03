@@ -35,6 +35,7 @@ class Submission:
         sample_ref: str,
         consent_ref: str,
         status: str,
+        order_id: Optional[str] = None,
         interpretation_id: Optional[str] = None,
         run_document_ref: Optional[str] = None,
         error_message: Optional[str] = None,
@@ -51,6 +52,7 @@ class Submission:
         self.sample_ref = sample_ref
         self.consent_ref = consent_ref
         self.status = status
+        self.order_id = order_id
         self.interpretation_id = interpretation_id
         self.run_document_ref = run_document_ref
         self.error_message = error_message
@@ -90,6 +92,7 @@ class SubmissionStore:
                 CREATE TABLE IF NOT EXISTS submissions (
                     id TEXT PRIMARY KEY,
                     org_id TEXT NOT NULL,
+                    order_id TEXT,
                     submission_key TEXT NOT NULL,
                     vcf_path TEXT NOT NULL,
                     assembly TEXT NOT NULL,
@@ -145,6 +148,7 @@ class SubmissionStore:
         assembly: str,
         sample_ref: str,
         consent_ref: str,
+        order_id: Optional[str] = None,
         hpo_terms: Optional[dict] = None,
         qc_metrics: Optional[dict] = None,
     ) -> Submission:
@@ -165,7 +169,7 @@ class SubmissionStore:
             # Check if submission_key already exists
             cursor = conn.execute(
                 """
-                SELECT id, status, interpretation_id, error_message
+                SELECT id, order_id, status, interpretation_id, error_message
                 FROM submissions
                 WHERE org_id = ? AND submission_key = ?
                 """,
@@ -173,7 +177,7 @@ class SubmissionStore:
             )
             existing = cursor.fetchone()
             if existing:
-                existing_id, status, interp_id, error_msg = existing
+                existing_id, existing_order_id, status, interp_id, error_msg = existing
                 return Submission(
                     id=existing_id,
                     org_id=org_id,
@@ -183,6 +187,7 @@ class SubmissionStore:
                     sample_ref=sample_ref,
                     consent_ref=consent_ref,
                     status=status,
+                    order_id=existing_order_id,
                     interpretation_id=interp_id,
                     error_message=error_msg,
                     hpo_terms=hpo_terms,
@@ -193,14 +198,15 @@ class SubmissionStore:
             conn.execute(
                 """
                 INSERT INTO submissions (
-                    id, org_id, submission_key, vcf_path, assembly, sample_ref,
+                    id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
                     consent_ref, status, hpo_terms, qc_metrics, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     submission_id,
                     org_id,
+                    order_id,
                     submission_key,
                     vcf_path,
                     assembly,
@@ -224,6 +230,7 @@ class SubmissionStore:
             sample_ref=sample_ref,
             consent_ref=consent_ref,
             status="queued",
+            order_id=order_id,
             hpo_terms=hpo_terms,
             qc_metrics=qc_metrics,
             created_at=now,
@@ -235,7 +242,7 @@ class SubmissionStore:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
-                SELECT id, org_id, submission_key, vcf_path, assembly, sample_ref,
+                SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
                        consent_ref, status, interpretation_id, run_document_ref,
                        error_message, hpo_terms, qc_metrics, created_at, updated_at
                 FROM submissions
@@ -251,19 +258,20 @@ class SubmissionStore:
         return Submission(
             id=row[0],
             org_id=row[1],
-            submission_key=row[2],
-            vcf_path=row[3],
-            assembly=row[4],
-            sample_ref=row[5],
-            consent_ref=row[6],
-            status=row[7],
-            interpretation_id=row[8],
-            run_document_ref=row[9],
-            error_message=row[10],
-            hpo_terms=json.loads(row[11]) if row[11] else {},
-            qc_metrics=json.loads(row[12]) if row[12] else {},
-            created_at=row[13],
-            updated_at=row[14],
+            order_id=row[2],
+            submission_key=row[3],
+            vcf_path=row[4],
+            assembly=row[5],
+            sample_ref=row[6],
+            consent_ref=row[7],
+            status=row[8],
+            interpretation_id=row[9],
+            run_document_ref=row[10],
+            error_message=row[11],
+            hpo_terms=json.loads(row[12]) if row[12] else {},
+            qc_metrics=json.loads(row[13]) if row[13] else {},
+            created_at=row[14],
+            updated_at=row[15],
         )
 
     def get_queued_submissions(self, limit: int = 10) -> list[Submission]:
@@ -271,7 +279,7 @@ class SubmissionStore:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
-                SELECT id, org_id, submission_key, vcf_path, assembly, sample_ref,
+                SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
                        consent_ref, status, interpretation_id, run_document_ref,
                        error_message, hpo_terms, qc_metrics, created_at, updated_at
                 FROM submissions
@@ -289,19 +297,20 @@ class SubmissionStore:
                 Submission(
                     id=row[0],
                     org_id=row[1],
-                    submission_key=row[2],
-                    vcf_path=row[3],
-                    assembly=row[4],
-                    sample_ref=row[5],
-                    consent_ref=row[6],
-                    status=row[7],
-                    interpretation_id=row[8],
-                    run_document_ref=row[9],
-                    error_message=row[10],
-                    hpo_terms=json.loads(row[11]) if row[11] else {},
-                    qc_metrics=json.loads(row[12]) if row[12] else {},
-                    created_at=row[13],
-                    updated_at=row[14],
+                    order_id=row[2],
+                    submission_key=row[3],
+                    vcf_path=row[4],
+                    assembly=row[5],
+                    sample_ref=row[6],
+                    consent_ref=row[7],
+                    status=row[8],
+                    interpretation_id=row[9],
+                    run_document_ref=row[10],
+                    error_message=row[11],
+                    hpo_terms=json.loads(row[12]) if row[12] else {},
+                    qc_metrics=json.loads(row[13]) if row[13] else {},
+                    created_at=row[14],
+                    updated_at=row[15],
                 )
             )
         return submissions

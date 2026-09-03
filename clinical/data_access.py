@@ -2217,21 +2217,18 @@ class DataAccess:
     # ── Phase 5a: Preconditions and VCF validation ──
     #
     # EXCEPTION WIRING (Phase 5d):
-    # These precondition and VCF validation checks are called from a submission
-    # orchestration layer (yet to be implemented, pending architectural decision).
-    # When a check fails, the orchestration layer calls create_or_reopen_exception with:
+    # When a check fails, validate_and_submit_order calls create_or_reopen_exception with:
     #   - category: from REASON_CODE_TO_CATEGORY[reason_code]
     #   - reason_code: the returned failure code
     #   - owner: from REASON_CODE_TO_OWNER[reason_code]
-    #   - actor: system principal or human actor performing submission
+    #   - actor: system principal performing submission
     #   - error_message: the specific failure descriptor
     #
-    # All 5 precondition checks + all 5 VCF validation checks must complete
-    # BEFORE submission is attempted. If any fails, no submission occurs and an
-    # exception is recorded instead.
+    # All precondition checks + VCF validation checks are called by
+    # validate_and_submit_order, which blocks submission if any fail.
     #
-    # NOTE: These methods return a reason string (enum). The orchestration layer
-    # maps that to an exception via the mappings in models/exception.py.
+    # NOTE: These methods return a reason string that maps to exception vocabulary
+    # in models/exception.py.
 
     @auditable(action="check_consent", resource_type="consent")
     def check_consent(self, session: Session, patient_id: uuid.UUID, scope: str) -> str:
@@ -2570,6 +2567,194 @@ class DataAccess:
 
         except Exception:
             return "no_variants"
+
+    # ── Phase 5d: Orchestration layer (validates all 5a checks, wires exceptions) ──
+
+    def validate_order_for_submission(
+        self,
+        session: Session,
+        order_id: uuid.UUID,
+        patient_id: uuid.UUID,
+        sample_id: uuid.UUID,
+        vcf_path: str,
+        expected_assembly: str,
+        consent_scope: str,
+        actor: str,
+    ) -> tuple[bool, Optional[uuid.UUID]]:
+        """
+        Orchestration layer: run all Phase 5a checks and wire exceptions on failure.
+
+        Runs checks in order:
+        1. check_consent (precondition)
+        2. check_identity_resolved (validation)
+        3. check_order_data (validation)
+        4. check_qc_passed (validation)
+        5. validate_vcf_file (validation)
+        6. validate_vcf_header (validation)
+        7. validate_vcf_build (validation)
+        8. validate_vcf_sample_column (validation)
+        9. validate_vcf_variant_count (validation)
+
+        If any check fails, creates an exception and returns (False, exception_id).
+        If all pass, returns (True, None).
+
+        Args:
+            session: Current session (org scope)
+            order_id: Order being submitted
+            patient_id: Patient ID
+            sample_id: Sample ID
+            vcf_path: Path to VCF file
+            expected_assembly: Expected genome assembly (e.g., "GRCh38")
+            consent_scope: Required consent scope
+            actor: System principal creating exceptions
+
+        Returns:
+            (success: bool, exception_id: Optional[UUID])
+            - (True, None) if all checks pass
+            - (False, exception_id) if a check fails (exception created and returned)
+        """
+        from clinical.models.exception import (
+            REASON_CODE_TO_CATEGORY,
+            REASON_CODE_TO_OWNER,
+        )
+
+        # 1. Check consent
+        consent_result = self.check_consent(session, patient_id, consent_scope)
+        if consent_result != "consent_ok":
+            reason_code = consent_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"Consent check failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 2. Check identity
+        identity_result = self.check_identity_resolved(session, patient_id, sample_id)
+        if identity_result != "identity_resolved":
+            reason_code = identity_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"Identity check failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 3. Check order data
+        order_result = self.check_order_data(session, order_id)
+        if order_result != "order_ok":
+            reason_code = order_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"Order data check failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 4. Check QC
+        qc_result = self.check_qc_passed(session, order_id)
+        if qc_result != "qc_ok":
+            reason_code = qc_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"QC check failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 5. Validate VCF file
+        vcf_file_result = self.validate_vcf_file(vcf_path)
+        if vcf_file_result != "vcf_file_ok":
+            reason_code = vcf_file_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"VCF file validation failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 6. Validate VCF header
+        header_result = self.validate_vcf_header(vcf_path)
+        if header_result != "header_ok":
+            reason_code = header_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"VCF header validation failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 7. Validate VCF build
+        build_result = self.validate_vcf_build(vcf_path, expected_assembly)
+        if build_result != "build_ok":
+            reason_code = build_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"VCF build validation failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 8. Validate VCF sample column
+        sample_col_result = self.validate_vcf_sample_column(vcf_path)
+        if sample_col_result != "sample_column_ok":
+            reason_code = sample_col_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"VCF sample column validation failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # 9. Validate VCF variant count
+        variants_result = self.validate_vcf_variant_count(vcf_path)
+        if variants_result != "variants_ok":
+            reason_code = variants_result
+            exc_id = self.create_or_reopen_exception(
+                session,
+                order_id,
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                f"VCF variant count validation failed: {reason_code}",
+                REASON_CODE_TO_OWNER[reason_code],
+                actor,
+            )
+            return False, exc_id
+
+        # All checks passed
+        return True, None
 
     # ── Phase 5c: Automatic submission (system principal, submission key, audit) ──
     #

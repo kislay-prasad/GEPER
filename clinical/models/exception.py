@@ -61,13 +61,37 @@ class ExceptionReasonCode(str, enum.Enum):
     CONSENT_MISSING = "consent_missing"
     CONSENT_WITHDRAWN = "consent_withdrawn"
 
-    # Validation failures (lab_operator owns)
-    SAMPLE_NOT_FOUND = "sample_not_found"
-    SAMPLE_COLUMN_MISSING = "sample_column_missing"
-    VARIANT_COUNT_ZERO = "variant_count_zero"
-    VCF_HEADER_INVALID = "vcf_header_invalid"
-    VCF_INVALID = "vcf_invalid"
-    ASSEMBLY_MISMATCH = "assembly_mismatch"
+    # Validation failures (lab_operator owns) — identity checks
+    PATIENT_UNRESOLVED = "patient_unresolved"
+    SAMPLE_UNRESOLVED = "sample_unresolved"
+
+    # Validation failures (lab_operator owns) — order checks
+    INDICATION_MISSING = "indication_missing"
+    ORDER_CANCELLED = "order_cancelled"
+
+    # Validation failures (lab_operator owns) — QC checks
+    QC_PENDING = "qc_pending"
+    QC_FAILED = "qc_failed"
+
+    # Validation failures (lab_operator owns) — VCF file checks
+    VCF_MISSING = "vcf_missing"
+    VCF_UNREADABLE = "vcf_unreadable"
+    VCF_FORMAT_INVALID = "vcf_format_invalid"
+
+    # Validation failures (lab_operator owns) — VCF header checks
+    VCF_HEADER_MISSING = "vcf_header_missing"
+    VCF_HEADER_MALFORMED = "vcf_header_malformed"
+
+    # Validation failures (lab_operator owns) — VCF assembly checks
+    VCF_BUILD_NOT_DECLARED = "vcf_build_not_declared"
+    VCF_BUILD_NOT_RECOGNISED = "vcf_build_not_recognised"
+    VCF_BUILD_MISMATCH = "vcf_build_mismatch"
+
+    # Validation failures (lab_operator owns) — VCF sample column checks
+    VCF_SAMPLE_COLUMN_MISSING = "vcf_sample_column_missing"
+
+    # Validation failures (lab_operator owns) — VCF variant count checks
+    VCF_NO_VARIANTS = "vcf_no_variants"
 
     # Submission failures (lab_operator owns)
     BIJ_AI_TIMEOUT = "bij_ai_timeout"
@@ -76,14 +100,27 @@ class ExceptionReasonCode(str, enum.Enum):
 
 # Reason code to owner mapping (immutable after creation)
 REASON_CODE_TO_OWNER = {
+    # Precondition failures (orderer)
     ExceptionReasonCode.CONSENT_MISSING: "orderer",
     ExceptionReasonCode.CONSENT_WITHDRAWN: "orderer",
-    ExceptionReasonCode.SAMPLE_NOT_FOUND: "lab_operator",
-    ExceptionReasonCode.SAMPLE_COLUMN_MISSING: "lab_operator",
-    ExceptionReasonCode.VARIANT_COUNT_ZERO: "lab_operator",
-    ExceptionReasonCode.VCF_HEADER_INVALID: "lab_operator",
-    ExceptionReasonCode.VCF_INVALID: "lab_operator",
-    ExceptionReasonCode.ASSEMBLY_MISMATCH: "lab_operator",
+    # Validation failures (lab_operator)
+    ExceptionReasonCode.PATIENT_UNRESOLVED: "lab_operator",
+    ExceptionReasonCode.SAMPLE_UNRESOLVED: "lab_operator",
+    ExceptionReasonCode.INDICATION_MISSING: "lab_operator",
+    ExceptionReasonCode.ORDER_CANCELLED: "lab_operator",
+    ExceptionReasonCode.QC_PENDING: "lab_operator",
+    ExceptionReasonCode.QC_FAILED: "lab_operator",
+    ExceptionReasonCode.VCF_MISSING: "lab_operator",
+    ExceptionReasonCode.VCF_UNREADABLE: "lab_operator",
+    ExceptionReasonCode.VCF_FORMAT_INVALID: "lab_operator",
+    ExceptionReasonCode.VCF_HEADER_MISSING: "lab_operator",
+    ExceptionReasonCode.VCF_HEADER_MALFORMED: "lab_operator",
+    ExceptionReasonCode.VCF_BUILD_NOT_DECLARED: "lab_operator",
+    ExceptionReasonCode.VCF_BUILD_NOT_RECOGNISED: "lab_operator",
+    ExceptionReasonCode.VCF_BUILD_MISMATCH: "lab_operator",
+    ExceptionReasonCode.VCF_SAMPLE_COLUMN_MISSING: "lab_operator",
+    ExceptionReasonCode.VCF_NO_VARIANTS: "lab_operator",
+    # Submission failures (lab_operator)
     ExceptionReasonCode.BIJ_AI_TIMEOUT: "lab_operator",
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: "lab_operator",
 }
@@ -93,13 +130,30 @@ REASON_CODE_TO_CATEGORY = {
     # Precondition failures (consent-related)
     ExceptionReasonCode.CONSENT_MISSING: ExceptionCategory.PRECONDITION_FAILURE,
     ExceptionReasonCode.CONSENT_WITHDRAWN: ExceptionCategory.PRECONDITION_FAILURE,
-    # Validation failures (data quality issues)
-    ExceptionReasonCode.SAMPLE_NOT_FOUND: ExceptionCategory.VALIDATION_FAILURE,
-    ExceptionReasonCode.SAMPLE_COLUMN_MISSING: ExceptionCategory.VALIDATION_FAILURE,
-    ExceptionReasonCode.VARIANT_COUNT_ZERO: ExceptionCategory.VALIDATION_FAILURE,
-    ExceptionReasonCode.VCF_HEADER_INVALID: ExceptionCategory.VALIDATION_FAILURE,
-    ExceptionReasonCode.VCF_INVALID: ExceptionCategory.VALIDATION_FAILURE,
-    ExceptionReasonCode.ASSEMBLY_MISMATCH: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — identity
+    ExceptionReasonCode.PATIENT_UNRESOLVED: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.SAMPLE_UNRESOLVED: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — order
+    ExceptionReasonCode.INDICATION_MISSING: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.ORDER_CANCELLED: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — QC
+    ExceptionReasonCode.QC_PENDING: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.QC_FAILED: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — VCF file
+    ExceptionReasonCode.VCF_MISSING: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_UNREADABLE: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_FORMAT_INVALID: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — VCF header
+    ExceptionReasonCode.VCF_HEADER_MISSING: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_HEADER_MALFORMED: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — VCF assembly
+    ExceptionReasonCode.VCF_BUILD_NOT_DECLARED: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_BUILD_NOT_RECOGNISED: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_BUILD_MISMATCH: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — VCF sample column
+    ExceptionReasonCode.VCF_SAMPLE_COLUMN_MISSING: ExceptionCategory.VALIDATION_FAILURE,
+    # Validation failures (data quality issues) — VCF variant count
+    ExceptionReasonCode.VCF_NO_VARIANTS: ExceptionCategory.VALIDATION_FAILURE,
     # Submission failures
     ExceptionReasonCode.BIJ_AI_TIMEOUT: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: ExceptionCategory.INTERPRETATION_FAILURE,

@@ -5,6 +5,7 @@ Background worker for Bij AI interpretation submissions.
 
 Polls submissions with status='queued', invokes Bij AI CLI via spawn_tracked
 (so interpretations are killable), handles timeouts, and updates submission status.
+On failure, creates exceptions in the clinical database to notify lab operators.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import logging
 import os
 import subprocess
 import time
+import uuid
 from pathlib import Path
 
 from shared.process_control import spawn_tracked, kill_process_tree_now
@@ -29,9 +31,48 @@ INTERPRETATION_TIMEOUT_SECONDS = 1800
 class InterpretationWorker:
     """Poll and process Bij AI interpretation submissions."""
 
-    def __init__(self, store: SubmissionStore):
+    def __init__(self, store: SubmissionStore, data_access=None):
         self.store = store
+        self.data_access = data_access
         self.bij_ai_cli = os.getenv("BIJ_AI_CLI_PATH", "bij-interpret")
+
+    def _create_submission_failure_exception(self, submission, reason_code: str, error_message: str) -> None:
+        """
+        Create an exception for a submission failure.
+
+        Only called if data_access is available and submission has order_id.
+        If either is missing, logs a warning but continues (doesn't block).
+        """
+        if not self.data_access or not submission.order_id:
+            logger.warning(
+                f"[{submission.id}] Cannot create exception: "
+                f"data_access={'available' if self.data_access else 'unavailable'}, "
+                f"order_id={submission.order_id}"
+            )
+            return
+
+        try:
+            from clinical.models.exception import (
+                REASON_CODE_TO_CATEGORY,
+                REASON_CODE_TO_OWNER,
+            )
+
+            # Get system session for this org
+            system_session = self.data_access._create_system_session(uuid.UUID(submission.org_id))
+
+            # Create exception
+            self.data_access.create_or_reopen_exception(
+                system_session,
+                uuid.UUID(submission.order_id),
+                REASON_CODE_TO_CATEGORY[reason_code].value,
+                reason_code,
+                error_message,
+                REASON_CODE_TO_OWNER[reason_code],
+                "system",
+            )
+            logger.info(f"[{submission.id}] Created exception: {reason_code}")
+        except Exception as e:
+            logger.error(f"[{submission.id}] Failed to create exception: {e}", exc_info=True)
 
     def process_queued_submission(self, submission) -> bool:
         """Process a single queued submission.
@@ -85,6 +126,12 @@ class InterpretationWorker:
                     "failed",
                     error_message=error_msg,
                 )
+                # Create exception for timeout
+                self._create_submission_failure_exception(
+                    submission,
+                    "bij_ai_timeout",
+                    error_msg,
+                )
                 return True
 
             # Check return code
@@ -97,6 +144,12 @@ class InterpretationWorker:
                     submission.id,
                     "failed",
                     error_message=error_msg,
+                )
+                # Create exception for non-zero exit
+                self._create_submission_failure_exception(
+                    submission,
+                    "bij_ai_error_other",
+                    error_msg,
                 )
                 return True
 
@@ -112,6 +165,12 @@ class InterpretationWorker:
                     "failed",
                     error_message=error_msg,
                 )
+                # Create exception for parse error
+                self._create_submission_failure_exception(
+                    submission,
+                    "bij_ai_error_other",
+                    error_msg,
+                )
                 return True
 
             # Check run_complete flag — not file presence
@@ -122,6 +181,12 @@ class InterpretationWorker:
                     submission.id,
                     "failed",
                     error_message=error_msg,
+                )
+                # Create exception for incomplete interpretation
+                self._create_submission_failure_exception(
+                    submission,
+                    "bij_ai_error_other",
+                    error_msg,
                 )
                 return True
 
@@ -146,6 +211,12 @@ class InterpretationWorker:
                 "failed",
                 error_message=error_msg,
             )
+            # Create exception for missing CLI
+            self._create_submission_failure_exception(
+                submission,
+                "bij_ai_error_other",
+                error_msg,
+            )
             return True
         except Exception as e:
             error_msg = f"Unexpected error: {type(e).__name__}: {e}"
@@ -154,6 +225,12 @@ class InterpretationWorker:
                 submission.id,
                 "failed",
                 error_message=error_msg,
+            )
+            # Create exception for unexpected error
+            self._create_submission_failure_exception(
+                submission,
+                "bij_ai_error_other",
+                error_msg,
             )
             return True
 
@@ -200,7 +277,24 @@ def main():
     )
     store = SubmissionStore(store_path)
 
-    worker = InterpretationWorker(store)
+    # Initialize DataAccess for exception creation (optional; worker works without it)
+    data_access = None
+    try:
+        dsn = os.getenv("CLINICAL_DSN")
+        if dsn:
+            import psycopg
+
+            connection = psycopg.connect(dsn, autocommit=False)
+            from clinical.data_access import DataAccess
+
+            data_access = DataAccess(connection)
+            logger.info("DataAccess initialized for exception creation")
+        else:
+            logger.warning("CLINICAL_DSN not set; exceptions will not be created")
+    except Exception as e:
+        logger.warning(f"Failed to initialize DataAccess: {e}; continuing without exception creation")
+
+    worker = InterpretationWorker(store, data_access)
     worker.run_loop()
 
 

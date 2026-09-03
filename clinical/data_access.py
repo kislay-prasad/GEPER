@@ -2215,6 +2215,23 @@ class DataAccess:
         return results
 
     # ── Phase 5a: Preconditions and VCF validation ──
+    #
+    # EXCEPTION WIRING (Phase 5d):
+    # These precondition and VCF validation checks are called from a submission
+    # orchestration layer (yet to be implemented, pending architectural decision).
+    # When a check fails, the orchestration layer calls create_or_reopen_exception with:
+    #   - category: from REASON_CODE_TO_CATEGORY[reason_code]
+    #   - reason_code: the returned failure code
+    #   - owner: from REASON_CODE_TO_OWNER[reason_code]
+    #   - actor: system principal or human actor performing submission
+    #   - error_message: the specific failure descriptor
+    #
+    # All 5 precondition checks + all 5 VCF validation checks must complete
+    # BEFORE submission is attempted. If any fails, no submission occurs and an
+    # exception is recorded instead.
+    #
+    # NOTE: These methods return a reason string (enum). The orchestration layer
+    # maps that to an exception via the mappings in models/exception.py.
 
     @auditable(action="check_consent", resource_type="consent")
     def check_consent(self, session: Session, patient_id: uuid.UUID, scope: str) -> str:
@@ -2555,6 +2572,33 @@ class DataAccess:
             return "no_variants"
 
     # ── Phase 5c: Automatic submission (system principal, submission key, audit) ──
+    #
+    # EXCEPTION WIRING (Phase 5d):
+    # Submission failures are caught and turned into exceptions by:
+    #
+    # 1. Transient submission failures (timeouts, retryable errors):
+    #    - Caught by worker / submission layer
+    #    - Call create_or_reopen_exception with:
+    #      - category: TRANSIENT_SUBMISSION_FAILURE
+    #      - reason_code: BIJ_AI_TIMEOUT or BIJ_AI_ERROR_OTHER
+    #      - owner: lab_operator
+    #
+    # 2. Interpretation failures (non-retryable Bij AI errors):
+    #    - Caught by worker / submission result inspection
+    #    - Call create_or_reopen_exception with:
+    #      - category: INTERPRETATION_FAILURE
+    #      - reason_code: BIJ_AI_ERROR_OTHER
+    #      - owner: lab_operator
+    #      - error_message: exact error from Bij AI run_document
+    #
+    # The submission flow:
+    # 1. Preconditions validated (5a)
+    # 2. VCF validated (5a)
+    # 3. Automatic submission audit written (precondition results recorded)
+    # 4. Submission enqueued
+    # 5. Worker polls and executes
+    # 6. On timeout or error: create_or_reopen_exception called
+    # 7. On success: run_document stored, interpretation created
 
     def _create_system_session(self, org_id: uuid.UUID) -> Session:
         """
@@ -2976,6 +3020,72 @@ class DataAccess:
         )
 
         return exc_id
+
+    @auditable(
+        action="read_exception",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="retrieve single exception with full event history",
+    )
+    def get_exception_by_id(self, session: Session, exception_id: uuid.UUID) -> Optional[ExceptionDTO]:
+        """Get a single exception by ID with full event history (org-scoped)."""
+        from clinical.models.exception import (
+            ExceptionDTO,
+            ExceptionEventDTO,
+        )
+
+        # Query the exception
+        exception = self._query_one(
+            "SELECT id, order_id, category, reason_code, error_message, status, owner, "
+            "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
+            "       resolution_note "
+            "FROM exceptions "
+            "WHERE org_id = %s AND id = %s",
+            (session.org_id, exception_id),
+        )
+
+        if exception is None:
+            return None
+
+        exc_id = exception[0]
+        order_id = exception[1]
+
+        # Get events for this exception
+        events = self._query(
+            "SELECT id, action, actor, timestamp, action_note "
+            "FROM exception_events "
+            "WHERE exception_id = %s "
+            "ORDER BY timestamp ASC",
+            (exc_id,),
+        )
+
+        event_dtos = [
+            ExceptionEventDTO(
+                id=str(ev[0]),
+                action=ev[1],
+                actor=ev[2],
+                timestamp=ev[3].isoformat() if isinstance(ev[3], _datetime.datetime) else ev[3],
+                action_note=ev[4],
+            )
+            for ev in events
+        ]
+
+        return ExceptionDTO(
+            id=str(exc_id),
+            order_id=str(order_id),
+            category=exception[2],
+            reason_code=exception[3],
+            error_message=exception[4],
+            status=exception[5],
+            owner=exception[6],
+            created_at=exception[7].isoformat() if isinstance(exception[7], _datetime.datetime) else exception[7],
+            last_resolved_by=exception[8],
+            last_resolved_at=exception[9].isoformat() if isinstance(exception[9], _datetime.datetime) else exception[9],
+            resolution_action=exception[10],
+            resolution_note=exception[11],
+            events=event_dtos,
+        )
 
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification

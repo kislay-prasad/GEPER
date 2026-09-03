@@ -5,6 +5,7 @@ Patients, consents, orders, samples, tests.
 """
 
 import datetime
+import json
 import os
 import uuid
 
@@ -1210,3 +1211,472 @@ class TestLineageReadMethods:
         assert result["interpretation_id"] == interp_id
         assert result["created_by"] == session_admin.user_id
         assert result["created_at"] is not None
+
+
+# ─── Phase 4b: Lineage query tests ──────────────────────────────────────────
+
+
+class TestLineageQueries:
+    """Tests for Phase 4b lineage query methods: trace_report_ancestors and find_reports_by_interpretation_criteria."""
+
+    # ── trace_report_ancestors tests ─────────────────────────────────────────
+
+    def test_trace_ancestors_complete_chain(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Trace ancestors returns complete chain from report back to patient."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "v8"}
+        interp_id = dao.create_interpretation(session_admin, vcf_id, run_document, str(sample_id))
+
+        report_id = dao.create_report(session_admin, interp_id)
+
+        # Trace ancestors
+        chain = dao.trace_report_ancestors(session_admin, report_id)
+
+        # Verify chain length: report, interpretation, vcf, sequencing_run, sample, order, patient
+        assert len(chain) == 7
+        assert chain[0]["table"] == "report"
+        assert chain[1]["table"] == "interpretation"
+        assert chain[2]["table"] == "vcf"
+        assert chain[3]["table"] == "sequencing_run"
+        assert chain[4]["table"] == "sample"
+        assert chain[5]["table"] == "order"
+        assert chain[6]["table"] == "patient"
+
+    def test_trace_ancestors_missing_report(self, dao, session_admin):
+        """Trace ancestors raises NotFoundError for nonexistent report."""
+        from clinical.data_access import NotFoundError
+
+        fake_report = uuid.uuid4()
+        with pytest.raises(NotFoundError):
+            dao.trace_report_ancestors(session_admin, fake_report)
+
+    def test_trace_ancestors_cross_org_not_found(self, dao, conn):
+        """Trace ancestors does not see reports from other organisations."""
+        from clinical.data_access import NotFoundError
+
+        # Create two orgs
+        org_a = dao.create_organisation("Org A")
+        org_b = dao.create_organisation("Org B")
+
+        # Create users and sessions for both orgs
+        user_a = dao.create_user(org_a, "user_a@test.local", "pass")
+        user_b = dao.create_user(org_b, "user_b@test.local", "pass")
+
+        # Setup admin roles
+        now = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_a, org_a, user_a, now),
+            )
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_b, org_b, user_b, now),
+            )
+        conn.commit()
+
+        session_a = dao.login("user_a@test.local", org_a, "pass")
+        session_b = dao.login("user_b@test.local", org_b, "pass")
+
+        # Create a full lineage in org_b
+        patient_id = dao.create_patient(session_b, "Patient", datetime.date(1990, 1, 1), "M")
+        consent_id = dao.record_consent(session_b, patient_id, "testing")
+
+        test_id = uuid.uuid4()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (test_id, org_b, "Test", "active", now),
+            )
+        conn.commit()
+
+        order_id = dao.create_order(session_b, patient_id, test_id, "testing", consent_id)
+        dao.place_order(session_b, order_id)
+        sample_id = dao.receive_sample(session_b, order_id, "dna")
+        run_id = dao.create_sequencing_run(session_b, sample_id)
+
+        # Create a temporary VCF file for org_b
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False, mode="w") as f:
+            f.write("##fileformat=VCFv4.2\n")
+            vcf_path = f.name
+
+        try:
+            vcf_id = dao.create_vcf(session_b, run_id, vcf_path)
+            interp_id = dao.create_interpretation(session_b, vcf_id, {"model_version": "v1"}, str(sample_id))
+            report_id = dao.create_report(session_b, interp_id)
+
+            # Try to trace from org_a's session — should not see org_b's report
+            with pytest.raises(NotFoundError):
+                dao.trace_report_ancestors(session_a, report_id)
+        finally:
+            import os
+
+            os.unlink(vcf_path)
+
+    def test_trace_ancestors_audit(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """Trace ancestors is audited with chain_length and patient_id in details."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        run_document = {"model_version": "v8"}
+        interp_id = dao.create_interpretation(session_admin, vcf_id, run_document, str(sample_id))
+        report_id = dao.create_report(session_admin, interp_id)
+
+        # Clear audit log to see only the trace call
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM audit_log WHERE action = 'read_lineage'")
+        conn.commit()
+
+        chain = dao.trace_report_ancestors(session_admin, report_id)
+
+        # Verify audit entry
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, resource_type, outcome, details FROM audit_log "
+                "WHERE action = 'read_lineage' AND org_id = %s",
+                (session_admin.org_id,),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        action, resource_type, outcome, details_json = row
+        assert action == "read_lineage"
+        assert resource_type == "report"
+        assert outcome == "success"
+
+        details = json.loads(details_json)
+        assert details["chain_length"] == 7
+        assert "final_patient_id" in details
+        assert details["final_patient_id"] == str(chain[-1]["resource_id"])
+
+    # ── find_reports_by_interpretation_criteria tests ────────────────────────
+
+    def test_find_empty_criteria_raises(self, dao, session_admin):
+        """find_reports_by_interpretation_criteria raises ValueError for empty criteria."""
+        with pytest.raises(ValueError, match="At least one criterion required"):
+            dao.find_reports_by_interpretation_criteria(session_admin, {})
+
+    def test_find_model_version_filter(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Filter by model_version returns only matching interpretations."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create two interpretations with different model versions
+        interp_v1_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
+        report_v1_id = dao.create_report(session_admin, interp_v1_id)
+
+        # Create second VCF for second interpretation
+        vcf_file2 = tmp_path / "test2.vcf"
+        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
+
+        interp_v2_id = dao.create_interpretation(session_admin, vcf_id2, {"model_version": "v2"}, str(sample_id))
+        dao.create_report(session_admin, interp_v2_id)
+
+        # Query for v1 only
+        results = dao.find_reports_by_interpretation_criteria(session_admin, {"model_version": "v1"})
+
+        assert len(results) == 1
+        assert results[0]["report_id"] == report_v1_id
+        assert results[0]["run_document"]["model_version"] == "v1"
+
+    def test_find_database_version_filter(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Filter by database_version returns only matching interpretations."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create interpretations with different database versions
+        interp_db1_id = dao.create_interpretation(
+            session_admin, vcf_id, {"database_version": "2024.01"}, str(sample_id)
+        )
+        dao.create_report(session_admin, interp_db1_id)
+
+        vcf_file2 = tmp_path / "test2.vcf"
+        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
+
+        interp_db2_id = dao.create_interpretation(
+            session_admin, vcf_id2, {"database_version": "2025.01"}, str(sample_id)
+        )
+        dao.create_report(session_admin, interp_db2_id)
+
+        # Query for 2024.01 only
+        results = dao.find_reports_by_interpretation_criteria(session_admin, {"database_version": "2024.01"})
+
+        assert len(results) == 1
+        assert results[0]["run_document"]["database_version"] == "2024.01"
+
+    def test_find_source_health_filter(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Filter by source_health (service + status) returns matching interpretations."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create interpretation with databases info including Ensembl status
+        run_doc_health = {
+            "model_version": "v1",
+            "databases": {
+                "Ensembl": "failed",
+                "ClinVar": "available",
+            },
+        }
+        interp_id = dao.create_interpretation(session_admin, vcf_id, run_doc_health, str(sample_id))
+        report_id = dao.create_report(session_admin, interp_id)
+
+        # Query for failed Ensembl
+        results = dao.find_reports_by_interpretation_criteria(
+            session_admin,
+            {"source_health": {"service": "Ensembl", "status": "failed"}},
+        )
+
+        assert len(results) == 1
+        assert results[0]["report_id"] == report_id
+        assert results[0]["run_document"]["databases"]["Ensembl"] == "failed"
+
+    def test_find_date_range_filter(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Filter by date_range returns interpretations within the range."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create an interpretation
+        interp_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
+        report_id = dao.create_report(session_admin, interp_id)
+
+        # Query with a date range that includes today
+        results = dao.find_reports_by_interpretation_criteria(
+            session_admin,
+            {
+                "date_range": {
+                    "start": "2026-09-01",
+                    "end": "2026-09-03",
+                }
+            },
+        )
+
+        assert len(results) >= 1
+        found_report = next((r for r in results if r["report_id"] == report_id), None)
+        assert found_report is not None
+
+    def test_find_multiple_criteria_and_logic(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Multiple criteria use AND logic: all must match."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create interpretation matching both criteria
+        run_doc = {
+            "model_version": "v1",
+            "database_version": "2024.01",
+        }
+        interp_both_id = dao.create_interpretation(session_admin, vcf_id, run_doc, str(sample_id))
+        report_both_id = dao.create_report(session_admin, interp_both_id)
+
+        # Create interpretation matching only model_version
+        vcf_file2 = tmp_path / "test2.vcf"
+        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
+
+        run_doc_partial = {"model_version": "v1", "database_version": "2025.01"}
+        interp_partial_id = dao.create_interpretation(session_admin, vcf_id2, run_doc_partial, str(sample_id))
+        dao.create_report(session_admin, interp_partial_id)
+
+        # Query with both criteria
+        results = dao.find_reports_by_interpretation_criteria(
+            session_admin,
+            {
+                "model_version": "v1",
+                "database_version": "2024.01",
+            },
+        )
+
+        # Should get only the one matching both
+        assert len(results) == 1
+        assert results[0]["report_id"] == report_both_id
+
+    def test_find_no_results(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Query with criteria that match nothing returns empty list."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        # Create interpretation with v1
+        interp_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
+        dao.create_report(session_admin, interp_id)
+
+        # Query for v99 (doesn't exist)
+        results = dao.find_reports_by_interpretation_criteria(session_admin, {"model_version": "v99"})
+
+        assert results == []
+
+    def test_find_returns_patient_id(self, dao, session_admin, sample_for_lineage, tmp_path):
+        """Query results include patient_id via chain walk."""
+        # sample_for_lineage is created via patient → order → sample
+        sample_id = sample_for_lineage
+
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        interp_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
+        report_id = dao.create_report(session_admin, interp_id)
+
+        results = dao.find_reports_by_interpretation_criteria(session_admin, {"model_version": "v1"})
+
+        assert len(results) == 1
+        assert results[0]["report_id"] == report_id
+        assert results[0]["sample_id"] == sample_id
+        assert results[0]["patient_id"] is not None
+        assert isinstance(results[0]["patient_id"], uuid.UUID)
+
+    def test_find_audit(self, dao, session_admin, sample_for_lineage, tmp_path, conn):
+        """Query is audited with criteria and result_count in details."""
+        sample_id = sample_for_lineage
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
+
+        interp_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
+        dao.create_report(session_admin, interp_id)
+
+        # Clear audit log to see only this query
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM audit_log WHERE action = 'query_affected_reports'")
+        conn.commit()
+
+        dao.find_reports_by_interpretation_criteria(session_admin, {"model_version": "v1"})
+
+        # Verify audit entry
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, resource_type, outcome, details FROM audit_log "
+                "WHERE action = 'query_affected_reports' AND org_id = %s",
+                (session_admin.org_id,),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        action, resource_type, outcome, details_json = row
+        assert action == "query_affected_reports"
+        assert resource_type == "interpretation"
+        assert outcome == "success"
+
+        details = json.loads(details_json)
+        assert "criteria" in details
+        assert details["result_count"] == 1
+
+    # ── Org isolation tests ──────────────────────────────────────────────────
+
+    def test_lineage_queries_cross_org_isolation(self, dao, conn):
+        """Lineage queries respect organisation boundaries."""
+        from clinical.data_access import NotFoundError
+
+        # Create two organisations
+        org_a = dao.create_organisation("Org A")
+        org_b = dao.create_organisation("Org B")
+
+        # Create users and setup sessions
+        user_a = dao.create_user(org_a, "user_a@test.local", "pass")
+        user_b = dao.create_user(org_b, "user_b@test.local", "pass")
+
+        now = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_a, org_a, user_a, now),
+            )
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user_b, org_b, user_b, now),
+            )
+        conn.commit()
+
+        session_a = dao.login("user_a@test.local", org_a, "pass")
+        session_b = dao.login("user_b@test.local", org_b, "pass")
+
+        # Create full lineage in org_b
+        patient_id_b = dao.create_patient(session_b, "Patient B", datetime.date(1990, 1, 1), "M")
+        consent_id_b = dao.record_consent(session_b, patient_id_b, "testing")
+
+        test_id = uuid.uuid4()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (test_id, org_b, "Test", "active", now),
+            )
+        conn.commit()
+
+        order_id_b = dao.create_order(session_b, patient_id_b, test_id, "testing", consent_id_b)
+        dao.place_order(session_b, order_id_b)
+        sample_id_b = dao.receive_sample(session_b, order_id_b, "dna")
+        run_id_b = dao.create_sequencing_run(session_b, sample_id_b)
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False, mode="w") as f:
+            f.write("##fileformat=VCFv4.2\n")
+            vcf_path = f.name
+
+        try:
+            vcf_id_b = dao.create_vcf(session_b, run_id_b, vcf_path)
+            interp_id_b = dao.create_interpretation(session_b, vcf_id_b, {"model_version": "v1"}, str(sample_id_b))
+            report_id_b = dao.create_report(session_b, interp_id_b)
+
+            # Try to query from org_a
+            # trace_report_ancestors should not find org_b's report
+            with pytest.raises(NotFoundError):
+                dao.trace_report_ancestors(session_a, report_id_b)
+
+            # find_reports_by_interpretation_criteria should return empty for org_a (no data in org_a)
+            results = dao.find_reports_by_interpretation_criteria(session_a, {"model_version": "v1"})
+            assert results == []
+
+            # But org_b should see their own data
+            results_b = dao.find_reports_by_interpretation_criteria(session_b, {"model_version": "v1"})
+            assert len(results_b) == 1
+            assert results_b[0]["report_id"] == report_id_b
+
+        finally:
+            import os
+
+            os.unlink(vcf_path)

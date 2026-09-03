@@ -1833,6 +1833,318 @@ class DataAccess:
             "created_by": row[3],
         }
 
+    # ── Phase 4b: Lineage queries (trace ancestors, criteria-based search) ────
+
+    @auditable(
+        action="read_lineage",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        details_builder=lambda params, result: {
+            "report_id": str(params.get("report_id")),
+            "chain_length": len(result) if result else 0,
+            "final_patient_id": str(result[-1]["resource_id"]) if result and result[-1]["table"] == "patient" else None,
+        },
+    )
+    @transactional
+    def trace_report_ancestors(self, session: Session, report_id: uuid.UUID) -> List[dict[str, Any]]:
+        """
+        Trace all ancestors of a report from the lineage chain.
+
+        Given a report_id, traverse backward through the lineage:
+        report → interpretation → vcf → sequencing_run → sample → order → patient
+
+        Returns a list of dicts in chronological order (report first, patient last):
+        {table, resource_id, created_at, created_by, org_id}
+
+        Raises NotFoundError if the report doesn't exist or belongs to another organisation.
+        """
+        # Start: verify the report exists in this org
+        report = self._query_one(
+            "SELECT id, interpretation_id, created_at, created_by, org_id FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+
+        chain = []
+        chain.append(
+            {
+                "table": "report",
+                "resource_id": report[0],
+                "created_at": report[2],
+                "created_by": report[3],
+                "org_id": report[4],
+            }
+        )
+
+        # Navigate: interpretation
+        interp_id = report[1]
+        interp = self._query_one(
+            "SELECT id, vcf_id, created_at, created_by, org_id FROM interpretations WHERE id = %s AND org_id = %s",
+            (interp_id, session.org_id),
+        )
+        if interp is None:
+            raise NotFoundError(f"Interpretation {interp_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "interpretation",
+                "resource_id": interp[0],
+                "created_at": interp[2],
+                "created_by": interp[3],
+                "org_id": interp[4],
+            }
+        )
+
+        # Navigate: vcf
+        vcf_id = interp[1]
+        vcf = self._query_one(
+            "SELECT id, sequencing_run_id, created_at, created_by, org_id FROM vcfs WHERE id = %s AND org_id = %s",
+            (vcf_id, session.org_id),
+        )
+        if vcf is None:
+            raise NotFoundError(f"VCF {vcf_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "vcf",
+                "resource_id": vcf[0],
+                "created_at": vcf[2],
+                "created_by": vcf[3],
+                "org_id": vcf[4],
+            }
+        )
+
+        # Navigate: sequencing_run
+        run_id = vcf[1]
+        run = self._query_one(
+            "SELECT id, sample_id, created_at, created_by, org_id FROM sequencing_runs WHERE id = %s AND org_id = %s",
+            (run_id, session.org_id),
+        )
+        if run is None:
+            raise NotFoundError(f"Sequencing run {run_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "sequencing_run",
+                "resource_id": run[0],
+                "created_at": run[2],
+                "created_by": run[3],
+                "org_id": run[4],
+            }
+        )
+
+        # Navigate: sample
+        sample_id = run[1]
+        sample = self._query_one(
+            "SELECT sample_id, order_id, created_at, created_by, org_id FROM samples WHERE sample_id = %s AND org_id = %s",
+            (sample_id, session.org_id),
+        )
+        if sample is None:
+            raise NotFoundError(f"Sample {sample_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "sample",
+                "resource_id": sample[0],
+                "created_at": sample[2],
+                "created_by": sample[3],
+                "org_id": sample[4],
+            }
+        )
+
+        # Navigate: order
+        order_id = sample[1]
+        order = self._query_one(
+            "SELECT order_id, patient_id, created_at, created_by, org_id FROM orders WHERE order_id = %s AND org_id = %s",
+            (order_id, session.org_id),
+        )
+        if order is None:
+            raise NotFoundError(f"Order {order_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "order",
+                "resource_id": order[0],
+                "created_at": order[2],
+                "created_by": order[3],
+                "org_id": order[4],
+            }
+        )
+
+        # Navigate: patient
+        patient_id = order[1]
+        patient = self._query_one(
+            "SELECT patient_id, created_at, org_id FROM patients WHERE patient_id = %s AND org_id = %s",
+            (patient_id, session.org_id),
+        )
+        if patient is None:
+            raise NotFoundError(f"Patient {patient_id} not found in chain")
+
+        chain.append(
+            {
+                "table": "patient",
+                "resource_id": patient[0],
+                "created_at": patient[1],
+                "created_by": None,  # patient creation has no created_by
+                "org_id": patient[2],
+            }
+        )
+
+        return chain
+
+    @auditable(
+        action="query_affected_reports",
+        resource_type="interpretation",
+        requires_session=True,
+        auditable=True,
+        details_builder=lambda params, result: {
+            "criteria": params.get("criteria"),
+            "result_count": len(result) if result else 0,
+            "first_report_id": str(result[0]["report_id"]) if result else None,
+        },
+    )
+    @transactional
+    def find_reports_by_interpretation_criteria(
+        self, session: Session, criteria: dict[str, Any]
+    ) -> List[dict[str, Any]]:
+        """
+        Find all reports affected by interpretations matching the given criteria.
+
+        Criteria dict can contain:
+          - model_version: str, matches run_document.model_version
+          - database_version: str, matches run_document.database_version
+          - code_version: str, matches run_document.code_version
+          - date_range: dict with 'start' and 'end' ISO date strings
+          - source_health: dict with 'service' and 'status' fields
+
+        At least one criterion is required (raises ValueError if empty).
+
+        Returns a list of dicts (one per affected report):
+        {report_id, interpretation_id, vcf_id, run_document, created_at, created_by, sample_id, patient_id}
+
+        All queries are scoped to the session's organisation.
+        """
+        if not criteria:
+            raise ValueError("At least one criterion required")
+
+        # Build WHERE clauses dynamically from criteria
+        where_clauses = ["org_id = %s"]
+        params: List[Any] = [session.org_id]
+
+        # Handle model_version
+        if "model_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"model_version": criteria["model_version"]}))
+
+        # Handle database_version
+        if "database_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"database_version": criteria["database_version"]}))
+
+        # Handle code_version
+        if "code_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"code_version": criteria["code_version"]}))
+
+        # Handle date_range
+        if "date_range" in criteria:
+            date_range = criteria["date_range"]
+            if "start" in date_range:
+                where_clauses.append("created_at >= %s")
+                params.append(date_range["start"])
+            if "end" in date_range:
+                where_clauses.append("created_at <= %s")
+                params.append(date_range["end"])
+
+        # Handle source_health
+        if "source_health" in criteria:
+            source_health = criteria["source_health"]
+            # Build a JSONB path query for nested source data
+            # Example: run_document -> 'databases' -> 'Ensembl' = 'unavailable'
+            # For now, use a simpler approach: check if databases field contains the condition
+            if "service" in source_health and "status" in source_health:
+                service = source_health["service"]
+                status = source_health["status"]
+                # Query for: run_document->'databases'->>'<service>' = '<status>'
+                where_clauses.append("run_document -> 'databases' ->> %s = %s")
+                params.append(service)
+                params.append(status)
+
+        where_sql = " AND ".join(where_clauses)
+        query = f"""
+            SELECT id, vcf_id, run_document, created_at, created_by
+            FROM interpretations
+            WHERE {where_sql}
+            ORDER BY created_at, id
+        """
+
+        interp_rows = self._query(query, tuple(params))
+        results = []
+
+        for interp_row in interp_rows:
+            interp_id, vcf_id, run_document_json, created_at, created_by = interp_row
+
+            # Get the report linked to this interpretation
+            report = self._query_one(
+                "SELECT id FROM reports WHERE interpretation_id = %s AND org_id = %s",
+                (interp_id, session.org_id),
+            )
+            if report is None:
+                # No report yet; skip this interpretation
+                continue
+
+            report_id = report[0]
+
+            # Walk the chain to get sample_id and patient_id
+            # interpretation → vcf → sequencing_run → sample → order → patient
+            vcf_row = self._query_one(
+                "SELECT sequencing_run_id FROM vcfs WHERE id = %s AND org_id = %s",
+                (vcf_id, session.org_id),
+            )
+            if vcf_row is None:
+                continue
+
+            sequencing_run_id = vcf_row[0]
+
+            run_row = self._query_one(
+                "SELECT sample_id FROM sequencing_runs WHERE id = %s AND org_id = %s",
+                (sequencing_run_id, session.org_id),
+            )
+            if run_row is None:
+                continue
+
+            sample_id = run_row[0]
+
+            order_row = self._query_one(
+                "SELECT patient_id FROM orders WHERE order_id IN "
+                "(SELECT order_id FROM samples WHERE sample_id = %s AND org_id = %s) AND org_id = %s",
+                (sample_id, session.org_id, session.org_id),
+            )
+            if order_row is None:
+                continue
+
+            patient_id = order_row[0]
+
+            # Parse run_document if it's a JSON string
+            run_doc = json.loads(run_document_json) if isinstance(run_document_json, str) else run_document_json
+
+            results.append(
+                {
+                    "report_id": report_id,
+                    "interpretation_id": interp_id,
+                    "vcf_id": vcf_id,
+                    "run_document": run_doc,
+                    "created_at": created_at,
+                    "created_by": created_by,
+                    "sample_id": sample_id,
+                    "patient_id": patient_id,
+                }
+            )
+
+        return results
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

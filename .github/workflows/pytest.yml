@@ -39,8 +39,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: geper/requirements.txt
 
-      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
-        run: pip install -e ../
+      - name: Install shared package (subprocess-reachable import resolution)
+        working-directory: .
+        run: pip install -e .
 
       # DO NOT REVERT THIS AS A TIDY-UP. It is load-bearing.
       #
@@ -175,8 +176,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: kim_pipeline/requirements.txt
 
-      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
-        run: pip install -e ../
+      - name: Install shared package (subprocess-reachable import resolution)
+        working-directory: .
+        run: pip install -e .
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -215,8 +217,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: clinical/requirements.txt
 
-      - name: Install GEPER root package (shared, clinical, kim_pipeline discoverable)
-        run: pip install -e ../
+      - name: Install shared package (subprocess-reachable import resolution)
+        working-directory: .
+        run: pip install -e .
 
       - name: Install dependencies
         run: |

@@ -669,6 +669,37 @@ class TestStructuralIsolation:
             f"@auditable(auditable=False, reason='...')."
         )
 
+    def test_create_system_session_call_site_enforcement(self):
+        """
+        _create_system_session is an authentication bypass. It must be called from
+        exactly one location (the automatic submission path), enforced via AST.
+        """
+        source = (pathlib.Path(__file__).resolve().parent.parent / "data_access.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        call_sites = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                # Match: self._create_system_session(...)
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "_create_system_session"
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "self"
+                ):
+                    # Find which method this call is in
+                    for potential_parent in ast.walk(tree):
+                        if isinstance(potential_parent, ast.FunctionDef):
+                            for child in ast.walk(potential_parent):
+                                if child is node:
+                                    call_sites.append(potential_parent.name)
+                                    break
+
+        assert len(call_sites) <= 1, (
+            f"_create_system_session must be called from at most one location "
+            f"(authentication bypass enforcement), but found {len(call_sites)} call(s): {call_sites}"
+        )
+
     def test_auditable_session_signature_enforcement(self):
         """
         When @auditable declares requires_session=True, the method must have

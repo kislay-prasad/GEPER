@@ -1831,3 +1831,200 @@ class TestDocumentDiscovery:
         if isinstance(details, str):
             details = json.loads(details)
         assert details["criteria"] == criteria
+
+
+class TestAutomaticSubmission:
+    """Tests for Phase 5c: Automatic submission (system principal, submission key, audit)."""
+
+    def test_system_principal_created_per_org(self, dao, org_a, conn):
+        """System principal is created once per organisation."""
+        # Create system session for org_a
+        session_sys_a = dao._create_system_session(org_a)
+        assert isinstance(session_sys_a.session_id, uuid.UUID)
+        assert session_sys_a.org_id == org_a
+
+        # Verify system user exists with is_system_account=true
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id, email, is_system_account FROM users WHERE org_id = %s AND is_system_account = true",
+                (org_a,),
+            )
+            row = cur.fetchone()
+        assert row is not None
+        user_id_a, email_a, is_system = row
+        assert is_system is True
+        assert email_a == f"system+{org_a}@platform"
+
+        # Calling again returns a new session for the same principal
+        session_sys_a2 = dao._create_system_session(org_a)
+        assert session_sys_a2.user_id == session_sys_a.user_id  # Same principal
+        assert session_sys_a2.session_id != session_sys_a.session_id  # Different session
+
+    def test_system_principal_one_per_org(self, dao, conn):
+        """Each organisation has its own system principal."""
+        org_a = dao.create_organisation("Org A")
+        org_b = dao.create_organisation("Org B")
+
+        session_a = dao._create_system_session(org_a)
+        session_b = dao._create_system_session(org_b)
+
+        assert session_a.org_id == org_a
+        assert session_b.org_id == org_b
+        assert session_a.user_id != session_b.user_id
+
+        # Email must be different per org
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT email FROM users WHERE user_id = %s AND org_id = %s",
+                (session_a.user_id, org_a),
+            )
+            email_a = cur.fetchone()[0]
+            cur.execute(
+                "SELECT email FROM users WHERE user_id = %s AND org_id = %s",
+                (session_b.user_id, org_b),
+            )
+            email_b = cur.fetchone()[0]
+
+        assert email_a == f"system+{org_a}@platform"
+        assert email_b == f"system+{org_b}@platform"
+        assert email_a != email_b
+
+    def test_system_account_cannot_login(self, dao, org_a, conn):
+        """System accounts are rejected by login()."""
+        from clinical.data_access import AuthenticationError
+
+        session_sys = dao._create_system_session(org_a)
+
+        # Get the system principal's email
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT email FROM users WHERE user_id = %s AND org_id = %s",
+                (session_sys.user_id, org_a),
+            )
+            system_email = cur.fetchone()[0]
+
+        # Attempting to log in with system account email fails, even with correct password
+        # (system accounts have a dummy password hash)
+        with pytest.raises(AuthenticationError, match="Authentication failed"):
+            dao.login(system_email, org_a, "any_password")
+
+    def test_system_principal_has_system_role(self, dao, org_a, conn):
+        """System principal is assigned the System role."""
+        session_sys = dao._create_system_session(org_a)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT role FROM role_assignments WHERE user_id = %s AND org_id = %s AND role = 'System'",
+                (session_sys.user_id, org_a),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        assert row[0] == "System"
+
+    def test_derive_submission_key_format(self, dao):
+        """Submission key is hash|sample_id with no collisions."""
+        sample_id = uuid.uuid4()
+        vcf_content_1 = b"##fileformat=VCFv4.2\ndata1"
+        vcf_content_2 = b"##fileformat=VCFv4.2\ndata2"
+
+        key_1 = dao.derive_submission_key(vcf_content_1, sample_id)
+        key_2 = dao.derive_submission_key(vcf_content_2, sample_id)
+
+        # Format: sha256_hex | sample_id
+        assert "|" in key_1
+        parts_1 = key_1.split("|")
+        assert len(parts_1) == 2
+        assert len(parts_1[0]) == 64  # sha256 hex is 64 chars
+        assert parts_1[1] == str(sample_id)
+
+        # Different content → different hash → different key
+        assert key_1 != key_2
+
+        # Same content → same key (idempotent)
+        key_1b = dao.derive_submission_key(vcf_content_1, sample_id)
+        assert key_1 == key_1b
+
+        # Same VCF, different sample → different key
+        sample_id_2 = uuid.uuid4()
+        key_1_sample2 = dao.derive_submission_key(vcf_content_1, sample_id_2)
+        assert key_1 != key_1_sample2
+
+    def test_write_automatic_submission_audit_submitted(self, dao, session_admin, conn):
+        """Audit entry for successful automatic submission."""
+        order_id = uuid.uuid4()
+        sample_id = uuid.uuid4()
+        submission_key = "testhash|sample123"
+        preconditions = {"consent": "valid", "qc": "passed"}
+        vcf_validations = {"file": "ok", "build": "matched"}
+
+        dao._write_automatic_submission_audit(
+            session_admin,
+            order_id,
+            sample_id,
+            submission_key,
+            preconditions,
+            vcf_validations,
+            decision="submitted",
+        )
+
+        # Verify audit entry
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, outcome, details FROM audit_log "
+                "WHERE user_id = %s AND action = 'automatic_submission' "
+                'ORDER BY "timestamp" DESC LIMIT 1',
+                (session_admin.user_id,),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        action, outcome, details = row
+        assert action == "automatic_submission"
+        assert outcome == "success"
+
+        if isinstance(details, str):
+            details = json.loads(details)
+        assert details["decision"] == "submitted"
+        assert details["preconditions"] == preconditions
+        assert details["vcf_validations"] == vcf_validations
+        assert "blocking_reason" not in details
+
+    def test_write_automatic_submission_audit_blocked(self, dao, session_admin, conn):
+        """Audit entry for blocked automatic submission includes blocking reason."""
+        order_id = uuid.uuid4()
+        sample_id = uuid.uuid4()
+        submission_key = "testhash|sample123"
+        preconditions = {"consent": "invalid", "qc": "passed"}
+        vcf_validations = {"file": "ok", "build": "matched"}
+
+        dao._write_automatic_submission_audit(
+            session_admin,
+            order_id,
+            sample_id,
+            submission_key,
+            preconditions,
+            vcf_validations,
+            decision="blocked",
+            blocking_reason="consent_withdrawn",
+        )
+
+        # Verify audit entry
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, outcome, details FROM audit_log "
+                "WHERE user_id = %s AND action = 'automatic_submission' "
+                'ORDER BY "timestamp" DESC LIMIT 1',
+                (session_admin.user_id,),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        action, outcome, details = row
+        assert action == "automatic_submission"
+        assert outcome == "blocked"
+
+        if isinstance(details, str):
+            details = json.loads(details)
+        assert details["decision"] == "blocked"
+        assert details["blocking_reason"] == "consent_withdrawn"

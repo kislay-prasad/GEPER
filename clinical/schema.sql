@@ -75,6 +75,13 @@ CREATE TABLE users (
     -- assignment that names them.
     disabled                BOOLEAN     NOT NULL DEFAULT FALSE,
 
+    -- System account flag. System accounts:
+    -- - Cannot log in via login() (authentication blocked)
+    -- - Can only be used as submission principal via _create_system_session
+    -- - Have role "System" with minimal privileges
+    -- One system account per organisation for automatic submission actions.
+    is_system_account       BOOLEAN     NOT NULL DEFAULT FALSE,
+
     created_at              TIMESTAMPTZ NOT NULL,
     updated_at              TIMESTAMPTZ NOT NULL,
 
@@ -145,7 +152,7 @@ CREATE TABLE role_assignments (
 
     CONSTRAINT role_assignments_role_known CHECK (
         role IN ('Orderer', 'Lab technician', 'Interpreter',
-                 'Approver', 'Administrator', 'Auditor')
+                 'Approver', 'Administrator', 'Auditor', 'System')
     ),
     CONSTRAINT role_assignments_approver_needs_basis CHECK (
         role <> 'Approver' OR basis IS NOT NULL

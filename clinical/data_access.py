@@ -64,6 +64,7 @@ ROLES = (
     "Approver",
     "Administrator",
     "Auditor",
+    "System",
 )
 
 # THE ONE MESSAGE every authentication failure produces, whatever the cause:
@@ -605,7 +606,7 @@ class DataAccess:
 
         row = self._query_one(
             "SELECT user_id, password_hash, failed_login_attempts, locked_until, "
-            "       disabled, totp_secret "
+            "       disabled, totp_secret, is_system_account "
             "FROM users WHERE org_id = %s AND email = %s",
             (org_id, email),
         )
@@ -617,7 +618,7 @@ class DataAccess:
             self.log_failed_login(email, org_id, ip_address, reason="unknown_user")
             raise AuthenticationError()
 
-        user_id, password_hash, failed_attempts, locked_until, disabled, totp_secret = row
+        user_id, password_hash, failed_attempts, locked_until, disabled, totp_secret, is_system = row
 
         if locked_until is not None and locked_until > now:
             self.log_failed_login(email, org_id, ip_address, reason="locked_out")
@@ -632,6 +633,12 @@ class DataAccess:
         # "is this account disabled?" to anyone who can guess an address.
         if disabled:
             self.log_failed_login(email, org_id, ip_address, reason="user_disabled")
+            raise AuthenticationError()
+
+        # System accounts cannot log in. They exist only for automatic actions
+        # via _create_system_session, never for interactive authentication.
+        if is_system:
+            self.log_failed_login(email, org_id, ip_address, reason="system_account")
             raise AuthenticationError()
 
         if totp_secret is not None:
@@ -2190,6 +2197,152 @@ class DataAccess:
                 )
 
         return results
+
+    # ── Phase 5c: Automatic submission (system principal, submission key, audit) ──
+
+    def _create_system_session(self, org_id: uuid.UUID) -> Session:
+        """
+        Create or retrieve a session for the system principal of this organisation.
+
+        ⚠️ AUTHENTICATION BYPASS BY DESIGN
+        ──────────────────────────────────
+        This method creates a session WITHOUT authentication. It is called only from
+        the automatic submission path and MUST NOT be callable from any request-handling
+        context or endpoint. If called from anywhere else, it is an authentication bypass.
+
+        An AST test enforces that this method is called from exactly one location.
+        """
+        now = self._clock.now()
+        system_email = f"system+{org_id}@platform"
+
+        # Fetch or create system principal for this org
+        user = self._query_one(
+            "SELECT user_id FROM users WHERE org_id = %s AND email = %s AND is_system_account = true",
+            (org_id, system_email),
+        )
+
+        if user is None:
+            # Create system principal
+            user_id = uuid.uuid4()
+            dummy_password_hash = _DUMMY_HASH
+            self._execute(
+                "INSERT INTO users (user_id, org_id, email, password_hash, password_changed_at, "
+                "                   is_system_account, disabled, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    user_id,
+                    org_id,
+                    system_email,
+                    dummy_password_hash,
+                    now,
+                    True,
+                    False,
+                    now,
+                    now,
+                ),
+            )
+
+            # Assign System role if not already present
+            role_check = self._query_one(
+                "SELECT 1 FROM role_assignments WHERE user_id = %s AND org_id = %s AND role = 'System'",
+                (user_id, org_id),
+            )
+            if role_check is None:
+                self._execute(
+                    "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                    "VALUES (%s, %s, 'System', %s, %s)",
+                    (user_id, org_id, user_id, now),
+                )
+        else:
+            user_id = user[0]
+
+        # Mint a session for the system principal
+        session_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO sessions (session_id, user_id, org_id, created_at, expires_at, "
+            "                      last_activity_at, idle_timeout_minutes) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (
+                session_id,
+                user_id,
+                org_id,
+                now,
+                now + _datetime.timedelta(hours=SESSION_ABSOLUTE_HOURS),
+                now,
+                SESSION_IDLE_MINUTES,
+            ),
+        )
+
+        return Session(session_id=session_id, user_id=user_id, org_id=org_id)
+
+    def _write_automatic_submission_audit(
+        self,
+        session: Session,
+        order_id: uuid.UUID,
+        sample_id: uuid.UUID,
+        submission_key: str,
+        preconditions: dict[str, Any],
+        vcf_validations: dict[str, Any],
+        decision: str,
+        blocking_reason: Optional[str] = None,
+    ) -> None:
+        """
+        Write audit entry for automatic submission attempt (success or blocked).
+
+        This is called BEFORE raising an exception if blocked, so the audit record
+        captures why the submission was rejected. Queries like "which orders were blocked
+        on which precondition" can be answered from the audit log.
+
+        decision: "submitted" or "blocked"
+        blocking_reason: required if decision is "blocked", describes the precondition/validation that failed
+        """
+        now = self._clock.now()
+        details = {
+            "order_id": str(order_id),
+            "sample_id": str(sample_id),
+            "submission_key": submission_key,
+            "preconditions": preconditions,
+            "vcf_validations": vcf_validations,
+            "decision": decision,
+        }
+        if blocking_reason:
+            details["blocking_reason"] = blocking_reason
+
+        self._execute(
+            "INSERT INTO audit_log (org_id, user_id, timestamp, action, resource_type, "
+            "                        outcome, details, actor_role) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                session.user_id,
+                now,
+                "automatic_submission",
+                "interpretation",
+                "success" if decision == "submitted" else "blocked",
+                json.dumps(details),
+                "System",
+            ),
+        )
+
+    @auditable(
+        action="none",
+        resource_type="none",
+        requires_session=False,
+        auditable=False,
+        reason="pure computation, derives idempotency key from VCF content; no data access",
+    )
+    def derive_submission_key(self, vcf_content: bytes, sample_id: uuid.UUID) -> str:
+        """
+        Derive idempotency key for VCF submission.
+
+        Format: <sha256_hex(vcf_content)>|<sample_id>
+        The pipe separator is safe: sha256 is hex (no pipes), sample_id is UUID (no pipes).
+
+        Same VCF + same sample = same key (idempotent).
+        Re-sequenced sample (different VCF) = different key (new interpretation).
+        """
+        vcf_hash = hashlib.sha256(vcf_content).hexdigest()
+        return f"{vcf_hash}|{sample_id}"
 
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification

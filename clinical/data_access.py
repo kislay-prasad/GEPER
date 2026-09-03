@@ -2717,7 +2717,7 @@ class DataAccess:
         )
 
         # Query all exceptions for this order, org-scoped
-        exceptions = self._fetch_all(
+        exceptions = self._query(
             "SELECT id, category, reason_code, error_message, status, owner, "
             "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
             "       resolution_note "
@@ -2732,7 +2732,7 @@ class DataAccess:
             exc_id = exc_row[0]
 
             # Get events for this exception
-            events = self._fetch_all(
+            events = self._query(
                 "SELECT id, action, actor, timestamp, action_note "
                 "FROM exception_events "
                 "WHERE exception_id = %s "
@@ -2788,7 +2788,7 @@ class DataAccess:
         )
 
         # Query open exceptions owned by this role, org-scoped
-        exceptions = self._fetch_all(
+        exceptions = self._query(
             "SELECT id, order_id, category, reason_code, error_message, status, owner, "
             "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
             "       resolution_note "
@@ -2804,7 +2804,7 @@ class DataAccess:
             order_id = exc_row[1]
 
             # Get events for this exception
-            events = self._fetch_all(
+            events = self._query(
                 "SELECT id, action, actor, timestamp, action_note "
                 "FROM exception_events "
                 "WHERE exception_id = %s "

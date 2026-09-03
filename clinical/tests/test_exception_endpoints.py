@@ -94,6 +94,21 @@ def patient_and_order(dao, session_admin, test_catalogue, conn):
     return patient_id, order_id
 
 
+@pytest.fixture
+def org_b_and_session(dao, conn):
+    """Create organisation B and admin session."""
+    org_b = dao.create_organisation("Org B")
+    user_id = dao.create_user(org_b, "admin@org-b.test", "password")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+            "VALUES (%s, %s, 'Administrator', %s, %s)",
+            (user_id, org_b, user_id, datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)),
+        )
+    conn.commit()
+    return org_b, dao.login("admin@org-b.test", org_b, "password")
+
+
 class TestGetExceptionsForOrder:
     """Test GET /orders/{id}/exceptions endpoint."""
 
@@ -109,15 +124,58 @@ class TestGetExceptionsForOrder:
         """Retrieve both open and resolved exceptions for an order."""
         _, order_id = patient_and_order
 
-        # Create open exception
-        open_exc_id = uuid.uuid4()
+        # Create open exception using the method
+        dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent not provided",
+            "orderer",
+            "orderer-1",
+        )
+
+        # Create and resolve another exception
+        resolved_exc_id = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.VALIDATION_FAILURE.value,
+            ExceptionReasonCode.VCF_INVALID.value,
+            "VCF invalid",
+            "lab_operator",
+            "lab-1",
+        )
+        dao.resolve_exception(
+            session_admin,
+            resolved_exc_id,
+            ResolutionAction.RETRY_CHECK.value,
+            "Consent obtained",
+            "orderer-1",
+        )
+
+        exceptions = dao.get_exceptions_for_order(session_admin, order_id)
+
+        assert len(exceptions) == 2
+        statuses = {exc.status for exc in exceptions}
+        assert "open" in statuses
+        assert "resolved" in statuses
+
+    def test_get_exceptions_cross_org_read_blocked(
+        self, dao, session_admin, patient_and_order, org_b_and_session, conn
+    ):
+        """Cross-org read attempt returns nothing (org-scoping enforced)."""
+        _, order_id = patient_and_order
+        org_b, session_org_b = org_b_and_session
+
+        # Create exception in Org A
+        exc_id = uuid.uuid4()
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO exceptions (id, org_id, order_id, category, reason_code, "
                 "                        error_message, status, owner, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
-                    open_exc_id,
+                    exc_id,
                     session_admin.org_id,
                     order_id,
                     ExceptionCategory.PRECONDITION_FAILURE.value,
@@ -130,39 +188,10 @@ class TestGetExceptionsForOrder:
             )
         conn.commit()
 
-        # Create resolved exception
-        resolved_exc_id = uuid.uuid4()
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO exceptions (id, org_id, order_id, category, reason_code, "
-                "                        error_message, status, owner, created_at, "
-                "                        last_resolved_by, last_resolved_at, "
-                "                        resolution_action, resolution_note) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    resolved_exc_id,
-                    session_admin.org_id,
-                    order_id,
-                    ExceptionCategory.PRECONDITION_FAILURE.value,
-                    ExceptionReasonCode.CONSENT_MISSING.value,
-                    "Consent not provided",
-                    ExceptionStatus.RESOLVED.value,
-                    "orderer",
-                    datetime.datetime.now(tz=datetime.timezone.utc),
-                    "orderer-1",
-                    datetime.datetime.now(tz=datetime.timezone.utc),
-                    ResolutionAction.RETRY_CHECK.value,
-                    "Consent obtained",
-                ),
-            )
-        conn.commit()
-
-        exceptions = dao.get_exceptions_for_order(session_admin, order_id)
-
-        assert len(exceptions) == 2
-        statuses = {exc.status for exc in exceptions}
-        assert "open" in statuses
-        assert "resolved" in statuses
+        # Try to read from Org B using same order_id (cross-org read)
+        # Should return empty (org-scoping enforced)
+        exceptions = dao.get_exceptions_for_order(session_org_b, order_id)
+        assert exceptions == [], "Org B should not see Org A's exceptions"
 
 
 class TestGetOpenExceptionsByOwner:
@@ -191,7 +220,47 @@ class TestGetOpenExceptionsByOwner:
             priority="routine",
         )
 
-        # Create open exception for lab_operator
+        # Create open exception for lab_operator using the method
+        dao.create_or_reopen_exception(
+            session_admin,
+            order_id_1,
+            ExceptionCategory.VALIDATION_FAILURE.value,
+            ExceptionReasonCode.VCF_INVALID.value,
+            "VCF invalid",
+            "lab_operator",
+            "lab-1",
+        )
+
+        # Create and resolve another exception for lab_operator (should not appear)
+        resolved_exc_id = dao.create_or_reopen_exception(
+            session_admin,
+            order_id_2,
+            ExceptionCategory.VALIDATION_FAILURE.value,
+            ExceptionReasonCode.VCF_INVALID.value,
+            "VCF invalid",
+            "lab_operator",
+            "lab-1",
+        )
+        dao.resolve_exception(
+            session_admin,
+            resolved_exc_id,
+            ResolutionAction.RETRY_CHECK.value,
+            "Fixed VCF",
+            "lab-operator-1",
+        )
+
+        exceptions = dao.get_open_exceptions_by_owner(session_admin, "lab_operator")
+
+        assert len(exceptions) == 1
+        assert exceptions[0].status == "open"
+        assert exceptions[0].owner == "lab_operator"
+
+    def test_worklist_cross_org_read_blocked(self, dao, session_admin, patient_and_order, org_b_and_session, conn):
+        """Cross-org worklist read returns nothing (org-scoping enforced)."""
+        _, order_id = patient_and_order
+        org_b, session_org_b = org_b_and_session
+
+        # Create open exception in Org A
         open_exc_id = uuid.uuid4()
         with conn.cursor() as cur:
             cur.execute(
@@ -201,7 +270,7 @@ class TestGetOpenExceptionsByOwner:
                 (
                     open_exc_id,
                     session_admin.org_id,
-                    order_id_1,
+                    order_id,
                     ExceptionCategory.VALIDATION_FAILURE.value,
                     ExceptionReasonCode.VCF_INVALID.value,
                     ExceptionStatus.OPEN.value,
@@ -211,32 +280,10 @@ class TestGetOpenExceptionsByOwner:
             )
         conn.commit()
 
-        # Create resolved exception for lab_operator (should not appear)
-        resolved_exc_id = uuid.uuid4()
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO exceptions (id, org_id, order_id, category, reason_code, "
-                "                        status, owner, created_at, last_resolved_by) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    resolved_exc_id,
-                    session_admin.org_id,
-                    order_id_2,
-                    ExceptionCategory.VALIDATION_FAILURE.value,
-                    ExceptionReasonCode.VCF_INVALID.value,
-                    ExceptionStatus.RESOLVED.value,
-                    "lab_operator",
-                    datetime.datetime.now(tz=datetime.timezone.utc),
-                    "lab-operator-1",
-                ),
-            )
-        conn.commit()
-
-        exceptions = dao.get_open_exceptions_by_owner(session_admin, "lab_operator")
-
-        assert len(exceptions) == 1
-        assert exceptions[0].status == "open"
-        assert exceptions[0].owner == "lab_operator"
+        # Query same owner/role from Org B (cross-org read)
+        # Should return empty (org-scoping enforced)
+        exceptions = dao.get_open_exceptions_by_owner(session_org_b, "lab_operator")
+        assert exceptions == [], "Org B should not see Org A's worklist"
 
 
 class TestResolveException:
@@ -245,26 +292,17 @@ class TestResolveException:
     def test_resolve_exception_updates_status_and_creates_event(self, dao, session_admin, patient_and_order, conn):
         """Resolve exception creates event and updates status atomically."""
         _, order_id = patient_and_order
-        exc_id = uuid.uuid4()
 
-        # Create open exception
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO exceptions (id, org_id, order_id, category, reason_code, "
-                "                        status, owner, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    exc_id,
-                    session_admin.org_id,
-                    order_id,
-                    ExceptionCategory.PRECONDITION_FAILURE.value,
-                    ExceptionReasonCode.CONSENT_MISSING.value,
-                    ExceptionStatus.OPEN.value,
-                    "orderer",
-                    datetime.datetime.now(tz=datetime.timezone.utc),
-                ),
-            )
-        conn.commit()
+        # Create open exception using the method
+        exc_id = dao.create_or_reopen_exception(
+            session_admin,
+            order_id,
+            ExceptionCategory.PRECONDITION_FAILURE.value,
+            ExceptionReasonCode.CONSENT_MISSING.value,
+            "Consent not provided",
+            "orderer",
+            "orderer-1",
+        )
 
         # Resolve it
         dao.resolve_exception(
@@ -275,31 +313,22 @@ class TestResolveException:
             "orderer-1",
         )
 
-        # Verify status updated
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT status, last_resolved_by, resolution_action, resolution_note "
-                "FROM exceptions WHERE id = %s AND org_id = %s",
-                (exc_id, session_admin.org_id),
-            )
-            exc = cur.fetchone()
+        # Verify via get_exceptions_for_order that the resolution was recorded
+        exceptions = dao.get_exceptions_for_order(session_admin, order_id)
+        assert len(exceptions) == 1
+        exc_dto = exceptions[0]
 
-        assert exc[0] == ExceptionStatus.RESOLVED.value
-        assert exc[1] == "orderer-1"
-        assert exc[2] == ResolutionAction.RETRY_CHECK.value
-        assert "Consent obtained" in exc[3]
+        assert exc_dto.status == ExceptionStatus.RESOLVED.value
+        assert exc_dto.last_resolved_by == "orderer-1"
+        assert exc_dto.resolution_action == ResolutionAction.RETRY_CHECK.value
+        assert "Consent obtained" in exc_dto.resolution_note
 
-        # Verify event created
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT action, actor FROM exception_events WHERE exception_id = %s",
-                (exc_id,),
-            )
-            events = cur.fetchall()
-
-        assert len(events) == 1
-        assert events[0][0] == ExceptionEventAction.RESOLVE.value
-        assert events[0][1] == "orderer-1"
+        # Verify event was recorded (get the full exception with events)
+        events = exc_dto.events
+        assert len(events) == 2  # OPEN event + RESOLVE event
+        assert events[0].action == ExceptionEventAction.OPEN.value
+        assert events[1].action == ExceptionEventAction.RESOLVE.value
+        assert events[1].actor == "orderer-1"
 
 
 class TestCreateOrReopenException:

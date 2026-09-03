@@ -176,6 +176,9 @@ jobs:
           cache: "pip"
           cache-dependency-path: kim_pipeline/requirements.txt
 
+      - name: Install system binaries (samtools, bcftools)
+        run: sudo apt-get update && sudo apt-get install -y samtools bcftools
+
       - name: Install shared package (subprocess-reachable import resolution)
         working-directory: .
         run: pip install -e .

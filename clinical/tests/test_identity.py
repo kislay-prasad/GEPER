@@ -639,3 +639,72 @@ class TestStructuralIsolation:
                     if name in ("datetime", "date", "_datetime"):
                         offenders.append(f"{cls.name}: {name}.{node.attr}()")
         assert not offenders, f"wall-clock read(s) outside SystemClock: {offenders}"
+
+    def test_every_public_method_has_auditable_decorator(self):
+        """
+        Phase 2 audit: every public DataAccess method declares its audit status
+        via @auditable. Absence of the decorator means "nobody looked", not
+        "deliberately non-auditable". Non-auditable methods must declare
+        auditable=False with a reason.
+        """
+        source = (pathlib.Path(__file__).resolve().parent.parent / "data_access.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        undecorated = []
+        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "DataAccess"]:
+            for node in cls.body:
+                if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                    # Check if @auditable decorator is present
+                    has_auditable = any(
+                        (isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id == "auditable")
+                        or (isinstance(d, ast.Name) and d.id == "auditable")
+                        for d in node.decorator_list
+                    )
+                    if not has_auditable:
+                        undecorated.append(node.name)
+
+        assert not undecorated, (
+            f"Public method(s) without @auditable decorator: {undecorated}. "
+            f"Every public method must declare @auditable(auditable=True) or "
+            f"@auditable(auditable=False, reason='...')."
+        )
+
+    def test_auditable_session_signature_enforcement(self):
+        """
+        When @auditable declares requires_session=True, the method must have
+        Session as its first parameter (after self).
+        """
+        source = (pathlib.Path(__file__).resolve().parent.parent / "data_access.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        offenders = []
+        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "DataAccess"]:
+            for node in cls.body:
+                if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                    # Find @auditable decorator and check requires_session param
+                    for dec in node.decorator_list:
+                        if isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "auditable":
+                            # Check if requires_session is explicitly set to False
+                            requires_session = True  # default
+                            for keyword in dec.keywords:
+                                if keyword.arg == "requires_session":
+                                    if isinstance(keyword.value, ast.Constant):
+                                        requires_session = keyword.value.value
+                                    elif isinstance(keyword.value, ast.NameConstant):
+                                        requires_session = keyword.value.value
+
+                            if requires_session:
+                                # Check if first parameter (after self) is Session
+                                if len(node.args.args) < 2:
+                                    offenders.append((node.name, "requires_session=True but no first parameter"))
+                                elif node.args.args[1].arg != "session":
+                                    offenders.append(
+                                        (
+                                            node.name,
+                                            f"requires_session=True but first param is '{node.args.args[1].arg}' not 'session'",
+                                        )
+                                    )
+
+        assert not offenders, "Method(s) with requires_session=True mismatch:\n  " + "\n  ".join(
+            f"{m}: {reason}" for m, reason in offenders
+        )

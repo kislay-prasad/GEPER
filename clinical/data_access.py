@@ -39,6 +39,8 @@ through.
 from __future__ import annotations
 
 import datetime as _datetime
+import functools
+import inspect
 import json
 import secrets
 import uuid
@@ -208,6 +210,162 @@ class User:
 ORG_SCOPED_TABLES = ("users", "role_assignments", "sessions", "totp_backup_codes")
 
 
+# ─── Audit decorator ────────────────────────────────────────────────────────
+
+
+def auditable(
+    action: str | dict[str, str] | Any,
+    resource_type: str,
+    requires_session: bool = True,
+    auditable: bool = True,
+    reason: str | None = None,
+    details_builder: Any = None,
+):
+    """
+    Decorator that wraps a DataAccess method to capture audit outcomes.
+
+    action: str, dict, or callable that resolves to action name.
+        - str: single action name used for all outcomes.
+        - dict: maps outcome ('success', 'denied', 'error') to action name.
+              Enables methods like login() that have different actions per outcome.
+        - callable(params, result): returns action name based on parameters/result.
+              Enables methods like set_user_disabled() where action depends on parameter.
+
+    resource_type: the resource type being acted upon.
+
+    requires_session: whether the method takes a Session as first argument.
+
+    auditable: whether this method should be audited.
+        False: marks this as a deliberate read/non-auditable operation.
+
+    details_builder: callable(bound_params, result) returning audit details dict.
+        bound_params: dict of resolved method parameters (positional/keyword resolved).
+        result: return value of the method (None on failure).
+
+    reason: explanation for non-auditable methods or special cases.
+    """
+
+    def decorator(func):
+        def wrapper(self, *args, **kwargs):
+            if not auditable:
+                # Non-auditable method: just call it
+                return func(self, *args, **kwargs)
+
+            # Validate session requirement
+            if requires_session:
+                if not args or not isinstance(args[0], Session):
+                    raise ConfigurationError(
+                        f"@auditable(requires_session=True) on {func.__name__}: expected Session as first argument"
+                    )
+                session = args[0]
+            else:
+                session = None
+
+            # Bind arguments to resolve positional/keyword ambiguity
+            # Try to get the original function's signature if wrapped
+            original_func = func
+            while hasattr(original_func, "__wrapped__"):
+                original_func = original_func.__wrapped__
+            sig = inspect.signature(original_func)
+            bound_args = sig.bind(self, *args, **kwargs)
+            bound_args.apply_defaults()
+            bound_params = dict(bound_args.arguments)
+            bound_params.pop("self", None)  # Remove self, not part of user args
+
+            try:
+                result = func(self, *args, **kwargs)
+                # Determine action name for this outcome
+                if isinstance(action, str):
+                    action_name = action
+                elif isinstance(action, dict):
+                    action_name = action.get("success", action.get(next(iter(action)), ""))
+                else:
+                    # Callable action: call with params and result
+                    action_name = action(bound_params, result)
+                # Build audit details — pass resolved parameters to avoid positional/keyword issues
+                details = details_builder(bound_params, result) if details_builder else {}
+                # For provisioning methods without session, extract org_id from parameters
+                write_org_id = session.org_id if session else None
+                write_user_id = session.user_id if session else None
+
+                # For organisation creation, result is the org_id
+                if not session and isinstance(result, uuid.UUID) and resource_type == "organisation":
+                    write_org_id = result
+                # For user creation, org_id is in the parameters
+                elif not session and resource_type == "user" and bound_params.get("org_id"):
+                    write_org_id = bound_params.get("org_id")
+                    # and result is the user_id
+                    if isinstance(result, uuid.UUID):
+                        write_user_id = result
+                # For any provisioning method, try to extract org_id from parameters
+                elif not session and bound_params.get("org_id") and not write_org_id:
+                    write_org_id = bound_params.get("org_id")
+                # Success: write audit entry
+                self._write_audit_entry(
+                    action_name,
+                    resource_type,
+                    resource_id=str(result) if result else "<none>",
+                    outcome="success",
+                    org_id=write_org_id,
+                    user_id=write_user_id,
+                    actor_role=self._get_actor_role(session) if session else None,
+                    details=details if details else None,
+                    ip_address=bound_params.get("ip_address"),
+                )
+                self._DataAccess__connection.commit()
+                return result
+            except AuthorizationError:
+                # Denied: write audit entry with action name for denied, re-raise
+                if isinstance(action, str):
+                    action_name = action
+                elif isinstance(action, dict):
+                    action_name = action.get("denied", action.get(next(iter(action)), ""))
+                else:
+                    # Callable action: use success path for denied (no separate denied action in callables)
+                    action_name = action(bound_params, None)
+                details = details_builder(bound_params, None) if details_builder else {}
+                self._write_audit_entry(
+                    action_name,
+                    resource_type,
+                    resource_id="<denied>",
+                    outcome="denied",
+                    org_id=session.org_id if session else None,
+                    user_id=session.user_id if session else None,
+                    actor_role=self._get_actor_role(session) if session else None,
+                    details=details if details else None,
+                    ip_address=bound_params.get("ip_address"),
+                )
+                self._DataAccess__connection.commit()
+                raise
+            except Exception:
+                # Error: write audit entry with action name for error, re-raise
+                if isinstance(action, str):
+                    action_name = action
+                elif isinstance(action, dict):
+                    action_name = action.get("error", action.get(next(iter(action)), ""))
+                else:
+                    # Callable action: use success path for error (no separate error action in callables)
+                    action_name = action(bound_params, None)
+                details = details_builder(bound_params, None) if details_builder else {}
+                self._write_audit_entry(
+                    action_name,
+                    resource_type,
+                    resource_id="<error>",
+                    outcome="error",
+                    org_id=session.org_id if session else None,
+                    user_id=session.user_id if session else None,
+                    actor_role=self._get_actor_role(session) if session else None,
+                    details=details if details else None,
+                    ip_address=bound_params.get("ip_address"),
+                )
+                self._DataAccess__connection.commit()
+                raise
+
+        return wrapper
+
+    return decorator
+
+
 # ─── Transaction decorator ───────────────────────────────────────────────────
 
 
@@ -218,6 +376,7 @@ def transactional(func):
     back only on unexpected errors. Nested calls within a transaction pass through.
     """
 
+    @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if hasattr(self, "_in_transaction") and self._in_transaction:
             return func(self, *args, **kwargs)
@@ -285,6 +444,46 @@ class DataAccess:
         finally:
             cur.close()
 
+    def _write_audit_entry(
+        self,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        outcome: str,
+        org_id: Optional[uuid.UUID] = None,
+        user_id: Optional[uuid.UUID] = None,
+        actor_role: Optional[str] = None,
+        details: Optional[dict] = None,
+        ip_address: Optional[str] = None,
+    ) -> None:
+        """Write an audit entry with the Phase 2 schema."""
+        self._execute(
+            'INSERT INTO audit_log (org_id, user_id, "timestamp", actor_role, action, resource_type, resource_id, outcome, details, ip_address) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                org_id,
+                user_id,
+                self._clock.now(),
+                actor_role,
+                action,
+                resource_type,
+                resource_id,
+                outcome,
+                json.dumps(details or {}),
+                ip_address,
+            ),
+        )
+
+    def _get_actor_role(self, session: Optional[Session]) -> Optional[str]:
+        """Get the primary active role for the actor in this session's org."""
+        if not session:
+            return None
+        rows = self._query(
+            "SELECT role FROM role_assignments WHERE user_id = %s AND org_id = %s AND revoked_at IS NULL ORDER BY assigned_at DESC LIMIT 1",
+            (session.user_id, session.org_id),
+        )
+        return rows[0][0] if rows else None
+
     def _audit(
         self,
         action: str,
@@ -307,6 +506,15 @@ class DataAccess:
 
     # ── authentication ───────────────────────────────────────────────────────
 
+    @auditable(
+        action="login_failed",
+        resource_type="session",
+        requires_session=False,
+        details_builder=lambda params, result: {
+            "email": params.get("email"),
+            "reason": params.get("reason"),
+        },
+    )
     @transactional
     def log_failed_login(
         self,
@@ -321,14 +529,16 @@ class DataAccess:
         identifiers preserved in `details` rather than in the FK-bearing
         columns that would have rejected the insert.
         """
-        self._audit(
-            "login_failed",
-            org_id=org_id,
-            user_id=None,
-            details={"email": email, "reason": reason},
-            ip_address=ip_address,
-        )
 
+    @auditable(
+        action="login_succeeded",
+        resource_type="session",
+        requires_session=False,
+        details_builder=lambda params, result: {
+            "session_id": str(result.session_id) if result else None,
+            "user_id": str(result.user_id) if result else None,
+        },
+    )
     @transactional
     def login(
         self,
@@ -423,13 +633,6 @@ class DataAccess:
                 user_agent,
             ),
         )
-        self._audit(
-            "login_succeeded",
-            org_id,
-            user_id,
-            {"session_id": str(session_id)},
-            ip_address,
-        )
         return Session(session_id=session_id, user_id=user_id, org_id=org_id)
 
     def _equalise_password_work(self, password: str) -> None:
@@ -506,6 +709,13 @@ class DataAccess:
 
     # ── sessions ─────────────────────────────────────────────────────────────
 
+    @auditable(
+        action="session_validated",
+        resource_type="session",
+        requires_session=False,
+        auditable=False,
+        reason="validation read, not a resource action",
+    )
     @transactional
     def session_valid(self, session_id: uuid.UUID) -> Session:
         """
@@ -549,6 +759,12 @@ class DataAccess:
         )
         return Session(session_id=session_id, user_id=user_id, org_id=org_id)
 
+    @auditable(
+        action="session_terminated",
+        resource_type="session",
+        requires_session=True,
+        details_builder=lambda params, result: {"target_session_id": str(params.get("target_session_id"))},
+    )
     @transactional
     def terminate_session(self, session: Session, target_session_id: uuid.UUID) -> None:
         """
@@ -566,15 +782,19 @@ class DataAccess:
             "WHERE session_id = %s AND org_id = %s AND terminated_at IS NULL",
             (now, session.user_id, target_session_id, session.org_id),
         )
-        self._audit(
-            "session_terminated",
-            session.org_id,
-            session.user_id,
-            {"target_session_id": str(target_session_id)},
-        )
 
     # ── roles ────────────────────────────────────────────────────────────────
 
+    @auditable(
+        action="role_assigned",
+        resource_type="role_assignment",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "target_user_id": str(params.get("target_user_id")),
+            "role": params.get("role"),
+            "basis": params.get("basis"),
+        },
+    )
     @transactional
     def assign_role(
         self,
@@ -616,14 +836,15 @@ class DataAccess:
             "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (assignment_id, target_user_id, session.org_id, role, session.user_id, now, basis),
         )
-        self._audit(
-            "role_assigned",
-            session.org_id,
-            session.user_id,
-            {"target_user_id": str(target_user_id), "role": role, "basis": basis},
-        )
         return assignment_id
 
+    @auditable(
+        action="roles_read",
+        resource_type="role",
+        requires_session=True,
+        auditable=False,
+        reason="list operation, not a resource action",
+    )
     @transactional
     def get_user_roles(self, session: Session, target_user_id: Optional[uuid.UUID] = None) -> List[RoleAssignment]:
         """
@@ -647,6 +868,13 @@ class DataAccess:
 
     # ── users ────────────────────────────────────────────────────────────────
 
+    @auditable(
+        action="user_read",
+        resource_type="user",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
     @transactional
     def get_user(self, session: Session, user_id: uuid.UUID) -> User:
         """
@@ -670,6 +898,13 @@ class DataAccess:
 
     # ── provisioning helpers (used by administrators and by the tests) ───────
 
+    @auditable(
+        action="organisation_created",
+        resource_type="organisation",
+        requires_session=False,
+        reason="provisioning: called before any session exists",
+        details_builder=lambda params, result: {"name": params.get("name")},
+    )
     @transactional
     def create_organisation(self, name: str) -> uuid.UUID:
         org_id = uuid.uuid4()
@@ -678,9 +913,15 @@ class DataAccess:
             "INSERT INTO organisations (org_id, name, created_at) VALUES (%s, %s, %s)",
             (org_id, name, now),
         )
-        self._audit("organisation_created", org_id, None, {"name": name})
         return org_id
 
+    @auditable(
+        action="user_created",
+        resource_type="user",
+        requires_session=False,
+        reason="provisioning: called before any session exists",
+        details_builder=lambda params, result: {"email": params.get("email")},
+    )
     @transactional
     def create_user(self, org_id: uuid.UUID, email: str, password: str) -> uuid.UUID:
         """
@@ -698,9 +939,14 @@ class DataAccess:
             "VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (user_id, org_id, email, self._hasher.hash(password), now, now, now),
         )
-        self._audit("user_created", org_id, user_id, {"email": email})
         return user_id
 
+    @auditable(
+        action=lambda params, result: "user_disabled" if params.get("disabled") else "user_enabled",
+        resource_type="user",
+        requires_session=True,
+        details_builder=lambda params, result: {"target_user_id": str(params.get("target_user_id"))},
+    )
     @transactional
     def set_user_disabled(self, session: Session, target_user_id: uuid.UUID, disabled: bool) -> None:
         """Offboarding. Never a DELETE -- that would orphan the audit chain."""
@@ -710,13 +956,16 @@ class DataAccess:
             "UPDATE users SET disabled = %s, updated_at = %s WHERE user_id = %s AND org_id = %s",
             (disabled, self._clock.now(), target_user_id, session.org_id),
         )
-        self._audit(
-            "user_disabled" if disabled else "user_enabled",
-            session.org_id,
-            session.user_id,
-            {"target_user_id": str(target_user_id)},
-        )
 
+    @auditable(
+        action="totp_enrolled",
+        resource_type="totp",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "target_user_id": str(params.get("target_user_id")),
+            "backup_codes_issued": len(result) if result else 0,
+        },
+    )
     @transactional
     def enrol_totp(self, session: Session, target_user_id: uuid.UUID, secret: str) -> List[str]:
         """
@@ -746,16 +995,17 @@ class DataAccess:
                 "VALUES (%s, %s, %s, %s, %s)",
                 (uuid.uuid4(), target_user_id, session.org_id, self._hasher.hash(code), now),
             )
-        self._audit(
-            "totp_enrolled",
-            session.org_id,
-            session.user_id,
-            {"target_user_id": str(target_user_id), "backup_codes_issued": len(codes)},
-        )
         return codes
 
     # ── audit reads ──────────────────────────────────────────────────────────
 
+    @auditable(
+        action="audit_read",
+        resource_type="audit_log",
+        requires_session=True,
+        auditable=False,
+        reason="audit access is not a resource action",
+    )
     @transactional
     def read_audit(
         self,

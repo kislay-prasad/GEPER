@@ -222,14 +222,21 @@ CREATE TABLE audit_log (
     org_id     UUID,
     user_id    UUID,
 
-    action     TEXT        NOT NULL,
+    "timestamp" TIMESTAMPTZ NOT NULL,
+    actor_role TEXT,
+
+    action          TEXT NOT NULL,
+    resource_type   TEXT,
+    resource_id     TEXT,
+    outcome         TEXT,
+
     details    JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    ip_address INET,
-    "timestamp" TIMESTAMPTZ NOT NULL
+    ip_address INET
 );
 
-CREATE INDEX audit_org_user      ON audit_log (org_id, user_id, "timestamp");
-CREATE INDEX audit_action_timestamp ON audit_log (action, "timestamp");
+CREATE INDEX audit_org_user           ON audit_log (org_id, user_id, "timestamp");
+CREATE INDEX audit_action_timestamp   ON audit_log (action, "timestamp");
+CREATE INDEX audit_outcome_timestamp  ON audit_log (outcome, "timestamp");
 
 
 -- ─── append-only enforcement ────────────────────────────────────────────────

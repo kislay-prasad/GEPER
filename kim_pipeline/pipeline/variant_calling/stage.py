@@ -133,7 +133,9 @@ class VariantCallingStage:
         _norm_performed = False
         try:
             _bcftools_check = spawn_tracked(
-                ["bcftools", "--version"], capture_output=True, timeout=5
+                ["bcftools", "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
             try:
                 _bcftools_check.communicate(timeout=5)
@@ -160,7 +162,10 @@ class VariantCallingStage:
                         raw_vcf_path,
                     ]
                     _norm_result = spawn_tracked(
-                        _norm_cmd, capture_output=True, text=True, timeout=300
+                        _norm_cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
                     )
                     try:
                         _norm_result.communicate(timeout=300)

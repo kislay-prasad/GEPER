@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -861,7 +862,8 @@ class ReportingStage:
             try:
                 proc = spawn_tracked(
                     ["wkhtmltopdf", html_path, pdf_path],
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                 )
                 proc.communicate()
                 if proc.returncode == 0:

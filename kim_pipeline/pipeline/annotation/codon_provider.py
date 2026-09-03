@@ -190,9 +190,9 @@ class _FastaReader:
         try:
             proc = spawn_tracked(
                 ["samtools", "version"],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=5,
             )
             try:
                 proc.communicate(timeout=5)

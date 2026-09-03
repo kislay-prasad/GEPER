@@ -445,9 +445,9 @@ class BLASTStage:
         try:
             proc = spawn_tracked(
                 [binary, "-version"],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=10,
             )
             try:
                 stdout, stderr = proc.communicate(timeout=10)

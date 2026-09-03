@@ -3427,6 +3427,273 @@ class DataAccess:
             events=event_dtos,
         )
 
+    # ─── Phase 6: reviewer claims (spec 13.2's review actions) ──────────────
+    #
+    # Each method here records ONE claim and nothing else. Deliberately absent,
+    # and deferred rather than forgotten:
+    #
+    #   - transition legality (draft -> under_review, approved -> released). A
+    #     claim is recorded independently of the report state around it.
+    #   - supersession uniqueness (an already-superseded claim must not be
+    #     superseded again). The schema states why a row constraint cannot
+    #     carry that rule: it cannot see the rest of the table.
+    #
+    # Both belong to the state-transition commit. evidence_json is not written
+    # by anything here either: it stays NULL pending the expert branch that
+    # decides what shape evidence takes, because writing a shape now would fix
+    # that vocabulary before the decision that owns it.
+
+    def _validate_claim_inputs(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        actor_id: Any,
+        reason: Optional[str],
+    ) -> None:
+        """
+        Shared precondition check for every reviewer claim.
+
+        Both lookups are org-scoped by construction -- they filter on
+        session.org_id, so an interpretation or an actor belonging to another
+        organisation is indistinguishable from one that does not exist. That is
+        the intended answer, not a rounding of it: a cross-org id is not a
+        permission error to be reported back, it is simply absent from this
+        org's world, and reporting it as "forbidden" would confirm it exists.
+        """
+        if reason is None or not str(reason).strip():
+            raise ValueError(
+                "A claim requires a reason: spec 13.2 records the reviewer's grounds, not only the verdict."
+            )
+
+        interpretation = self._query_one(
+            "SELECT 1 FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, interpretation_id),
+        )
+        if interpretation is None:
+            raise NotFoundError(f"Interpretation {interpretation_id} not found")
+
+        actor = self._query_one(
+            "SELECT 1 FROM users WHERE org_id = %s AND user_id = %s",
+            (session.org_id, actor_id),
+        )
+        if actor is None:
+            raise NotFoundError(f"No such user in this organisation: {actor_id}")
+
+    @staticmethod
+    def _require_variant_scope(variant_id: Any, claim_type: str) -> None:
+        """
+        Three of the four claim types are about one specific variant and are
+        meaningless without naming it: a 'disagree' that does not say which
+        variant it disagrees about records a verdict with no object.
+
+        Checks only that a variant was named. That the named variant is one
+        this interpretation actually CONTAINS is not checked here and is not
+        forgotten: variants are not rows, they live inside
+        interpretations.run_document, so the check is a document read rather
+        than a constraint -- which puts it with transition legality and
+        supersession uniqueness in the state-transition commit, for the reason
+        all three share. A row constraint cannot see what it would need to see.
+        """
+        if variant_id is None:
+            raise ValueError(f"A '{claim_type}' claim is about one variant and must name it: variant_id is required.")
+
+    @staticmethod
+    def _require_classification(classification: Optional[str], claim_type: str) -> None:
+        """
+        'disagree' and 'variant_added' each assert a classification of their
+        own; without one the claim says a variant matters without saying what
+        the reviewer thinks it means.
+
+        The vocabulary is deliberately not checked -- the schema's comment on
+        the column records why: the ACMG tier list this platform will accept is
+        not settled across the pipeline, and pinning it here would put the
+        narrower list in the harder place to change.
+        """
+        if classification is None or not str(classification).strip():
+            raise ValueError(f"A '{claim_type}' claim must state the classification the reviewer asserts.")
+
+    def _insert_claim(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        actor_id: Any,
+        reason: str,
+        claim_type: str,
+        variant_id: Any = None,
+        classification: Optional[str] = None,
+    ) -> Any:
+        """
+        Insert exactly one reviewer_claims row and return its id.
+
+        Shared by all four claim recorders so the column list, the org
+        scoping and the two deliberate NULLs (evidence_json, supersedes) are
+        written once rather than four times slightly differently.
+        """
+        claim_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO reviewer_claims "
+            "(org_id, id, interpretation_id, variant_id, claim_type, classification, "
+            ' actor_id, "timestamp", reason) '
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                claim_id,
+                interpretation_id,
+                variant_id,
+                claim_type,
+                classification,
+                actor_id,
+                self._clock.now(),
+                reason,
+            ),
+        )
+        return claim_id
+
+    @auditable(
+        action="record_accept",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=True,
+        reason="reviewer concurs with an interpretation (spec 13.2)",
+    )
+    @transactional
+    def _record_accept(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        actor_id: Any,
+        reason: str,
+    ) -> Any:
+        """
+        Record an 'accept' claim against an interpretation.
+
+        Under the re-derive reading the schema's own comment records, an accept
+        is NOT agreement with a draft -- it is an independent concurrence, a
+        second clinician arriving at the same classification on their own. That
+        is evidence, and evidence without stated grounds is not evidence, which
+        is why `reason` is required here exactly as it is for a disagreement.
+
+        The only one of the four scoped to the whole interpretation: it names
+        no variant and asserts no classification, so both of those columns stay
+        NULL. That asymmetry is why they are nullable.
+        """
+        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        return self._insert_claim(session, interpretation_id, actor_id, reason, claim_type="accept")
+
+    @auditable(
+        action="record_disagreement",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=True,
+        reason="reviewer disagrees with a variant's classification (spec 13.2)",
+    )
+    @transactional
+    def _record_disagreement(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        variant_id: Any,
+        actor_id: Any,
+        new_classification: str,
+        reason: str,
+    ) -> Any:
+        """
+        Record a 'disagree' claim against one variant.
+
+        Does NOT remove or overwrite the classification it disagrees with --
+        the schema's comment on claim_type says so, and this method holds to
+        it: the row is appended and the pipeline's own call stays exactly where
+        it was. Both readings survive, which is the whole point of recording a
+        disagreement as a claim rather than as an edit.
+        """
+        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._require_variant_scope(variant_id, "disagree")
+        self._require_classification(new_classification, "disagree")
+        return self._insert_claim(
+            session,
+            interpretation_id,
+            actor_id,
+            reason,
+            claim_type="disagree",
+            variant_id=variant_id,
+            classification=new_classification,
+        )
+
+    @auditable(
+        action="add_variant_by_reviewer",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=True,
+        reason="reviewer names a variant the pipeline did not surface (spec 13.2)",
+    )
+    @transactional
+    def _add_variant_by_reviewer(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        variant_id: Any,
+        actor_id: Any,
+        acmg_classification: str,
+        reason: str,
+    ) -> Any:
+        """
+        Record a 'variant_added' claim: a variant Bij AI did not surface.
+
+        This is the claim type that most clearly is not an edit of the run --
+        the variant is absent from the interpretation's own document and this
+        row is the only record that a reviewer says it belongs there. The
+        classification is required for exactly that reason: an addition with no
+        call attached says a variant matters without saying what it means.
+        """
+        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._require_variant_scope(variant_id, "variant_added")
+        self._require_classification(acmg_classification, "variant_added")
+        return self._insert_claim(
+            session,
+            interpretation_id,
+            actor_id,
+            reason,
+            claim_type="variant_added",
+            variant_id=variant_id,
+            classification=acmg_classification,
+        )
+
+    @auditable(
+        action="mark_variant_not_relevant",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=True,
+        reason="reviewer scopes a variant out against the indication (spec 13.2)",
+    )
+    @transactional
+    def _mark_variant_not_relevant(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        variant_id: Any,
+        actor_id: Any,
+        reason: str,
+    ) -> Any:
+        """
+        Record a 'variant_not_relevant' claim: scoped out, not deleted.
+
+        Takes no classification, and that is deliberate rather than an omission
+        -- scoping a variant out against the indication is not a statement about
+        what the variant means, it is a statement that this indication is not
+        the place to answer it. A classification here would assert something the
+        reviewer has not said.
+        """
+        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._require_variant_scope(variant_id, "variant_not_relevant")
+        return self._insert_claim(
+            session,
+            interpretation_id,
+            actor_id,
+            reason,
+            claim_type="variant_not_relevant",
+            variant_id=variant_id,
+        )
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

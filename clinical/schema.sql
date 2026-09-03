@@ -572,6 +572,24 @@ CREATE TABLE reviewer_claims (
     id                  UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
     interpretation_id   UUID        NOT NULL,
 
+    -- The variant this claim is about, identified within
+    -- interpretations.run_document. NOT a foreign key, and cannot be one:
+    -- variants are not rows anywhere in this schema, they live inside that
+    -- JSONB document, so there is no table for this column to reference. The
+    -- integrity that matters -- that the variant is one this interpretation
+    -- actually contains -- is therefore the method's to check, like transition
+    -- legality and supersession uniqueness below, and for the same reason.
+    --
+    -- NULLABLE, and the asymmetry is the point rather than an omission: an
+    -- 'accept' is scoped to the whole interpretation and names no variant,
+    -- while the other three are each about one specific variant. Added in
+    -- amendment 2 because the claim_type CHECK above already commits to
+    -- variant-scoped claims existing -- 'variant_added' means "the pipeline
+    -- did not surface THIS variant" -- while the original table gave them no
+    -- column to name the variant by. The gap was inside this table, and it
+    -- surfaced the moment anything first had to write those rows.
+    variant_id          UUID,
+
     -- Spec 13.2's four reviewer actions, closed. 'disagree' does not remove
     -- the classification it disagrees with; 'variant_added' names a variant
     -- the pipeline did not surface; 'variant_not_relevant' scopes a variant
@@ -579,6 +597,19 @@ CREATE TABLE reviewer_claims (
     claim_type          TEXT        NOT NULL
         CHECK (claim_type IN ('accept', 'disagree', 'variant_added',
                               'variant_not_relevant')),
+
+    -- The classification the REVIEWER asserts: the replacement on a
+    -- 'disagree', the proposed call on a 'variant_added'. NULL on 'accept'
+    -- (which asserts no new classification, only concurrence with the one
+    -- already there) and on 'variant_not_relevant' (which scopes a variant
+    -- out against the indication rather than reclassifying it).
+    --
+    -- Deliberately unconstrained for now. A CHECK against the ACMG five-tier
+    -- vocabulary is the obvious next move and is NOT made here: the
+    -- vocabulary this platform will accept is not yet settled across the
+    -- pipeline, and fixing it in a table constraint before that decision
+    -- would put the narrower list in the harder place to change.
+    classification      TEXT,
 
     actor_id            UUID        NOT NULL,
     "timestamp"         TIMESTAMPTZ NOT NULL,

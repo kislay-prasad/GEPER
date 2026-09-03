@@ -1957,7 +1957,7 @@ class DataAccess:
         # Navigate: order
         order_id = sample[1]
         order = self._query_one(
-            "SELECT order_id, patient_id, created_at, created_by, org_id FROM orders WHERE order_id = %s AND org_id = %s",
+            "SELECT order_id, patient_id, created_at, ordered_by, org_id FROM orders WHERE order_id = %s AND org_id = %s",
             (order_id, session.org_id),
         )
         if order is None:

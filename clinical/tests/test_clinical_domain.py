@@ -1477,7 +1477,7 @@ class TestLineageQueries:
             {
                 "date_range": {
                     "start": "2026-09-01",
-                    "end": "2026-09-03",
+                    "end": "2026-09-04",
                 }
             },
         )

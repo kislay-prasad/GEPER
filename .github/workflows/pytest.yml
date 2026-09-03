@@ -159,7 +159,7 @@ jobs:
       # tests locally with model packages installed, or explicitly via
       # `pytest -m live_network` or `pytest -m real_pip`.
       - name: Run pytest
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ api/tests/ -v
 
   kim_pipeline-tests:
     name: kim_pipeline/ pytest

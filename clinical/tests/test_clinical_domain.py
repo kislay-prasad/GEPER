@@ -1294,8 +1294,8 @@ class TestLineageQueries:
         test_id = uuid.uuid4()
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (test_id, org_b, "Test", "active", now),
+                "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (test_id, org_b, "Test", "hg38", "active", now),
             )
         conn.commit()
 
@@ -1642,8 +1642,8 @@ class TestLineageQueries:
         test_id = uuid.uuid4()
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (test_id, org_b, "Test", "active", now),
+                "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (test_id, org_b, "Test", "hg38", "active", now),
             )
         conn.commit()
 
@@ -1699,8 +1699,8 @@ class TestDocumentDiscovery:
         test_id = uuid.uuid4()
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (test_id, session_admin.org_id, "Test", "active", now),
+                "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+                (test_id, session_admin.org_id, "Test", "hg38", "active", now),
             )
         conn.commit()
 

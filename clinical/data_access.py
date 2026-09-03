@@ -2213,6 +2213,7 @@ class DataAccess:
 
     # ── Phase 5a: Preconditions and VCF validation ──
 
+    @auditable(action="check_consent", resource_type="consent")
     def check_consent(self, session: Session, patient_id: uuid.UUID, scope: str) -> str:
         """
         Check consent for automatic submission.
@@ -2237,6 +2238,7 @@ class DataAccess:
 
         return "consent_ok"
 
+    @auditable(action="check_identity", resource_type="patient")
     def check_identity_resolved(self, session: Session, patient_id: uuid.UUID, sample_id: uuid.UUID) -> str:
         """
         Check that patient and sample IDs resolve to real records.
@@ -2262,6 +2264,7 @@ class DataAccess:
 
         return "identity_resolved"
 
+    @auditable(action="check_order", resource_type="order")
     def check_order_data(self, session: Session, order_id: uuid.UUID) -> str:
         """
         Check required order data present.
@@ -2292,6 +2295,7 @@ class DataAccess:
 
         return "order_ok"
 
+    @auditable(action="check_qc", resource_type="sample")
     def check_qc_passed(self, session: Session, order_id: uuid.UUID) -> str:
         """
         Check sample QC status.
@@ -2319,6 +2323,13 @@ class DataAccess:
         else:
             return "qc_pending"
 
+    @auditable(
+        auditable=False,
+        action="validate_vcf",
+        resource_type="vcf",
+        requires_session=False,
+        reason="reads VCF files, not clinical data",
+    )
     def validate_vcf_file(self, vcf_path: str) -> str:
         """
         Validate VCF file exists, is readable, and is VCF or bgzipped VCF.
@@ -2355,6 +2366,13 @@ class DataAccess:
         except (PermissionError, OSError):
             return "vcf_unreadable"
 
+    @auditable(
+        auditable=False,
+        action="validate_vcf",
+        resource_type="vcf",
+        requires_session=False,
+        reason="reads VCF files, not clinical data",
+    )
     def validate_vcf_header(self, vcf_path: str) -> str:
         """
         Validate VCF header is present and parseable.
@@ -2389,6 +2407,13 @@ class DataAccess:
         except Exception:
             return "header_malformed"
 
+    @auditable(
+        auditable=False,
+        action="validate_vcf",
+        resource_type="vcf",
+        requires_session=False,
+        reason="reads VCF files, not clinical data",
+    )
     def validate_vcf_build(self, vcf_path: str, expected_assembly: str) -> str:
         """
         Validate VCF build matches expected assembly.
@@ -2442,6 +2467,13 @@ class DataAccess:
         except Exception:
             return "build_not_declared"
 
+    @auditable(
+        auditable=False,
+        action="validate_vcf",
+        resource_type="vcf",
+        requires_session=False,
+        reason="reads VCF files, not clinical data",
+    )
     def validate_vcf_sample_column(self, vcf_path: str) -> str:
         """
         Validate VCF has at least one sample column.
@@ -2474,6 +2506,13 @@ class DataAccess:
         except Exception:
             return "sample_column_missing"
 
+    @auditable(
+        auditable=False,
+        action="validate_vcf",
+        resource_type="vcf",
+        requires_session=False,
+        reason="reads VCF files, not clinical data",
+    )
     def validate_vcf_variant_count(self, vcf_path: str) -> str:
         """
         Validate VCF has at least one variant.

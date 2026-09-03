@@ -1680,3 +1680,154 @@ class TestLineageQueries:
             import os
 
             os.unlink(vcf_path)
+
+
+class TestDocumentDiscovery:
+    """Tests for Phase 4c: Document discovery with orphaned interpretation handling."""
+
+    @pytest.fixture
+    def sample_for_discovery(self, dao, session_admin, conn):
+        """Lineage up to interpretation, with and without report."""
+        import os
+        import tempfile
+
+        now = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)
+        patient_id = dao.create_patient(session_admin, "Test Patient", datetime.date(1990, 1, 1), "M")
+        consent_id = dao.record_consent(session_admin, patient_id, "testing")
+
+        test_id = uuid.uuid4()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (test_id, session_admin.org_id, "Test", "active", now),
+            )
+        conn.commit()
+
+        order_id = dao.create_order(session_admin, patient_id, test_id, "testing", consent_id)
+        dao.place_order(session_admin, order_id)
+        sample_id = dao.receive_sample(session_admin, order_id, "dna")
+        run_id = dao.create_sequencing_run(session_admin, sample_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False, mode="w") as f:
+            f.write("##fileformat=VCFv4.2\n")
+            f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+            f.write("chr1\t1000\t.\tA\tG\t60\tPASS\t.\n")
+            vcf_path = f.name
+
+        with tempfile.NamedTemporaryFile(suffix=".vcf", delete=False, mode="w") as f2:
+            f2.write("##fileformat=VCFv4.2\n")
+            f2.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+            f2.write("chr1\t2000\t.\tT\tC\t60\tPASS\t.\n")
+            vcf_path_2 = f2.name
+
+        try:
+            vcf_id = dao.create_vcf(session_admin, run_id, vcf_path)
+
+            run_document_complete = {
+                "model_version": "v1",
+                "database_version": "2024.01",
+                "code_version": "1.0.0",
+                "databases": {"Ensembl": "ok", "ClinVar": "ok"},
+            }
+
+            interpretation_id = dao.create_interpretation(session_admin, vcf_id, run_document_complete, str(sample_id))
+
+            # Create report for this interpretation
+            report_id = dao.create_report(session_admin, interpretation_id)
+
+            # Create a second interpretation without a report (orphaned/in-review)
+            vcf_id_2 = dao.create_vcf(session_admin, run_id, vcf_path_2)
+            interpretation_id_orphaned = dao.create_interpretation(
+                session_admin, vcf_id_2, run_document_complete, str(sample_id)
+            )
+
+            yield {
+                "patient_id": patient_id,
+                "sample_id": sample_id,
+                "interpretation_id": interpretation_id,
+                "interpretation_id_orphaned": interpretation_id_orphaned,
+                "report_id": report_id,
+                "vcf_path": vcf_path,
+            }
+        finally:
+            if os.path.exists(vcf_path):
+                os.unlink(vcf_path)
+            if os.path.exists(vcf_path_2):
+                os.unlink(vcf_path_2)
+
+    def test_find_reports_silently_skips_orphaned_interpretations(self, dao, session_admin, sample_for_discovery):
+        """
+        Red-first: prove that find_reports_by_interpretation_criteria silently skips
+        interpretations without reports (the defect 4c fixes).
+        """
+        # Query for the model version that both interpretations have
+        results = dao.find_reports_by_interpretation_criteria(session_admin, {"model_version": "v1"})
+
+        # Should return exactly 1 result (the one with a report)
+        assert len(results) == 1
+        assert results[0]["report_id"] == sample_for_discovery["report_id"]
+        assert results[0]["interpretation_id"] == sample_for_discovery["interpretation_id"]
+
+        # The orphaned interpretation is ABSENT (this is the bug)
+        returned_interp_ids = {r["interpretation_id"] for r in results}
+        assert sample_for_discovery["interpretation_id_orphaned"] not in returned_interp_ids
+
+    def test_find_interpretations_by_criteria_includes_orphaned(self, dao, session_admin, sample_for_discovery):
+        """
+        Red-first: when find_interpretations_by_criteria is implemented,
+        it should return ALL matching interpretations, including orphaned ones.
+        Orphaned interpretations have report_id = None.
+        """
+        results = dao.find_interpretations_by_criteria(session_admin, {"model_version": "v1"})
+
+        # Should return exactly 2 results (both interpretations)
+        assert len(results) == 2
+
+        # Find the reported one and orphaned one
+        reported = next((r for r in results if r["report_id"] is not None), None)
+        orphaned = next((r for r in results if r["report_id"] is None), None)
+
+        assert reported is not None
+        assert reported["interpretation_id"] == sample_for_discovery["interpretation_id"]
+        assert reported["report_id"] == sample_for_discovery["report_id"]
+
+        assert orphaned is not None
+        assert orphaned["interpretation_id"] == sample_for_discovery["interpretation_id_orphaned"]
+        assert orphaned["report_id"] is None
+        assert orphaned["sample_id"] == sample_for_discovery["sample_id"]
+        assert orphaned["patient_id"] == sample_for_discovery["patient_id"]
+
+    def test_find_interpretations_empty_criteria_raises(self, dao, session_admin, sample_for_discovery):
+        """Empty criteria raises ValueError (same rule as find_reports_by_interpretation_criteria)."""
+        from pytest import raises
+
+        with raises(ValueError, match="At least one criterion required"):
+            dao.find_interpretations_by_criteria(session_admin, {})
+
+    def test_find_interpretations_by_criteria_audit(self, dao, session_admin, sample_for_discovery, conn):
+        """find_interpretations_by_criteria writes an audit entry with criteria in details."""
+        criteria = {"model_version": "v1", "code_version": "1.0.0"}
+        results = dao.find_interpretations_by_criteria(session_admin, criteria)
+
+        assert len(results) >= 1  # Should find at least the reported interpretation
+
+        # Check audit log
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT action, resource_type, outcome, details FROM audit_log "
+                "WHERE user_id = %s AND action = 'interpretations_query' "
+                'ORDER BY "timestamp" DESC LIMIT 1',
+                (session_admin.user_id,),
+            )
+            row = cur.fetchone()
+
+        assert row is not None
+        action, resource_type, outcome, details = row
+        assert action == "interpretations_query"
+        assert resource_type == "interpretations"
+        assert outcome == "success"
+
+        # details is already a dict (JSONB from PostgreSQL)
+        if isinstance(details, str):
+            details = json.loads(details)
+        assert details["criteria"] == criteria

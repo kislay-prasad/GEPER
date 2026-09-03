@@ -1833,6 +1833,145 @@ class DataAccess:
             "created_by": row[3],
         }
 
+    # ── Phase 4c: Document discovery (all interpretations, including orphaned) ─────
+    @auditable(
+        action="interpretations_query",
+        resource_type="interpretations",
+        requires_session=True,
+        auditable=True,
+        details_builder=lambda bound_params, result: {"criteria": bound_params.get("criteria")},
+    )
+    @transactional
+    def find_interpretations_by_criteria(self, session: Session, criteria: dict[str, Any]) -> List[dict[str, Any]]:
+        """
+        Find all interpretations matching the given criteria, including orphaned ones (no report).
+
+        Criteria dict can contain:
+          - model_version: str, matches run_document.model_version
+          - database_version: str, matches run_document.database_version
+          - code_version: str, matches run_document.code_version
+          - date_range: dict with 'start' and 'end' ISO date strings
+          - source_health: dict with 'service' and 'status' fields
+
+        At least one criterion is required (raises ValueError if empty).
+
+        Returns a list of dicts (one per interpretation):
+        {
+            interpretation_id, vcf_id, run_document, created_at, created_by,
+            sample_id, patient_id, report_id (None if orphaned)
+        }
+
+        All queries are scoped to the session's organisation.
+        """
+        if not criteria:
+            raise ValueError("At least one criterion required")
+
+        # Build WHERE clauses dynamically from criteria (same as 4b)
+        where_clauses = ["org_id = %s"]
+        params: List[Any] = [session.org_id]
+
+        if "model_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"model_version": criteria["model_version"]}))
+
+        if "database_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"database_version": criteria["database_version"]}))
+
+        if "code_version" in criteria:
+            where_clauses.append("run_document @> %s")
+            params.append(json.dumps({"code_version": criteria["code_version"]}))
+
+        if "date_range" in criteria:
+            date_range = criteria["date_range"]
+            if "start" in date_range:
+                where_clauses.append("created_at >= %s")
+                params.append(date_range["start"])
+            if "end" in date_range:
+                where_clauses.append("created_at <= %s")
+                params.append(date_range["end"])
+
+        if "source_health" in criteria:
+            source_health = criteria["source_health"]
+            if "service" in source_health and "status" in source_health:
+                service = source_health["service"]
+                status = source_health["status"]
+                where_clauses.append("run_document -> 'databases' ->> %s = %s")
+                params.append(service)
+                params.append(status)
+
+        additional_clauses = where_clauses[1:]
+        if additional_clauses:
+            additional_sql = " AND " + " AND ".join(additional_clauses)
+        else:
+            additional_sql = ""
+
+        query = f"""
+            SELECT id, vcf_id, run_document, created_at, created_by
+            FROM interpretations
+            WHERE org_id = %s{additional_sql}
+            ORDER BY created_at, id
+        """
+
+        interp_rows = self._query(query, tuple(params))
+        results = []
+
+        for interp_row in interp_rows:
+            interp_id, vcf_id, run_document_json, created_at, created_by = interp_row
+
+            # Try to get the report (may be None for orphaned interpretations)
+            report = self._query_one(
+                "SELECT id FROM reports WHERE interpretation_id = %s AND org_id = %s",
+                (interp_id, session.org_id),
+            )
+            report_id = report[0] if report else None
+
+            # Walk the chain to get sample_id and patient_id
+            vcf_row = self._query_one(
+                "SELECT sequencing_run_id FROM vcfs WHERE id = %s AND org_id = %s",
+                (vcf_id, session.org_id),
+            )
+            if vcf_row is None:
+                continue
+
+            sequencing_run_id = vcf_row[0]
+
+            run_row = self._query_one(
+                "SELECT sample_id FROM sequencing_runs WHERE id = %s AND org_id = %s",
+                (sequencing_run_id, session.org_id),
+            )
+            if run_row is None:
+                continue
+
+            sample_id = run_row[0]
+
+            order_row = self._query_one(
+                "SELECT patient_id FROM orders WHERE order_id IN "
+                "(SELECT order_id FROM samples WHERE sample_id = %s AND org_id = %s) AND org_id = %s",
+                (sample_id, session.org_id, session.org_id),
+            )
+            if order_row is None:
+                continue
+
+            patient_id = order_row[0]
+
+            run_doc = json.loads(run_document_json) if isinstance(run_document_json, str) else run_document_json
+
+            results.append(
+                {
+                    "interpretation_id": interp_id,
+                    "vcf_id": vcf_id,
+                    "run_document": run_doc,
+                    "created_at": created_at,
+                    "created_by": created_by,
+                    "sample_id": sample_id,
+                    "patient_id": patient_id,
+                    "report_id": report_id,
+                }
+            )
+
+        return results
+
     # ── Phase 4b: Lineage queries (trace ancestors, criteria-based search) ────
 
     @auditable(
@@ -2012,6 +2151,10 @@ class DataAccess:
         """
         Find all reports affected by interpretations matching the given criteria.
 
+        This method returns only interpretations that have completed (have a report).
+        For a complete impact analysis including crashed/in-review interpretations,
+        use find_interpretations_by_criteria and filter by report_id.
+
         Criteria dict can contain:
           - model_version: str, matches run_document.model_version
           - database_version: str, matches run_document.database_version
@@ -2026,127 +2169,25 @@ class DataAccess:
 
         All queries are scoped to the session's organisation.
         """
-        if not criteria:
-            raise ValueError("At least one criterion required")
+        # Use the new 4c method to get all interpretations (including orphaned)
+        all_interps = self.find_interpretations_by_criteria(session, criteria)
 
-        # Build WHERE clauses dynamically from criteria
-        where_clauses = ["org_id = %s"]
-        params: List[Any] = [session.org_id]
-
-        # Handle model_version
-        if "model_version" in criteria:
-            where_clauses.append("run_document @> %s")
-            params.append(json.dumps({"model_version": criteria["model_version"]}))
-
-        # Handle database_version
-        if "database_version" in criteria:
-            where_clauses.append("run_document @> %s")
-            params.append(json.dumps({"database_version": criteria["database_version"]}))
-
-        # Handle code_version
-        if "code_version" in criteria:
-            where_clauses.append("run_document @> %s")
-            params.append(json.dumps({"code_version": criteria["code_version"]}))
-
-        # Handle date_range
-        if "date_range" in criteria:
-            date_range = criteria["date_range"]
-            if "start" in date_range:
-                where_clauses.append("created_at >= %s")
-                params.append(date_range["start"])
-            if "end" in date_range:
-                where_clauses.append("created_at <= %s")
-                params.append(date_range["end"])
-
-        # Handle source_health
-        if "source_health" in criteria:
-            source_health = criteria["source_health"]
-            # Build a JSONB path query for nested source data
-            # Example: run_document -> 'databases' -> 'Ensembl' = 'unavailable'
-            # For now, use a simpler approach: check if databases field contains the condition
-            if "service" in source_health and "status" in source_health:
-                service = source_health["service"]
-                status = source_health["status"]
-                # Query for: run_document->'databases'->>'<service>' = '<status>'
-                where_clauses.append("run_document -> 'databases' ->> %s = %s")
-                params.append(service)
-                params.append(status)
-
-        additional_clauses = where_clauses[1:]  # Skip org_id (first clause)
-        if additional_clauses:
-            additional_sql = " AND " + " AND ".join(additional_clauses)
-        else:
-            additional_sql = ""
-
-        query = f"""
-            SELECT id, vcf_id, run_document, created_at, created_by
-            FROM interpretations
-            WHERE org_id = %s{additional_sql}
-            ORDER BY created_at, id
-        """
-
-        interp_rows = self._query(query, tuple(params))
+        # Filter to only those with reports
         results = []
-
-        for interp_row in interp_rows:
-            interp_id, vcf_id, run_document_json, created_at, created_by = interp_row
-
-            # Get the report linked to this interpretation
-            report = self._query_one(
-                "SELECT id FROM reports WHERE interpretation_id = %s AND org_id = %s",
-                (interp_id, session.org_id),
-            )
-            if report is None:
-                # No report yet; skip this interpretation
-                continue
-
-            report_id = report[0]
-
-            # Walk the chain to get sample_id and patient_id
-            # interpretation → vcf → sequencing_run → sample → order → patient
-            vcf_row = self._query_one(
-                "SELECT sequencing_run_id FROM vcfs WHERE id = %s AND org_id = %s",
-                (vcf_id, session.org_id),
-            )
-            if vcf_row is None:
-                continue
-
-            sequencing_run_id = vcf_row[0]
-
-            run_row = self._query_one(
-                "SELECT sample_id FROM sequencing_runs WHERE id = %s AND org_id = %s",
-                (sequencing_run_id, session.org_id),
-            )
-            if run_row is None:
-                continue
-
-            sample_id = run_row[0]
-
-            order_row = self._query_one(
-                "SELECT patient_id FROM orders WHERE order_id IN "
-                "(SELECT order_id FROM samples WHERE sample_id = %s AND org_id = %s) AND org_id = %s",
-                (sample_id, session.org_id, session.org_id),
-            )
-            if order_row is None:
-                continue
-
-            patient_id = order_row[0]
-
-            # Parse run_document if it's a JSON string
-            run_doc = json.loads(run_document_json) if isinstance(run_document_json, str) else run_document_json
-
-            results.append(
-                {
-                    "report_id": report_id,
-                    "interpretation_id": interp_id,
-                    "vcf_id": vcf_id,
-                    "run_document": run_doc,
-                    "created_at": created_at,
-                    "created_by": created_by,
-                    "sample_id": sample_id,
-                    "patient_id": patient_id,
-                }
-            )
+        for interp in all_interps:
+            if interp["report_id"] is not None:
+                results.append(
+                    {
+                        "report_id": interp["report_id"],
+                        "interpretation_id": interp["interpretation_id"],
+                        "vcf_id": interp["vcf_id"],
+                        "run_document": interp["run_document"],
+                        "created_at": interp["created_at"],
+                        "created_by": interp["created_by"],
+                        "sample_id": interp["sample_id"],
+                        "patient_id": interp["patient_id"],
+                    }
+                )
 
         return results
 

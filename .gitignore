@@ -24,6 +24,7 @@ __pycache__/
 # hosts; Enformer/Borzoi/SpliceBERT/SpliceFormer each have their own
 # HuggingFace/checkpoint-URL bootstrap (see DATA_PROVENANCE.md).
 geper/plugin_model_cache/
+plugin_model_cache/
 geper/hyena-dna/
 geper/checkpoints/
 
@@ -32,6 +33,11 @@ geper/checkpoints/
 # databases -- all self-fetch via their own pipeline/*/bootstrap.py (or
 # equivalent) on first use; nothing here is meant to be committed.
 geper/model_cache/
+model_cache/
+
+# --- Test cache / compiled databases -----------------------------------------
+*.sqlite
+*.db
 
 # --- Run output / logs --------------------------------------------------------
 geper/geper_output/

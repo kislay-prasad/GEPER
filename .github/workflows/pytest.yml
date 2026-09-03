@@ -216,3 +216,29 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest tests/ -v
+
+  shared-tests:
+    name: shared/ pytest (process control)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install psutil pytest
+
+      - name: Run pytest
+        run: |
+          python -m pytest shared/tests/ -v
+          # Exit code 5 means no tests collected — treat as failure
+          # (empty test suite is not success, it's an infrastructure problem)
+          EXIT_CODE=$?
+          if [ $EXIT_CODE -eq 5 ]; then
+            echo "::error::No tests collected in shared/tests/ — CI job is misconfigured or tests are missing"
+            exit 1
+          fi
+          exit $EXIT_CODE

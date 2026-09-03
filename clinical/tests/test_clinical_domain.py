@@ -5,6 +5,7 @@ Patients, consents, orders, samples, tests.
 """
 
 import datetime
+from datetime import date, timezone
 import json
 import os
 import uuid
@@ -154,8 +155,8 @@ def test_catalogue(dao, session_admin, conn):
     now = datetime.datetime(2026, 9, 1, tzinfo=datetime.timezone.utc)
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO tests (test_id, org_id, name, status, created_at) VALUES (%s, %s, %s, %s, %s)",
-            (test_id, session_admin.org_id, "Test Gene Panel", "active", now),
+            "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            (test_id, session_admin.org_id, "Test Gene Panel", "GRCh38", "active", now),
         )
     conn.commit()
     return test_id
@@ -2028,3 +2029,319 @@ class TestAutomaticSubmission:
             details = json.loads(details)
         assert details["decision"] == "blocked"
         assert details["blocking_reason"] == "consent_withdrawn"
+
+
+class TestPreconditionsAndValidation:
+    """Phase 5a: Precondition checks and VCF validation"""
+
+    def test_check_consent_missing(self, dao, session_admin):
+        """Consent missing returns consent_missing reason"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        result = dao.check_consent(session_admin, patient_id, "genomics")
+        assert result == "consent_missing"
+
+    def test_check_consent_withdrawn(self, dao, session_admin):
+        """Withdrawn consent returns consent_withdrawn reason"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        consent_id = dao.record_consent(session_admin, patient_id, scope="genomics")
+        dao.withdraw_consent(session_admin, consent_id)
+
+        result = dao.check_consent(session_admin, patient_id, "genomics")
+        assert result == "consent_withdrawn"
+
+    def test_check_consent_ok(self, dao, session_admin):
+        """Valid unwithdrawm consent returns consent_ok"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        dao.record_consent(session_admin, patient_id, scope="genomics")
+
+        result = dao.check_consent(session_admin, patient_id, "genomics")
+        assert result == "consent_ok"
+
+    def test_check_identity_resolved_both_exist(self, dao, session_admin, patient_with_consent):
+        """Both patient and sample exist returns identity_resolved"""
+        patient_id, consent_id, test_id = patient_with_consent
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            consent_id=consent_id,
+        )
+        dao.place_order(session_admin, order_id)
+        sample_id = dao.receive_sample(session_admin, order_id=order_id, sample_type="dna")
+
+        result = dao.check_identity_resolved(session_admin, patient_id, sample_id)
+        assert result == "identity_resolved"
+
+    def test_check_identity_patient_unresolved(self, dao, session_admin):
+        """Non-existent patient returns patient_unresolved"""
+        fake_patient_id = uuid.uuid4()
+        fake_sample_id = uuid.uuid4()
+
+        result = dao.check_identity_resolved(session_admin, fake_patient_id, fake_sample_id)
+        assert result == "patient_unresolved"
+
+    def test_check_identity_sample_unresolved(self, dao, session_admin):
+        """Non-existent sample returns sample_unresolved"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        fake_sample_id = uuid.uuid4()
+        result = dao.check_identity_resolved(session_admin, patient_id, fake_sample_id)
+        assert result == "sample_unresolved"
+
+    def test_check_order_data_ok(self, dao, session_admin, patient_with_consent):
+        """Valid order data returns order_ok"""
+        patient_id, consent_id, test_id = patient_with_consent
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            clinical_indication="Test indication",
+            consent_id=consent_id,
+        )
+
+        result = dao.check_order_data(session_admin, order_id)
+        assert result == "order_ok"
+
+    def test_check_order_data_indication_missing(self, dao, session_admin, conn):
+        """Order without indication returns indication_missing"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        test_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO tests (test_id, org_id, name, assembly) VALUES (%s, %s, %s, %s)",
+            (test_id, session_admin.org_id, "Test", "GRCh38"),
+        )
+
+        consent_id = uuid.uuid4()
+        now = datetime.datetime.now(timezone.utc)
+        conn.execute(
+            "INSERT INTO consents (consent_id, patient_id, org_id, scope, recorded_by, recorded_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (consent_id, patient_id, session_admin.org_id, "genomics", session_admin.user_id, now),
+        )
+
+        order_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO orders (order_id, patient_id, org_id, test_id, required_scope, "
+            "clinical_indication, ordered_by, consent_id, state, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                order_id,
+                patient_id,
+                session_admin.org_id,
+                test_id,
+                "genomics",
+                None,
+                session_admin.user_id,
+                consent_id,
+                "placed",
+                now,
+            ),
+        )
+        conn.commit()
+
+        result = dao.check_order_data(session_admin, order_id)
+        assert result == "indication_missing"
+
+    def test_check_order_data_cancelled(self, dao, session_admin, conn):
+        """Cancelled order returns order_cancelled"""
+        patient_id = dao.create_patient(session_admin, name="Test", dob=date(1990, 1, 1), sex="U")
+
+        test_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO tests (test_id, org_id, name, assembly) VALUES (%s, %s, %s, %s)",
+            (test_id, session_admin.org_id, "Test", "GRCh38"),
+        )
+
+        consent_id = uuid.uuid4()
+        now = datetime.datetime.now(timezone.utc)
+        conn.execute(
+            "INSERT INTO consents (consent_id, patient_id, org_id, scope, recorded_by, recorded_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (consent_id, patient_id, session_admin.org_id, "genomics", session_admin.user_id, now),
+        )
+
+        order_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO orders (order_id, patient_id, org_id, test_id, required_scope, "
+            "clinical_indication, ordered_by, consent_id, state, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                order_id,
+                patient_id,
+                session_admin.org_id,
+                test_id,
+                "genomics",
+                "Test indication",
+                session_admin.user_id,
+                consent_id,
+                "cancelled",
+                now,
+            ),
+        )
+        conn.commit()
+
+        result = dao.check_order_data(session_admin, order_id)
+        assert result == "order_cancelled"
+
+    def test_check_qc_passed(self, dao, session_admin, patient_with_consent):
+        """QC passed returns qc_ok"""
+        patient_id, consent_id, test_id = patient_with_consent
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            consent_id=consent_id,
+        )
+        dao.place_order(session_admin, order_id)
+        sample_id = dao.receive_sample(session_admin, order_id=order_id, sample_type="dna")
+        dao.record_qc(session_admin, sample_id, qc_status="passed")
+
+        result = dao.check_qc_passed(session_admin, order_id)
+        assert result == "qc_ok"
+
+    def test_check_qc_pending(self, dao, session_admin, patient_with_consent):
+        """QC pending returns qc_pending"""
+        patient_id, consent_id, test_id = patient_with_consent
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            consent_id=consent_id,
+        )
+        dao.place_order(session_admin, order_id)
+        dao.receive_sample(session_admin, order_id=order_id, sample_type="dna")
+
+        result = dao.check_qc_passed(session_admin, order_id)
+        assert result == "qc_pending"
+
+    def test_check_qc_failed(self, dao, session_admin, patient_with_consent):
+        """QC failed returns qc_failed"""
+        patient_id, consent_id, test_id = patient_with_consent
+        order_id = dao.create_order(
+            session_admin,
+            patient_id=patient_id,
+            test_id=test_id,
+            required_scope="testing",
+            consent_id=consent_id,
+        )
+        dao.place_order(session_admin, order_id)
+        sample_id = dao.receive_sample(session_admin, order_id=order_id, sample_type="dna")
+        dao.record_qc(session_admin, sample_id, qc_status="failed")
+
+        result = dao.check_qc_passed(session_admin, order_id)
+        assert result == "qc_failed"
+
+    def test_validate_vcf_file_missing(self, dao, tmp_path):
+        result = dao.validate_vcf_file(str(tmp_path / "nonexistent.vcf"))
+        assert result == "vcf_missing"
+
+    def test_validate_vcf_file_ok_text(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_file(str(vcf_file))
+        assert result == "vcf_file_ok"
+
+    def test_validate_vcf_file_ok_bgzip(self, dao, tmp_path):
+        import gzip
+
+        vcf_file = tmp_path / "test.vcf.gz"
+        with gzip.open(vcf_file, "wb") as f:
+            f.write(b"##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_file(str(vcf_file))
+        assert result == "vcf_file_ok"
+
+    def test_validate_vcf_file_format_invalid(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("NOT A VCF FILE\n")
+
+        result = dao.validate_vcf_file(str(vcf_file))
+        assert result == "vcf_format_invalid"
+
+    def test_validate_vcf_header_ok(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=GRCh38\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_header(str(vcf_file))
+        assert result == "header_ok"
+
+    def test_validate_vcf_header_missing(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("1\t1000\tA\tG\n")
+
+        result = dao.validate_vcf_header(str(vcf_file))
+        assert result == "header_missing"
+
+    def test_validate_vcf_build_ok(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=GRCh38\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
+        assert result == "build_ok"
+
+    def test_validate_vcf_build_mismatch(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=GRCh37\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
+        assert result == "build_mismatch"
+
+    def test_validate_vcf_build_not_declared(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
+        assert result == "build_not_declared"
+
+    def test_validate_vcf_build_normalisation_hg38_to_grch38(self, dao, tmp_path):
+        """Normalisation: hg38 in VCF matches GRCh38 in test (both canonical GRCh38)"""
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=hg38\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
+        assert result == "build_ok"
+
+    def test_validate_vcf_build_unmapped_assembly(self, dao, tmp_path):
+        """Unmapped assembly in VCF returns build_not_recognised, not build_mismatch"""
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n##assembly=unknown_build_xyz\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_build(str(vcf_file), "GRCh38")
+        assert result == "build_not_recognised"
+
+    def test_validate_vcf_sample_column_ok(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n")
+
+        result = dao.validate_vcf_sample_column(str(vcf_file))
+        assert result == "sample_column_ok"
+
+    def test_validate_vcf_sample_column_missing(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+
+        result = dao.validate_vcf_sample_column(str(vcf_file))
+        assert result == "sample_column_missing"
+
+    def test_validate_vcf_variant_count_ok(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n1\t1000\tA\tG\n")
+
+        result = dao.validate_vcf_variant_count(str(vcf_file))
+        assert result == "variants_ok"
+
+    def test_validate_vcf_variant_count_zero(self, dao, tmp_path):
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n")
+
+        result = dao.validate_vcf_variant_count(str(vcf_file))
+        assert result == "no_variants"

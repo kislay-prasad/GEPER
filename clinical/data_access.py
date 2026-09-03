@@ -67,6 +67,19 @@ ROLES = (
     "System",
 )
 
+# Assembly name normalization: maps variant names to canonical form
+# Only explicitly mapped names are recognised; unknown assemblies are rejected
+ASSEMBLY_CANONICAL = {
+    # GRCh38 (hg38)
+    "GRCh38": "GRCh38",
+    "hg38": "GRCh38",
+    "GRCh38.p13": "GRCh38",
+    # GRCh37 (hg19, b37)
+    "GRCh37": "GRCh37",
+    "hg19": "GRCh37",
+    "b37": "GRCh37",
+}
+
 # THE ONE MESSAGE every authentication failure produces, whatever the cause:
 # unknown organisation, unknown address, wrong password, wrong TOTP code,
 # disabled user, disabled organisation, locked account. A caller cannot tell
@@ -2197,6 +2210,297 @@ class DataAccess:
                 )
 
         return results
+
+    # ── Phase 5a: Preconditions and VCF validation ──
+
+    def check_consent(self, session: Session, patient_id: uuid.UUID, scope: str) -> str:
+        """
+        Check consent for automatic submission.
+
+        Returns a reason string (enum):
+          - "consent_ok": Valid, unwithdrawm consent exists
+          - "consent_missing": No active consent for scope
+          - "consent_withdrawn": Consent was withdrawn
+        """
+        consent = self._query_one(
+            "SELECT consent_id, withdrawn_at FROM consents "
+            "WHERE org_id = %s AND patient_id = %s AND scope = %s AND superseded_by IS NULL "
+            "ORDER BY recorded_at DESC LIMIT 1",
+            (session.org_id, patient_id, scope),
+        )
+
+        if consent is None:
+            return "consent_missing"
+
+        if consent[1] is not None:
+            return "consent_withdrawn"
+
+        return "consent_ok"
+
+    def check_identity_resolved(self, session: Session, patient_id: uuid.UUID, sample_id: uuid.UUID) -> str:
+        """
+        Check that patient and sample IDs resolve to real records.
+
+        Returns a reason string (enum):
+          - "identity_resolved": Both exist in this org
+          - "patient_unresolved": Patient record not found
+          - "sample_unresolved": Sample record not found
+        """
+        patient = self._query_one(
+            "SELECT patient_id FROM patients WHERE org_id = %s AND patient_id = %s",
+            (session.org_id, patient_id),
+        )
+        if patient is None:
+            return "patient_unresolved"
+
+        sample = self._query_one(
+            "SELECT sample_id FROM samples WHERE org_id = %s AND sample_id = %s",
+            (session.org_id, sample_id),
+        )
+        if sample is None:
+            return "sample_unresolved"
+
+        return "identity_resolved"
+
+    def check_order_data(self, session: Session, order_id: uuid.UUID) -> str:
+        """
+        Check required order data present.
+
+        Per §10.1, requires: test/panel, indication, ordering clinician.
+        Test and clinician are NOT NULL in schema, so only indication is checked.
+
+        Returns a reason string (enum):
+          - "order_ok": All required data present, not cancelled
+          - "indication_missing": clinical_indication is NULL or empty
+          - "order_cancelled": Order state is cancelled
+        """
+        order = self._query_one(
+            "SELECT state, clinical_indication FROM orders WHERE org_id = %s AND order_id = %s",
+            (session.org_id, order_id),
+        )
+
+        if order is None:
+            return "indication_missing"
+
+        state, indication = order
+
+        if state == "cancelled":
+            return "order_cancelled"
+
+        if not indication or (isinstance(indication, str) and not indication.strip()):
+            return "indication_missing"
+
+        return "order_ok"
+
+    def check_qc_passed(self, session: Session, order_id: uuid.UUID) -> str:
+        """
+        Check sample QC status.
+
+        Per §10.1: "Sample QC passed" means samples.qc_status = 'passed'.
+
+        Returns a reason string (enum):
+          - "qc_ok": qc_status = 'passed'
+          - "qc_pending": qc_status = 'pending'
+          - "qc_failed": qc_status = 'failed'
+        """
+        sample = self._query_one(
+            "SELECT qc_status FROM samples WHERE org_id = %s AND order_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session.org_id, order_id),
+        )
+
+        if sample is None:
+            return "qc_pending"
+
+        qc_status = sample[0]
+        if qc_status == "passed":
+            return "qc_ok"
+        elif qc_status == "failed":
+            return "qc_failed"
+        else:
+            return "qc_pending"
+
+    def validate_vcf_file(self, vcf_path: str) -> str:
+        """
+        Validate VCF file exists, is readable, and is VCF or bgzipped VCF.
+
+        Returns a reason string (enum):
+          - "vcf_file_ok": File valid
+          - "vcf_missing": File not found
+          - "vcf_unreadable": File exists but cannot be read
+          - "vcf_format_invalid": File exists but is not VCF/bgzip format
+        """
+        path = Path(vcf_path)
+
+        if not path.exists():
+            return "vcf_missing"
+
+        try:
+            if not path.is_file():
+                return "vcf_unreadable"
+
+            with open(path, "rb") as f:
+                header = f.read(4)
+
+            if len(header) < 2:
+                return "vcf_format_invalid"
+
+            is_bgzip = header[:2] == b"\x1f\x8b"
+            is_vcf_text = header[:2] == b"##"
+
+            if not (is_bgzip or is_vcf_text):
+                return "vcf_format_invalid"
+
+            return "vcf_file_ok"
+
+        except (PermissionError, OSError):
+            return "vcf_unreadable"
+
+    def validate_vcf_header(self, vcf_path: str) -> str:
+        """
+        Validate VCF header is present and parseable.
+
+        Returns a reason string (enum):
+          - "header_ok": Header present and valid
+          - "header_missing": No header found
+          - "header_malformed": Header parsing fails
+        """
+        import gzip
+
+        path = Path(vcf_path)
+
+        try:
+            if vcf_path.endswith(".gz"):
+                opener = gzip.open
+            else:
+                opener = open
+
+            with opener(path, "rt" if not vcf_path.endswith(".gz") else "rt") as f:
+                header_found = False
+                for line in f:
+                    if line.startswith("##"):
+                        header_found = True
+                    elif line.startswith("#CHROM"):
+                        return "header_ok" if header_found else "header_missing"
+                    elif not line.startswith("#"):
+                        break
+
+            return "header_missing"
+
+        except Exception:
+            return "header_malformed"
+
+    def validate_vcf_build(self, vcf_path: str, expected_assembly: str) -> str:
+        """
+        Validate VCF build matches expected assembly.
+
+        Reads assembly from VCF header's ##assembly line and normalises against
+        canonical assembly names. Only explicitly mapped assemblies are recognised.
+
+        Returns a reason string (enum):
+          - "build_ok": Header assembly matches expected (after normalisation)
+          - "build_not_declared": No assembly declared in header
+          - "build_not_recognised": Assembly declared but not in canonical mapping
+          - "build_mismatch": Assembly declared, recognised, but doesn't match expected
+        """
+        import gzip
+        import re
+
+        # Normalise expected assembly
+        expected_canonical = ASSEMBLY_CANONICAL.get(expected_assembly)
+        if expected_canonical is None:
+            return "build_not_recognised"
+
+        path = Path(vcf_path)
+
+        try:
+            if vcf_path.endswith(".gz"):
+                opener = gzip.open
+            else:
+                opener = open
+
+            with opener(path, "rt" if not vcf_path.endswith(".gz") else "rt") as f:
+                for line in f:
+                    if line.startswith("##assembly"):
+                        match = re.search(r"##assembly=([^\s]+)", line)
+                        if match:
+                            vcf_assembly = match.group(1)
+                            vcf_canonical = ASSEMBLY_CANONICAL.get(vcf_assembly)
+                            if vcf_canonical is None:
+                                return "build_not_recognised"
+                            if vcf_canonical == expected_canonical:
+                                return "build_ok"
+                            else:
+                                return "build_mismatch"
+                        return "build_not_declared"
+                    elif line.startswith("#CHROM"):
+                        return "build_not_declared"
+                    elif not line.startswith("#"):
+                        break
+
+            return "build_not_declared"
+
+        except Exception:
+            return "build_not_declared"
+
+    def validate_vcf_sample_column(self, vcf_path: str) -> str:
+        """
+        Validate VCF has at least one sample column.
+
+        Returns a reason string (enum):
+          - "sample_column_ok": At least one sample column
+          - "sample_column_missing": No sample columns
+        """
+        import gzip
+
+        path = Path(vcf_path)
+
+        try:
+            if vcf_path.endswith(".gz"):
+                opener = gzip.open
+            else:
+                opener = open
+
+            with opener(path, "rt" if not vcf_path.endswith(".gz") else "rt") as f:
+                for line in f:
+                    if line.startswith("#CHROM"):
+                        fields = line.rstrip("\n").split("\t")
+                        if len(fields) > 9:
+                            return "sample_column_ok"
+                        else:
+                            return "sample_column_missing"
+
+            return "sample_column_missing"
+
+        except Exception:
+            return "sample_column_missing"
+
+    def validate_vcf_variant_count(self, vcf_path: str) -> str:
+        """
+        Validate VCF has at least one variant.
+
+        Returns a reason string (enum):
+          - "variants_ok": At least one variant
+          - "no_variants": No variant lines found
+        """
+        import gzip
+
+        path = Path(vcf_path)
+
+        try:
+            if vcf_path.endswith(".gz"):
+                opener = gzip.open
+            else:
+                opener = open
+
+            with opener(path, "rt" if not vcf_path.endswith(".gz") else "rt") as f:
+                for line in f:
+                    if not line.startswith("#"):
+                        return "variants_ok"
+
+            return "no_variants"
+
+        except Exception:
+            return "no_variants"
 
     # ── Phase 5c: Automatic submission (system principal, submission key, audit) ──
 

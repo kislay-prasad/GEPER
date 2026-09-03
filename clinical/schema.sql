@@ -310,6 +310,7 @@ CREATE TABLE tests (
     org_id          UUID        NOT NULL REFERENCES organisations (org_id),
     name            TEXT        NOT NULL,
     cdsco_class     TEXT,
+    assembly        TEXT        NOT NULL,
     status          TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
     approved_at     TIMESTAMPTZ,
     approved_by     UUID,

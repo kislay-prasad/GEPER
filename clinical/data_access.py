@@ -3694,6 +3694,236 @@ class DataAccess:
             variant_key=variant_key,
         )
 
+    # ─── Phase 6: approval and release (spec 13.3, 13.4) ─────────────────────
+    #
+    # The final gate. Everything upstream (reviewer claims, the interpretation
+    # itself) can be recorded freely; nothing downstream of this section may
+    # leave the platform without passing through it. Two facts this section
+    # exists to make true:
+    #
+    #   - Approval is what makes a report releasable, and nothing else does
+    #     (spec 13.3). _approve_report is the ONLY place reports.state becomes
+    #     'approved', and it writes the three approval facts -- approver_id,
+    #     approved_at, content_hash -- together, in the one UPDATE that makes
+    #     the schema's reports_approval_complete CHECK meaningful rather than
+    #     merely satisfiable.
+    #
+    #   - No report leaves the platform without approval (spec 13.4).
+    #     require_release is the hard stop every delivery path must call
+    #     before handing content to a consumer; it is the structural
+    #     enforcement, not a convention documented in a docstring.
+    #
+    # NOT in this section, and not an oversight: nothing here transitions a
+    # report from 'draft' to 'under_review'. No method anywhere in this file
+    # does -- there is no submit-for-review action yet. _approve_report
+    # therefore only ever accepts a report already in 'under_review', which
+    # today can only be reached by a test or an operator writing the state
+    # directly. That gap is real and is reported alongside this commit rather
+    # than closed here: adding a fourth method to backfill it would be
+    # deciding the missing transition's shape (who may submit, what
+    # precondition it enforces) unasked, which is a different-sized decision
+    # than "implement the three methods this commit was scoped for".
+
+    @auditable(
+        action="report_approved",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="approval is the one event that makes a report releasable (spec 13.3)",
+    )
+    @transactional
+    def _approve_report(self, session: Session, report_id: uuid.UUID, actor_id: uuid.UUID) -> None:
+        """
+        Approve a report: draft -> under_review -> approved is the one path a
+        report may enter 'approved' by. Only an Approver may act, per spec
+        13.3, and "only Approvers can approve" is enforced twice over here
+        rather than once:
+
+          - `_require_role(session, 'Approver')` gates the SESSION invoking
+            this method (the reused gate the dispatch named).
+          - the identity recorded as approver -- `actor_id` -- is separately
+            checked to hold the Approver role itself.
+
+        The second check is not redundant with the first. Every other method
+        in this file that takes a session plus a separate actor_id (the
+        reviewer-claim recorders above, create_or_reopen_exception) lets the
+        two diverge with no per-actor check, because nothing downstream reads
+        actor_id as an authority claim. Here it is one: ISO 15189 7.4.1.5 c)
+        requires the identity of the person who approved be retrievable, and
+        a session gate alone would let any Approver's session record an
+        unqualified colleague's user_id as having approved -- retrievable,
+        but false. Checking actor_id's own roles closes that gap.
+
+        content_hash is computed here, from the linked interpretation's
+        run_document, deterministically serialised (sorted keys, no
+        ambiguous separators) and hashed with SHA-256 -- the same approach
+        create_vcf already uses for file content, applied to the JSONB
+        document that stands in for a report's content since reports carries
+        no content column of its own.
+
+        Deliberately NOT included in the hash: reviewer_claims. Spec 13.2
+        marks which claims a released report shows, and how, as one of the
+        six expert-branch decisions the reviewer_claims schema comment lists
+        as undecided; hashing them into content_hash now would fix that
+        undecided rendering into the immutability check before the branch is
+        resolved. When it is, this hash's inputs are the place to extend.
+        """
+        self._require_role(session, "Approver")
+
+        actor = self._query_one(
+            "SELECT 1 FROM users WHERE org_id = %s AND user_id = %s",
+            (session.org_id, actor_id),
+        )
+        if actor is None:
+            raise NotFoundError(f"No such user in this organisation: {actor_id}")
+
+        actor_roles = {a.role for a in self.get_user_roles(session, target_user_id=actor_id)}
+        if "Approver" not in actor_roles:
+            raise AuthorizationError(
+                f"User {actor_id} does not hold the Approver role and cannot be recorded as the approver."
+            )
+
+        report = self._query_one(
+            "SELECT interpretation_id, state FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        interpretation_id, state = report
+
+        if state != "under_review":
+            raise ValueError(
+                f"Report is in '{state}' state, cannot approve -- spec 13.1: only a report "
+                "under_review may be approved."
+            )
+
+        # fk_report_interp guarantees this exists; no NotFoundError branch needed.
+        interp_row = self._query_one(
+            "SELECT run_document FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, interpretation_id),
+        )
+        run_document = interp_row[0]
+        if isinstance(run_document, str):
+            run_document = json.loads(run_document)
+        serialized = json.dumps(run_document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        content_hash = hashlib.sha256(serialized).hexdigest()
+
+        now = self._clock.now()
+        self._execute(
+            "UPDATE reports SET state = %s, approver_id = %s, approved_at = %s, content_hash = %s "
+            "WHERE id = %s AND org_id = %s",
+            ("approved", actor_id, now, content_hash, report_id, session.org_id),
+        )
+
+    @auditable(
+        action="report_released",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="release is a delivery event and the record of who received what, when (spec 13.4)",
+    )
+    @transactional
+    def _release_report(
+        self,
+        session: Session,
+        report_id: uuid.UUID,
+        consumer: str,
+        actor_id: uuid.UUID,
+    ) -> uuid.UUID:
+        """
+        Record one delivery of an approved report to one consumer.
+
+        Release is an event, not a state flag (schema comment on
+        release_events): releasing the same report to a second consumer
+        inserts a second row rather than being refused by an already-released
+        report. reports.state still moves to 'released', but only on the
+        FIRST release -- it is a derived summary ("has this report been
+        released at all"), not itself the record of who received what and
+        when.
+
+        content_hash is copied from reports.content_hash rather than
+        recomputed: between approval and release nothing in this schema can
+        change an interpretation's run_document (there is no UPDATE path for
+        interpretations), so the value approved is definitionally the value
+        being handed to this consumer. The duplication onto release_events is
+        still deliberate, per that table's own schema comment -- it lets a
+        reader learn what was delivered without joining back to reports.
+        """
+        actor = self._query_one(
+            "SELECT 1 FROM users WHERE org_id = %s AND user_id = %s",
+            (session.org_id, actor_id),
+        )
+        if actor is None:
+            raise NotFoundError(f"No such user in this organisation: {actor_id}")
+
+        if consumer is None or not str(consumer).strip():
+            raise ValueError("A release must name its consumer (spec 13.4).")
+
+        report = self._query_one(
+            "SELECT state, content_hash FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        state, content_hash = report
+
+        if state not in ("approved", "released"):
+            raise ValueError(
+                f"Report is in '{state}' state, cannot release -- spec 13.4: no report leaves "
+                "the platform without approval."
+            )
+
+        release_id = uuid.uuid4()
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO release_events (org_id, id, report_id, consumer, released_at, released_by, content_hash) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (session.org_id, release_id, report_id, consumer, now, actor_id, content_hash),
+        )
+
+        if state != "released":
+            self._execute(
+                "UPDATE reports SET state = %s WHERE id = %s AND org_id = %s",
+                ("released", report_id, session.org_id),
+            )
+
+        return release_id
+
+    @auditable(
+        action="require_release",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="the release gate is the structural enforcement spec 13.4 depends on; its denials are audit-relevant",
+        details_builder=lambda params, result: {"report_id": str(params.get("report_id"))},
+    )
+    @transactional
+    def require_release(self, session: Session, report_id: uuid.UUID) -> None:
+        """
+        The one gate every delivery path calls before handing report content
+        to a consumer (spec 13.4). Hard stop: a report that is not at least
+        approved refuses here, structurally, rather than by a convention a
+        future delivery path could forget to honour.
+
+        Approved and released both pass -- released implies a report was
+        approved first (require_release itself was the only gate before the
+        first _release_report call could ever have succeeded), and a second
+        consumer requesting the same already-released report is not a reason
+        to refuse it.
+        """
+        report = self._query_one(
+            "SELECT state FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        state = report[0]
+
+        if state not in ("approved", "released"):
+            raise ValueError(
+                f"Report is in '{state}' state -- spec 13.4: no report leaves the platform without approval."
+            )
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

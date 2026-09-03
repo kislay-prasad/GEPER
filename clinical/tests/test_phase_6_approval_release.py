@@ -229,14 +229,28 @@ class TestApproveReport:
         assert content_hash is not None
         assert len(content_hash) == 64, "sha256 hex digest is 64 characters"
 
-    def test_approve_content_hash_reflects_run_document(self, dao, conn, session_a, approver_a, interp_a):
+    def test_approve_content_hash_reflects_run_document_and_reviewer_claims(
+        self, dao, conn, session_a, approver_a, interp_a
+    ):
+        """
+        Phase 7 commit 1 widened content_hash to cover reviewer_claims as
+        well as run_document (see clinical/tests/test_phase_7_commit1_hash_locking.py
+        for the full hash-scope test suite). This interpretation has no
+        claims recorded against it, so the expected payload's
+        reviewer_claims list is empty -- still a different, and correct,
+        hash from the pre-Phase-7 run_document-only value.
+        """
         report_id = dao.create_report(session_a, interp_a)
         _set_report_state(conn, report_id, "under_review")
 
         dao._approve_report(approver_a, report_id, actor_id=approver_a.user_id)
 
         expected = hashlib.sha256(
-            json.dumps({"variants": []}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            json.dumps(
+                {"run_document": {"variants": []}, "reviewer_claims": []},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         ).hexdigest()
         with conn.cursor() as cur:
             cur.execute("SELECT content_hash FROM reports WHERE id = %s", (report_id,))

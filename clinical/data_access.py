@@ -3811,6 +3811,131 @@ class DataAccess:
             (session.org_id, report_id),
         )
 
+    def _compute_report_content_hash(self, session: Session, interpretation_id: uuid.UUID) -> str:
+        """
+        Deterministic SHA-256 over exactly what an Approver reviewed: the
+        interpretation's run_document AND the full set of reviewer_claims
+        recorded against it, AS STORED.
+
+        Shared by _approve_report (which writes the result) and
+        verify_report_integrity (which recomputes it later and compares) so
+        "the same canonicalisation" is a structural fact -- one function --
+        rather than a discipline of keeping two call sites in sync by hand.
+
+        WHY REVIEWER_CLAIMS ARE IN THIS HASH (this reverses an earlier
+        decision; the correction is recorded here on purpose rather than
+        silently, because the original reasoning was sound on its own terms
+        and the distinction that overturns it is easy to lose again).
+
+        The earlier version of this method excluded reviewer_claims because
+        spec 13.2 leaves WHICH CLAIMS A RELEASED REPORT DISPLAYS, and how, as
+        an explicitly undecided expert-branch question (see the six points
+        in reviewer_claims's own schema comment) -- and hashing claims felt
+        like fixing that undecided rendering into an immutability check
+        before the branch was resolved.
+
+        That reasoning conflates two different questions. Which claims are
+        DISPLAYED is rendering, and the expert branch governs exactly that.
+        Which claims EXISTED AT APPROVAL is a fact about what was approved,
+        settled the moment the Approver signs, regardless of how any claim
+        is later shown or on any surface. This hash captures the second
+        question, not the first: rendering can still be decided freely, on
+        its own timeline, without touching what this function computes.
+
+        The cost of getting this wrong was asymmetric. Excluding claims left
+        a real gap: a reviewer_claims row could be altered after approval
+        (reviewer_claims is append-only against the application's own
+        clinical_app role -- see schema.sql's grants -- but is not immune to
+        a direct database write outside that role, which is exactly the
+        threat a content hash exists to catch) and verify_report_integrity
+        would report no tampering, because the one thing a human actually
+        contributed to the approved record was the one thing not covered.
+        Including claims that turn out to be irrelevant to some future
+        rendering decision costs nothing verify_report_integrity cares
+        about; excluding claims that turn out to matter costs the entire
+        guarantee this function exists to provide.
+
+        FIELDS HASHED PER CLAIM: EVERY stored column of a reviewer_claims
+        row -- claim_type, variant_key, classification, reason, actor_id,
+        timestamp, evidence_json, supersedes. There is no exclusion list.
+
+        This is a second, later correction, and it is recorded here for the
+        same reason the first one is: the two columns first left out were
+        left out for reasons that looked sound in isolation and were wrong
+        for the identical structural reason the original run_document-only
+        scope was wrong.
+
+          - evidence_json was excluded as "always NULL today, pending the
+            expert-branch decision on what shape evidence takes." That is
+            true today and is exactly the shape of the claims-exclusion bug
+            this function already corrects once: a column that is empty NOW
+            is not evidence it will stay empty, and evidence_json is
+            precisely the column a re-derive reading of the expert branch
+            would start writing into. Excluding it means the hash would
+            silently stop covering reviewer evidence the moment that branch
+            is decided, with nothing forcing this function to be revisited
+            when it happens.
+          - supersedes was excluded as "already covered where it matters,
+            since a superseding claim is itself a row this function hashes."
+            That covers a superseding claim being ADDED after the fact (a
+            new row, which does change the hash), but not an EXISTING
+            claim's supersedes value being altered in place to point
+            somewhere else -- reviewer_claims is append-only against
+            clinical_app, which makes that mutation unlikely, not
+            impossible, and a hash that carries an exception for "the
+            columns append-only makes unlikely" has an exception to explain
+            every time someone reads it.
+
+        The rule now, and the reason there is no numbered list of hashed
+        columns to maintain: this function hashes every stored column of a
+        reviewer_claims row. A column added to the schema later is hashed
+        the day it exists, without this function needing to be revisited to
+        remember to include it.
+
+        Claims are ordered by (timestamp, id) for a stable serialisation --
+        without a fixed order, two computations over the identical set of
+        rows could serialise to different JSON and hash to different values,
+        which would make this function non-deterministic over data that
+        never changed. id is the reviewer_claims primary key, so (timestamp,
+        id) is a genuine total order: id alone can never tie.
+        """
+        interp_row = self._query_one(
+            "SELECT run_document FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, interpretation_id),
+        )
+        run_document = interp_row[0]
+        if isinstance(run_document, str):
+            run_document = json.loads(run_document)
+
+        claim_rows = self._query(
+            'SELECT claim_type, variant_key, classification, reason, actor_id, "timestamp", '
+            "evidence_json, supersedes "
+            "FROM reviewer_claims WHERE org_id = %s AND interpretation_id = %s "
+            'ORDER BY "timestamp", id',
+            (session.org_id, interpretation_id),
+        )
+        claims = []
+        for row in claim_rows:
+            evidence_json = row[6]
+            if isinstance(evidence_json, str):
+                evidence_json = json.loads(evidence_json)
+            claims.append(
+                {
+                    "claim_type": row[0],
+                    "variant_key": row[1],
+                    "classification": row[2],
+                    "reason": row[3],
+                    "actor_id": str(row[4]),
+                    "timestamp": row[5].isoformat(),
+                    "evidence_json": evidence_json,
+                    "supersedes": str(row[7]) if row[7] is not None else None,
+                }
+            )
+
+        payload = {"run_document": run_document, "reviewer_claims": claims}
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()
+
     @auditable(
         action="report_approved",
         resource_type="report",
@@ -3841,19 +3966,9 @@ class DataAccess:
         unqualified colleague's user_id as having approved -- retrievable,
         but false. Checking actor_id's own roles closes that gap.
 
-        content_hash is computed here, from the linked interpretation's
-        run_document, deterministically serialised (sorted keys, no
-        ambiguous separators) and hashed with SHA-256 -- the same approach
-        create_vcf already uses for file content, applied to the JSONB
-        document that stands in for a report's content since reports carries
-        no content column of its own.
-
-        Deliberately NOT included in the hash: reviewer_claims. Spec 13.2
-        marks which claims a released report shows, and how, as one of the
-        six expert-branch decisions the reviewer_claims schema comment lists
-        as undecided; hashing them into content_hash now would fix that
-        undecided rendering into the immutability check before the branch is
-        resolved. When it is, this hash's inputs are the place to extend.
+        content_hash is computed by _compute_report_content_hash -- see that
+        method's docstring for what it covers and why (run_document AND
+        reviewer_claims, as stored, not as any surface renders them).
         """
         self._require_role(session, "Approver")
 
@@ -3884,16 +3999,7 @@ class DataAccess:
                 "under_review may be approved."
             )
 
-        # fk_report_interp guarantees this exists; no NotFoundError branch needed.
-        interp_row = self._query_one(
-            "SELECT run_document FROM interpretations WHERE org_id = %s AND id = %s",
-            (session.org_id, interpretation_id),
-        )
-        run_document = interp_row[0]
-        if isinstance(run_document, str):
-            run_document = json.loads(run_document)
-        serialized = json.dumps(run_document, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        content_hash = hashlib.sha256(serialized).hexdigest()
+        content_hash = self._compute_report_content_hash(session, interpretation_id)
 
         now = self._clock.now()
         self._execute(
@@ -3901,6 +4007,48 @@ class DataAccess:
             "WHERE id = %s AND org_id = %s",
             ("approved", actor_id, now, content_hash, report_id, session.org_id),
         )
+
+    @auditable(
+        action="report_integrity_verified",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="ISO 15189 7.5 nonconformance detection: a mismatch is audit-relevant on its own, not only on export",
+        details_builder=lambda params, result: {"report_id": str(params.get("report_id")), "matched": result},
+    )
+    @transactional
+    def verify_report_integrity(self, session: Session, report_id: uuid.UUID) -> bool:
+        """
+        Recompute the report's content hash from CURRENT run_document and
+        CURRENT reviewer_claims, using _compute_report_content_hash -- the
+        same function _approve_report used to produce the stored value --
+        and compare.
+
+        Returns True on a match, False on a mismatch. Deliberately a bool,
+        not a raise: this is a check a caller interprets, like
+        check_consent and check_order_data elsewhere in this file, not a
+        hard-stop gate like require_release. A future delivery-path gate
+        may choose to treat False as fatal; that choice is not made here.
+
+        Raises NotFoundError for an unknown or cross-org report (the usual
+        meaning throughout this file), and ValueError for a report with no
+        content_hash yet -- an unapproved report was never hashed, so there
+        is nothing stored to verify against, which is a different condition
+        from "verified and found to differ."
+        """
+        report = self._query_one(
+            "SELECT interpretation_id, content_hash FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        interpretation_id, stored_hash = report
+
+        if stored_hash is None:
+            raise ValueError(f"Report {report_id} has not been approved and has no content_hash to verify against.")
+
+        current_hash = self._compute_report_content_hash(session, interpretation_id)
+        return current_hash == stored_hash
 
     @auditable(
         action="report_released",

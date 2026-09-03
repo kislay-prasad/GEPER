@@ -430,10 +430,21 @@ CREATE TABLE interpretations (
     created_at      TIMESTAMPTZ NOT NULL,
     created_by      UUID        NOT NULL,
 
+    -- Phase 7 (spec 15.3). The lineage branch re-analysis needs and Phase
+    -- 4a's chain does not have: NULL for a first interpretation of a VCF,
+    -- populated with the interpretation it re-analyses when this one is a
+    -- re-analysis. A composite self-FK, org-scoped like every other
+    -- reference in this schema, so a re-analysis cannot point at another
+    -- organisation's interpretation. Column only in this commit -- no
+    -- method writes it yet; that is a later Phase 7 commit's job.
+    parent_interpretation_id UUID,
+
     CONSTRAINT fk_interp_vcf
         FOREIGN KEY (org_id, vcf_id) REFERENCES vcfs (org_id, id),
     CONSTRAINT fk_interp_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_interp_parent
+        FOREIGN KEY (org_id, parent_interpretation_id) REFERENCES interpretations (org_id, id),
     CONSTRAINT uk_interp_submission UNIQUE (org_id, submission_key),
     CONSTRAINT uk_interp_org_id UNIQUE (org_id, id)
 );

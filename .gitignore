@@ -73,3 +73,7 @@ Thumbs.db
 !.env.example
 config.yaml
 !config.yaml.example
+
+# Test output logs
+clinical_test_output.txt
+phase5d_test_output.txt

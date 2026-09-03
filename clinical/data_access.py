@@ -3215,16 +3215,23 @@ class DataAccess:
         auditable=True,
         reason="scan and retry transient submission failures with exponential backoff",
     )
-    def retry_scheduler(self, session: Session) -> None:
+    def retry_scheduler(self, session: Session, submission_store=None) -> None:
         """
         Scan open TRANSIENT_SUBMISSION_FAILURE exceptions and retry/escalate them.
 
         For each open TRANSIENT exception where next_retry_at <= now:
         - If attempt_count < 6: increment attempt_count, update last_attempt_at,
-          set next_retry_at = now + backoff(attempt_count)
+          set next_retry_at = now + backoff(attempt_count), and re-queue the associated
+          submission if submission_store is provided
         - If attempt_count >= 6: escalate status to 'escalated'
 
         Idempotent: UPDATE conditional on status='open' prevents concurrent escalations.
+
+        Args:
+            session: Session object for org context
+            submission_store: Optional SubmissionStore to re-queue failed submissions.
+                If provided, failed submissions associated with retried exceptions
+                are marked as 'queued' for retry.
         """
         now = self._clock.now()
 
@@ -3233,15 +3240,15 @@ class DataAccess:
             return base
 
         exceptions_to_retry = self._query(
-            "SELECT id, attempt_count "
+            "SELECT id, attempt_count, order_id "
             "FROM exceptions "
             "WHERE org_id = %s AND status = 'open' "
-            "  AND category = 'TRANSIENT_SUBMISSION_FAILURE' "
+            "  AND category = 'transient_submission_failure' "
             "  AND next_retry_at IS NOT NULL AND next_retry_at <= %s",
             (session.org_id, now),
         )
 
-        for exc_id, attempt_count in exceptions_to_retry:
+        for exc_id, attempt_count, order_id in exceptions_to_retry:
             if attempt_count >= 6:
                 self._execute(
                     "UPDATE exceptions SET status = 'escalated' WHERE id = %s AND org_id = %s AND status = 'open'",
@@ -3258,6 +3265,54 @@ class DataAccess:
                     "WHERE id = %s AND org_id = %s AND status = 'open'",
                     (new_attempt_count, now, next_retry_at, exc_id, session.org_id),
                 )
+
+                # Re-queue the associated submission if submission_store is provided
+                if submission_store:
+                    self._requeue_failed_submission_for_order(submission_store, session.org_id, order_id)
+
+    def _requeue_failed_submission_for_order(self, submission_store, org_id: uuid.UUID, order_id: uuid.UUID) -> None:
+        """
+        Find failed submissions for an order and re-queue them.
+
+        This is called by retry_scheduler when an exception is ready for retry.
+        Searches for submissions associated with the order_id that are marked 'failed'
+        and re-queues them by changing status to 'queued'.
+
+        Args:
+            submission_store: SubmissionStore instance
+            org_id: Organisation ID (UUID)
+            order_id: Order ID (UUID)
+        """
+        import sqlite3
+
+        try:
+            # Convert UUIDs to strings for store query
+            org_id_str = str(org_id)
+            order_id_str = str(order_id)
+
+            # Query the submission store for failed submissions for this order
+            # We query all failed submissions (not just recent ones) to catch
+            # any that were previously failed and not yet retried
+            with sqlite3.connect(submission_store.db_path) as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT id
+                    FROM submissions
+                    WHERE org_id = ? AND order_id = ? AND status = 'failed'
+                    """,
+                    (org_id_str, order_id_str),
+                )
+                failed_submissions = cursor.fetchall()
+
+            # Re-queue each failed submission
+            for (submission_id,) in failed_submissions:
+                submission_store.update_status(submission_id, "queued")
+        except Exception as e:
+            # Log error but don't fail the scheduler
+            import logging
+
+            logger = logging.getLogger("clinical.data_access")
+            logger.warning(f"Failed to re-queue submission for order {order_id}: {e}")
 
     @auditable(
         action="list_open_exceptions",

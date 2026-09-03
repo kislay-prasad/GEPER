@@ -1938,7 +1938,7 @@ class DataAccess:
         # Navigate: sample
         sample_id = run[1]
         sample = self._query_one(
-            "SELECT sample_id, order_id, created_at, created_by, org_id FROM samples WHERE sample_id = %s AND org_id = %s",
+            "SELECT sample_id, order_id, created_at, received_by, org_id FROM samples WHERE sample_id = %s AND org_id = %s",
             (sample_id, session.org_id),
         )
         if sample is None:
@@ -1949,7 +1949,7 @@ class DataAccess:
                 "table": "sample",
                 "resource_id": sample[0],
                 "created_at": sample[2],
-                "created_by": sample[3],
+                "created_by": sample[3],  # received_by marks when platform record begins
                 "org_id": sample[4],
             }
         )
@@ -2072,11 +2072,16 @@ class DataAccess:
                 params.append(service)
                 params.append(status)
 
-        where_sql = " AND ".join(where_clauses)
+        additional_clauses = where_clauses[1:]  # Skip org_id (first clause)
+        if additional_clauses:
+            additional_sql = " AND " + " AND ".join(additional_clauses)
+        else:
+            additional_sql = ""
+
         query = f"""
             SELECT id, vcf_id, run_document, created_at, created_by
             FROM interpretations
-            WHERE {where_sql}
+            WHERE org_id = %s{additional_sql}
             ORDER BY created_at, id
         """
 

@@ -1376,16 +1376,16 @@ class TestLineageQueries:
         run_id = dao.create_sequencing_run(session_admin, sample_id)
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\nchr1\t100\t.\tA\tT\n")
         vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
 
         # Create two interpretations with different model versions
         interp_v1_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
         report_v1_id = dao.create_report(session_admin, interp_v1_id)
 
-        # Create second VCF for second interpretation
+        # Create second VCF for second interpretation (unique content)
         vcf_file2 = tmp_path / "test2.vcf"
-        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_file2.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\tID\tREF\tALT\nchr1\t200\t.\tG\tC\n")
         vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
 
         interp_v2_id = dao.create_interpretation(session_admin, vcf_id2, {"model_version": "v2"}, str(sample_id))
@@ -1404,7 +1404,7 @@ class TestLineageQueries:
         run_id = dao.create_sequencing_run(session_admin, sample_id)
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text("##fileformat=VCFv4.2\n")
+        vcf_file.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n1\t100\n")
         vcf_id = dao.create_vcf(session_admin, run_id, str(vcf_file))
 
         # Create interpretations with different database versions
@@ -1414,7 +1414,7 @@ class TestLineageQueries:
         dao.create_report(session_admin, interp_db1_id)
 
         vcf_file2 = tmp_path / "test2.vcf"
-        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_file2.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\n1\t200\n")
         vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
 
         interp_db2_id = dao.create_interpretation(
@@ -1503,9 +1503,9 @@ class TestLineageQueries:
         interp_both_id = dao.create_interpretation(session_admin, vcf_id, run_doc, str(sample_id))
         report_both_id = dao.create_report(session_admin, interp_both_id)
 
-        # Create interpretation matching only model_version
+        # Create interpretation matching only model_version (unique VCF content)
         vcf_file2 = tmp_path / "test2.vcf"
-        vcf_file2.write_text("##fileformat=VCFv4.2\n")
+        vcf_file2.write_text("##fileformat=VCFv4.2\n#CHROM\tPOS\nchr2\t300\n")
         vcf_id2 = dao.create_vcf(session_admin, run_id, str(vcf_file2))
 
         run_doc_partial = {"model_version": "v1", "database_version": "2025.01"}

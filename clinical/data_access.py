@@ -3207,6 +3207,105 @@ class DataAccess:
 
         return exc_id
 
+    @transactional
+    @auditable(
+        action="retry_scheduler",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="scan and retry transient submission failures with exponential backoff",
+    )
+    def retry_scheduler(self, session: Session) -> None:
+        """
+        Scan open TRANSIENT_SUBMISSION_FAILURE exceptions and retry/escalate them.
+
+        For each open TRANSIENT exception where next_retry_at <= now:
+        - If attempt_count < 6: increment attempt_count, update last_attempt_at,
+          set next_retry_at = now + backoff(attempt_count)
+        - If attempt_count >= 6: escalate status to 'escalated'
+
+        Idempotent: UPDATE conditional on status='open' prevents concurrent escalations.
+        """
+        now = self._clock.now()
+
+        def backoff_seconds(attempt_count: int) -> int:
+            base = min(2**attempt_count * 30, 900)
+            return base
+
+        exceptions_to_retry = self._query(
+            "SELECT id, attempt_count "
+            "FROM exceptions "
+            "WHERE org_id = %s AND status = 'open' "
+            "  AND category = 'TRANSIENT_SUBMISSION_FAILURE' "
+            "  AND next_retry_at IS NOT NULL AND next_retry_at <= %s",
+            (session.org_id, now),
+        )
+
+        for exc_id, attempt_count in exceptions_to_retry:
+            if attempt_count >= 6:
+                self._execute(
+                    "UPDATE exceptions SET status = 'escalated' WHERE id = %s AND org_id = %s AND status = 'open'",
+                    (exc_id, session.org_id),
+                )
+            else:
+                new_attempt_count = attempt_count + 1
+                next_retry_seconds = backoff_seconds(new_attempt_count)
+                next_retry_at = now + _datetime.timedelta(seconds=next_retry_seconds)
+
+                self._execute(
+                    "UPDATE exceptions "
+                    "SET attempt_count = %s, last_attempt_at = %s, next_retry_at = %s "
+                    "WHERE id = %s AND org_id = %s AND status = 'open'",
+                    (new_attempt_count, now, next_retry_at, exc_id, session.org_id),
+                )
+
+    @auditable(
+        action="list_open_exceptions",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="retrieve open/escalated exceptions for operator worklist",
+    )
+    def list_open_exceptions(self, session: Session) -> list[ExceptionDTO]:
+        """
+        List all open and escalated exceptions for an organisation.
+
+        Returns exceptions ordered by status (escalated first), then by category,
+        then by created_at. Includes attempt_count and next_retry_at so operators
+        can distinguish active retries from escalated waits.
+        """
+        from clinical.models.exception import ExceptionDTO
+
+        exceptions = self._query(
+            "SELECT id, order_id, category, reason_code, error_message, status, owner, "
+            "       created_at, last_resolved_by, last_resolved_at, resolution_action, "
+            "       resolution_note, attempt_count, next_retry_at "
+            "FROM exceptions "
+            "WHERE org_id = %s AND status != 'resolved' "
+            "ORDER BY CASE WHEN status = 'escalated' THEN 0 ELSE 1 END, category ASC, created_at ASC",
+            (session.org_id,),
+        )
+
+        return [
+            ExceptionDTO(
+                id=str(exc[0]),
+                order_id=str(exc[1]),
+                category=exc[2],
+                reason_code=exc[3],
+                error_message=exc[4],
+                status=exc[5],
+                owner=exc[6],
+                created_at=exc[7].isoformat() if isinstance(exc[7], _datetime.datetime) else exc[7],
+                last_resolved_by=exc[8],
+                last_resolved_at=exc[9].isoformat() if isinstance(exc[9], _datetime.datetime) else exc[9],
+                resolution_action=exc[10],
+                resolution_note=exc[11],
+                attempt_count=exc[12],
+                next_retry_at=exc[13].isoformat() if isinstance(exc[13], _datetime.datetime) else exc[13],
+            )
+            for exc in exceptions
+        ]
+
     @auditable(
         action="read_exception",
         resource_type="exception",

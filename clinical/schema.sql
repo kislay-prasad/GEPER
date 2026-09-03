@@ -467,13 +467,17 @@ CREATE TABLE exceptions (
     category TEXT NOT NULL,
     reason_code TEXT NOT NULL,
     error_message TEXT,
-    status TEXT NOT NULL CHECK (status IN ('open', 'resolved')),
+    status TEXT NOT NULL CHECK (status IN ('open', 'escalated', 'resolved')),
     owner TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     last_resolved_by TEXT,
     last_resolved_at TIMESTAMPTZ,
     resolution_action TEXT,
     resolution_note TEXT,
+
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TIMESTAMPTZ,
+    next_retry_at TIMESTAMPTZ,
 
     CONSTRAINT exceptions_order_fk
         FOREIGN KEY (org_id, order_id) REFERENCES orders (org_id, order_id),
@@ -484,6 +488,8 @@ CREATE INDEX idx_exceptions_org_order ON exceptions (org_id, order_id);
 CREATE INDEX idx_exceptions_org_owner_status ON exceptions (org_id, owner, status)
     WHERE status = 'open';
 CREATE INDEX idx_exceptions_reason_code ON exceptions (org_id, reason_code);
+CREATE INDEX idx_exceptions_retry_scheduler ON exceptions (org_id, next_retry_at)
+    WHERE status = 'open';
 
 
 CREATE TABLE exception_events (

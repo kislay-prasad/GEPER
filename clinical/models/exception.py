@@ -222,7 +222,13 @@ class ExceptionDTO:
     last_resolved_at: Optional[str]
     resolution_action: Optional[str]
     resolution_note: Optional[str]
-    events: list["ExceptionEventDTO"]
+    attempt_count: int = 0
+    next_retry_at: Optional[str] = None
+    events: list["ExceptionEventDTO"] = None
+
+    def __post_init__(self):
+        if self.events is None:
+            self.events = []
 
 
 @dataclass

@@ -857,10 +857,12 @@ CREATE INDEX idx_amendment_org_original
 --
 -- Records that an ordering clinician was notified of an amendment (ISO 15189
 -- 7.4.1.8 requires notification). The notification is recorded AS SENT at the
--- moment of amendment creation: read=FALSE initially, meaning the clinician
--- may not have read it yet, but the fact of the notification is recorded.
--- Delivery mechanism (email, SMS, etc.) is deferred to a later phase; this
--- table records the event itself, not the transport.
+-- moment of amendment creation. Delivery mechanism (email, SMS, etc.) is
+-- deferred to a later phase; this table records the event itself, not the
+-- transport. Read state is DERIVED from notification_read_receipts table:
+-- a receipt row is inserted when the clinician opens the notification, carrying
+-- who and when (not a mutable flag). Current: a notification is read if a
+-- receipt exists for it.
 
 CREATE TABLE amendment_notifications (
     org_id                  UUID        NOT NULL,
@@ -877,11 +879,6 @@ CREATE TABLE amendment_notifications (
     -- now would fix the vocabulary before the platform's delivery paths exist.
     delivered_to_role       TEXT        NOT NULL,
 
-    -- read=FALSE at creation: the notification was sent but the clinician may
-    -- not have read it yet. read=TRUE would be set by a later phase when
-    -- the clinician opens the notification in-app or delivery is confirmed.
-    read                    BOOLEAN     NOT NULL DEFAULT FALSE,
-
     created_at              TIMESTAMPTZ NOT NULL,
     created_by              UUID        NOT NULL,
 
@@ -895,9 +892,39 @@ CREATE TABLE amendment_notifications (
 CREATE INDEX idx_notification_org_amendment
     ON amendment_notifications (org_id, amendment_report_id);
 
-CREATE INDEX idx_notification_org_unread
-    ON amendment_notifications (org_id, read)
-    WHERE read = FALSE;
+
+-- ─── Phase 7 commit 2b: Notification read receipts (append-only) ───────────
+--
+-- Records when a clinician opened/read a notification. An append-only record
+-- carries WHO read it and WHEN, not a mutable flag. A notification is read
+-- (derived) if at least one receipt row exists for it. Multiple receipts may
+-- exist for the same notification if multiple clinicians with the same role
+-- open it, or if the same clinician opens it multiple times.
+
+CREATE TABLE notification_read_receipts (
+    org_id                  UUID        NOT NULL,
+    id                      UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    notification_id         UUID        NOT NULL,
+
+    -- When the notification was read (opened by the clinician).
+    read_at                 TIMESTAMPTZ NOT NULL,
+
+    -- Who read it: the user_id of the clinician who opened the notification.
+    read_by                 UUID        NOT NULL,
+
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_receipt_notification
+        FOREIGN KEY (org_id, notification_id) REFERENCES amendment_notifications (org_id, id),
+    CONSTRAINT fk_receipt_reader
+        FOREIGN KEY (org_id, read_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_receipt_org_id UNIQUE (org_id, id)
+);
+
+-- Read receipts are immutable (append-only): the same rule as amendments,
+-- reviewer_claims, and release_events. No row update, only INSERT.
+CREATE INDEX idx_receipt_org_notification
+    ON notification_read_receipts (org_id, notification_id);
 
 
 -- ─── Phase 7 commit 4: Retention policy configuration (spec 22) ────────────
@@ -1030,12 +1057,13 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 -- row, so correcting the record never requires touching an existing one.
 -- These tables have exactly the privileges audit_log has, and a future
 -- change that needs UPDATE on any of them is a design error rather than a
--- missing grant. amendments and amendment_notifications are append-only by the
--- same reasoning: an amendment and its notification are recorded at creation
--- and never touched again. The forward pointer is immutable once written.
-GRANT  SELECT, INSERT ON reviewer_claims, release_events, amendments, amendment_notifications TO clinical_app;
-REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications FROM clinical_app;
-REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications FROM PUBLIC;
+-- missing grant. amendments, amendment_notifications, and notification_read_receipts
+-- are append-only by the same reasoning: an amendment, its notification, and read
+-- receipts are recorded at creation and never touched again. The forward pointer
+-- and read receipt are immutable once written.
+GRANT  SELECT, INSERT ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts TO clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM PUBLIC;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,

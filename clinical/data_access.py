@@ -4469,20 +4469,79 @@ class DataAccess:
         notification_id = uuid.uuid4()
         self._execute(
             "INSERT INTO amendment_notifications (org_id, id, amendment_report_id, reason_for_change, "
-            "delivered_to_role, read, created_at, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "delivered_to_role, created_at, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 session.org_id,
                 notification_id,
                 amendment_report_id,
                 reason,
                 "ordering_clinician",
-                False,  # Notification sent but not read
                 now,
                 session.user_id,
             ),
         )
 
         return amendment_report_id, notification_id
+
+    @auditable(
+        action="notification_read_receipt_recorded",
+        resource_type="notification",
+        requires_session=True,
+        auditable=True,
+        reason="Read receipt recorded: clinician opened the amendment notification (ISO 15189 7.4.1.8)",
+    )
+    @transactional
+    def record_notification_read_receipt(
+        self, session: Session, notification_id: uuid.UUID, read_by_user_id: uuid.UUID
+    ) -> uuid.UUID:
+        """
+        Record that a clinician read a notification. A receipt row carries
+        WHO read it and WHEN (an append-only record, not a mutable flag).
+        Multiple receipts may exist for the same notification (different users
+        or the same user reading multiple times).
+
+        Read state is DERIVED: a notification is read if at least one receipt
+        row exists for it (EXISTS in amendment_notifications → notification_read_receipts).
+
+        Preconditions:
+          - Notification must exist in this org
+          - read_by_user_id must exist in this org
+          - read_by_user_id must hold a role that can open notifications
+            (deferred to a future phase; not validated here)
+
+        Returns: receipt_id (UUID of the read_receipts row)
+        """
+        notification = self._query_one(
+            "SELECT amendment_report_id FROM amendment_notifications WHERE id = %s AND org_id = %s",
+            (notification_id, session.org_id),
+        )
+        if notification is None:
+            raise NotFoundError(f"Notification {notification_id} not found in org {session.org_id}")
+
+        reader = self._query_one(
+            "SELECT user_id FROM users WHERE user_id = %s AND org_id = %s",
+            (read_by_user_id, session.org_id),
+        )
+        if reader is None:
+            raise NotFoundError(f"User {read_by_user_id} not found in org {session.org_id}")
+
+        receipt_id = uuid.uuid4()
+        now = self._clock.now()
+
+        self._execute(
+            "INSERT INTO notification_read_receipts (org_id, id, notification_id, read_at, read_by, created_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                receipt_id,
+                notification_id,
+                now,
+                read_by_user_id,
+                now,
+            ),
+        )
+
+        return receipt_id
 
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification

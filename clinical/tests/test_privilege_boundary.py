@@ -70,7 +70,7 @@ _LOCAL_TEST_PASSWORD = "not-a-secret-local-test-only"
 
 _ROLES = ("clinical_app", "clinical_retention")
 
-# The five append-only tables. clinical_app may SELECT and INSERT; UPDATE and
+# The six append-only tables. clinical_app may SELECT and INSERT; UPDATE and
 # DELETE are revoked from it and from PUBLIC.
 APPEND_ONLY = (
     "audit_log",
@@ -78,6 +78,7 @@ APPEND_ONLY = (
     "release_events",
     "amendments",
     "amendment_notifications",
+    "notification_read_receipts",
 )
 
 # The three retention-managed tables. clinical_retention may SELECT and UPDATE

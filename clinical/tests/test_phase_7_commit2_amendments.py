@@ -16,11 +16,16 @@ actual schema:
   amendments (org_id, id, original_report_id, amendment_report_id, reason,
               supersedes_amendment_id, created_at, created_by)
   amendment_notifications (org_id, id, amendment_report_id, reason_for_change,
-                            delivered_to_role, read, created_at, created_by)
+                            delivered_to_role, created_at, created_by)
+  notification_read_receipts (org_id, id, notification_id, read_at, read_by,
+                              created_at)
 
 "Current amendment" is derived (the row nothing else's supersedes_amendment_id
 names), never stored, exactly like reviewer_claims.supersedes in Phase 6.
-create_amendment() performs three INSERTs and zero UPDATEs.
+Read state is DERIVED (a receipt row exists) not marked (the removed read=FALSE
+column was a forbidden future per the schema's GRANT/REVOKE). Both amendments
+and notifications are append-only: create_amendment() performs three INSERTs
+and zero UPDATEs; record_notification_read_receipt() performs one INSERT only.
 """
 
 from __future__ import annotations
@@ -264,9 +269,10 @@ class TestAmendmentCreation:
 
         amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
 
+        # Notification is recorded as sent (exists in the table)
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT amendment_report_id, reason_for_change, delivered_to_role, read "
+                "SELECT amendment_report_id, reason_for_change, delivered_to_role "
                 "FROM amendment_notifications WHERE org_id = %s AND id = %s",
                 (session_a.org_id, notification_id),
             )
@@ -275,7 +281,15 @@ class TestAmendmentCreation:
         assert row[0] == amendment_report_id
         assert row[1] == "Updated findings"
         assert row[2] == "ordering_clinician"
-        assert row[3] is False  # sent but not read
+
+        # Read state is DERIVED: no receipt exists yet (unread)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM notification_read_receipts WHERE org_id = %s AND notification_id = %s",
+                (session_a.org_id, notification_id),
+            )
+            receipt_count = cur.fetchone()[0]
+        assert receipt_count == 0  # notification has not been read yet
 
     def test_original_report_unchanged(self, dao, conn, session_a, interp_a):
         original = _approved_original(dao, conn, session_a, interp_a)
@@ -513,3 +527,151 @@ class TestAmendmentScoping:
             )
             count = cur.fetchone()[0]
         assert count >= 1
+
+
+class TestNotificationReadReceipts:
+    """Read receipt recording (append-only record of who read when)."""
+
+    def test_records_a_receipt(self, dao, conn, session_a, interp_a):
+        """Recording a receipt inserts a row with who and when."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        receipt_id = dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+        assert receipt_id is not None
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT notification_id, read_by FROM notification_read_receipts WHERE org_id = %s AND id = %s",
+                (session_a.org_id, receipt_id),
+            )
+            row = cur.fetchone()
+        assert row is not None
+        assert row[0] == notification_id
+        assert row[1] == session_a.user_id
+
+    def test_read_state_is_derived_single_receipt(self, dao, conn, session_a, interp_a):
+        """A notification is read (derived) if a receipt exists."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        # Before receipt: no receipt exists
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM notification_read_receipts WHERE notification_id = %s AND org_id = %s)",
+                (notification_id, session_a.org_id),
+            )
+            is_read_before = cur.fetchone()[0]
+        assert is_read_before is False
+
+        # Record receipt
+        dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+        # After receipt: read state is derived as True (EXISTS)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT EXISTS(SELECT 1 FROM notification_read_receipts WHERE notification_id = %s AND org_id = %s)",
+                (notification_id, session_a.org_id),
+            )
+            is_read_after = cur.fetchone()[0]
+        assert is_read_after is True
+
+    def test_multiple_clinicians_can_read_same_notification(self, dao, conn, session_a, interp_a):
+        """Multiple receipts may exist for one notification (different readers)."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        # Create a second user in the same org
+        user2_id = dao.create_user(session_a.org_id, "clinician2@org-a.test", "password")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'Administrator', %s, %s)",
+                (user2_id, session_a.org_id, session_a.user_id, datetime.datetime(2026, 9, 4, tzinfo=timezone.utc)),
+            )
+        conn.commit()
+
+        # Both clinicians record a receipt
+        receipt1_id = dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+        receipt2_id = dao.record_notification_read_receipt(session_a, notification_id, user2_id)
+
+        assert receipt1_id != receipt2_id
+
+        # Both receipts exist
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM notification_read_receipts WHERE notification_id = %s AND org_id = %s",
+                (notification_id, session_a.org_id),
+            )
+            count = cur.fetchone()[0]
+        assert count == 2
+
+    def test_rejects_unknown_notification(self, dao, session_a):
+        """Unknown notification is rejected."""
+        import uuid
+
+        with pytest.raises(NotFoundError):
+            dao.record_notification_read_receipt(session_a, uuid.uuid4(), session_a.user_id)
+
+    def test_rejects_unknown_reader(self, dao, conn, session_a, interp_a):
+        """Unknown reader user is rejected."""
+        import uuid
+
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        with pytest.raises(NotFoundError):
+            dao.record_notification_read_receipt(session_a, notification_id, uuid.uuid4())
+
+    def test_cross_org_notification_rejected(self, dao, conn, session_a, session_b, interp_b):
+        """Org A cannot record a receipt for Org B's notification."""
+        original = _approved_original(dao, conn, session_b, interp_b)
+        amendment_report_id, notification_id = dao.create_amendment(session_b, original, "Updated findings")
+
+        with pytest.raises(NotFoundError):
+            dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+    def test_cross_org_reader_rejected(self, dao, conn, session_a, session_b, interp_a):
+        """Cannot record a receipt for a user from another org."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        with pytest.raises(NotFoundError):
+            dao.record_notification_read_receipt(session_a, notification_id, session_b.user_id)
+
+    def test_receipt_is_auditable(self, dao, conn, session_a, interp_a):
+        """Receipt recording is audited."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE org_id = %s AND action = 'notification_read_receipt_recorded'",
+                (session_a.org_id,),
+            )
+            count = cur.fetchone()[0]
+        assert count >= 1
+
+    def test_receipt_is_append_only(self, dao, conn, session_a, interp_a):
+        """Receipt table cannot be updated or deleted by clinical_app."""
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        receipt_id = dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+        # Attempt UPDATE should fail (permission denied)
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    "UPDATE notification_read_receipts SET read_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (receipt_id,),
+                )
+                conn.commit()
+                # If we got here, UPDATE succeeded (bad)
+                assert False, "UPDATE should have been refused by privilege control"
+            except Exception:
+                # Expected: permission denied
+                conn.rollback()
+                pass

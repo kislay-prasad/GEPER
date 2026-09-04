@@ -56,6 +56,11 @@ _CREATE_ROLE_RETENTION = (
 )
 
 
+def _foreign_key_violation():
+    psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+    return psycopg.errors.ForeignKeyViolation
+
+
 @pytest.fixture()
 def conn():
     psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
@@ -135,7 +140,7 @@ def approver_b(dao, session_b, org_b):
     return _role_session(dao, session_b, org_b, "approver@org-b.test", "Approver")
 
 
-def _make_interpretation(dao, conn, session, run_document=None):
+def _make_interpretation(dao, conn, session, run_document=None, parent_interpretation_id=None):
     """
     Build the full FK chain an interpretation needs:
     test -> patient -> consent -> order -> sample -> sequencing_run -> vcf -> interpretation.
@@ -184,14 +189,15 @@ def _make_interpretation(dao, conn, session, run_document=None):
         )
         cur.execute(
             "INSERT INTO interpretations "
-            "(org_id, id, vcf_id, run_document, submission_key, created_at, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "(org_id, id, vcf_id, run_document, submission_key, parent_interpretation_id, created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 org_id,
                 interp_id,
                 vcf_id,
                 json.dumps(document),
                 "sub-" + str(interp_id),
+                parent_interpretation_id,
                 now,
                 session.user_id,
             ),
@@ -352,21 +358,36 @@ class TestVerifyReportIntegrityDetectsTampering:
 
         assert dao.verify_report_integrity(approver_a, report_id) is False
 
-    def test_detects_run_document_tampered_after_approval(
-        self, dao, conn, session_a, interpreter_a, approver_a, interp_a
-    ):
-        """Regression coverage: the original (pre-Phase-7) guarantee must still hold."""
-        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a)
-        assert dao.verify_report_integrity(approver_a, report_id) is True
-
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE interpretations SET run_document = %s WHERE id = %s",
-                (json.dumps({"variants": [{"gene": "INSERTED_AFTER_APPROVAL"}]}), interp_a),
-            )
-        conn.commit()
-
-        assert dao.verify_report_integrity(approver_a, report_id) is False
+    # test_detects_run_document_tampered_after_approval -- RETIRED (D0b half two).
+    #
+    # This test simulated a post-approval tamper of interpretations.run_document
+    # via a raw UPDATE, then asserted verify_report_integrity() caught it
+    # (DETECTION). The content-immutability trigger (clinical/schema.sql,
+    # enforce_content_immutability()) now makes interpretations.run_document
+    # immutable outright: no UPDATE to that column succeeds for any principal
+    # except through the privilege-gated tombstone path, which does not touch
+    # run_document. A STRONGER GUARANTEE REPLACED THE ONE THIS TEST EXERCISED --
+    # prevention superseded detection on this path -- and the attack the test
+    # relied on to demonstrate detection can no longer be constructed at all.
+    #
+    # Ruled out explicitly, not chosen by default, two alternatives that looked
+    # cheaper:
+    #   - Disabling the trigger for the test (as TestRefusalCanItselfFail does,
+    #     legitimately, to prove the refusal itself is real) would leave the
+    #     codebase holding a working, committed recipe for turning the
+    #     guarantee off -- exercising a world the running system no longer has.
+    #   - Rewriting the test against a still-mutable column would change what
+    #     is tested while keeping the old name and calling it the same test.
+    #
+    # What this means for what the system can DEMONSTRATE: detection remains
+    # implemented in verify_report_integrity() for run_document, but is now
+    # UNTESTED on this specific path, because prevention deletes the executable
+    # evidence that detection still works here. See spec 15.1 for the same
+    # distinction stated for the design as a whole. Detection against
+    # reviewer_claims and evidence_json (still mutable-by-attack, not covered
+    # by this trigger) remains both implemented and tested, unaffected --
+    # see test_detects_supersedes_tampered_after_approval and
+    # test_detects_evidence_json_tampered_after_approval below.
 
     def test_detects_claim_added_after_approval(self, dao, conn, session_a, interpreter_a, approver_a, interp_a):
         """A new claim, not just an edited one, is also a change the hash must catch."""
@@ -456,38 +477,40 @@ class TestLineageColumn:
             cur.execute("SELECT parent_interpretation_id FROM interpretations WHERE id = %s", (interp_a,))
             assert cur.fetchone()[0] is None
 
-    def test_accepts_a_same_org_parent(self, dao, conn, session_a, interpreter_a):
+    def test_accepts_a_same_org_parent(self, dao, conn, session_a):
+        """
+        Re-expressed at INSERT (not a post-hoc UPDATE): interpretations has no
+        legitimate UPDATE path left under the content-immutability trigger
+        (clinical/schema.sql), and parent_interpretation_id is no exception --
+        it is set once, at creation, same as every other lineage fact. The
+        property under test is the composite FK constraint itself, not the
+        UPDATE mechanism the original test happened to use to exercise it.
+        """
         parent_id = _make_interpretation(dao, conn, session_a)
-        child_id = _make_interpretation(dao, conn, session_a)
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE interpretations SET parent_interpretation_id = %s WHERE id = %s",
-                (parent_id, child_id),
-            )
-        conn.commit()
+        child_id = _make_interpretation(dao, conn, session_a, parent_interpretation_id=parent_id)
         with conn.cursor() as cur:
             cur.execute("SELECT parent_interpretation_id FROM interpretations WHERE id = %s", (child_id,))
             assert cur.fetchone()[0] == parent_id
 
     def test_rejects_a_cross_org_parent(self, dao, conn, session_a, session_b):
+        """
+        Exception narrowed to ForeignKeyViolation by name (was bare Exception):
+        under the content-immutability trigger, an UPDATE-based version of this
+        test would also raise an Exception subclass on a same-org parent
+        (ImmutabilityViolationError, via RAISE EXCEPTION P0001) -- a bare
+        `pytest.raises(Exception)` cannot distinguish "the FK rejected this" from
+        "the trigger rejected this for an unrelated reason," so it would report
+        green even with the composite FK constraint dropped entirely. See
+        clinical/tests/test_privilege_boundary.py, which asserts
+        InsufficientPrivilege by name for the same reason.
+        """
         parent_id = _make_interpretation(dao, conn, session_b)  # org B
-        child_id = _make_interpretation(dao, conn, session_a)  # org A
-        with pytest.raises(Exception):  # psycopg.errors.ForeignKeyViolation
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE interpretations SET parent_interpretation_id = %s WHERE id = %s",
-                    (parent_id, child_id),
-                )
-            conn.commit()
+        with pytest.raises(_foreign_key_violation()):
+            _make_interpretation(dao, conn, session_a, parent_interpretation_id=parent_id)  # org A
         conn.rollback()
 
     def test_rejects_an_unknown_parent(self, dao, conn, session_a):
-        child_id = _make_interpretation(dao, conn, session_a)
-        with pytest.raises(Exception):  # psycopg.errors.ForeignKeyViolation
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE interpretations SET parent_interpretation_id = %s WHERE id = %s",
-                    (uuid.uuid4(), child_id),
-                )
-            conn.commit()
+        """Exception narrowed to ForeignKeyViolation by name; see test_rejects_a_cross_org_parent."""
+        with pytest.raises(_foreign_key_violation()):
+            _make_interpretation(dao, conn, session_a, parent_interpretation_id=uuid.uuid4())
         conn.rollback()

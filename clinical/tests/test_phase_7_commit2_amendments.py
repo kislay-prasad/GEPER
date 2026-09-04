@@ -458,7 +458,18 @@ class TestAmendmentPreconditions:
             dao.create_amendment(session_a, original, "Updated findings")
 
     def test_rejects_returned_report(self, dao, conn, session_a, interp_a):
-        original = _approved_original(dao, conn, session_a, interp_a)
+        # Reached from draft, not from an approved report, same as
+        # test_rejects_under_review_report above: no application method
+        # produces 'returned' yet (there is no reject/return-to-revision
+        # method), so a raw-SQL walk from draft is the same mechanism this
+        # file already uses for every other state that has no workflow path
+        # -- not a route through 'approved', which the content-immutability
+        # trigger (clinical/schema.sql) now refuses to walk back out of. The
+        # assertion below still holds for the same reason: create_amendment
+        # requires the original be approved or released, and a report that
+        # reached 'returned' from draft IS returned, refused by the same
+        # precondition either way.
+        original = dao.create_report(session_a, interp_a)
         _set_report_state(conn, original, "returned")
 
         with pytest.raises(ValueError, match="returned"):

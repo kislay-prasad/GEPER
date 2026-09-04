@@ -84,7 +84,14 @@ from typing import Any, List, Optional, Sequence
 # where raw reads live, from this tree entirely. Not a gap this shell leaves
 # open; an already-ruled exclusion, re-confirmed here rather than silently
 # assumed when the two NABL floors (VCF, raw reads) were read side by side.
-NABL_VCF_RETENTION_DAYS = 10 * 365  # 3650 -- see seed_nabl_default_retention_policies below
+# NOT a production default -- see seed_nabl_default_retention_policies below
+# for why. Kept as a named, documented value (the top of NABL's minor-patient
+# range, 5-10 years) for tests to prove the retention mechanism against a
+# real, configured "vcf" policy without shipping an unruled production
+# period. Human ruling 2026-09-05: NABL states a minimum, never a period, so
+# entering any single number here as the org-wide default -- even one
+# provably never under the floor -- answers a question counsel hasn't.
+NABL_VCF_RETENTION_DAYS = 10 * 365  # 3650 -- test-only value, see seed_nabl_default_retention_policies below
 
 
 class RetentionPolicyMissingError(ValueError):
@@ -372,49 +379,66 @@ class RetentionPrincipal:
         return PurgeResult(org_id=org_id, artefact_class="vcf", tombstoned_ids=ids)
 
 
-def seed_nabl_default_retention_policies(dao: Any, session: Any) -> None:
+def seed_nabl_default_retention_policies(dao: Any, session: Any, vcf_retention_days: Optional[int] = None) -> None:
     """
     Populate the settled half of retention configuration (D2, COUNSEL-d2)
-    for one org: the NABL floor for "vcf", and nothing else.
+    for one org. As of the human's 2026-09-05 ruling on this function, that
+    settled half is EMPTY: nothing is configured for any class by default.
 
-    "run_document" and "report" are deliberately left UNSET. Their periods
-    await counsel (COUNSEL-d2's remaining legal question, part (b)), and c4's
-    own missing-policy behaviour -- RetentionPolicyMissingError, raised by
-    RetentionPrincipal._policy_days above -- is what makes leaving them unset
-    a REFUSAL rather than a silent gap: purge_expired() against either raises
-    loudly instead of defaulting. Calling set_retention_policy for them here
-    with any number, including a deliberately large "safe" one, would be
-    exactly the silent default the human ruling forbids: "A DEFAULT OF ANY
-    KIND WOULD SILENTLY ANSWER A QUESTION COUNSEL HASN'T."
+    "run_document" and "report" have never been configured here -- their
+    periods await counsel (COUNSEL-d2's remaining legal question, part (b)),
+    and c4's own missing-policy behaviour -- RetentionPolicyMissingError,
+    raised by RetentionPrincipal._policy_days above -- is what makes leaving
+    them unset a REFUSAL rather than a silent gap: purge_expired() against
+    either raises loudly instead of defaulting.
 
-    THE VCF NUMBER IS NOT A PRECISE IMPLEMENTATION OF NABL 112A 7.8.5(b)(iv),
-    AND THAT IS A REPORTED LIMITATION, NOT AN OVERSIGHT. The clause floors
-    VCF retention at 5 years for an adult patient and "AT LEAST FOR 5-10
-    YEARS" for a minor -- conditional on patient age, not flat. This org's
-    retention_policies row is one integer for the whole "vcf" class
-    (schema.sql: PRIMARY KEY (org_id, artefact_class)), and the purge queries
-    in this module apply it uniformly to every VCF row; nothing here joins to
-    patients.dob or branches per row. The schema DOES know a patient's age
-    (patients.dob, reachable from a vcf via sequencing_runs -> samples ->
-    orders -> patients), but the retention MECHANISM cannot express an
-    age-conditional floor with it -- doing so would need a new mechanism (a
-    policy keyed by age bracket, or a per-row purge-time join to patients.dob),
-    which the human's 2026-09-05 boundary on this shell rules out ("add no
-    new mechanism").
-    NABL_VCF_RETENTION_DAYS is therefore set to the TOP of the minor range
-    (10 years), applied uniformly. That is provably never a violation of the
-    floor for any patient -- an adult's 5-year minimum and a minor's 5-10-year
-    minimum are both <= 10 years -- but it is a conservative SUBSTITUTE for
-    age-conditionality, not an implementation of it: an adult VCF that could
-    legally be purged at 5 years instead sits until 10. Precisely targeting
-    each patient's actual floor is future work, not this shell's.
+    "vcf" WAS configured here to NABL_VCF_RETENTION_DAYS, and the human
+    ruled that back out (2026-09-05, superseding this function's first
+    version). NABL 112A 7.8.5(b)(iv) states a MINIMUM ("at least 5 years",
+    "at least 5-10 years for a minor"), not a PERIOD -- a floor tells you
+    when you MAY purge, never when you SHOULD, so the settled NABL text
+    bounds a retention period from below without determining one. Entering
+    ANY single number as the production default -- including
+    NABL_VCF_RETENTION_DAYS itself, chosen as a provably-never-under-the-floor
+    substitute -- answers a question counsel hasn't, and the two applicable
+    regimes disagree about which direction is safe: under NABL, holding
+    longer is safe; under DPDP, holding longer is CONTINUED EXPOSURE, which
+    is exactly the unresolved tension in COUNSEL-d2's parked question (b)(2)
+    ("where DPDP erasure conflicts with the NABL floor, which controls").
+    A uniform default longer than necessary picks a side in that dispute
+    rather than waiting for it.
+
+    `vcf_retention_days` exists so the underlying mechanism -- that
+    set_retention_policy and purge_expired work correctly end to end on a
+    real, configured artefact_class -- stays provable without shipping an
+    unruled production period. TESTS pass a TEST-ONLY value here (see
+    TestSeedNablDefaultRetentionPolicies in
+    test_phase_7_commit4_retention.py); PRODUCTION callers pass nothing, and
+    "vcf" gets the same treatment as "run_document" and "report" -- no call,
+    absence as the honest, refusing state.
+
+    THE AGE-CONDITIONAL GAP THIS FUNCTION CANNOT CLOSE, carded separately as
+    a measured gap rather than folded into this ruling: even a counsel-
+    supplied production period for "vcf" could not express NABL's real
+    age-conditional floor (5 years adult, "at least 5-10 years" minor) with
+    this table's shape. retention_policies is PRIMARY KEY (org_id,
+    artefact_class) -- one integer per org per class, no per-row dimension --
+    and the purge queries in this module apply that one number uniformly to
+    every VCF row; nothing here joins to patients.dob or branches per row.
+    The schema DOES know a patient's age (patients.dob, reachable from a vcf
+    via sequencing_runs -> samples -> orders -> patients), but the MECHANISM
+    cannot use it without a new mechanism (a policy keyed by age bracket, or
+    a per-row purge-time join to patients.dob) -- out of this shell's scope
+    ("add no new mechanism") regardless of what counsel eventually rules for
+    an adult.
 
     `dao` is a DataAccess instance (typed Any to avoid a circular import --
     this module otherwise has no dependency on data_access.py); `session`
     must hold the Administrator role, since set_retention_policy is
     Administrator-gated (same governance level as assign_role).
     """
-    dao.set_retention_policy(session, "vcf", NABL_VCF_RETENTION_DAYS)
-    # "run_document" and "report": no call. Their absence from
-    # retention_policies IS the configuration -- awaiting-counsel, not
-    # forgotten. See the docstring above and COUNSEL-d2.
+    if vcf_retention_days is not None:
+        dao.set_retention_policy(session, "vcf", vcf_retention_days)
+    # "vcf" (production default), "run_document", "report": no call. Their
+    # absence from retention_policies IS the configuration -- awaiting
+    # counsel, not forgotten. See the docstring above and COUNSEL-d2.

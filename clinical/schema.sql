@@ -1263,11 +1263,47 @@ GRANT  USAGE, SELECT               ON SEQUENCE audit_log_log_id_seq TO clinical_
 CREATE OR REPLACE FUNCTION enforce_content_immutability() RETURNS TRIGGER AS $$
 BEGIN
     IF TG_TABLE_NAME = 'reports' THEN
-        -- state: always mutable. Spec 13.1's state machine (draft ->
-        -- under_review -> approved -> released, returned -> under_review)
-        -- is enforced by application preconditions, not by this trigger --
-        -- this trigger only ever asks "did content change", never "is this
-        -- transition legal".
+        -- state: mostly mutable, EXCEPT an approved or released report may
+        -- not be walked backwards. This check was added after the original
+        -- design here treated state as "always mutable, transition legality
+        -- is the application's job" -- defensible when state was assumed to
+        -- be an application-controlled workflow column. An audit (Ryan,
+        -- test_report_state_is_a_control.py) established that premise was
+        -- false: require_release() -- "the one gate every delivery path
+        -- calls", data_access.py:4385 -- and create_amendment(),
+        -- data_access.py:4449, both refuse unless state is approved or
+        -- released. state GATES DELIVERY, so it is a control, and a control
+        -- must not be freely rewritable by the principal it constrains.
+        -- `UPDATE reports SET state = 'draft'` on an approved report was
+        -- measured PERMITTED for clinical_app and for the superuser before
+        -- this check existed -- an approved report could be walked back and
+        -- effectively withdrawn from the record without touching a single
+        -- content column, which no grant can see and only a trigger (it
+        -- alone holds OLD and NEW together) can refuse.
+        --
+        -- The one forward transition past approval stays legal: approved ->
+        -- released is exactly what _release_report performs. Everything
+        -- else that moves state away from approved or released -- including
+        -- released -> anything, since release is the platform's exit and
+        -- nothing legitimately reopens it -- is refused. draft ->
+        -- under_review -> approved and returned -> under_review are
+        -- untouched by this check (OLD.state is neither approved nor
+        -- released), so the application's own workflow preconditions still
+        -- govern every transition below approval, same as before.
+        IF OLD.state IN ('approved', 'released')
+            AND NEW.state IS DISTINCT FROM OLD.state
+            AND NOT (OLD.state = 'approved' AND NEW.state = 'released')
+        THEN
+            RAISE EXCEPTION 'reports: an approved or released report cannot have its state walked back (report %, % -> %)', OLD.id, OLD.state, NEW.state;
+        END IF;
+
+        -- Everything else about state: unchecked by this trigger. Spec
+        -- 13.1's state machine below approval (draft -> under_review ->
+        -- approved, returned -> under_review) is enforced by application
+        -- preconditions, not here -- this trigger asks "is this transition
+        -- legal" only for the one boundary a control's own state can be
+        -- walked back across (approved/released), and otherwise still only
+        -- ever asks "did content change".
         --
         -- approver_id/approved_at/content_hash: write-once together (the
         -- reports_approval_complete CHECK already requires all three NULL

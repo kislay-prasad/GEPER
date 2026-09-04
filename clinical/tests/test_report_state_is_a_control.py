@@ -9,10 +9,26 @@ clinical_app AND as the superuser:
 
     UPDATE reports SET state = 'draft'   on an APPROVED report   ->  PERMITTED
 
-I reported that as a residual. The ruling was to AUDIT it rather than record it,
-on the grounds that if the delivery gate filters on state then that filtering is
-a control, and an unchecked control is a thing this codebase has been bitten by
-before.
+THAT IS NO LONGER TRUE, AND THIS FILE IS WHY. The residual was audited rather
+than recorded; the audit established that state GATES DELIVERY and is therefore
+a control; and the mechanism ruling was then revised so the trigger refuses a
+walk-back outright. The paragraph above describes the world this file was written
+in, kept because it is the reason the file exists.
+
+WHAT CHANGED HERE WHEN THE GAP CLOSED. Fifteen of the original twenty tests went
+red, which is not a defect in either piece of work: a walk-back on an approved
+report was this file's shared SETUP, not just one test's subject. Fourteen tests
+used it to construct an "approved then corrupted" report so they could assert
+something about the gate, retrieval or blast radius. Prevention deleted the
+executable evidence those tests were standing on.
+
+The line that decided each one: IF THE TEST'S SUBJECT WAS THE GAP, it is retired
+or inverted. IF THE TEST MERELY USED THE GAP AS A MECHANISM to reach a subject
+about something else -- the gate, retrieval -- it is rewritten to construct the
+state directly. That is not a loophole around this file's own fixture rule. The
+rule is that a fixture must not use THE MECHANISM THE TEST MEASURES; those tests
+measure the gate and retrieval, and a report CREATED in draft, under_review or
+returned is a genuine report in that state rather than one pushed there.
 
 THE AUDIT'S ANSWER: it does. require_release() -- "the one gate every delivery
 path calls" -- refuses any report whose state is not approved or released, and
@@ -32,10 +48,11 @@ WHAT THIS FILE ASSERTS, AND WHAT IT DELIBERATELY DOES NOT.
   -- the report stays retrievable and the release record survives, because
   release_events is append-only. Those are real mitigations and they should be
   held in place by a test rather than remembered.
-  It does NOT assert that a walk-back is acceptable. Locking a known gap in as
-  expected behaviour would be the wrong shape entirely: the tests below name the
-  exposure as an exposure, and closing it -- if the human rules that way -- is a
-  change to the mechanism, not to this file's expectations.
+  It never asserted that a walk-back was acceptable, and that is the whole reason
+  this transition could be closed by editing the mechanism rather than by
+  arguing with a test. A test that exists to document a gap should FAIL when the
+  gap closes. These did, loudly, and the inverted premise test below now asserts
+  the refusal instead.
 """
 
 from __future__ import annotations
@@ -176,19 +193,65 @@ def interp(dao, conn, session):
     return interp_id
 
 
-def _walk_state_back(conn, report_id, state):
+def _attempt_state_write(conn, report_id, state):
     """
-    The residual, exercised: move a report's state by raw SQL.
+    Attempt a raw state write. USED ONLY WHERE THE ATTEMPT ITSELF IS THE SUBJECT.
 
-    This is the write the content-immutability trigger permits by design -- it
-    asks whether content changed, never whether a transition is legal -- and it
-    is permitted to clinical_app and to the superuser alike. If this UPDATE ever
-    starts failing, the mechanism has changed and the tests below are measuring
-    something other than what they claim.
+    This was `_walk_state_back`, and it used to be this file's shared setup: it
+    SUCCEEDED on an approved report, and fourteen tests leaned on that to build an
+    "approved then corrupted" row. It cannot succeed on one any more -- the
+    content-immutability trigger now refuses a walk-back from approved or
+    released -- so it is deliberately no longer a fixture helper. Anything that
+    needs a report in a non-delivery state constructs one in that state instead,
+    via `report_in_state` below.
     """
     with conn.cursor() as cur:
         cur.execute("UPDATE reports SET state = %s WHERE id = %s", (state, report_id))
     conn.commit()
+
+
+@pytest.fixture()
+def report_in_state(dao, conn, session, approver, interp):
+    """
+    A report GENUINELY IN a given state, never one walked back into it.
+
+    WHY THIS IS NOT THE BYPASS THIS FILE OTHERWISE FORBIDS. The rule is that a
+    fixture must not use the mechanism the test measures. The tests using this
+    fixture measure the DELIVERY GATE and RETRIEVAL -- neither of which requires
+    the report to have passed through approval -- and the trigger is BEFORE
+    UPDATE, so a report created in draft and left there is exactly a draft
+    report. Where a real workflow path exists it is used in preference to a
+    direct write, which is the same discipline `approved_report` follows.
+
+      draft         create_report leaves it there. No write at all.
+      under_review  the real path: record a reviewer claim, then submit_for_review.
+      returned      no workflow path to it exists yet (spec 13.1 has the state;
+                    the method that sends a report back is Phase 6 commit 3's
+                    work, not written at this commit). Constructed by a direct
+                    write on a report that is NOT approved -- a transition the
+                    trigger permits and which is not the mechanism under test.
+                    When that method lands, this arm should use it.
+    """
+
+    def _make(state):
+        report_id = dao.create_report(session, interp)
+        if state == "draft":
+            return report_id
+        if state == "under_review":
+            dao._record_accept(
+                approver,
+                interp,
+                actor_id=approver.user_id,
+                reason="Independent concurrence with the engine's classification.",
+            )
+            dao.submit_for_review(session, report_id)
+            return report_id
+        if state == "returned":
+            _attempt_state_write(conn, report_id, "returned")
+            return report_id
+        raise AssertionError(f"no construction path for state {state!r}")
+
+    return _make
 
 
 @pytest.fixture()
@@ -218,36 +281,65 @@ def approved_report(dao, conn, session, approver, interp):
     return report_id
 
 
-class TestTheWalkBackIsPossibleAtAll:
+class TestTheWalkBackIsNowRefused:
     """
-    The premise of every other test here. If this stopped being true the residual
-    would be closed and the rest of this file would be asserting against a
-    scenario that can no longer arise -- passing, but meaningless.
+    INVERTED, NOT DELETED. This class used to assert that an approved report's
+    state COULD be rewritten -- it existed to document the residual, and to say
+    out loud that if the walk-back ever stopped being possible the rest of the
+    file was measuring a scenario that could no longer arise.
+
+    That is exactly what happened. A test that exists to document a gap should
+    fail when the gap closes, and this one did. It now asserts the refusal, so
+    the closure is held in place rather than merely remembered -- and so that
+    anyone reading the file can see that the gap was real, was measured, and was
+    shut, rather than finding no trace of it.
     """
 
-    def test_an_approved_reports_state_can_still_be_rewritten(self, conn, dao, session, approved_report):
-        _walk_state_back(conn, approved_report, "draft")
+    def test_an_approved_report_cannot_have_its_state_walked_back(self, conn, approved_report):
+        # The wall is named, as everywhere else in this suite: a bare PL/pgSQL
+        # RAISE, so SQLSTATE P0001 and psycopg's RaiseException. Asserting merely
+        # "something was raised" would pass on a NOT NULL violation.
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.RaiseException) as caught:
+                cur.execute("UPDATE reports SET state = 'draft' WHERE id = %s", (approved_report,))
+        conn.rollback()
+        assert caught.value.sqlstate == "P0001"
+
+        # AND THE REFUSAL HELD, not merely raised. Read back in the same test
+        # rather than in one of its own: a separate test that only reads a
+        # fixture nothing has written to cannot fail for the right reason -- it
+        # would pass just as happily against a schema with no trigger at all.
         state = conn.execute("SELECT state FROM reports WHERE id = %s", (approved_report,)).fetchone()[0]
-        assert state == "draft", (
-            "the walk-back was refused -- state is no longer freely writable, so the "
-            "residual this file audits has been closed and these tests need revisiting"
-        )
+        assert state == "approved", "the report's state moved despite the refusal"
 
-    def test_the_approval_facts_did_not_move_with_it(self, conn, dao, session, approved_report):
-        # WHAT LIMITS THE EXPOSURE, and the reason it is a residual rather than a
-        # breach: the trigger still freezes the approval facts, so a report walked
-        # back to draft cannot be re-approved with a DIFFERENT content hash. The
-        # tampering path that would actually matter stays shut.
-        before = conn.execute(
-            "SELECT approver_id, approved_at, content_hash FROM reports WHERE id = %s",
-            (approved_report,),
-        ).fetchone()
-        _walk_state_back(conn, approved_report, "draft")
-        after = conn.execute(
-            "SELECT approver_id, approved_at, content_hash FROM reports WHERE id = %s",
-            (approved_report,),
-        ).fetchone()
-        assert before == after, "approval facts moved with the state -- the trigger is not holding"
+        # THE SUPERUSER IS BOUND, and that is the point of the mechanism ruling
+        # rather than an aside: `conn` is the schema owner, so no GRANT is doing
+        # this work and none could -- a grant cannot see OLD.state. Only a
+        # BEFORE UPDATE trigger holds OLD and NEW together.
+
+    def test_a_released_report_cannot_be_reopened_either(self, dao, conn, session, approver, approved_report):
+        # The other arm of the check, and a distinct branch: release is the
+        # platform's exit, so nothing legitimately reopens it -- released ->
+        # anything is refused, not just approved -> draft. Covered separately
+        # because a trigger that only guarded OLD.state = 'approved' would pass
+        # every other test in this class while leaving released rows rewritable.
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        dao._release_report(session, approved_report, consumer="LIMS", actor_id=approver.user_id)
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.RaiseException) as caught:
+                cur.execute("UPDATE reports SET state = 'under_review' WHERE id = %s", (approved_report,))
+        conn.rollback()
+        assert caught.value.sqlstate == "P0001"
+
+    def test_but_the_one_legal_forward_transition_still_works(self, dao, conn, session, approver, approved_report):
+        # THE PAIRED PERMITTED DIRECTION, and without it this class is satisfied
+        # by a trigger that refuses every state change -- which would break
+        # release outright while every refusal above went on passing. approved ->
+        # released is precisely what _release_report performs.
+        dao._release_report(session, approved_report, consumer="LIMS", actor_id=approver.user_id)
+        state = conn.execute("SELECT state FROM reports WHERE id = %s", (approved_report,)).fetchone()[0]
+        assert state == "released"
 
 
 class TestTheDeliveryGateFiltersOnState:
@@ -268,66 +360,52 @@ class TestTheDeliveryGateFiltersOnState:
         dao.require_release(session, approved_report)
 
     @pytest.mark.parametrize("state", NON_DELIVERY_STATES)
-    def test_the_gate_refuses_every_non_delivery_state(self, dao, conn, session, approved_report, state):
-        # Parametrised over the states rather than written once, so that a new
-        # state added to the CHECK constraint without a decision about delivery
-        # shows up here as an unlisted case rather than as silence.
-        _walk_state_back(conn, approved_report, state)
+    def test_the_gate_refuses_every_non_delivery_state(self, dao, session, report_in_state, state):
+        # REWRITTEN. This used to approve a report and walk it back into `state`,
+        # which the trigger now refuses. The SUBJECT was never the walk-back --
+        # it is the gate's decision rule -- so the report is now constructed in
+        # the state directly and the assertion is unchanged.
+        #
+        # Parametrised over the states rather than written once, so a new state
+        # added to the CHECK constraint without a decision about delivery shows
+        # up here as an unlisted case rather than as silence.
+        report_id = report_in_state(state)
         with pytest.raises(ValueError, match=state):
-            dao.require_release(session, approved_report)
+            dao.require_release(session, report_id)
 
-    def test_a_walked_back_report_is_refused_delivery(self, dao, conn, session, approved_report):
-        """
-        THE RESIDUAL, NAMED. This is not the same test as "a draft report is
-        refused", which already existed: this report WAS approved, and delivery
-        of it is now refused because a raw-SQL write moved one column that no
-        content-immutability mechanism guards.
-
-        The refusal is CORRECT -- the gate is doing its job. What this test
-        records is that the gate's correctness is precisely what converts a state
-        rewrite into an effective WITHDRAWAL of an approved report, with no
-        content column touched. It is asserted here so the behaviour cannot
-        change silently, NOT because the exposure is accepted.
-        """
-        dao.require_release(session, approved_report)  # delivered before
-
-        _walk_state_back(conn, approved_report, "draft")
-
-        with pytest.raises(ValueError, match="no report leaves the platform without approval"):
-            dao.require_release(session, approved_report)
-
-    def test_amendment_creation_filters_on_state_too(self, dao, conn, session, approved_report):
-        # The second path the enumeration found. Amending a report requires it to
-        # be approved or released, so a walk-back blocks amendment as well --
-        # which matters because amendment is the ISO 15189 7.4.1.8 mechanism for
+    def test_amendment_creation_filters_on_state_too(self, dao, session, report_in_state):
+        # REWRITTEN, same reasoning. The second path the read-side enumeration
+        # found: amending requires the original to be approved or released, which
+        # matters because amendment is the ISO 15189 7.4.1.8 mechanism for
         # correcting a report without altering the original.
-        _walk_state_back(conn, approved_report, "draft")
+        report_id = report_in_state("draft")
         with pytest.raises(ValueError, match="only approved or released"):
-            dao.create_amendment(session, approved_report, reason="corrected variant call")
+            dao.create_amendment(session, report_id, reason="corrected variant call")
 
 
-class TestWhatAWalkBackDoesNotDestroy:
-    """
-    THE BLAST RADIUS, measured rather than assumed. A residual is only as bad as
-    what it actually reaches, and two things bound this one. Both are held here
-    so they cannot quietly stop being true.
-    """
-
-    def test_the_report_itself_is_still_retrievable(self, dao, conn, session, approved_report):
-        # get_report does NOT filter on state -- established by reading it, not by
-        # searching for the word. So the record is not lost: it is undeliverable,
-        # which is a different and smaller thing.
-        _walk_state_back(conn, approved_report, "draft")
-        assert dao.get_report(session, approved_report) is not None
-
-    def test_the_release_record_survives(self, dao, conn, session, approver, approved_report):
-        # release_events is append-only by grant, so the evidence that a report
-        # WAS released outlives any later rewrite of the report's own state. The
-        # audit trail does not walk back with it.
-        dao._release_report(session, approved_report, consumer="LIMS", actor_id=approver.user_id)
-        _walk_state_back(conn, approved_report, "draft")
-        rows = conn.execute("SELECT consumer FROM release_events WHERE report_id = %s", (approved_report,)).fetchall()
-        assert [r[0] for r in rows] == ["LIMS"], "the release record did not survive the walk-back"
+# ─── RETIRED: three tests whose SUBJECT was the gap itself ───────────────────
+#
+# test_a_walked_back_report_is_refused_delivery, and the two in
+# TestWhatAWalkBackDoesNotDestroy (the report stays retrievable; the release
+# record survives).
+#
+# All three asked what happens AFTER an approved report has been walked back.
+# That event can no longer occur -- the trigger refuses it, for clinical_app and
+# for the superuser alike -- so they measured the blast radius of something that
+# does not happen, and a test asserting a consequence of an impossible premise
+# passes for the wrong reason forever.
+#
+# Prevention superseded them; it did not merely make them redundant. The
+# properties they were protecting are not lost:
+#   - that the gate refuses non-delivery states is still asserted above, per
+#     state, on reports genuinely in those states.
+#   - that retrieval does not depend on state is still asserted below, which is
+#     the guard on a measured absence and the reason this file must not shrink
+#     to only the tests that were easy to keep.
+#   - that release_events outlives a report's own state is a property of the
+#     append-only grant, already asserted from a real role login in
+#     test_privilege_boundary.py.
+# Recorded here rather than deleted silently, so the closure leaves a trace.
 
 
 class TestRetrievalDoesNotFilterOnState:
@@ -345,18 +423,30 @@ class TestRetrievalDoesNotFilterOnState:
     These tests fail if a state filter is ever added to a retrieval path.
     """
 
-    @pytest.mark.parametrize("state", NON_DELIVERY_STATES + ("approved", "released"))
-    def test_get_report_returns_the_report_in_every_state(self, dao, conn, session, approved_report, state):
-        _walk_state_back(conn, approved_report, state)
-        assert dao.get_report(session, approved_report) is not None, (
+    @pytest.mark.parametrize("state", NON_DELIVERY_STATES)
+    def test_get_report_returns_a_report_in_every_non_delivery_state(self, dao, session, report_in_state, state):
+        # REWRITTEN to construct the state rather than walk back into it. THE
+        # GUARD IS UNWEAKENED: it still fails the moment a state predicate is
+        # added to a retrieval path, which is the only thing it was ever for.
+        report_id = report_in_state(state)
+        assert dao.get_report(session, report_id) is not None, (
             f"get_report stopped returning a report in '{state}' -- a state filter has been "
             "added to a retrieval path, which turns a workflow column into a visibility control"
         )
 
+    @pytest.mark.parametrize("state", ("approved", "released"))
+    def test_get_report_returns_a_delivery_state_report_too(self, dao, conn, session, approver, approved_report, state):
+        # The other half, kept separate because these two states are now reached
+        # through the workflow rather than by a raw write -- approved by the
+        # fixture, released by the one forward transition the trigger permits.
+        if state == "released":
+            dao._release_report(session, approved_report, consumer="LIMS", actor_id=approver.user_id)
+        assert dao.get_report(session, approved_report) is not None
+
     @pytest.mark.parametrize("state", NON_DELIVERY_STATES)
-    def test_lineage_tracing_does_not_depend_on_state(self, dao, conn, session, approved_report, state):
-        _walk_state_back(conn, approved_report, state)
-        assert dao.trace_report_ancestors(session, approved_report) is not None
+    def test_lineage_tracing_does_not_depend_on_state(self, dao, session, report_in_state, state):
+        report_id = report_in_state(state)
+        assert dao.trace_report_ancestors(session, report_id) is not None
 
     def test_a_missing_report_is_still_a_miss(self, dao, session):
         # THE KNOWN-POSITIVE for this class, and it is load-bearing: if get_report

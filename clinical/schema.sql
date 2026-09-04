@@ -1065,12 +1065,48 @@ GRANT  SELECT, INSERT ON reviewer_claims, release_events, amendments, amendment_
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM clinical_app;
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM PUBLIC;
 
-GRANT SELECT, INSERT, UPDATE, DELETE
+-- D0b half one (human ruling, 2026-09-04): NOTHING DELETES. DELETE is revoked
+-- on all nineteen of these, from clinical_app and from PUBLIC, in the same
+-- belt-and-braces shape the append-only tables above use.
+--
+-- WHY IT COSTS NOTHING: there is not one DELETE statement in clinical/'s
+-- production code -- measured, twice, at two different commits, not assumed.
+-- The privilege being removed is one the application has never once exercised.
+-- What it removes is the GAP between spec 15.1's "an approved report is
+-- immutable" and a grant block that let the application delete the report
+-- outright: the claim was resting on application code declining to do
+-- something the database permitted, which is the same shape as an unverified
+-- sign-off identity -- a guarantee asserted at a layer that cannot enforce it.
+--
+-- UPDATE DELIBERATELY STAYS. Deletion is unconditional and so a plain REVOKE
+-- settles it; mutation is not, because reports are legitimately updated through
+-- draft -> under_review -> approved -> released and a blanket REVOKE UPDATE
+-- would break the state machine outright. State-conditional protection cannot
+-- be expressed by a grant at all -- grants are per table, not per row -- so
+-- that half is a separate design and a separate commit.
+--
+-- IF A DELETE IS EVER GENUINELY NEEDED, it is a design question and not a
+-- missing grant: retention already answered the one real case by TOMBSTONING
+-- rather than deleting (D4), which is why clinical_retention holds UPDATE and
+-- is refused DELETE below.
+GRANT  SELECT, INSERT, UPDATE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
        patients, external_identifiers, consents, tests, test_genes, orders, samples,
        sequencing_runs, vcfs, interpretations, reports,
        exceptions, exception_events, retention_policies
     TO clinical_app;
+REVOKE DELETE
+    ON organisations, users, totp_backup_codes, role_assignments, sessions,
+       patients, external_identifiers, consents, tests, test_genes, orders, samples,
+       sequencing_runs, vcfs, interpretations, reports,
+       exceptions, exception_events, retention_policies
+    FROM clinical_app;
+REVOKE DELETE
+    ON organisations, users, totp_backup_codes, role_assignments, sessions,
+       patients, external_identifiers, consents, tests, test_genes, orders, samples,
+       sequencing_runs, vcfs, interpretations, reports,
+       exceptions, exception_events, retention_policies
+    FROM PUBLIC;
 
 
 -- ─── Phase 7 commit 4: the retention principal (spec 22, human ruling D0c) ──

@@ -85,6 +85,33 @@ APPEND_ONLY = (
 # (to write the tombstone); DELETE is revoked -- D4 ruled tombstone, not delete.
 RETENTION_TABLES = ("vcfs", "interpretations", "reports")
 
+# The nineteen tables clinical_app may still SELECT, INSERT and UPDATE, and on
+# which DELETE was revoked by D0b half one (human ruling, 2026-09-04). Kept as
+# an explicit literal rather than derived from schema.sql at runtime: a test
+# that reads its expectations out of the file it is testing agrees with that
+# file by construction and would not notice a table silently leaving the block.
+DELETE_REVOKED = (
+    "organisations",
+    "users",
+    "totp_backup_codes",
+    "role_assignments",
+    "sessions",
+    "patients",
+    "external_identifiers",
+    "consents",
+    "tests",
+    "test_genes",
+    "orders",
+    "samples",
+    "sequencing_runs",
+    "vcfs",
+    "interpretations",
+    "reports",
+    "exceptions",
+    "exception_events",
+    "retention_policies",
+)
+
 
 def _login_dsn(role: str) -> str:
     return DSN
@@ -323,6 +350,63 @@ class TestClinicalRetentionMayTombstoneButNeverDelete:
             retention_conn.execute("UPDATE release_events SET consumer = 'x'")
 
 
+# ─── D0b half one: nothing deletes ───────────────────────────────────────────
+
+
+def _self_assignable_column(conn, table: str) -> str:
+    """
+    Any column of `table`, for a no-op `SET col = col`.
+
+    Read from information_schema rather than hard-coded per table: the point of
+    the UPDATE probe below is only that the privilege is present, and a
+    hand-written column list would need editing every time a column is renamed
+    and would fail as a spurious privilege result when it was really a typo.
+    Self-assignment cannot violate a constraint, because the value is unchanged.
+    """
+    row = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position LIMIT 1",
+        (table,),
+    ).fetchone()
+    assert row is not None, f"{table} has no columns -- does the table exist?"
+    return row[0]
+
+
+class TestNothingDeletes:
+    """
+    D0b half one. The nineteen tables that carried full DELETE now do not.
+
+    THE RULING THIS ENFORCES: spec 15.1 says an approved report is immutable
+    while the grant block let the application delete the report outright, so the
+    claim rested on application code declining to do something the database
+    permitted -- the same shape as an unverified sign-off identity, a guarantee
+    asserted at a layer that cannot enforce it.
+
+    THE REVOKE HAD TO BE SURGICAL, which is why the permitted-direction tests
+    here matter as much as the refusals: DELETE goes, UPDATE stays. A blanket
+    REVOKE would also have taken UPDATE and broken the report state machine
+    (draft -> under_review -> approved -> released) outright, and every refusal
+    test in this class would still have passed while it did so.
+    """
+
+    @pytest.mark.parametrize("table", DELETE_REVOKED)
+    def test_delete_is_refused(self, app_conn, table):
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(f"DELETE FROM {table}")
+
+    @pytest.mark.parametrize("table", DELETE_REVOKED)
+    def test_update_is_still_permitted(self, conn, app_conn, table):
+        # THE GUARD THAT MAKES THE REFUSAL ABOVE MEAN SOMETHING, and the one
+        # that catches an over-broad revoke. If UPDATE had gone with DELETE,
+        # test_delete_is_refused would pass just as happily.
+        col = _self_assignable_column(conn, table)
+        app_conn.execute(f"UPDATE {table} SET {col} = {col}")
+
+    @pytest.mark.parametrize("table", DELETE_REVOKED)
+    def test_select_is_still_permitted(self, app_conn, table):
+        app_conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+
+
 # ─── guard 3: the refusal assertion is proven capable of failing ─────────────
 
 
@@ -371,3 +455,35 @@ class TestTheRefusalAssertionCanItselfFail:
         # 4. and the refusal returns
         with pytest.raises(_insufficient_privilege()):
             app_conn.execute(f"UPDATE {table} SET org_id = org_id")
+
+    def test_granting_delete_makes_the_refusal_go_away_and_revoking_brings_it_back(self, conn, app_conn):
+        """
+        The same known-positive for the DELETE class, not assumed to follow from
+        the UPDATE one. The two refusals are produced by DIFFERENT grants on a
+        DIFFERENT set of tables -- the append-only six for UPDATE, the nineteen
+        for DELETE -- so one proving live says nothing about the other. Run
+        against `reports`, which is one of the nineteen and is empty here, so a
+        permitted DELETE removes nothing.
+        """
+        table = "reports"
+
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(f"DELETE FROM {table}")
+
+        with conn.cursor() as cur:
+            cur.execute(f"GRANT DELETE ON {table} TO clinical_app")
+        conn.commit()
+        try:
+            app_conn.execute(f"DELETE FROM {table}")
+        except Exception as exc:  # pragma: no cover - this failing is the finding
+            pytest.fail(
+                "Granting DELETE did not make the statement succeed, so the DELETE "
+                f"refusals are not measuring the grant: {exc!r}"
+            )
+        finally:
+            with conn.cursor() as cur:
+                cur.execute(f"REVOKE DELETE ON {table} FROM clinical_app")
+            conn.commit()
+
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(f"DELETE FROM {table}")

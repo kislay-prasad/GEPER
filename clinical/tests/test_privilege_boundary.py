@@ -85,6 +85,13 @@ APPEND_ONLY = (
 # (to write the tombstone); DELETE is revoked -- D4 ruled tombstone, not delete.
 RETENTION_TABLES = ("vcfs", "interpretations", "reports")
 
+# D0b, the free win (human ruling, 2026-09-04). These two are INSERT-ONLY for
+# clinical_app: it may SELECT and INSERT, and UPDATE is revoked from it and from
+# PUBLIC. Named as an explicit exception list rather than left implicit, because
+# the guard below subtracts it from DELETE_REVOKED and a silent change to either
+# end of that subtraction is exactly what this file exists to catch.
+INSERT_ONLY_FOR_APP = ("interpretations", "vcfs")
+
 # The nineteen tables clinical_app may still SELECT, INSERT and UPDATE, and on
 # which DELETE was revoked by D0b half one (human ruling, 2026-09-04). Kept as
 # an explicit literal rather than derived from schema.sql at runtime: a test
@@ -111,6 +118,16 @@ DELETE_REVOKED = (
     "exception_events",
     "retention_policies",
 )
+
+# The seventeen on which clinical_app still holds UPDATE: the nineteen above,
+# less the two that D0b's free win made INSERT-only. Derived by subtraction and
+# then CHECKED FOR ARITY, so that a table entering or leaving either list
+# without the other being considered fails here rather than silently widening
+# or narrowing the permitted-direction guard.
+UPDATE_STILL_PERMITTED = tuple(t for t in DELETE_REVOKED if t not in INSERT_ONLY_FOR_APP)
+assert len(UPDATE_STILL_PERMITTED) == 17, UPDATE_STILL_PERMITTED
+assert len(DELETE_REVOKED) == 19, DELETE_REVOKED
+assert set(INSERT_ONLY_FOR_APP) <= set(DELETE_REVOKED), INSERT_ONLY_FOR_APP
 
 
 def _login_dsn(role: str) -> str:
@@ -394,7 +411,7 @@ class TestNothingDeletes:
         with pytest.raises(_insufficient_privilege()):
             app_conn.execute(f"DELETE FROM {table}")
 
-    @pytest.mark.parametrize("table", DELETE_REVOKED)
+    @pytest.mark.parametrize("table", UPDATE_STILL_PERMITTED)
     def test_update_is_still_permitted(self, conn, app_conn, table):
         # THE GUARD THAT MAKES THE REFUSAL ABOVE MEAN SOMETHING, and the one
         # that catches an over-broad revoke. If UPDATE had gone with DELETE,
@@ -405,6 +422,102 @@ class TestNothingDeletes:
     @pytest.mark.parametrize("table", DELETE_REVOKED)
     def test_select_is_still_permitted(self, app_conn, table):
         app_conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+
+
+# ─── D0b, the free win: interpretations and vcfs are INSERT-only ─────────────
+
+
+class TestInterpretationsAndVcfsAreInsertOnlyForTheApplication:
+    """
+    D0b's free win (human ruling, 2026-09-04). clinical_app's legitimate UPDATE
+    count on these two tables is ZERO -- enumerated by parsing every
+    SQL-executing call site and constant-folding its statement, not by searching
+    for a name. So UPDATE is revoked outright, with no trigger, no column-level
+    grant and no new role: the intended surface here is UNCONDITIONAL, unlike
+    reports, where UPDATE stays because the state machine legitimately needs it.
+
+    WHAT THIS ACTUALLY PROTECTS: interpretations.run_document is the evidence a
+    report's content hash is computed over. While clinical_app held UPDATE, a
+    rewritten run_document would make verify_report_integrity PASS against
+    tampered content -- the hash still matching because the thing it is a hash
+    OF had moved underneath it. That is the one tampering shape integrity
+    verification cannot see, and this closes it by prevention rather than
+    detection.
+
+    THE PERMITTED DIRECTIONS ARE HALF THE POINT, exactly as in TestNothingDeletes:
+    INSERT and SELECT must survive, and clinical_retention must still be able to
+    tombstone. A blanket revoke would break creation and purging outright while
+    every refusal below carried on passing.
+    """
+
+    @pytest.mark.parametrize("table", INSERT_ONLY_FOR_APP)
+    def test_update_is_refused(self, app_conn, table):
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(f"UPDATE {table} SET tombstoned_at = now()")
+
+    def test_the_run_document_column_specifically_cannot_be_rewritten(self, app_conn):
+        # Named on its own rather than left to the parametrised case above,
+        # because this column is the reason the ruling was taken: it is the one
+        # whose mutation defeats hash verification instead of being caught by it.
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute("UPDATE interpretations SET run_document = '{}'::jsonb")
+
+    @pytest.mark.parametrize("table", INSERT_ONLY_FOR_APP)
+    def test_insert_is_still_permitted(self, app_conn, table):
+        # A DELIBERATELY INVALID INSERT. PostgreSQL checks privilege before it
+        # checks constraints, so a row that cannot satisfy NOT NULL still proves
+        # which of the two walls it hit: InsufficientPrivilege means the grant is
+        # gone, any other error means the grant is present and the row was simply
+        # bad. Building a valid row here would need the whole FK chain and would
+        # measure the fixture rather than the privilege.
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        with pytest.raises(psycopg.Error) as caught:
+            app_conn.execute(f"INSERT INTO {table} DEFAULT VALUES")
+        assert not isinstance(caught.value, _insufficient_privilege()), (
+            f"clinical_app has lost INSERT on {table} -- the revoke was over-broad"
+        )
+
+    @pytest.mark.parametrize("table", INSERT_ONLY_FOR_APP)
+    def test_select_is_still_permitted(self, app_conn, table):
+        app_conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+
+    @pytest.mark.parametrize("table", INSERT_ONLY_FOR_APP)
+    def test_retention_can_still_tombstone_them(self, retention_conn, seeded, table):
+        # THE RULING SAID SO EXPLICITLY: the retention principal must keep its
+        # tombstone UPDATE on both tables, and that is to be VERIFIED rather than
+        # assumed to survive a revoke aimed at a different role. Row count and
+        # read-back, not "raises nothing" -- an UPDATE matching no row also
+        # raises nothing.
+        now = datetime.datetime(2026, 9, 4, 12, 30, 0, tzinfo=timezone.utc)
+        cur = retention_conn.execute(
+            f"UPDATE {table} SET tombstoned_at = %s, tombstoned_by = %s WHERE id = %s",
+            (now, seeded["user_id"], seeded[table]),
+        )
+        assert cur.rowcount == 1, f"clinical_retention's tombstone on {table} matched no row"
+        landed = retention_conn.execute(
+            f"SELECT tombstoned_at FROM {table} WHERE id = %s", (seeded[table],)
+        ).fetchone()[0]
+        assert landed == now, f"the tombstone did not persist on {table}"
+
+    def test_this_refusal_can_itself_fail(self, conn, app_conn):
+        # KNOWN-POSITIVE, and separate from the DELETE and append-only ones
+        # already in this file: this refusal comes from a different grant on a
+        # different table set, so neither of those proving live says anything
+        # about this one. Grant UPDATE back and the refusal must disappear;
+        # revoke it and the refusal must return.
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute("UPDATE interpretations SET run_document = run_document")
+
+        with conn.cursor() as cur:
+            cur.execute("GRANT UPDATE ON interpretations TO clinical_app")
+        conn.commit()
+        app_conn.execute("UPDATE interpretations SET run_document = run_document")
+
+        with conn.cursor() as cur:
+            cur.execute("REVOKE UPDATE ON interpretations FROM clinical_app")
+        conn.commit()
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute("UPDATE interpretations SET run_document = run_document")
 
 
 # ─── guard 3: the refusal assertion is proven capable of failing ─────────────

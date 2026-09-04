@@ -1092,9 +1092,43 @@ REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_
 GRANT  SELECT, INSERT, UPDATE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
        patients, external_identifiers, consents, tests, test_genes, orders, samples,
-       sequencing_runs, vcfs, interpretations, reports,
+       sequencing_runs, reports,
        exceptions, exception_events, retention_policies
     TO clinical_app;
+
+-- D0b, the free win (human ruling, 2026-09-04): interpretations and vcfs are
+-- INSERT-ONLY for clinical_app. They are absent from the UPDATE grant above and
+-- the privilege is revoked explicitly below, from clinical_app and from PUBLIC.
+--
+-- WHY IT COSTS NOTHING: clinical_app's legitimate UPDATE count on both tables is
+-- ZERO -- enumerated by parsing every SQL-executing call site and constant-folding
+-- its statement, not by searching for a name. Every write either role makes to
+-- these two tables is one of five:
+--     data_access.py:1649  create_vcf()               INSERT
+--     data_access.py:1723  create_interpretation()    INSERT
+--     data_access.py:1844  create_reanalysis()        INSERT   (spec 15.3: re-analysis
+--                              creates a NEW interpretation, it never updates the old one)
+--     retention.py:310     _purge_interpretations()   UPDATE   -- clinical_RETENTION
+--     retention.py:358     _purge_vcfs()              UPDATE   -- clinical_RETENTION
+-- The two UPDATEs belong to a different role, which keeps its grant below. So this
+-- removes a privilege the application has never once exercised, exactly as the
+-- DELETE revoke above did.
+--
+-- WHAT IT BUYS, AND IT IS NOT SMALL: interpretations.run_document is the evidence a
+-- report's content hash is computed over. It is written at INSERT and never updated.
+-- While clinical_app held UPDATE, a rewritten run_document would make
+-- verify_report_integrity pass against tampered content -- the hash would still match,
+-- because the thing it is a hash OF had moved. Detection could not see it. This closes
+-- that by PREVENTION rather than detection, and needs no trigger, no column-level
+-- grant, no new role and no state-conditional logic, because the intended surface here
+-- is unconditional: never updated, by anyone, in any state.
+--
+-- Contrast reports, immediately above, where UPDATE deliberately stays: that table IS
+-- legitimately updated through its state machine, so protecting it is state-conditional
+-- and a grant cannot express it. That is the trigger's job, not this commit's.
+GRANT  SELECT, INSERT ON interpretations, vcfs TO clinical_app;
+REVOKE UPDATE         ON interpretations, vcfs FROM clinical_app;
+REVOKE UPDATE         ON interpretations, vcfs FROM PUBLIC;
 REVOKE DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
        patients, external_identifiers, consents, tests, test_genes, orders, samples,

@@ -1756,6 +1756,139 @@ class DataAccess:
         )
         return report_id
 
+    @auditable(
+        action="reanalysis_created",
+        resource_type="interpretation",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "vcf_id": str(params.get("vcf_id")),
+            "parent_interpretation_id": str(params.get("parent_interpretation_id")),
+        },
+    )
+    @transactional
+    def create_reanalysis(
+        self,
+        session: Session,
+        vcf_id: uuid.UUID,
+        parent_interpretation_id: uuid.UUID,
+        run_document: dict[str, Any],
+    ) -> uuid.UUID:
+        """
+        Spec 15.3: "Re-analysis produces a new interpretation, a new report,
+        and a new lineage branch from the same VCF. It does not update the
+        old one." This creates the new interpretation only; call
+        create_report() with the returned id exactly as for a fresh
+        interpretation -- the two-call pattern is unchanged, only the source
+        of the interpretation differs.
+
+        Human ruling 1 (who may trigger): same act as create_interpretation,
+        with a different trigger -- create_interpretation has no explicit
+        role gate today, so this does not add one either. Widening either
+        method's gating is a separate decision, not this commit's.
+
+        Human ruling 2 (predecessor state): not gated on the parent's report
+        state. 15.3 re-interprets the VCF, not the report -- a draft or
+        under-review report on the parent must not block new evidence being
+        applied to the underlying data. No report-state query appears here.
+
+        Human ruling 3 (branching): parent_interpretation_id is the caller's
+        explicit claim, never derived as "the current tip" of anything --
+        A->B and A->C are both valid, and so is re-branching from B after C
+        exists. The only validation is that the named parent exists, is in
+        this org, and belongs to the named vcf_id -- so a caller who passes
+        a parent from a different VCF is refused rather than silently
+        re-analysing the wrong data.
+
+        submission_key: interpretations.submission_key is UNIQUE per org
+        (Phase 4a idempotency for original submissions). Reusing that
+        formula (content_hash|platform_sample_id) here would make every
+        re-analysis of the same VCF collide with the original AND with each
+        other, which directly contradicts ruling 3's "A->B and A->C both
+        valid". A re-analysis is a deliberate new act, not a resubmission,
+        so it gets a key that is unconditionally unique per call instead of
+        idempotent on content.
+        """
+        vcf = self._query_one(
+            "SELECT id FROM vcfs WHERE id = %s AND org_id = %s",
+            (vcf_id, session.org_id),
+        )
+        if vcf is None:
+            raise NotFoundError(f"VCF {vcf_id} not found")
+
+        parent = self._query_one(
+            "SELECT vcf_id FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, parent_interpretation_id),
+        )
+        if parent is None:
+            raise NotFoundError(f"Parent interpretation {parent_interpretation_id} not found")
+        parent_vcf_id = parent[0]
+        if parent_vcf_id != vcf_id:
+            raise ValueError(
+                f"Parent interpretation {parent_interpretation_id} belongs to VCF "
+                f"{parent_vcf_id}, not the named VCF {vcf_id}"
+            )
+
+        interpretation_id = uuid.uuid4()
+        now = self._clock.now()
+        submission_key = f"reanalysis:{parent_interpretation_id}:{interpretation_id}"
+        self._execute(
+            "INSERT INTO interpretations (org_id, id, vcf_id, run_document, submission_key, "
+            "parent_interpretation_id, created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                interpretation_id,
+                vcf_id,
+                json.dumps(run_document),
+                submission_key,
+                parent_interpretation_id,
+                now,
+                session.user_id,
+            ),
+        )
+        return interpretation_id
+
+    @auditable(
+        action="reanalyses_query",
+        resource_type="interpretations",
+        requires_session=True,
+        auditable=True,
+        details_builder=lambda params, result: {
+            "parent_interpretation_id": str(params.get("parent_interpretation_id")),
+        },
+    )
+    @transactional
+    def find_reanalyses(self, session: Session, parent_interpretation_id: uuid.UUID) -> List[dict[str, Any]]:
+        """
+        The read path spec 15.3's lineage branch needs: every interpretation
+        that names `parent_interpretation_id` as its parent, i.e. the direct
+        children of one node in the branch (ruling 3 allows more than one --
+        A->B and A->C both exist as siblings). Ordered by (created_at, id)
+        for a stable, total order, same discipline as
+        find_interpretations_by_criteria.
+        """
+        rows = self._query(
+            "SELECT id, vcf_id, run_document, created_at, created_by "
+            "FROM interpretations WHERE org_id = %s AND parent_interpretation_id = %s "
+            "ORDER BY created_at, id",
+            (session.org_id, parent_interpretation_id),
+        )
+        results = []
+        for row in rows:
+            interp_id, vcf_id, run_document_json, created_at, created_by = row
+            run_doc = json.loads(run_document_json) if isinstance(run_document_json, str) else run_document_json
+            results.append(
+                {
+                    "interpretation_id": interp_id,
+                    "vcf_id": vcf_id,
+                    "parent_interpretation_id": parent_interpretation_id,
+                    "run_document": run_doc,
+                    "created_at": created_at,
+                    "created_by": created_by,
+                }
+            )
+        return results
+
     # Read methods (org-isolated, non-auditable)
 
     @auditable(

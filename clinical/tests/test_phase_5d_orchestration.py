@@ -179,6 +179,60 @@ class TestValidateOrderForSubmission:
         assert exc.owner == "orderer"
         assert exc.status == ExceptionStatus.OPEN.value
 
+    def test_withdrawn_consent_creates_exception(
+        self, dao, session_admin, patient_and_order, sample_with_qc, tmp_path, conn
+    ):
+        """
+        Spec 6.2/6.3: consent is a precondition on submission, and withdrawal
+        halts further processing. The gate is check_consent (already wired
+        into this method); withdraw_consent is the record. Mirrors
+        test_missing_consent_creates_exception above -- same gate, different
+        cause -- because that test only proves the gate for consent that was
+        NEVER granted, not for valid consent withdrawn AFTER the order (and
+        its consent) already existed.
+        """
+        patient_id, order_id = patient_and_order
+        sample_id = sample_with_qc
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT consent_id FROM consents WHERE org_id = %s AND patient_id = %s "
+                "AND scope = %s AND withdrawn_at IS NULL AND superseded_by IS NULL",
+                (session_admin.org_id, patient_id, "testing"),
+            )
+            consent_id = cur.fetchone()[0]
+        dao.withdraw_consent(session_admin, consent_id)
+
+        vcf_file = tmp_path / "test.vcf"
+        vcf_file.write_text(
+            "##fileformat=VCFv4.2\n"
+            "##assembly=GRCh38\n"
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
+            "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
+        )
+
+        success, exc_id = dao.validate_order_for_submission(
+            session_admin,
+            order_id,
+            patient_id,
+            sample_id,
+            str(vcf_file),
+            "GRCh38",
+            "testing",  # the scope that now has withdrawn, not missing, consent
+            "system",
+        )
+
+        assert success is False
+        assert exc_id is not None
+
+        exceptions = dao.get_exceptions_for_order(session_admin, order_id)
+        assert len(exceptions) == 1
+        exc = exceptions[0]
+        assert exc.reason_code == ExceptionReasonCode.CONSENT_WITHDRAWN.value
+        assert exc.category == ExceptionCategory.PRECONDITION_FAILURE.value
+        assert exc.owner == "orderer"
+        assert exc.status == ExceptionStatus.OPEN.value
+
     def test_missing_vcf_file_creates_exception(self, dao, session_admin, patient_and_order, sample_with_qc, conn):
         """When VCF file is missing, orchestration creates exception."""
         patient_id, order_id = patient_and_order

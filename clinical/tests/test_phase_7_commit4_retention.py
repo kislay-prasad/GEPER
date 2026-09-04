@@ -39,9 +39,11 @@ from clinical.data_access import (
     SystemClock,
 )
 from clinical.retention import (
+    NABL_VCF_RETENTION_DAYS,
     NoSystemPrincipalError,
     RetentionPolicyMissingError,
     RetentionPrincipal,
+    seed_nabl_default_retention_policies,
 )
 
 DSN = os.getenv("CLINICAL_TEST_DSN")
@@ -213,6 +215,63 @@ class TestRetentionPolicyConfiguration:
 
         with pytest.raises(AuthorizationError):
             dao.set_retention_policy(interp_session, "report", 30)
+
+
+class TestSeedNablDefaultRetentionPolicies:
+    """
+    COUNSEL-d2's engineering half: populate the settled NABL floor for vcf,
+    leave run_document/report unconfigured pending counsel. The refusal path
+    is what matters -- purging an unconfigured class must fail loudly with
+    the specific error, not a base class, same discipline as everywhere else
+    the raises(Exception) rule is carded.
+    """
+
+    def test_configures_vcf_to_the_nabl_default(self, dao, session_a):
+        seed_nabl_default_retention_policies(dao, session_a)
+        assert dao.get_retention_policy(session_a, "vcf") == NABL_VCF_RETENTION_DAYS
+
+    def test_leaves_run_document_and_report_unconfigured(self, dao, session_a):
+        seed_nabl_default_retention_policies(dao, session_a)
+        assert dao.get_retention_policy(session_a, "run_document") is None
+        assert dao.get_retention_policy(session_a, "report") is None
+
+    def test_seeded_vcf_policy_is_past_its_window_but_blocked_by_its_live_interpretation(
+        self, dao, conn, session_a, retention
+    ):
+        """
+        NOT a "purge succeeds" test -- it deliberately cannot be one under this
+        seed function's own config. D6 blocks a vcf purge behind any
+        not-yet-tombstoned interpretation of it (TestPurgeExpiredVcf below
+        proves the same guard directly), and interpretations only tombstone
+        via the "run_document" class, which this seed function leaves
+        unconfigured on purpose (awaiting counsel). So a vcf whose date
+        window has genuinely passed is STILL correctly refused -- not
+        because the date check failed, but because nothing can retire its
+        interpretation yet. Worth stating plainly: seeding "vcf" alone is
+        safe (nothing purges prematurely) but not yet SUFFICIENT on its own
+        to ever tombstone anything, until "run_document" also has a policy.
+        """
+        dao._create_system_session(session_a.org_id)
+        seed_nabl_default_retention_policies(dao, session_a)
+        chain = _full_chain(dao, conn, session_a)
+        _release(conn, session_a, chain["report_id"], NOW - timedelta(days=NABL_VCF_RETENTION_DAYS + 1))
+
+        result = retention.purge_expired(session_a.org_id, "vcf", now=NOW)
+        assert result.tombstoned_ids == []
+
+    def test_purge_against_unconfigured_run_document_fails_loudly(self, dao, conn, session_a, retention):
+        seed_nabl_default_retention_policies(dao, session_a)
+        _full_chain(dao, conn, session_a)
+
+        with pytest.raises(RetentionPolicyMissingError):
+            retention.purge_expired(session_a.org_id, "run_document", now=NOW)
+
+    def test_purge_against_unconfigured_report_fails_loudly(self, dao, conn, session_a, retention):
+        seed_nabl_default_retention_policies(dao, session_a)
+        _full_chain(dao, conn, session_a)
+
+        with pytest.raises(RetentionPolicyMissingError):
+            retention.purge_expired(session_a.org_id, "report", now=NOW)
 
 
 class TestPurgeExpiredReport:

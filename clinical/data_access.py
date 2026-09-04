@@ -4159,6 +4159,131 @@ class DataAccess:
                 f"Report is in '{state}' state -- spec 13.4: no report leaves the platform without approval."
             )
 
+    # ─── Phase 7 commit 2: Amendments (ISO 15189 7.4.1.8) ──────────────────
+
+    @auditable(
+        action="amendment_created",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        reason="Amendment creation (ISO 15189 7.4.1.8): original never modified, traceability recorded",
+    )
+    @transactional
+    def create_amendment(
+        self, session: Session, original_report_id: uuid.UUID, reason: str
+    ) -> tuple[uuid.UUID, uuid.UUID]:
+        """
+        Create an amendment: a new report referencing an existing approved
+        report, with the reason recorded and traceability to what it
+        replaces maintained by a forward pointer, not a mutated column.
+
+        Spec 15.2 (ISO 15189 7.4.1.8) requires:
+          - The original report is never modified, never withdrawn from the record
+          - Traceability to the original is maintained
+          - Ordering clinician is notified
+
+        This method writes three rows and nothing else: a new `reports` row
+        (the amendment itself, draft state), one `amendments` row, and one
+        `amendment_notifications` row. No UPDATE anywhere -- amendments and
+        amendment_notifications are append-only against clinical_app (see
+        schema.sql's grants), and this method does not attempt to be the
+        exception. "Current amendment" is derived by query (the row named
+        in `supersedes_amendment_id` by no other row), not stored as a
+        boolean column that a later write would have to keep in sync.
+
+        Delivery mechanism for the notification (email, SMS, etc.) is
+        deferred to a later phase; this records the event itself, not the
+        transport. Recorded as sent (read=FALSE: may not be read yet, but
+        the fact of the notification is recorded).
+
+        Preconditions:
+          - Original report must exist in this org
+          - Original report must be approved or released (not in draft/under_review/returned)
+          - Reason for amendment is NOT NULL
+
+        A second (or later) amendment of the same original chains off the
+        current one: this method looks up whatever amendment of
+        `original_report_id` nothing yet supersedes and records the new
+        row's `supersedes_amendment_id` as that id, exactly the way
+        reviewer_claims.supersedes chains. NULL means this is the first
+        amendment of this original.
+
+        Returns: tuple of (amendment_report_id, notification_id)
+        """
+        original = self._query_one(
+            "SELECT state, interpretation_id FROM reports WHERE id = %s AND org_id = %s",
+            (original_report_id, session.org_id),
+        )
+        if original is None:
+            raise NotFoundError(f"Original report {original_report_id} not found")
+
+        state, interpretation_id = original
+
+        if state not in ("approved", "released"):
+            raise ValueError(
+                f"Original report is in '{state}' state; only approved or released reports may be amended."
+            )
+
+        if not reason or not reason.strip():
+            raise ValueError("reason for amendment is required and cannot be empty")
+
+        # Find the current (non-superseded) amendment using NOT EXISTS instead of NOT IN
+        # to reduce lock contention under concurrent amendments.
+        current_amendment = self._query_one(
+            "SELECT a.id FROM amendments a "
+            "WHERE a.org_id = %s AND a.original_report_id = %s "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM amendments b "
+            "  WHERE b.org_id = %s AND b.supersedes_amendment_id = a.id"
+            ")",
+            (session.org_id, original_report_id, session.org_id),
+        )
+        supersedes_amendment_id = current_amendment[0] if current_amendment else None
+
+        now = self._clock.now()
+
+        # The amendment IS a new report: its own state machine entry, draft
+        # to start, linked to the same interpretation as the original.
+        amendment_report_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s)",
+            (session.org_id, amendment_report_id, interpretation_id, now, session.user_id),
+        )
+
+        amendment_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO amendments (org_id, id, original_report_id, amendment_report_id, reason, "
+            "supersedes_amendment_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                amendment_id,
+                original_report_id,
+                amendment_report_id,
+                reason,
+                supersedes_amendment_id,
+                now,
+                session.user_id,
+            ),
+        )
+
+        notification_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO amendment_notifications (org_id, id, amendment_report_id, reason_for_change, "
+            "delivered_to_role, read, created_at, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                notification_id,
+                amendment_report_id,
+                reason,
+                "ordering_clinician",
+                False,  # Notification sent but not read
+                now,
+                session.user_id,
+            ),
+        )
+
+        return amendment_report_id, notification_id
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

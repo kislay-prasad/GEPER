@@ -739,6 +739,129 @@ CREATE INDEX idx_release_org_report
     ON release_events (org_id, report_id, released_at);
 
 
+-- ─── Phase 7 commit 2: Amendments (ISO 15189 7.4.1.8) ──────────────────────
+--
+-- Amendment records an existing approved report was revised: a new report is
+-- created, the original is never modified. Both original and amendment stay
+-- live and queryable. Which amendment is "current" is derivable, not stored
+-- (the one with supersedes_amendment_id naming it -- see the query below).
+--
+-- Spec 15.2 requires the original report to be never withdrawn from the record
+-- and traceable alongside the amendment. This table makes both constraints
+-- structural: original_report_id is the immutable reference to what was
+-- revised, and append-only prevents an amendment from being hidden or reverted.
+--
+-- Amendments are append-only: no UPDATE, only INSERT. A new amendment INSERTs
+-- one row naming, in supersedes_amendment_id, the amendment it replaces (NULL
+-- if it is the first amendment of this original). The row it replaces is never
+-- touched. Pattern, identical in shape to reviewer_claims.supersedes:
+--
+--   A(supersedes=NULL) <- B(supersedes=A) <- C(supersedes=B, current)
+--
+-- "Current" is the row nothing else supersedes -- a query, not a column, for
+-- the same reason reviewer_claims.supersedes is a query and not a column:
+-- the superseding row does not exist yet at the moment the row it will
+-- eventually supersede is inserted, so there is no backward pointer to fill
+-- in without an UPDATE, and this table has none to give.
+
+CREATE TABLE amendments (
+    org_id              UUID        NOT NULL,
+    id                  UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    original_report_id  UUID        NOT NULL,
+
+    -- The new report this amendment IS: create_amendment() creates a fresh
+    -- reports row (draft state, same interpretation as the original) and
+    -- records its id here. Without this column an amendments row cannot
+    -- name its own report, which create_amendment() needs to return and
+    -- amendment_notifications needs to reference.
+    amendment_report_id UUID        NOT NULL,
+
+    -- Reason for change (NOT NULL). ISO 15189 7.4.1.8 requires the reason
+    -- a report was amended to be retrievable.
+    reason              TEXT        NOT NULL,
+
+    -- This amendment supersedes the one named here (NULL for the first amendment).
+    -- Append-only: written at INSERT, never updated. The new amendment row
+    -- declares what it replaces, just like reviewer_claims.supersedes.
+    -- Current amendment: the one that no other amendment supersedes.
+    supersedes_amendment_id UUID,
+
+    created_at          TIMESTAMPTZ NOT NULL,
+    created_by          UUID        NOT NULL,
+
+    CONSTRAINT fk_amendment_original
+        FOREIGN KEY (org_id, original_report_id) REFERENCES reports (org_id, id),
+    CONSTRAINT fk_amendment_report
+        FOREIGN KEY (org_id, amendment_report_id) REFERENCES reports (org_id, id),
+    CONSTRAINT fk_amendment_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_amendment_supersedes
+        FOREIGN KEY (org_id, supersedes_amendment_id) REFERENCES amendments (org_id, id),
+    CONSTRAINT uk_amendment_org_id UNIQUE (org_id, id)
+);
+
+-- Amendments are immutable (append-only): the same rule as audit_log,
+-- reviewer_claims, and release_events. No row update, only INSERT.
+CREATE INDEX idx_amendment_org_original
+    ON amendments (org_id, original_report_id);
+
+-- Current amendment for one original (not superseded by any other amendment
+-- of the same original):
+--   SELECT * FROM amendments
+--   WHERE org_id = ? AND original_report_id = ?
+--     AND id NOT IN (
+--       SELECT supersedes_amendment_id FROM amendments
+--       WHERE org_id = ? AND original_report_id = ? AND supersedes_amendment_id IS NOT NULL
+--     )
+
+
+-- ─── Phase 7 commit 2: Amendment notifications ──────────────────────────────
+--
+-- Records that an ordering clinician was notified of an amendment (ISO 15189
+-- 7.4.1.8 requires notification). The notification is recorded AS SENT at the
+-- moment of amendment creation: read=FALSE initially, meaning the clinician
+-- may not have read it yet, but the fact of the notification is recorded.
+-- Delivery mechanism (email, SMS, etc.) is deferred to a later phase; this
+-- table records the event itself, not the transport.
+
+CREATE TABLE amendment_notifications (
+    org_id                  UUID        NOT NULL,
+    id                      UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    amendment_report_id     UUID        NOT NULL,
+
+    -- Reason for the amendment (denormalized from amendments.reason for
+    -- queryability without a join). The notification includes this so the
+    -- ordering clinician can understand why the report was revised.
+    reason_for_change       TEXT        NOT NULL,
+
+    -- The role the notification was delivered to (e.g., 'ordering_clinician').
+    -- Free text pending the role vocabulary of a later commit; enumerating it
+    -- now would fix the vocabulary before the platform's delivery paths exist.
+    delivered_to_role       TEXT        NOT NULL,
+
+    -- read=FALSE at creation: the notification was sent but the clinician may
+    -- not have read it yet. read=TRUE would be set by a later phase when
+    -- the clinician opens the notification in-app or delivery is confirmed.
+    read                    BOOLEAN     NOT NULL DEFAULT FALSE,
+
+    created_at              TIMESTAMPTZ NOT NULL,
+    created_by              UUID        NOT NULL,
+
+    CONSTRAINT fk_notification_amendment
+        FOREIGN KEY (org_id, amendment_report_id) REFERENCES reports (org_id, id),
+    CONSTRAINT fk_notification_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT uk_notification_org_id UNIQUE (org_id, id)
+);
+
+CREATE INDEX idx_notification_org_amendment
+    ON amendment_notifications (org_id, amendment_report_id);
+
+CREATE INDEX idx_notification_org_unread
+    ON amendment_notifications (org_id, read)
+    WHERE read = FALSE;
+
+
 -- ─── Phase 5d: Exception workflow (order exceptions and resolution tracking) ─
 
 CREATE TABLE exceptions (
@@ -829,12 +952,14 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 -- WITH NO EXCEPTION. There is no column-level UPDATE grant here and there
 -- should never be one: the supersedes pointer is written at INSERT by the new
 -- row, so correcting the record never requires touching an existing one.
--- These two tables have exactly the privileges audit_log has, and a future
--- change that needs UPDATE on either is a design error rather than a missing
--- grant.
-GRANT  SELECT, INSERT ON reviewer_claims, release_events TO clinical_app;
-REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM clinical_app;
-REVOKE UPDATE, DELETE ON reviewer_claims, release_events FROM PUBLIC;
+-- These tables have exactly the privileges audit_log has, and a future
+-- change that needs UPDATE on any of them is a design error rather than a
+-- missing grant. amendments and amendment_notifications are append-only by the
+-- same reasoning: an amendment and its notification are recorded at creation
+-- and never touched again. The forward pointer is immutable once written.
+GRANT  SELECT, INSERT ON reviewer_claims, release_events, amendments, amendment_notifications TO clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications FROM clinical_app;
+REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications FROM PUBLIC;
 
 GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,

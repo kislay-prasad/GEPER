@@ -1149,3 +1149,206 @@ GRANT  SELECT, UPDATE              ON vcfs, interpretations, reports TO clinical
 REVOKE DELETE                      ON vcfs, interpretations, reports FROM clinical_retention;
 GRANT  INSERT                      ON audit_log TO clinical_retention;
 GRANT  USAGE, SELECT               ON SEQUENCE audit_log_log_id_seq TO clinical_retention;
+
+
+-- ─── D0b half two: content immutability (BEFORE UPDATE triggers) ───────────
+--
+-- Measured, not assumed (card phase7-d0b-approved-report-privilege-layer-
+-- protection): a CHECK constraint cannot reference OLD ("missing FROM-clause
+-- entry for table \"old\""). Row Level Security cannot compare OLD to NEW --
+-- USING sees the old row, WITH CHECK sees the new row, nothing sees both --
+-- and it fails SILENTLY (rowcount=0, no error), which would have broken
+-- release: approved -> released is a legitimate UPDATE of an
+-- already-approved row (data_access.py's _release_report), and
+-- release_events is inserted FIRST, so a silently-refused state write would
+-- release a report that still said "approved". Worse than no protection.
+-- A BEFORE UPDATE TRIGGER is the only mechanism of the three that can see
+-- both old and new, raise loudly, and still let a legitimate state advance
+-- through.
+--
+-- THE RULE, human ruling: "state may ADVANCE, content may NOT CHANGE."
+-- Not "an approved report may not be updated" -- that is the RLS finding
+-- restated, and it is wrong for the same reason.
+--
+-- WHAT EACH TABLE'S PROTECTION BUYS (human ruling, stated per table so it
+-- survives into the schema rather than living only in chat):
+--   reports.content_hash: DETECTION. verify_report_integrity() recomputes
+--     the hash and compares it against the value STORED on this row
+--     (data_access.py, `return current_hash == stored_hash`). Protecting
+--     the stored value does not stop an attacker altering run_document or
+--     reviewer_claims -- it stops them making the ALTERED content verify,
+--     by denying them the one thing that would let a lie pass the check.
+--   interpretations.run_document: PREVENTION. There is no verification
+--     step for this column the way there is for reports -- protecting it
+--     is the only thing standing between the row and a silent rewrite.
+--   vcfs (vcf_path, content_hash): PREVENTION, and it also protects the
+--     MEANING of interpretations.submission_key (Phase 4a), which is
+--     derived from this row's content_hash at submission time and would
+--     silently stop matching what it was computed from if this row could
+--     be altered afterward.
+--
+-- EXEMPTION, KEYED ON PRIVILEGE NOT ON current_user (human ruling 4, verbatim:
+-- "Role names are strings that change; a privilege check is what the
+-- guarantee actually rests on"). tombstoned_at/tombstoned_by are the one
+-- pair of columns a non-application principal (clinical_retention) may
+-- write. The trigger below checks has_column_privilege(current_user,
+-- TG_TABLE_NAME, 'tombstoned_by', 'UPDATE') rather than current_user =
+-- 'clinical_retention' -- a role-name check would silently stop working
+-- the moment the role is renamed, and would not follow a grant given to
+-- some future second retention-capable role. The privilege check follows
+-- the grant, wherever it goes. This is why clinical_app's own UPDATE on
+-- reports/interpretations/vcfs is rebuilt at COLUMN level, excluding
+-- tombstoned_at/tombstoned_by, near the end of this file: the privilege the
+-- trigger keys on must actually distinguish the two roles, and clinical_app's
+-- original blanket table-level UPDATE (from the big GRANT above) would
+-- otherwise make the check pass for it too -- see that section's own comment
+-- for why a column-level REVOKE alone does not achieve this.
+--
+-- BINDS THE SUPERUSER TOO (human ruling 3): a plain trigger fires for every
+-- role including superuser -- there is no automatic bypass the way Row
+-- Level Security bypasses the table owner and superuser by default. Nothing
+-- in the function below checks for or exempts a superuser role; the
+-- content-immutability checks are pure OLD/NEW value comparisons with no
+-- privilege escape at all, so no role, however privileged, can pass them.
+-- A migration that genuinely needs to touch protected content is a
+-- deliberate act that disables the trigger explicitly
+-- (ALTER TABLE ... DISABLE TRIGGER ...) and re-enables it afterward; silent
+-- bypass is what this trigger exists to remove.
+--
+-- LOUD REFUSAL (human ruling 2): RAISE EXCEPTION aborts the statement (and,
+-- inside a transaction, the transaction) rather than silently doing
+-- nothing, which is the RLS finding's exact failure mode. This means
+-- data_access.py's write paths to these three tables can now fail in a way
+-- they structurally could not before -- see ImmutabilityViolationError in
+-- data_access.py, and _execute()'s translation of SQLSTATE P0001 into it.
+--
+-- NOT COVERED HERE: DELETE. That REVOKE landed separately (Ryan, D0b half
+-- one, phase7-d0b-approved-report-privilege-layer-protection). This trigger
+-- adds UPDATE protection on top of it; it does not touch DELETE grants.
+
+CREATE OR REPLACE FUNCTION enforce_content_immutability() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'reports' THEN
+        -- state: always mutable. Spec 13.1's state machine (draft ->
+        -- under_review -> approved -> released, returned -> under_review)
+        -- is enforced by application preconditions, not by this trigger --
+        -- this trigger only ever asks "did content change", never "is this
+        -- transition legal".
+        --
+        -- approver_id/approved_at/content_hash: write-once together (the
+        -- reports_approval_complete CHECK already requires all three NULL
+        -- or all three set). Legal exactly once, at approval, moving from
+        -- NULL to a value; frozen forever after. _approve_report only ever
+        -- reaches this UPDATE when state = 'under_review', which the
+        -- reports_released_states_need_approval CHECK guarantees means
+        -- approver_id IS NULL, so this never fires against a genuine
+        -- approval -- it exists for what a bug or a raw-SQL bypass would
+        -- attempt.
+        IF OLD.approver_id IS NOT NULL AND (
+            NEW.approver_id IS DISTINCT FROM OLD.approver_id OR
+            NEW.approved_at IS DISTINCT FROM OLD.approved_at OR
+            NEW.content_hash IS DISTINCT FROM OLD.content_hash
+        ) THEN
+            RAISE EXCEPTION 'reports: approval facts are immutable once set (report %)', OLD.id;
+        END IF;
+
+        -- identity and provenance: never legitimately change after INSERT.
+        IF NEW.org_id IS DISTINCT FROM OLD.org_id
+            OR NEW.interpretation_id IS DISTINCT FROM OLD.interpretation_id
+            OR NEW.created_at IS DISTINCT FROM OLD.created_at
+            OR NEW.created_by IS DISTINCT FROM OLD.created_by
+        THEN
+            RAISE EXCEPTION 'reports: identity and provenance columns are immutable (report %)', OLD.id;
+        END IF;
+
+        -- tombstoned_at/tombstoned_by: privilege-gated, see comment above.
+        IF (NEW.tombstoned_at IS DISTINCT FROM OLD.tombstoned_at
+            OR NEW.tombstoned_by IS DISTINCT FROM OLD.tombstoned_by)
+            AND NOT has_column_privilege(current_user, TG_TABLE_NAME, 'tombstoned_by', 'UPDATE')
+        THEN
+            RAISE EXCEPTION 'reports: tombstoning requires the retention principal''s privilege (report %)', OLD.id;
+        END IF;
+
+    ELSIF TG_TABLE_NAME = 'interpretations' THEN
+        -- No column here is ever legitimately rewritten after INSERT --
+        -- unlike reports, interpretations has no state machine and no
+        -- write-once-then-frozen fact pattern. Full immutability except the
+        -- privilege-gated tombstone pair.
+        IF NEW.org_id IS DISTINCT FROM OLD.org_id
+            OR NEW.vcf_id IS DISTINCT FROM OLD.vcf_id
+            OR NEW.run_document IS DISTINCT FROM OLD.run_document
+            OR NEW.submission_key IS DISTINCT FROM OLD.submission_key
+            OR NEW.parent_interpretation_id IS DISTINCT FROM OLD.parent_interpretation_id
+            OR NEW.created_at IS DISTINCT FROM OLD.created_at
+            OR NEW.created_by IS DISTINCT FROM OLD.created_by
+        THEN
+            RAISE EXCEPTION 'interpretations: content and lineage columns are immutable (interpretation %)', OLD.id;
+        END IF;
+
+        IF (NEW.tombstoned_at IS DISTINCT FROM OLD.tombstoned_at
+            OR NEW.tombstoned_by IS DISTINCT FROM OLD.tombstoned_by)
+            AND NOT has_column_privilege(current_user, TG_TABLE_NAME, 'tombstoned_by', 'UPDATE')
+        THEN
+            RAISE EXCEPTION 'interpretations: tombstoning requires the retention principal''s privilege (interpretation %)', OLD.id;
+        END IF;
+
+    ELSIF TG_TABLE_NAME = 'vcfs' THEN
+        -- Same reasoning as interpretations: nothing here is legitimately
+        -- rewritten after INSERT except the tombstone pair.
+        IF NEW.org_id IS DISTINCT FROM OLD.org_id
+            OR NEW.sequencing_run_id IS DISTINCT FROM OLD.sequencing_run_id
+            OR NEW.vcf_path IS DISTINCT FROM OLD.vcf_path
+            OR NEW.content_hash IS DISTINCT FROM OLD.content_hash
+            OR NEW.created_at IS DISTINCT FROM OLD.created_at
+            OR NEW.created_by IS DISTINCT FROM OLD.created_by
+        THEN
+            RAISE EXCEPTION 'vcfs: content columns are immutable (vcf %)', OLD.id;
+        END IF;
+
+        IF (NEW.tombstoned_at IS DISTINCT FROM OLD.tombstoned_at
+            OR NEW.tombstoned_by IS DISTINCT FROM OLD.tombstoned_by)
+            AND NOT has_column_privilege(current_user, TG_TABLE_NAME, 'tombstoned_by', 'UPDATE')
+        THEN
+            RAISE EXCEPTION 'vcfs: tombstoning requires the retention principal''s privilege (vcf %)', OLD.id;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_reports_content_immutability
+    BEFORE UPDATE ON reports
+    FOR EACH ROW EXECUTE FUNCTION enforce_content_immutability();
+
+CREATE TRIGGER trg_interpretations_content_immutability
+    BEFORE UPDATE ON interpretations
+    FOR EACH ROW EXECUTE FUNCTION enforce_content_immutability();
+
+CREATE TRIGGER trg_vcfs_content_immutability
+    BEFORE UPDATE ON vcfs
+    FOR EACH ROW EXECUTE FUNCTION enforce_content_immutability();
+
+-- MEASURED, NOT ASSUMED: a column-level REVOKE cannot narrow a broader
+-- TABLE-LEVEL GRANT that already covers that column -- has_column_privilege()
+-- checks both and returns true if EITHER authorises it, so a plain
+-- REVOKE UPDATE (tombstoned_at, tombstoned_by) ON ... FROM clinical_app
+-- does nothing while the blanket GRANT SELECT, INSERT, UPDATE ... TO
+-- clinical_app above still stands. The table-level grant has to be revoked
+-- and rebuilt at column level for exactly what clinical_app's own code
+-- writes.
+--
+-- reports: clinical_app writes state (submit_for_review, _release_report)
+-- and approver_id/approved_at/content_hash together, once, at approval
+-- (_approve_report). tombstoned_at/tombstoned_by are excluded from the
+-- re-grant on purpose -- that exclusion IS the distinguishing privilege
+-- has_column_privilege() checks for in the trigger above.
+--
+-- interpretations and vcfs: clinical_app has NO legitimate UPDATE path to
+-- either table at all -- grep confirms zero UPDATE statements touching
+-- either anywhere in data_access.py; every column on both tables is written
+-- once at INSERT and never again except by clinical_retention's tombstone
+-- write. So no column-level UPDATE grant follows for clinical_app on
+-- either table -- not even a narrowed one.
+REVOKE UPDATE ON reports, interpretations, vcfs FROM clinical_app;
+GRANT UPDATE (state, approver_id, approved_at, content_hash) ON reports TO clinical_app;

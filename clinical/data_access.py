@@ -132,6 +132,31 @@ class ConfigurationError(Exception):
     """Raised when the layer is asked to do something it was not configured for."""
 
 
+class ImmutabilityViolationError(Exception):
+    """
+    Raised when a database-enforced immutability trigger refuses an UPDATE
+    (D0b half two: reports/interpretations/vcfs BEFORE UPDATE triggers,
+    schema.sql's "content may not change" enforcement).
+
+    Translated in _execute() from the raw driver error (Postgres SQLSTATE
+    P0001, the code a plain PL/pgSQL RAISE EXCEPTION uses) rather than
+    imported and caught as a specific psycopg exception class, so this
+    module stays driver-agnostic the same way __init__'s `connection: Any`
+    already is -- nothing here assumes psycopg specifically.
+
+    Every current DataAccess write to these three tables is written to
+    never trigger this in normal operation (submit_for_review only ever
+    touches state; _approve_report only writes approver_id/approved_at/
+    content_hash while they are still NULL; _release_report only touches
+    state). This exists for the paths that "currently can't fail" per the
+    human ruling requiring it -- a future bug, a race, or a raw-SQL bypass
+    attempt -- so that when the database refuses, the caller gets a named,
+    catchable application exception instead of a raw driver error surfacing
+    through a method whose signature never previously mentioned failure
+    here.
+    """
+
+
 class SessionExpired(AuthenticationError):
     """Session is terminated, past its absolute cap, or idle too long."""
 
@@ -499,7 +524,18 @@ class DataAccess:
     def _execute(self, sql: str, params: Sequence[Any] = ()) -> None:
         cur = self.__connection.cursor()
         try:
-            cur.execute(sql, tuple(params))
+            try:
+                cur.execute(sql, tuple(params))
+            except Exception as e:
+                # SQLSTATE P0001: a plain PL/pgSQL RAISE EXCEPTION with no
+                # SQLSTATE of its own -- currently only the reports/
+                # interpretations/vcfs immutability triggers use this.
+                # Checked via the driver-agnostic .sqlstate attribute rather
+                # than importing and catching a specific psycopg exception
+                # class; see ImmutabilityViolationError's docstring.
+                if getattr(e, "sqlstate", None) == "P0001":
+                    raise ImmutabilityViolationError(str(e)) from e
+                raise
         finally:
             cur.close()
 

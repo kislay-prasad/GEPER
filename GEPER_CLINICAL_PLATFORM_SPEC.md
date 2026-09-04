@@ -656,8 +656,57 @@ styled away.
 
 ### 15.1 Locking
 
-An approved report is immutable. Its content hash is recorded at approval and
-verifiable afterwards.
+An approved report is immutable, and the immutability is enforced by the
+database rather than by application code. A BEFORE UPDATE trigger on
+`reports` refuses any change to an approved or released row except the two
+writes the workflow requires: the approved → released transition, and the
+retention tombstone. Its content hash is recorded at approval and verifiable
+afterwards (`verify_report_integrity`), and because neither the hashed
+content nor the stored hash can be rewritten after approval, verification is
+PREVENTION rather than DETECTION.
+
+The same trigger extends to `interpretations` and `vcfs`. WHAT IS NOT
+COVERED, stated so the claim is not read wider than it is: the trigger does
+not make every column of these tables immutable, and on `interpretations`
+and `vcfs` it does not stand alone. On `reports`, `state` remains mutable by
+design — the trigger enforces content-immutability, not workflow legality;
+which state transitions are legal is an application precondition, not a
+database constraint — and the tombstone columns (`tombstoned_at`,
+`tombstoned_by`) are mutable for exactly one principal, gated by
+column-level UPDATE privilege rather than by role name. On
+`interpretations` and `vcfs`, `clinical_app`'s inability to UPDATE at all is
+enforced by a separate mechanism — a `REVOKE UPDATE` from `clinical_app` —
+not by this trigger; the trigger's own job on those two tables is narrower
+and different: it binds the database superuser, which no `REVOKE` can
+reach, since a grant (or its absence) never constrains a superuser. A
+migration requiring an exemption from any of this must disable the trigger
+explicitly.
+
+Why the guarantee is stated this way rather than as a blanket "immutable":
+unqualified, nothing at the database layer used to deliver it — the
+guarantee was application convention on every table involved, and
+verification could not bear the weight the word implied. Verification
+(`verify_report_integrity`) is a comparison of recomputed content against a
+stored hash; if the same principal could rewrite both the content and the
+stored hash, tampered content verified clean. Per table: `reports.content_hash`
+is protected against the same principal that could alter content, so
+tampering there is DETECTION — a mismatch at verification. `interpretations.run_document`,
+being the hashed content itself, is now PREVENTION — protecting it stops the
+tampering rather than reporting it. `vcfs` is PREVENTION for lineage, not
+covered by the report hash at all. Before this trigger, neither
+`run_document` nor `vcfs` content was protected, and tampering there was
+undetectable: alter the content, rewrite the stored hash, verification
+passes.
+
+DETECTION REMAINS IMPLEMENTED AND REMAINS UNTESTED on the paths where
+prevention makes the attack unconstructable. This is a statement about what
+the system can demonstrate, not a claim that both guarantees are exercised:
+retiring the regression test that simulated a post-approval tamper of
+`interpretations.run_document` (prevention now makes that tamper
+impossible to construct, not merely harder) removed the executable evidence
+that detection works on that specific path. Detection against
+`reviewer_claims` and `evidence_json` — neither covered by this trigger — is
+unaffected, still implemented, and still tested.
 
 ### 15.2 Amendment
 

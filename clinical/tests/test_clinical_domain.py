@@ -1472,13 +1472,17 @@ class TestLineageQueries:
         interp_id = dao.create_interpretation(session_admin, vcf_id, {"model_version": "v1"}, str(sample_id))
         report_id = dao.create_report(session_admin, interp_id)
 
-        # Query with a date range that includes today
+        # Derive the range from the clock the DAO writes created_at with. A
+        # hardcoded end date is a coordinate: it sits in the future when written
+        # and silently becomes the current day, at which point `created_at <= end`
+        # compares against midnight and excludes rows created later that same day.
+        now = dao._clock.now()
         results = dao.find_reports_by_interpretation_criteria(
             session_admin,
             {
                 "date_range": {
-                    "start": "2026-09-01",
-                    "end": "2026-09-04",
+                    "start": (now - datetime.timedelta(days=1)).date().isoformat(),
+                    "end": (now + datetime.timedelta(days=1)).date().isoformat(),
                 }
             },
         )

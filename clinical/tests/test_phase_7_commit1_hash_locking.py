@@ -51,6 +51,9 @@ DSN = os.getenv("CLINICAL_TEST_DSN")
 SCHEMA_PATH = __import__("pathlib").Path(__file__).parent.parent / "schema.sql"
 
 _CREATE_ROLE = "DO $$ BEGIN CREATE ROLE clinical_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+_CREATE_ROLE_RETENTION = (
+    "DO $$ BEGIN CREATE ROLE clinical_retention; EXCEPTION WHEN duplicate_object THEN NULL; END $$;"
+)
 
 
 @pytest.fixture()
@@ -62,6 +65,7 @@ def conn():
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         cur.execute(_CREATE_ROLE)
+        cur.execute(_CREATE_ROLE_RETENTION)
         cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
     connection.commit()
     yield connection

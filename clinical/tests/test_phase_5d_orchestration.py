@@ -30,6 +30,7 @@ def conn():
     with connection.cursor() as cur:
         cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
         cur.execute("DO $$ BEGIN CREATE ROLE clinical_app; EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
+        cur.execute("DO $$ BEGIN CREATE ROLE clinical_retention; EXCEPTION WHEN duplicate_object THEN NULL; END $$;")
         cur.execute(SCHEMA_PATH.read_text(encoding="utf-8"))
     connection.commit()
     yield connection

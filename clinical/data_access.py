@@ -70,6 +70,16 @@ ROLES = (
     "System",
 )
 
+# Phase 7 commit 4 (spec 22, human ruling D2). The artefact classes wired to
+# an actual retention purge path -- see clinical/retention.py. Not every
+# class spec 22.1 names (raw reads is explicitly out of scope, D1 -- see
+# schema.sql's retention_policies comment) and not every evidentiary table
+# this codebase has (reviewer_claims/amendments/amendment_notifications have
+# no purge path yet, D2: "inherit nothing by default"). A policy for a class
+# outside this tuple is refused at set time rather than silently accepted
+# and never actionable.
+RETENTION_ARTEFACT_CLASSES = ("vcf", "run_document", "report")
+
 # Assembly name normalization: maps variant names to canonical form
 # Only explicitly mapped names are recognised; unknown assemblies are rejected
 ASSEMBLY_CANONICAL = {
@@ -1888,6 +1898,63 @@ class DataAccess:
                 }
             )
         return results
+
+    @auditable(
+        action="retention_policy_set",
+        resource_type="retention_policy",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "artefact_class": params.get("artefact_class"),
+            "retention_days": params.get("retention_days"),
+        },
+    )
+    @transactional
+    def set_retention_policy(self, session: Session, artefact_class: str, retention_days: int) -> None:
+        """
+        Spec 22, human ruling D2: periods are configuration, never code, and
+        an unset period fails loudly rather than defaulting. This is the
+        write side of that configuration surface -- Administrator-gated, the
+        same governance level as assign_role, because a retention period is
+        a policy decision about clinical data, not routine data entry.
+
+        Restricted to RETENTION_ARTEFACT_CLASSES: a policy for a class with
+        no purge path is not configuration, it is a policy nobody can ever
+        act on, and accepting it here would let one exist unnoticed.
+        """
+        self._require_role(session, "Administrator")
+        if artefact_class not in RETENTION_ARTEFACT_CLASSES:
+            raise ValueError(
+                f"Unknown retention artefact_class: {artefact_class!r}. "
+                f"Known classes: {', '.join(RETENTION_ARTEFACT_CLASSES)}"
+            )
+        if retention_days <= 0:
+            raise ValueError(f"retention_days must be positive, got {retention_days}")
+
+        now = self._clock.now()
+        self._execute(
+            "INSERT INTO retention_policies (org_id, artefact_class, retention_days, created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (org_id, artefact_class) DO UPDATE SET "
+            "retention_days = EXCLUDED.retention_days, created_at = EXCLUDED.created_at, "
+            "created_by = EXCLUDED.created_by",
+            (session.org_id, artefact_class, retention_days, now, session.user_id),
+        )
+
+    @auditable(
+        action="retention_policy_read",
+        resource_type="retention_policy",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_retention_policy(self, session: Session, artefact_class: str) -> Optional[int]:
+        """Returns the configured retention_days for this org and class, or None if unset."""
+        row = self._query_one(
+            "SELECT retention_days FROM retention_policies WHERE org_id = %s AND artefact_class = %s",
+            (session.org_id, artefact_class),
+        )
+        return row[0] if row else None
 
     # Read methods (org-isolated, non-auditable)
 

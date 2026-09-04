@@ -411,10 +411,24 @@ CREATE TABLE vcfs (
     created_at      TIMESTAMPTZ NOT NULL,
     created_by      UUID        NOT NULL,
 
+    -- Phase 7 commit 4 (spec 22, human ruling D4: tombstone not real
+    -- delete). NULL means live. Written only by the clinical_retention
+    -- principal (see the GRANT/REVOKE block below) -- clinical_app never
+    -- writes these columns, on the same "no exclusion, no exception"
+    -- discipline as the append-only tables: retention is a separate,
+    -- auditable actor's job, not an ordinary application code path.
+    tombstoned_at   TIMESTAMPTZ,
+    tombstoned_by   UUID,
+
     CONSTRAINT fk_vcf_sequ_run
         FOREIGN KEY (org_id, sequencing_run_id) REFERENCES sequencing_runs (org_id, id),
     CONSTRAINT fk_vcf_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_vcf_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT vcfs_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_vcf_org_id UNIQUE (org_id, id)
 );
 
@@ -439,12 +453,22 @@ CREATE TABLE interpretations (
     -- method writes it yet; that is a later Phase 7 commit's job.
     parent_interpretation_id UUID,
 
+    -- Phase 7 commit 4 (spec 22, human ruling D4). Same discipline as
+    -- vcfs.tombstoned_at/tombstoned_by above.
+    tombstoned_at   TIMESTAMPTZ,
+    tombstoned_by   UUID,
+
     CONSTRAINT fk_interp_vcf
         FOREIGN KEY (org_id, vcf_id) REFERENCES vcfs (org_id, id),
     CONSTRAINT fk_interp_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
     CONSTRAINT fk_interp_parent
         FOREIGN KEY (org_id, parent_interpretation_id) REFERENCES interpretations (org_id, id),
+    CONSTRAINT fk_interp_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT interp_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_interp_submission UNIQUE (org_id, submission_key),
     CONSTRAINT uk_interp_org_id UNIQUE (org_id, id)
 );
@@ -484,12 +508,26 @@ CREATE TABLE reports (
     approved_at         TIMESTAMPTZ,
     content_hash        VARCHAR(64),
 
+    -- Phase 7 commit 4 (spec 22, human ruling D4). Same discipline as
+    -- vcfs.tombstoned_at/tombstoned_by above. D3: the clock that decides
+    -- WHEN a report becomes eligible runs from release_events, not from a
+    -- column here -- these two columns record only the outcome once the
+    -- retention principal has acted, same shape as approver_id/approved_at
+    -- recording the outcome of approval rather than gating it.
+    tombstoned_at       TIMESTAMPTZ,
+    tombstoned_by       UUID,
+
     CONSTRAINT fk_report_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
     CONSTRAINT fk_report_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
     CONSTRAINT fk_report_approver
         FOREIGN KEY (org_id, approver_id) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_report_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT reports_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
 
     -- The three approval facts are one fact. A report carrying an approver
     -- but no hash records an approval of unknown content; a report carrying a
@@ -862,6 +900,44 @@ CREATE INDEX idx_notification_org_unread
     WHERE read = FALSE;
 
 
+-- ─── Phase 7 commit 4: Retention policy configuration (spec 22) ────────────
+--
+-- Human ruling D2: retention periods are CONFIGURABLE PER ARTEFACT CLASS,
+-- never hardcoded. This table is that configuration surface and nothing
+-- more -- it holds no logic and enforces no retention by itself. Deliberately
+-- empty: no row is seeded by this schema for any artefact_class, because
+-- NABL 112A's >=5y figure (spec line 826) is a FLOOR, not a value, and every
+-- other period is a counsel question (D2, D5) not yet answered. A class with
+-- no row here is not "retained forever by default" -- it is unconfigured,
+-- and clinical/retention.py's RetentionPrincipal fails loudly rather than
+-- silently skipping or defaulting when it is asked to purge a class with no
+-- policy row, per the same ruling: "make an unset period FAIL LOUDLY rather
+-- than defaulting -- a silent default here would be a retention policy
+-- nobody chose."
+--
+-- artefact_class values wired to an actual purge path in this commit: 'vcf',
+-- 'run_document' (the interpretations table -- named this way because spec
+-- 22.1's artefact list says "run documents", and interpretations.run_document
+-- is the column that IS one), 'report'. Ordinary clinical_app privileges
+-- (below) -- this is policy configuration, not evidentiary data, and an
+-- Administrator sets it the same way any other configuration is set.
+CREATE TABLE retention_policies (
+    org_id          UUID        NOT NULL,
+    artefact_class  TEXT        NOT NULL,
+    retention_days  INTEGER     NOT NULL CHECK (retention_days > 0),
+    created_at      TIMESTAMPTZ NOT NULL,
+    created_by      UUID        NOT NULL,
+
+    -- Org-scoped, like every reference in this schema (see fk_interp_parent's
+    -- comment on the same point) -- one organisation's retention policy is
+    -- not another's, and nothing here should make cross-org policy leakage
+    -- structurally possible.
+    PRIMARY KEY (org_id, artefact_class),
+    CONSTRAINT fk_retention_policy_creator
+        FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id)
+);
+
+
 -- ─── Phase 5d: Exception workflow (order exceptions and resolution tracking) ─
 
 CREATE TABLE exceptions (
@@ -965,5 +1041,47 @@ GRANT SELECT, INSERT, UPDATE, DELETE
     ON organisations, users, totp_backup_codes, role_assignments, sessions,
        patients, external_identifiers, consents, tests, test_genes, orders, samples,
        sequencing_runs, vcfs, interpretations, reports,
-       exceptions, exception_events
+       exceptions, exception_events, retention_policies
     TO clinical_app;
+
+
+-- ─── Phase 7 commit 4: the retention principal (spec 22, human ruling D0c) ──
+--
+-- "clinical_app's REVOKE stays ABSOLUTE -- the application still cannot
+-- delete, which is what every claim rests on." clinical_app's own grants
+-- above are UNCHANGED by this commit: no new privilege, on any table, is
+-- given to clinical_app here. Retention is performed by a second, distinct,
+-- narrowly-privileged login role instead -- the composition god's dispatch
+-- named: D0 was framed as "who holds the DELETE grant" but D4 ruled
+-- tombstone, not delete, so what this role actually needs is UPDATE (to
+-- write tombstoned_at/tombstoned_by) and enough SELECT to decide what is
+-- eligible, plus INSERT on audit_log so a purge is itself an audited act
+-- (D7). It needs no DELETE anywhere -- tombstoning never removes a row.
+--
+-- Scope of what clinical_retention can touch is deliberately narrow and
+-- named explicitly rather than inherited: the three artefact classes wired
+-- to an actual purge path this commit (vcfs, interpretations, reports),
+-- retention_policies (to read configured periods), release_events and
+-- amendments (read-only, to compute a release anchor and a live-descendant
+-- check), users (read-only, to attribute a purge to the org's existing
+-- Phase 5c system principal -- see clinical/retention.py), and INSERT-only
+-- on audit_log, matching clinical_app's own audit_log privilege exactly:
+-- the retention principal can account for what it did and can rewrite
+-- nothing, including its own account of itself.
+--
+-- reviewer_claims and amendment_notifications are deliberately untouched:
+-- no policy exists to purge them (human ruling D2: Phase 6/7 tables absent
+-- from spec 22.1's list "inherit nothing by default; each needs a period
+-- named"), so clinical_retention has no grant on them and no code path
+-- writes to them. Extending retention to those tables is future work, not
+-- an omission -- if it lands, it needs its own commit and its own grant,
+-- exactly as this commit needed one.
+
+-- CREATE ROLE clinical_retention LOGIN PASSWORD '...';   -- deployment, not here
+
+GRANT  USAGE                       ON SCHEMA public TO clinical_retention;
+GRANT  SELECT                      ON retention_policies, release_events, amendments, users TO clinical_retention;
+GRANT  SELECT, UPDATE              ON vcfs, interpretations, reports TO clinical_retention;
+REVOKE DELETE                      ON vcfs, interpretations, reports FROM clinical_retention;
+GRANT  INSERT                      ON audit_log TO clinical_retention;
+GRANT  USAGE, SELECT               ON SEQUENCE audit_log_log_id_seq TO clinical_retention;

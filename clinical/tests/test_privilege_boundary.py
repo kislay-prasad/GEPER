@@ -124,10 +124,22 @@ DELETE_REVOKED = (
 # then CHECKED FOR ARITY, so that a table entering or leaving either list
 # without the other being considered fails here rather than silently widening
 # or narrowing the permitted-direction guard.
-UPDATE_STILL_PERMITTED = tuple(t for t in DELETE_REVOKED if t not in INSERT_ONLY_FOR_APP)
-assert len(UPDATE_STILL_PERMITTED) == 17, UPDATE_STILL_PERMITTED
+# D0b half two. reports leaves the blanket guard for a DIFFERENT reason than the
+# two above: not because clinical_app may never update it, but because its UPDATE
+# is now COLUMN-SCOPED to state/approver_id/approved_at/content_hash. A blanket
+# `SET col = col` probe therefore hits whichever column happens to be first and
+# says nothing useful. Its permitted directions are asserted per transition
+# instead, in TestAnApprovedReportAdmitsOnlyReleaseAndTombstone -- which is
+# STRONGER than the probe it replaces, not a relaxation of it. Kept as its own
+# named list rather than folded into INSERT_ONLY_FOR_APP because the two
+# exclusions mean different things and a reader must not have to guess which.
+COLUMN_SCOPED_FOR_APP = ("reports",)
+
+UPDATE_STILL_PERMITTED = tuple(t for t in DELETE_REVOKED if t not in INSERT_ONLY_FOR_APP + COLUMN_SCOPED_FOR_APP)
+assert len(UPDATE_STILL_PERMITTED) == 16, UPDATE_STILL_PERMITTED
 assert len(DELETE_REVOKED) == 19, DELETE_REVOKED
 assert set(INSERT_ONLY_FOR_APP) <= set(DELETE_REVOKED), INSERT_ONLY_FOR_APP
+assert set(COLUMN_SCOPED_FOR_APP) <= set(DELETE_REVOKED), COLUMN_SCOPED_FOR_APP
 
 
 def _login_dsn(role: str) -> str:
@@ -600,3 +612,274 @@ class TestTheRefusalAssertionCanItselfFail:
 
         with pytest.raises(_insufficient_privilege()):
             app_conn.execute(f"DELETE FROM {table}")
+
+
+# ─── D0b half two: what an approved report still admits ─────────────────────
+
+
+def _raise_exception():
+    """
+    The trigger's refusal, from a RAW ROLE LOGIN.
+
+    NOT ImmutabilityViolationError. That is what DataAccess._execute() translates
+    a P0001 into, and every test in this file deliberately bypasses DataAccess to
+    speak to the database as a real role -- so what arrives here is the driver's
+    own error. psycopg has no dedicated subclass for P0001 the way it has
+    InsufficientPrivilege for 42501, so RaiseException plus the SQLSTATE is the
+    precise assertion, and the sqlstate check below is what keeps it precise.
+    """
+    psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+    return psycopg.errors.RaiseException
+
+
+@pytest.fixture()
+def other_user(dao, seeded):
+    """
+    A SECOND real user in the same org. Needed so that "reassign the authoriser"
+    can be attempted with a VALID value: setting approver_id to NULL or to a
+    nonexistent id would be stopped by a CHECK or an FK, and a test that cannot
+    tell a constraint from the mechanism it is measuring proves nothing.
+    """
+    return dao.create_user(seeded["org_id"], "other@org.test", "password")
+
+
+@pytest.fixture()
+def approved_report(conn, seeded):
+    """
+    A freshly approved report, created rather than mutated into place.
+
+    THE ROW CANNOT BE RESET, which is worth stating because it is the mechanism
+    proving itself: once approver_id is set, the trigger refuses to move it back
+    -- to the SUPERUSER as well -- so a fixture that un-approved a row between
+    tests could not exist. Each test that needs an approved report gets a new one.
+    """
+    import uuid as _uuid
+
+    new_id = _uuid.uuid4()
+    now = datetime.datetime(2026, 8, 1, 12, 0, 0, tzinfo=timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) "
+            "SELECT org_id, %s, interpretation_id, created_at, created_by FROM reports WHERE id = %s",
+            (new_id, seeded["reports"]),
+        )
+        cur.execute(
+            "UPDATE reports SET state = 'approved', approver_id = %s, approved_at = %s, "
+            "content_hash = %s WHERE id = %s",
+            (seeded["user_id"], now, "a" * 64, new_id),
+        )
+    conn.commit()
+    return new_id
+
+
+@pytest.fixture()
+def draft_report(conn, seeded):
+    import uuid as _uuid
+
+    new_id = _uuid.uuid4()
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) "
+            "SELECT org_id, %s, interpretation_id, created_at, created_by FROM reports WHERE id = %s",
+            (new_id, seeded["reports"]),
+        )
+    conn.commit()
+    return new_id
+
+
+class TestAnApprovedReportAdmitsOnlyReleaseAndTombstone:
+    """
+    D0b half two, from the role-login side. Meredith's own trigger tests exercise
+    the mechanism through DataAccess; this class asks the different question this
+    file exists to ask -- what can a REAL LOGIN as each principal actually do to
+    an approved report.
+
+    THE POST-APPROVAL WRITE SET IS CLOSED AT EXACTLY TWO, by AST enumeration of
+    every write to `reports`:
+        _release_report()  UPDATE reports SET state = 'released'
+        _purge_reports()   UPDATE reports SET tombstoned_at, tombstoned_by
+    Disjoint and narrow. Both are asserted to SUCCEED below; everything else is
+    asserted to be refused.
+
+    WHY PER TRANSITION AND NOT PER COLUMN: `state` must stay writable -- draft ->
+    under_review -> approved -> released -- so no column list can express
+    "writable while draft, frozen once approved". That property is a function of
+    the ROW'S STATE, which a grant cannot see and a BEFORE UPDATE trigger can.
+
+    TWO DIFFERENT WALLS, AND THE TESTS NAME WHICH ONE THEY EXPECT. The column
+    grant (defence in depth) refuses anything outside
+    state/approver_id/approved_at/content_hash with InsufficientPrivilege before
+    the trigger ever runs; the trigger refuses the approval facts themselves with
+    P0001 once they are set. Asserting the wrong wall would pass while proving
+    the other one absent, so each is named.
+    """
+
+    # ── the permitted two ────────────────────────────────────────────────────
+
+    def test_an_approved_report_may_be_released(self, app_conn, approved_report):
+        cur = app_conn.execute("UPDATE reports SET state = 'released' WHERE id = %s", (approved_report,))
+        assert cur.rowcount == 1
+        state = app_conn.execute("SELECT state FROM reports WHERE id = %s", (approved_report,)).fetchone()[0]
+        assert state == "released", "the release did not persist"
+
+    def test_retention_may_tombstone_an_approved_report(self, retention_conn, seeded, approved_report):
+        now = datetime.datetime(2026, 9, 4, 13, 0, 0, tzinfo=timezone.utc)
+        cur = retention_conn.execute(
+            "UPDATE reports SET tombstoned_at = %s, tombstoned_by = %s WHERE id = %s",
+            (now, seeded["user_id"], approved_report),
+        )
+        assert cur.rowcount == 1
+        landed = retention_conn.execute(
+            "SELECT tombstoned_at FROM reports WHERE id = %s", (approved_report,)
+        ).fetchone()[0]
+        assert landed == now, "the tombstone did not persist"
+
+    # ── the approval facts: frozen by the trigger once set ───────────────────
+
+    @pytest.mark.parametrize("column", ["content_hash", "approver_id", "approved_at"])
+    def test_the_approval_facts_are_frozen_once_set(self, app_conn, approved_report, other_user, column):
+        # EVERY VALUE HERE IS VALID -- a different real hash, a different real
+        # user in the same org, a different real timestamp. So the only thing that
+        # can refuse the write is the mechanism under test. NULLs would have been
+        # stopped by the reports_approval_complete CHECK, and would have made a
+        # passing test out of a constraint.
+        value = {
+            "content_hash": "b" * 64,
+            "approver_id": other_user,  # ISO 15189 7.4.1.5 c): the authoriser
+            "approved_at": datetime.datetime(  # identity must stay retrievable
+                2027, 1, 1, tzinfo=timezone.utc
+            ),
+        }[column]
+        with pytest.raises(_raise_exception()) as caught:
+            app_conn.execute(f"UPDATE reports SET {column} = %s WHERE id = %s", (value, approved_report))
+        assert caught.value.sqlstate == "P0001", (
+            "refused, but not by the trigger -- a different wall stopped this, and "
+            "the trigger's own coverage is therefore unproven"
+        )
+
+    def test_rewriting_the_hash_is_what_this_exists_to_stop(self, app_conn, approved_report):
+        # Named on its own rather than left to the parametrised case: an attacker
+        # who can rewrite content_hash makes verify_report_integrity agree with
+        # tampered content, which is the one shape verification cannot detect.
+        with pytest.raises(_raise_exception()):
+            app_conn.execute("UPDATE reports SET content_hash = %s WHERE id = %s", ("f" * 64, approved_report))
+        held = app_conn.execute("SELECT content_hash FROM reports WHERE id = %s", (approved_report,)).fetchone()[0]
+        assert held == "a" * 64, "the hash moved despite the refusal"
+
+    # ── identity and provenance: refused by the column grant, before the trigger
+
+    @pytest.mark.parametrize("column", ["created_by", "interpretation_id", "created_at", "org_id"])
+    def test_identity_and_provenance_are_not_even_grantable(self, app_conn, approved_report, column):
+        # DEFENCE IN DEPTH, and it lands FIRST: these columns are outside
+        # clinical_app's column grant, so the statement is refused before the
+        # trigger runs. The trigger covers them too -- that is what binds the
+        # superuser -- but the application never reaches it.
+        # SELF-ASSIGNMENT, deliberately: `SET col = col` cannot violate NOT NULL or
+        # an FK, so InsufficientPrivilege is the only outcome available and a
+        # constraint cannot masquerade as a privilege result. It is also invisible
+        # to the trigger (IS DISTINCT FROM is false), which is what makes this a
+        # measurement of the GRANT specifically.
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(f"UPDATE reports SET {column} = {column} WHERE id = %s", (approved_report,))
+
+    def test_the_application_cannot_tombstone_a_report(self, app_conn, seeded, approved_report):
+        # Tombstoning is the retention principal's act alone. Without this, an
+        # application-level compromise could withdraw a report from the record --
+        # which ISO 15189 7.4.1.8 forbids as squarely as altering one.
+        with pytest.raises(_insufficient_privilege()):
+            app_conn.execute(
+                "UPDATE reports SET tombstoned_at = now(), tombstoned_by = %s WHERE id = %s",
+                (seeded["user_id"], approved_report),
+            )
+
+    # ── the paired permitted directions ──────────────────────────────────────
+    # WITHOUT THESE THE WHOLE CLASS IS SATISFIED BY A MECHANISM THAT REFUSES
+    # EVERYTHING -- the same over-broad failure the DELETE work already taught.
+
+    def test_a_draft_report_can_still_be_submitted_for_review(self, app_conn, draft_report):
+        cur = app_conn.execute("UPDATE reports SET state = 'under_review' WHERE id = %s", (draft_report,))
+        assert cur.rowcount == 1
+
+    def test_approval_can_still_write_the_hash_on_an_unapproved_report(self, app_conn, seeded, draft_report):
+        # The write-once direction must survive: NULL -> value is legal exactly
+        # once. If this failed, reports could never be approved at all and every
+        # refusal above would still pass.
+        app_conn.execute("UPDATE reports SET state = 'under_review' WHERE id = %s", (draft_report,))
+        cur = app_conn.execute(
+            "UPDATE reports SET state = 'approved', approver_id = %s, approved_at = now(), "
+            "content_hash = %s WHERE id = %s",
+            (seeded["user_id"], "e" * 64, draft_report),
+        )
+        assert cur.rowcount == 1
+
+    # ── the ruling that no privilege design could have satisfied ─────────────
+
+    def test_the_superuser_is_bound_too(self, conn, approved_report):
+        """
+        BIND THE SUPERUSER was ruled explicitly, and this is the only assertion
+        in this file that can prove it. The superuser bypasses every GRANT and
+        every RLS policy, so under any privilege-based design this test is
+        impossible to write. A BEFORE UPDATE trigger binds the owner and the
+        superuser alike. If this passes, the mechanism is genuinely a trigger and
+        not a grant wearing one's name.
+        """
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.RaiseException) as caught:
+                cur.execute("UPDATE reports SET content_hash = %s WHERE id = %s", ("d" * 64, approved_report))
+        conn.rollback()
+        assert caught.value.sqlstate == "P0001"
+
+    def test_the_superuser_cannot_rewrite_a_run_document_either(self, conn, seeded):
+        # The other half of the same ruling, on the table whose mutation defeats
+        # hash verification rather than being caught by it. This is what closes
+        # run_document for EVERY principal: the INSERT-only revoke stops
+        # clinical_app, and the trigger stops everyone the revoke cannot reach --
+        # including the retention principal, which does hold UPDATE here.
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        with conn.cursor() as cur:
+            with pytest.raises(psycopg.errors.RaiseException) as caught:
+                cur.execute(
+                    "UPDATE interpretations SET run_document = %s WHERE id = %s",
+                    ('{"tampered": true}', seeded["interpretations"]),
+                )
+        conn.rollback()
+        assert caught.value.sqlstate == "P0001"
+
+    def test_retention_cannot_rewrite_a_run_document(self, retention_conn, seeded):
+        # clinical_retention holds table-level UPDATE on interpretations, so the
+        # grant does NOT stop it here and only the trigger does. This is the case
+        # that would have been open under a privilege-only design.
+        with pytest.raises(_raise_exception()):
+            retention_conn.execute(
+                "UPDATE interpretations SET run_document = %s WHERE id = %s",
+                ('{"tampered": true}', seeded["interpretations"]),
+            )
+
+    # ── the refusal is proven capable of failing ─────────────────────────────
+
+    def test_this_refusal_can_itself_fail(self, conn, app_conn, approved_report):
+        """
+        KNOWN-POSITIVE, and a THIRD distinct one in this file: the DELETE and
+        INSERT-only known-positives both prove a GRANT is live, which says
+        nothing about a TRIGGER. Drop the trigger and the write must succeed;
+        recreate it and the refusal must return. Without this, the class passes
+        just as happily on a database where the trigger silently failed to
+        install -- which is the whole failure mode a schema-level mechanism has.
+        """
+        with pytest.raises(_raise_exception()):
+            app_conn.execute("UPDATE reports SET content_hash = %s WHERE id = %s", ("b" * 64, approved_report))
+
+        with conn.cursor() as cur:
+            cur.execute("DROP TRIGGER trg_reports_content_immutability ON reports")
+        conn.commit()
+        app_conn.execute("UPDATE reports SET content_hash = %s WHERE id = %s", ("b" * 64, approved_report))
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "CREATE TRIGGER trg_reports_content_immutability BEFORE UPDATE ON reports "
+                "FOR EACH ROW EXECUTE FUNCTION enforce_content_immutability()"
+            )
+        conn.commit()
+        with pytest.raises(_raise_exception()):
+            app_conn.execute("UPDATE reports SET content_hash = %s WHERE id = %s", ("c" * 64, approved_report))

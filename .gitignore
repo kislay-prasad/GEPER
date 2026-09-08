@@ -77,3 +77,17 @@ config.yaml
 # Test output logs
 clinical_test_output.txt
 phase5d_test_output.txt
+
+# --- The offline model-cache seed: UNTRACKED BY DESIGN, NOT BY OVERSIGHT ------
+# Ruled: "The 4.6 GB seed does not go in git. Too large, and it is DERIVED
+# RATHER THAN AUTHORED. It needs a documented location and a rebuild
+# procedure -- where it lives on this machine, and how to regenerate it if
+# lost. That is a README entry, not a commit."
+#
+# These two lines exist so that decision is machine-readable rather than
+# prose-only: an artefact untracked BY OVERSIGHT is otherwise indistinguishable
+# from one that was ruled on. Location, contents, the relationship between the
+# directory and the tarball, and the rebuild procedure (with its UNKNOWNs named)
+# are in DOCKER.md, under "The offline model-cache seed".
+model_cache_seed/
+model_cache_seed.tar.gz

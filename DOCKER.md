@@ -181,6 +181,130 @@ property without either cost — you pay the download once, on first
 real run, and never again across container restarts/recreations as
 long as the volume isn't deleted.
 
+### The offline model-cache seed (`model_cache_seed/`) -- where it lives and how to rebuild it
+
+Everything above describes the *volume* path, which needs a live
+network on first use. There is a second, offline path, and it depends
+on a 4.6 GB artefact that exists in **no repository**. This section is
+that artefact's only record.
+
+**Where it lives, and why it is untracked.**
+
+| | |
+|---|---|
+| Path | `C:\Users\kisla\GEPER\model_cache_seed\` (the primary working tree, not a worktree) |
+| Size | 4,832,167,646 bytes (~4.6 GiB), 57 regular files + 5 symlinks |
+| Transport copy | `C:\Users\kisla\GEPER\model_cache_seed.tar.gz`, 3,391,920,924 bytes (~3.2 GiB) |
+| Tracked in git? | **No -- by decision, not by oversight.** Ruled: too large to commit, and *derived rather than authored*. |
+
+That distinction is the point of writing this down: an untracked file
+nobody decided to leave untracked looks identical on disk to one that
+was ruled on. Both artefacts are therefore named in `.gitignore`, under
+a comment quoting the ruling -- **that entry is what makes the decision
+machine-readable; this section is where the reasoning lives.** Without
+the entry they would sit in `git status` among ten scratch
+`Dockerfile.*` variants, indistinguishable from clutter; without this
+section the entry would record *that* they are ignored and nothing about
+*why*, or what they are.
+
+**Caveat, because "the ignore is in the repo" and "the ignore is
+protecting the artefact" are two different claims:** the `.gitignore`
+entry is only in force in a working tree checked out on a branch that
+contains it. The seed physically lives in the primary working tree,
+which is routinely on a different branch, and there `git status` still
+lists both artefacts as untracked. **The entry takes effect in that tree
+at merge, not when it was written.**
+
+**The two artefacts are the same content, and the tarball is not a
+stale copy.** Established by comparing the tarball's member list
+(`tar -tvzf`, no extraction) against the tree: every path and every
+member size matches, except that the tree has one file the tarball
+does not --
+`models--facebook--esm2_t33_650M_UR50D/refs/main` (40 bytes, created
+after the tarball was written). Its content is the ESM2 commit sha
+that `geper/models/esm2.py`'s `_ESM2_REVISION` already pins, and
+`from_pretrained(..., revision=<sha>)` resolves `snapshots/<sha>`
+directly rather than through `refs/main`, so a restore from the
+tarball should be functionally complete -- *should*, because that is
+read from the pin, not measured. **Caveat stated rather than glossed:
+paths and sizes were compared, contents were not hashed** (that costs
+two full 4.6 GB reads). A same-size, different-bytes file would not
+have been caught.
+The tarball exists because `Dockerfile.bridge-ready-tarball` copies a
+single file into the build context instead of a 4.6 GB tree; it is a
+transport form, not a backup generation.
+
+**What it is for.** It seeds `geper:bridge-ready`
+(`sha256:a8a5fe67749e38206cbd188487cc34b95bd7609cc99f3e234030c707c5f6af94`),
+the image the offline end-to-end proof runs in, in which all four
+models load with no network. The floor's measured figures for that
+image: **~36 s to load all four from the seed, against ~47 minutes and
+a live network without it.** That ratio is the reason this procedure
+is written down rather than reconstructed later.
+
+**How the image actually consumes it** -- read from `docker history`,
+not from the `Dockerfile.bridge-ready*` variants, **none of which built
+this image**. The seed was `docker cp`-ed into a running container and
+`docker commit`-ed:
+
+```
+sh -c mkdir -p /app/model_cache_seed && cp -a /seed/. /app/model_cache_seed/ && ...verify...
+ENV GEPER_CACHE_DIR=/app/model_cache_seed
+ENV HF_HUB_CACHE=/app/model_cache_seed
+ENV HF_HOME=/app/model_cache_seed
+```
+
+The three env vars are re-pointed at `/app/model_cache_seed` rather
+than reusing the base image's `GEPER_CACHE_DIR=/app/geper/model_cache`
+because that path is a `VOLUME`, **and `docker commit` does not
+capture volume contents** -- a seed written there would vanish from the
+committed image. Anyone restoring must preserve that, or the models
+appear absent.
+
+**How to regenerate it if lost.** No single script populates this
+cache -- searched the tracked file list, not assumed; acquisition is
+spread across each loader and the per-source `*/bootstrap.py` modules --
+and **how this tree was
+actually accumulated is not recorded anywhere, so it is UNKNOWN.** What
+*is* established is the layout a regeneration has to reproduce, which is
+read out of `geper/config.py` and each loader rather than reconstructed
+from memory. Every destination below is relative to `$GEPER_CACHE_DIR`;
+each loader writes its own subpath when that variable points at a
+directory lacking it.
+
+| Subpath | Source | Pinned by | Routed there by |
+|---|---|---|---|
+| `models--facebook--esm2_t33_650M_UR50D/`, `.locks/` | HF hub, `facebook/esm2_t33_650M_UR50D` | `_ESM2_REVISION` = `08e4846e537177426273712802403f7ba8261b6c` | `esm2.py` passes `cache_dir=CONFIG.CACHE_DIR` to `from_pretrained` |
+| `torch/hub/checkpoints/RNA-FM_pretrained.pth` (1.19 GB) | HF mirror `_HF_MIRROR_REPO_ID` first, then the upstream `proj.cse.cuhk.edu.hk` endpoint | unpinned (no revision in either path) | `config.py` derives `TORCH_HOME=$GEPER_CACHE_DIR/torch` when `GEPER_CACHE_DIR` is set and `TORCH_HOME` is not |
+| `hyenadna/hyenadna-medium-450k-seqlen/` (316 MB, incl. `.git/lfs`) | `git lfs clone https://huggingface.co/LongSafari/{model_name}` | `_HYENADNA_CHECKPOINT_REVISIONS[model_name]`; the loader **refuses an unpinned checkpoint** | `CONFIG.models.HYENADNA_CHECKPOINT_DIR` = `$GEPER_CACHE_DIR/hyenadna`, `HYENADNA_MODEL_NAME` = `hyenadna-medium-450k-seqlen` |
+| `alphamissense/AlphaMissense_hg38.tsv.gz` (+`.tbi`, +`.provenance.json`) | GCS -- URL and `gcs-etag-md5` recorded in the sidecar `.provenance.json`, which is the authoritative source record | etag/md5 in the sidecar | `CACHE_SUBDIR` (`GEPER_ALPHAMISSENSE_CACHE_SUBDIR`), default `alphamissense` |
+| `ensembl/ensembl_transcripts.jsonl` (+`.provenance.json`) | derived from `ftp.ensembl.org/.../Homo_sapiens.GRCh38.116.gtf.gz`; sha256 in the sidecar | Ensembl release 116 | `pipeline/ensembl/bootstrap.py` -> `$GEPER_CACHE_DIR/ensembl` |
+| `plugin_model_cache/spliceformer/` (4.7 MB) | SpliceFormer plugin weights | UNKNOWN | `PLUGIN_CACHE_DIR` = `$GEPER_CACHE_DIR/plugin_model_cache` |
+| `blast_cache.sqlite` (12 KB) | not a model -- a runtime BLAST cache, created empty | n/a | `database/blast_client.py`, `$GEPER_CACHE_DIR/blast_cache.sqlite` |
+
+**MMSplice is deliberately absent from this table and from the seed.**
+Its five `.h5` weights ship *inside the pip package*, in the image's
+site-packages, not in the cache -- `pipeline/models/mmsplice/loader.py`
+resolves them by file path without importing the package. A restored
+seed does not carry MMSplice; the image does.
+
+**What is UNKNOWN here, with the method that would settle it** (rather
+than a confident procedure that has never run -- this one would be
+discovered wrong only after the seed is already lost):
+
+- **The exact invocation** that populates a cold cache in one pass.
+  Settled by running the pipeline once against an empty
+  `GEPER_CACHE_DIR` on a live network and diffing the resulting tree
+  against the manifest above.
+- **Whether regeneration is byte-reproducible.** The AlphaMissense and
+  Ensembl artefacts have content hashes in their sidecars and should
+  be; ESM2 and HyenaDNA are revision-pinned; **RNA-FM's checkpoint is
+  pinned by nothing at all**, and its two sources are a HF mirror and a
+  single academic host. Settled by hashing a fresh fetch against
+  `RNA-FM_pretrained.pth`.
+- **SpliceFormer's source URL and pin.** Settled by reading the
+  SpliceFormer plugin's own download path.
+
 ### One shared venv, not the `--kim-python`/`--geper-python` split
 
 `README_INTEGRATION.md` documents the bridge as supporting two

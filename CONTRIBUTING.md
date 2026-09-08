@@ -94,17 +94,16 @@ target to match.
 |---|---|---|---|
 | `geper/` | 2483 | 22 | 29 deselected, **32 errors**, 603 subtests passed |
 | `kim_pipeline/` | 1219 | 29 | 3 subtests passed |
-| `clinical/` | 33 | **466** | -- |
+| `clinical/` | 33 | **466** | **see below -- 33 is not this suite's number** |
 | `bridge/` | 24 | 0 | -- |
 | `shared/` | 10 | 0 | -- |
 
 **Read the skip and error columns before you read the pass column.**
 
-- **`clinical/` is 33 of 499.** All 466 skips are a single cause,
-  `CLINICAL_TEST_DSN not set` -- the database tests need a live
-  Postgres. Quoting "clinical: 33 passed" as a green is quoting a suite
-  that is ~93% unexercised. One of the skip reasons in that file says
-  so in its own words: *"skip is not pass"*.
+- **`clinical/` is 33 of 499, and 33 is the wrong number.** See
+  [the same command, two answers](#the-same-command-two-answers-clinical-needs-a-database)
+  below -- it is the clearest argument on this page for why a bare pass
+  count means nothing.
 - **`geper/`'s 32 errors are pre-existing** and are not a regression:
   Windows `PermissionError [WinError 32]` during *teardown* of the
   `db_path` tempdir fixture in `api/tests/test_submission_worker.py`.
@@ -115,8 +114,50 @@ target to match.
   [geper/pytest.ini](geper/pytest.ini)): `real_pip` and `live_network`.
   A green `geper/` run therefore does **not** mean the live-network
   coverage passed. See that file for why they are excluded.
+- **`geper/`'s 22 skips are optional models and tools that are not
+  installed** -- `enformer-pytorch` (11), `tabix`/`bgzip` (6),
+  `enformer-pytorch`/`borzoi-pytorch` (4), a missing SpliceBERT
+  checkpoint (1). Config-gated integrations, not failures -- but those
+  code paths are not exercised by a default run either.
 - **`kim_pipeline/`'s 29 skips are missing external binaries** (`bwa`,
   `samtools`, `bcftools`, `minimap2`, `freebayes`), not test failures.
+
+### The same command, two answers: `clinical/` needs a database
+
+On 2026-09-08, at the same commit, with the same command:
+
+| who | `CLINICAL_TEST_DSN` | result |
+|---|---|---|
+| vic | unset | **33 passed, 466 skipped** |
+| ryan | set (local Postgres 16) | **504 passed, 0 skipped** |
+| kelly | set | **513**, then **516** passed |
+
+**Nothing differed but the environment.** The run without a DSN reports
+a pass while executing about 7% of the suite: all 466 skips are the one
+cause, `CLINICAL_TEST_DSN not set`, because the database tests need a
+live Postgres. One of that file's own skip reasons already says so --
+*"CLINICAL_TEST_DSN not set -- database tests skipped (skip is not
+pass)"* -- and it did not stop anyone, because a skip reason is only
+read by someone who is already suspicious.
+
+So **a command does not pin a number; a command plus an environment
+does.** When you quote a count from `clinical/`, say whether the DSN
+was set. The three DSN-set numbers above are not equal to each other
+either (504 / 513 / 516) and that difference is not explained here --
+which is the point: treat any of these as a measurement with
+conditions attached, not as the suite's score.
+
+To run it properly you need a Postgres database and
+`CLINICAL_TEST_DSN` pointing at it. A bootstrap for a clean one exists
+--
+
+```bash
+python -m clinical.bootstrap --apply-schema
+```
+
+-- but **as of this writing that command is unpushed** (ryan's
+worktree, commit `e1c696b`), so it is not on `master` yet. If it is not
+there when you look, that is why.
 
 ### Why not just `pytest` at the repo root
 

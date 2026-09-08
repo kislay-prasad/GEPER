@@ -27,11 +27,13 @@ independently:
      helpfully re-adding the singleton the old docstring asked for, which
      would silently reintroduce cross-request transaction bleed.
 
-THE APP HERE IS TEST-LOCAL AND DELIBERATELY SO. There is still no clinical
-application object in the tree (that is S1, separately sequenced), so this file
-builds the smallest one that mounts the router. When the real app lands, these
-tests should point at it instead -- a one-line change, and the fixture is
-written so that it is one line.
+THE APP IS NO LONGER TEST-LOCAL. This file used to build its own `FastAPI()`
+and mount the router, because no clinical application object existed; it said
+so, and said the swap would be a one-line change. `clinical/app.py` now exists
+and the swap has been made. Everything below therefore runs against THE OBJECT
+THE SERVICE ACTUALLY SERVES, not a stand-in that happens to mount the same
+router -- and for as long as the stand-in was the only `include_router` in the
+repository, these nine tests were green against a service that did not exist.
 """
 
 import datetime
@@ -141,10 +143,15 @@ def seeded(clinical_dsn):
 @pytest.fixture()
 def client(clinical_dsn):
     """
-    A TestClient over the smallest app that mounts the router.
+    A TestClient over THE REAL APPLICATION OBJECT, `clinical.app.app`.
 
-    When a real clinical application object exists (S1), replace the two lines
-    that build `app` with an import of it; nothing else in this file changes.
+    This fixture used to build a test-local `FastAPI()` and mount the router
+    itself, because no clinical application object existed. One does now, and
+    the swap was the one-line change this docstring promised. It matters more
+    than it looks: a test-local app proves the router works when mounted, not
+    that anything mounts it -- and for as long as that was the only
+    `include_router` in the repository, these nine tests passed against a
+    service that did not exist.
     """
     pytest.importorskip("fastapi", reason="fastapi not installed")
     # httpx is named separately because starlette's TestClient raises a
@@ -152,13 +159,10 @@ def client(clinical_dsn):
     # importorskip("fastapi") alone would let a missing httpx surface as an
     # unexplained error at setup rather than as a named missing package.
     pytest.importorskip("httpx", reason="httpx not installed (starlette TestClient requires it)")
-    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from clinical.endpoints import router
+    from clinical.app import app
 
-    app = FastAPI()
-    app.include_router(router)
     with TestClient(app) as test_client:
         yield test_client
 

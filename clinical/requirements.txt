@@ -1,0 +1,40 @@
+# clinical/requirements.txt
+# ─────────────────────────
+# WHAT THE CLINICAL SERVICE NEEDS TO RUN, DECLARED IN ONE PLACE BECAUSE A
+# DEPENDENCY THAT IS NOT DECLARED WILL BE ABSENT SOMEWHERE.
+#
+# This file did not exist until the service did, and its absence had already
+# cost twice in one evening:
+#   - the clinical CI job lists its packages inline and had no `fastapi`, so
+#     nine HTTP tests skipped and CLINICAL_REQUIRE_DB turned each skip into a
+#     failure;
+#   - `.github/workflows/pytest.yml` sets `cache-dependency-path:
+#     clinical/requirements.txt`, a path that did not resolve to anything.
+# `bcrypt` in particular was declared NOWHERE in the repository -- only in
+# that inline CI line -- while `clinical/data_access.py` imports it inside
+# BcryptHasher. A lazy import means the gap does not show at startup; it shows
+# the first time someone tries to authenticate.
+#
+# Unpinned, matching geper/requirements.txt's stated convention for the same
+# packages. See that file's own note on why psycopg is not pinned.
+
+# ── The service ──────────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
+# ── The database ─────────────────────────────────────────────────────────────
+# The [binary] extra, not bare psycopg: it ships its own libpq, so no system
+# package is required in the image. Matches geper/requirements.txt.
+psycopg[binary]
+
+# ── Passwords ────────────────────────────────────────────────────────────────
+# Imported lazily by clinical/data_access.py::BcryptHasher. Absent here, the
+# service starts happily and fails at the first login.
+bcrypt
+
+# ── Tests ────────────────────────────────────────────────────────────────────
+# httpx is required by starlette's TestClient, which raises RuntimeError --
+# not ImportError -- when it is missing, so pytest.importorskip does not catch
+# it and it surfaces as an unexplained error at setup.
+pytest
+httpx>=0.27.0

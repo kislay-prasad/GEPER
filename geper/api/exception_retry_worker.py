@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -111,8 +112,17 @@ def main():
     try:
         dsn = os.getenv("CLINICAL_DSN")
         if not dsn:
-            logger.error("CLINICAL_DSN not set; cannot start worker")
-            return
+            # 2026-09-08 (F4): this already refused to run the worker, but
+            # returning from main() exits 0 -- which a process supervisor
+            # reads as "the job finished successfully", so the retry lifecycle
+            # stops dead with nothing restarting it and nothing alerting. The
+            # same silent-nothing shape, one layer up. Exit non-zero so the
+            # refusal is visible to whatever supervises the process, matching
+            # the posture in api/main.py.
+            sys.stderr.write(
+                "ERROR: refusing to start -- CLINICAL_DSN is not set. Set it to the clinical database DSN.\n"
+            )
+            sys.exit(1)
 
         import psycopg
 
@@ -133,8 +143,12 @@ def main():
         logger.info("SubmissionStore initialized")
 
     except Exception as e:
+        # As above: returning here reported a failed startup as a clean run.
+        # (SystemExit raised by the CLINICAL_DSN refusal above is a
+        # BaseException and deliberately passes through this handler.)
         logger.error(f"Failed to initialize: {e}; exiting")
-        return
+        sys.stderr.write(f"ERROR: refusing to start -- initialization failed: {e}\n")
+        sys.exit(1)
 
     # Run the worker
     worker = ExceptionRetryWorker(data_access, submission_store)

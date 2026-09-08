@@ -69,6 +69,164 @@ git log --format='%h %an | %cn | %s'
 Author is the agent (after the cutover); committer is the repository owner
 throughout.
 
+## Running the tests -- there is no "full suite", and a bare `pytest` at the repo root does not run
+
+**Run one package at a time, from that package's own directory.** Nothing
+else works, and the reason is structural rather than something wrong
+with your machine.
+
+```bash
+cd geper        && python -m pytest -q
+cd kim_pipeline && python -m pytest -q
+cd clinical     && python -m pytest -q
+cd bridge       && python -m pytest -q
+cd shared       && python -m pytest -q
+```
+
+Counts below were measured on 2026-09-08 at `8e19fdd` (Python 3.14.7,
+pytest 9.1.1, no virtualenv, empty `PYTHONPATH`, Windows), each with
+`-p no:cacheprovider` appended -- that only suppresses the
+`.pytest_cache` write and does not change results. They are here so you
+can tell a result you caused from a condition you inherited -- not as a
+target to match.
+
+| from | passed | skipped | other |
+|---|---|---|---|
+| `geper/` | 2483 | 22 | 29 deselected, **32 errors**, 603 subtests passed |
+| `kim_pipeline/` | 1219 | 29 | 3 subtests passed |
+| `clinical/` | 33 | **466** | **see below -- 33 is not this suite's number** |
+| `bridge/` | 24 | 0 | -- |
+| `shared/` | 10 | 0 | -- |
+
+**Read the skip and error columns before you read the pass column.**
+
+- **`clinical/` is 33 of 499, and 33 is the wrong number.** See
+  [the same command, two answers](#the-same-command-two-answers-clinical-needs-a-database)
+  below -- it is the clearest argument on this page for why a bare pass
+  count means nothing.
+- **`geper/`'s 32 errors are pre-existing** and are not a regression:
+  Windows `PermissionError [WinError 32]` during *teardown* of the
+  `db_path` tempdir fixture in `api/tests/test_submission_worker.py`.
+  The tests themselves pass; the tempdir cleanup cannot delete a
+  still-open SQLite file. Unfixed, and unrelated to whatever you are
+  changing.
+- **`geper/` deselects 29 opt-in tests by default** (`addopts` in
+  [geper/pytest.ini](geper/pytest.ini)): `real_pip` and `live_network`.
+  A green `geper/` run therefore does **not** mean the live-network
+  coverage passed. See that file for why they are excluded.
+- **`geper/`'s 22 skips are optional models and tools that are not
+  installed** -- `enformer-pytorch` (11), `tabix`/`bgzip` (6),
+  `enformer-pytorch`/`borzoi-pytorch` (4), a missing SpliceBERT
+  checkpoint (1). Config-gated integrations, not failures -- but those
+  code paths are not exercised by a default run either.
+- **`kim_pipeline/`'s 29 skips are missing external binaries** (`bwa`,
+  `samtools`, `bcftools`, `minimap2`, `freebayes`), not test failures.
+
+### The same command, two answers: `clinical/` needs a database
+
+On 2026-09-08, at the same commit, with the same command:
+
+| who | `CLINICAL_TEST_DSN` | result |
+|---|---|---|
+| vic | unset | **33 passed, 466 skipped** |
+| ryan | set (local Postgres 16) | **504 passed, 0 skipped** |
+| kelly | set | **513**, then **516** passed |
+
+**Nothing differed but the environment.** The run without a DSN reports
+a pass while executing about 7% of the suite: all 466 skips are the one
+cause, `CLINICAL_TEST_DSN not set`, because the database tests need a
+live Postgres. One of that file's own skip reasons already says so --
+*"CLINICAL_TEST_DSN not set -- database tests skipped (skip is not
+pass)"* -- and it did not stop anyone, because a skip reason is only
+read by someone who is already suspicious.
+
+So **a command does not pin a number; a command plus an environment
+does.** When you quote a count from `clinical/`, say whether the DSN
+was set. The three DSN-set numbers above are not equal to each other
+either (504 / 513 / 516) and that difference is not explained here --
+which is the point: treat any of these as a measurement with
+conditions attached, not as the suite's score.
+
+To run it properly you need a Postgres database and
+`CLINICAL_TEST_DSN` pointing at it. A bootstrap for a clean one exists
+--
+
+```bash
+python -m clinical.bootstrap --apply-schema
+```
+
+-- but **as of this writing that command is unpushed** (ryan's
+worktree, commit `e1c696b`), so it is not on `master` yet. If it is not
+there when you look, that is why.
+
+### Why not just `pytest` at the repo root
+
+It fails collection outright:
+
+```
+Interrupted: 51 errors during collection
+ModuleNotFoundError: No module named 'pipeline.utils'
+```
+
+**That is not a missing module. It is the wrong `pipeline` answering to
+the name.** There are two different packages called `pipeline` in this
+repository:
+
+| import name | actual package | contains |
+|---|---|---|
+| `pipeline` | `geper/pipeline/` | `hpo/`, `acmg_rules.py`, `orchestrator.py` -- **no `utils/`** |
+| `pipeline` | `kim_pipeline/pipeline/` | `utils/`, `annotation/`, `acmg/`, `reporting/`, `orchestration/` |
+
+One Python process cannot import both. Collecting from the repo root
+puts `geper/` on `sys.path` first, so `pipeline` binds to GEPER's copy,
+and every `kim_pipeline` test asking for a kim submodule fails.
+
+The error names a *submodule* precisely because `pipeline` **was**
+found -- which is why this reads as "your environment is broken", and
+why the first instinct is to go fix an environment that is fine.
+Running from a package's own directory puts the right `pipeline` first,
+and that is the whole of the fix available today. A real fix is a
+rename of one of the two packages; it is carded, not done.
+
+### "The full suite" is not a thing in this repository
+
+There is no single command that runs every test here, so a count quoted
+without its invocation is not comparable to any other count. **Say
+which directory you ran from and which command produced the number.** A
+`geper/` run does not collect `kim_pipeline/`, `clinical/`, `bridge/`
+or `shared/`, and the reverse holds too.
+
+### `import shared` does not come from your worktree
+
+`geper-platform` is installed editable, and its import finder maps
+exactly one name, to an absolute path:
+
+```python
+MAPPING: dict[str, str] = {'shared': 'C:\\Users\\kisla\\GEPER\\shared'}
+```
+
+That path is **the shared checkout**, not your worktree. From a
+worktree's root `import shared` still resolves locally, but from a
+*subdirectory* -- which is exactly the invocation above, the one that
+works -- it resolves to the shared checkout instead.
+
+**So if you edit a module under `shared/` in your own worktree and run
+the tests the documented way, you are testing the shared checkout's
+copy of that file, and your change will appear to have no effect.**
+Nothing reports this: the test passes or fails on a file you are not
+looking at.
+
+This is latent rather than active. At the time of writing the only file
+differing between the two copies is `shared/tests/conftest.py`, and
+`shared/process_control.py` -- the only thing `geper/` imports from
+`shared` -- is byte-identical in both. It becomes real the moment
+someone edits a `shared/` module. If you are working in `shared/`,
+check which file you actually imported:
+
+```bash
+python -c "import shared; print(shared.__file__)"
+```
+
 ## Pre-commit hooks
 
 This repo uses [pre-commit](https://pre-commit.com/) to run a few checks

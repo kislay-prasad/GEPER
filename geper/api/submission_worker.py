@@ -467,22 +467,55 @@ def main():
     )
     store = SubmissionStore(store_path)
 
-    # Initialize DataAccess for exception creation (optional; worker works without it)
-    data_access = None
+    # Initialize DataAccess for exception creation. NOT optional -- see below.
+    #
+    # 2026-09-08 (F4), fail-closed. This block used to log a warning and carry
+    # on when CLINICAL_DSN was unset or the connection failed, leaving
+    # data_access=None. The worker then ran normally, processed submissions,
+    # and silently created no clinical exception records at all: the clinical
+    # trail simply absent, with one startup log line as the only evidence.
+    # The adjacent exception_retry_worker.py refused to start in exactly that
+    # situation -- one failure, two opposite policies, chosen by nobody. The
+    # refusing policy wins, in both files.
+    #
+    # Raising the log level would not have been a fix: a warning nobody reads
+    # and an error nobody reads fail identically. The control has to be that
+    # the worker does not proceed.
+    #
+    # Deliberately NO opt-out env var here (contrast GEPER_DEV_INSECURE in
+    # api/main.py). exception_retry_worker.py has never had one, and adding a
+    # bypass to only this worker would re-open the very divergence this change
+    # closes. A supported no-clinical-database mode should be an explicit
+    # decision applied to BOTH workers, not a flag that grows on one of them.
+    dsn = os.getenv("CLINICAL_DSN")
+    if not dsn:
+        sys.stderr.write(
+            "ERROR: refusing to start -- CLINICAL_DSN is not set. Without it this "
+            "worker would process submissions normally and silently create no "
+            "clinical exception records at all. Set CLINICAL_DSN to the clinical "
+            "database DSN.\n"
+        )
+        sys.exit(1)
+
     try:
-        dsn = os.getenv("CLINICAL_DSN")
-        if dsn:
-            import psycopg
+        import psycopg
 
-            connection = psycopg.connect(dsn, autocommit=False)
-            from clinical.data_access import DataAccess
+        connection = psycopg.connect(dsn, autocommit=False)
+        from clinical.data_access import DataAccess
 
-            data_access = DataAccess(connection)
-            logger.info("DataAccess initialized for exception creation")
-        else:
-            logger.warning("CLINICAL_DSN not set; exceptions will not be created")
+        data_access = DataAccess(connection)
+        logger.info("DataAccess initialized for exception creation")
     except Exception as e:
-        logger.warning(f"Failed to initialize DataAccess: {e}; continuing without exception creation")
+        # Second route to the same silent-nothing state: with CLINICAL_DSN set
+        # but the database unreachable (or psycopg missing), this handler used
+        # to downgrade a genuine connection failure to a warning and carry on.
+        # Fixing only the missing-DSN branch above would have left this route
+        # open one step later.
+        sys.stderr.write(
+            "ERROR: refusing to start -- CLINICAL_DSN is set but the clinical "
+            f"DataAccess could not be initialized: {e}\n"
+        )
+        sys.exit(1)
 
     worker = InterpretationWorker(store, data_access)
     worker.run_loop()

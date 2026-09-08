@@ -383,6 +383,50 @@ CREATE TABLE samples (
 CREATE INDEX samples_order ON samples (org_id, order_id);
 
 
+-- ─── Ingestion: FASTQ sets ──────────────────────────────────────────────────
+--
+-- The first unit of ingestion: a paired-end FASTQ set observed on disk for a
+-- sample. One row per set; R1 and R2 travel together because they are one
+-- observation, and a set with only one mate is a defect rather than a state.
+--
+-- ORG-SCOPED BY CONSTRUCTION, not by convention. The foreign key names
+-- (org_id, sample_id) rather than sample_id alone, so a fastq set CANNOT
+-- reference a sample belonging to another organisation -- the database refuses
+-- the row. That is stronger than an application that declines to write one:
+-- an unscoped reference is not expressible, rather than merely not written.
+-- `samples_org_sample_unique` is what makes the composite reference possible
+-- and is the reason it exists.
+--
+-- APPEND-ONLY, enforced by the GRANT/REVOKE block at the foot of this file
+-- rather than by this comment. A FASTQ set is an observation of what was on
+-- disk at a moment: rewriting it would rewrite the evidence of what arrived.
+--
+-- A CONSEQUENCE OF APPEND-ONLY THAT IS DELIBERATE AND WORTH READING BEFORE
+-- ADDING A TRANSITION: `state` is set at INSERT and can never be updated,
+-- because clinical_app holds no UPDATE on this table. So `state` records the
+-- state AT DETECTION. Advancing a set through validation is therefore a
+-- design question -- a new appended row, or a separate table -- and NOT a
+-- missing grant. The scanner, validation and pipeline invocation are all out
+-- of scope here; this table is the floor they will sit on.
+CREATE TABLE fastq_sets (
+    fastq_set_id    UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    org_id          UUID        NOT NULL,
+    sample_id       UUID        NOT NULL,
+    r1_path         TEXT        NOT NULL,
+    r2_path         TEXT        NOT NULL,
+    r1_checksum     TEXT        NOT NULL,
+    r2_checksum     TEXT        NOT NULL,
+    detected_at     TIMESTAMPTZ NOT NULL,
+    state           TEXT        NOT NULL DEFAULT 'detected'
+        CHECK (state IN ('detected', 'validated', 'rejected', 'consumed')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT fastq_sets_sample_fk
+        FOREIGN KEY (org_id, sample_id) REFERENCES samples (org_id, sample_id),
+    CONSTRAINT fastq_sets_org_unique UNIQUE (org_id, fastq_set_id)
+);
+
+
 -- ─── Phase 4a: Lineage foundation (sequencing, VCF, interpretation, reports) ─
 
 CREATE TABLE sequencing_runs (
@@ -1061,6 +1105,16 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 -- are append-only by the same reasoning: an amendment, its notification, and read
 -- receipts are recorded at creation and never touched again. The forward pointer
 -- and read receipt are immutable once written.
+-- fastq_sets is append-only for the same reason the tables above are: it
+-- records what was observed on disk at a point in time, and a FASTQ set whose
+-- paths or checksums could be rewritten afterwards is not evidence of what
+-- arrived. There is no UPDATE grant and there should not be one -- see the
+-- note on `state` at the table definition, which is the one place someone will
+-- be tempted to ask for it.
+GRANT  SELECT, INSERT ON fastq_sets TO clinical_app;
+REVOKE UPDATE, DELETE ON fastq_sets FROM clinical_app;
+REVOKE UPDATE, DELETE ON fastq_sets FROM PUBLIC;
+
 GRANT  SELECT, INSERT ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts TO clinical_app;
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM clinical_app;
 REVOKE UPDATE, DELETE ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts FROM PUBLIC;

@@ -73,8 +73,7 @@ last-resort fallback for backward compatibility, so:
 --------------------------------------------------------------------
 """
 
-import contextlib
-import pickle
+import argparse
 import shutil
 import socket
 import time
@@ -256,67 +255,71 @@ def _is_permanent_download_error(exc: Exception) -> bool:
     return isinstance(exc, urllib.error.HTTPError)
 
 
-def _is_unpickling_error(exc: Exception) -> bool:
-    """True for the failure PyTorch >=2.6 raises against this exact
-    checkpoint now that `torch.load`'s `weights_only` default flipped
-    from `False` to `True` -- the file itself isn't corrupt, it's just
-    a plain, trusted first-party checkpoint (same trust level as
-    HyenaDNA's, which already loads with `weights_only=False`
-    explicitly -- see hyenadna.py) that predates PyTorch's newer,
-    stricter unpickling allowlist."""
-    if isinstance(exc, pickle.UnpicklingError):
-        return True
-    return "weights_only" in str(exc)
-
-
-@contextlib.contextmanager
-def _force_weights_only_false():
+def _allow_argparse_namespace_in_checkpoints() -> None:
     """
-    `fm.pretrained.<variant>(model_location=...)` calls `torch.load(...)`
-    internally with no `weights_only` argument, so there's no way to
-    pass it through the official package's API. This temporarily
-    patches `torch.load`'s default back to `weights_only=False` for the
-    duration of the call instead, so a checkpoint that only fails
-    because of PyTorch 2.6's new default can be loaded from the exact
-    same local file it already has -- instead of discarding a perfectly
-    good file and wastefully re-downloading (or re-hitting the flaky
-    upstream endpoint) for a problem re-downloading can't fix anyway.
+    Registers `argparse.Namespace` on PyTorch's strict-unpickling
+    allowlist so the RNA-FM checkpoint loads with `weights_only` left
+    at PyTorch's own default. Idempotent -- safe to call on every load.
+
+    WHAT IN THE FILE TRIPS THE NEWER DEFAULT. PyTorch 2.6 flipped
+    `torch.load`'s `weights_only` default from `False` to `True`. The
+    RNA-FM checkpoint is a fairseq-style *training* checkpoint, not a
+    bare state dict: alongside the 206-tensor `model` state dict it
+    carries `args`, `cfg`, optimizer history and task state. The one
+    and only thing in it the strict unpickler rejects is
+    `argparse.Namespace`, at exactly `.args` and `.cfg.model`:
+
+        WeightsUnpickler error: Unsupported global: GLOBAL
+        argparse.Namespace was not an allowed global by default.
+
+    Nothing is wrong with the file. It is a trusted first-party
+    checkpoint (same trust level as HyenaDNA's, which loads with
+    `weights_only=False` explicitly -- see hyenadna.py) that simply
+    predates PyTorch's stricter unpickling allowlist.
+
+    WHY THE OBVIOUS FIX -- RE-SAVING THE CHECKPOINT WITHOUT THE
+    `Namespace` -- DOES NOT WORK. `args`/`cfg` are load-bearing for
+    `fm.pretrained` itself. Two re-save forms were tested through the
+    official loader with `torch.load` unpatched: stripping the file to
+    `{"model": ...}`, and keeping the full structure with every
+    `Namespace` converted to a plain dict. Both got past
+    `weights_only=True` and then died further along with
+    `FileNotFoundError: <variant>-contact-regression.pt` -- the library
+    reads that metadata, and without it takes a branch demanding a
+    companion file that does not exist beside the checkpoint. So a
+    re-save satisfies the unpickler and breaks the loader. This is NOT
+    a claim that no correct re-save is possible, only that neither
+    obvious form works, and why. If that route is ever revisited the
+    weights themselves are portable: a SHA-256 over all 206 tensors was
+    identical before and after re-saving.
+
+    WHY AN ALLOWLIST RATHER THAN `weights_only=False`. Forcing
+    `weights_only=False` permits arbitrary code execution during
+    unpickling, for every object in the file. This keeps strict
+    unpickling switched on for everything else and permits exactly one
+    inert data-holder class.
+
+    CAVEAT, ACCEPTED KNOWINGLY: `add_safe_globals` is process-global.
+    Once called, any `torch.load` in this process will also accept an
+    `argparse.Namespace`. That is far narrower than the blanket
+    `torch.load` patch this replaces, but it is a real property of the
+    change, named here so it is chosen deliberately rather than
+    inherited silently.
     """
-    original_load = torch.load
-
-    def _patched_load(*args, **kwargs):
-        kwargs.setdefault("weights_only", False)
-        return original_load(*args, **kwargs)
-
-    torch.load = _patched_load
-    try:
-        yield
-    finally:
-        torch.load = original_load
+    torch.serialization.add_safe_globals([argparse.Namespace])
 
 
-def _load_local_checkpoint(loader, path: str, logger):
+def _load_local_checkpoint(loader, path: str):
     """
     Loads an already-on-disk RNA-FM checkpoint via the official
-    `fm.pretrained` loader, retrying once with `weights_only` forced to
-    `False` (see `_force_weights_only_false`) if the first attempt
-    fails with an unpickling error. Any other failure (a genuinely
-    truncated/corrupt file, an unexpected format, ...) is re-raised
-    immediately for the caller's existing fallback chain to handle.
+    `fm.pretrained` loader. `weights_only` is left at PyTorch's own
+    default; `argparse.Namespace` is allowlisted first (see
+    `_allow_argparse_namespace_in_checkpoints`) so the checkpoint's
+    training metadata does not trip the strict unpickler. Any failure
+    is re-raised for the caller's existing fallback chain to handle.
     """
-    try:
-        return loader(model_location=path)
-    except Exception as exc:  # noqa: BLE001 - re-raised below unless recognized
-        if not _is_unpickling_error(exc):
-            raise
-        logger.info(
-            f"RNA-FM checkpoint at '{path}' failed to load under "
-            f"PyTorch's newer weights_only=True default "
-            f"({exc.__class__.__name__}); retrying the same local file "
-            "with weights_only=False instead of re-downloading."
-        )
-        with _force_weights_only_false():
-            return loader(model_location=path)
+    _allow_argparse_namespace_in_checkpoints()
+    return loader(model_location=path)
 
 
 class RNAFMModel(BaseGenomicModel):
@@ -401,16 +404,16 @@ class RNAFMModel(BaseGenomicModel):
                 f"Using cached RNA-FM weights for '{model_variant}' at '{cached_path}' -- skipping network download."
             )
             try:
-                return _load_local_checkpoint(loader, str(cached_path), self.logger)
+                return _load_local_checkpoint(loader, str(cached_path))
             except Exception as exc:  # noqa: BLE001
                 # A cached file that fails to load (corrupted partial
                 # download, wrong format) shouldn't be trusted silently
                 # -- fall through to a fresh network attempt instead,
                 # which is more likely to succeed than reusing bad
-                # local bytes. (An UnpicklingError caused only by
-                # PyTorch 2.6's weights_only default was already
-                # retried in-place by _load_local_checkpoint above, so
-                # reaching this branch means it genuinely didn't help.)
+                # local bytes. (PyTorch 2.6's weights_only default is
+                # already accounted for by the allowlist in
+                # _load_local_checkpoint above, so reaching this branch
+                # means the file itself is the problem.)
                 self.logger.warning(
                     f"Cached RNA-FM checkpoint at '{cached_path}' failed "
                     f"to load ({exc.__class__.__name__}); ignoring cache "
@@ -433,7 +436,7 @@ class RNAFMModel(BaseGenomicModel):
                         f"'{_HF_MIRROR_REPO_ID}' -- skipping the "
                         "unreliable upstream endpoint."
                     )
-                    return _load_local_checkpoint(loader, str(mirror_path), self.logger)
+                    return _load_local_checkpoint(loader, str(mirror_path))
                 except Exception as exc:  # noqa: BLE001
                     self.logger.warning(
                         f"HF-mirrored RNA-FM checkpoint at '{mirror_path}' "
@@ -457,6 +460,11 @@ class RNAFMModel(BaseGenomicModel):
         # `TimeoutError`, which the retry loop below already treats as
         # transient and retryable -- so this only supplies the missing
         # timeout, it doesn't change the retry/skip behavior itself.
+        # The downloaded file is the same fairseq-style checkpoint as
+        # the cached one, so it needs the same allowlist before
+        # `loader()` unpickles it (see
+        # `_allow_argparse_namespace_in_checkpoints`).
+        _allow_argparse_namespace_in_checkpoints()
         last_exc: Optional[Exception] = None
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             previous_timeout = socket.getdefaulttimeout()
@@ -464,19 +472,6 @@ class RNAFMModel(BaseGenomicModel):
             try:
                 return loader()
             except Exception as exc:  # noqa: BLE001 - translate + sanitize below
-                if _is_unpickling_error(exc):
-                    # The download itself succeeded (torch.hub already
-                    # cached the file); only the unpickling step failed,
-                    # under PyTorch 2.6's new weights_only=True default.
-                    # Retry the load in place instead of letting this
-                    # be treated as a corrupt/permanent failure below,
-                    # which would otherwise skip RNA-FM for the whole
-                    # run over a problem that was never about the file.
-                    try:
-                        with _force_weights_only_false():
-                            return loader()
-                    except Exception as retry_exc:  # noqa: BLE001
-                        exc = retry_exc
                 last_exc = exc
                 permanent = _is_permanent_download_error(exc)
                 self.logger.debug(

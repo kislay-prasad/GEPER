@@ -3,9 +3,29 @@ geper/api/submission_worker.py
 ──────────────────────────────
 Background worker for Bij AI interpretation submissions.
 
-Polls submissions with status='queued', invokes Bij AI CLI via spawn_tracked
+Polls submissions with status='queued', invokes geper/main.py via spawn_tracked
 (so interpretations are killable), handles timeouts, and updates submission status.
 On failure, creates exceptions in the clinical database to notify lab operators.
+
+2026-09-08: this file used to shell out to a binary named "bij-interpret"
+that has never existed anywhere in this repo (hive finding
+meredith-establish-what-bij-interpret-is-the-last-missing-link). The
+human ruled: geper/main.py is proven (ran end to end on 2026-09-05) and
+this worker has never executed against anything real, so THE WORKER
+ADAPTS TO geper/main.py'S CONTRACT, not the other way around. This
+revision makes three changes, all traceable to that ruling: (1) invokes
+geper/main.py directly via the running interpreter instead of a
+nonexistent named binary -- geper/ has no [project.scripts] entry
+anywhere (confirmed in the same finding), so there is no real console
+script to point at without inventing packaging; (2) drops --sample-ref/
+--consent-ref from the command line (main.py's build_arg_parser(),
+main.py:43-203, has never accepted either) while leaving them on the
+Submission object, the DB schema, and the API model untouched -- the
+platform already knows which submission it started and does not need
+the CLI to correlate it; (3) reads success/failure from the exit code
+and the run document from disk instead of parsing a stdout JSON envelope
+main.py has never produced (main.py:206-281 never prints to stdout;
+its output is files under --output-dir plus an exit code).
 """
 
 from __future__ import annotations
@@ -14,10 +34,12 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
 
+from pipeline.hpo.utils import is_well_formed_hpo_id
 from shared.process_control import spawn_tracked, kill_process_tree_now
 
 from .submission_store import SubmissionStore
@@ -27,6 +49,65 @@ logger = logging.getLogger("geper.api.submission_worker")
 # Timeout for a single interpretation run (30 minutes)
 INTERPRETATION_TIMEOUT_SECONDS = 1800
 
+# geper/main.py itself -- the proven CLI. No console-script entry exists
+# for it anywhere in the repo (geper/ has no pyproject.toml/setup.py of
+# its own; only shared/ is packaged at the repo root), so this points at
+# the file directly rather than a name on PATH. BIJ_AI_CLI_PATH is kept
+# as an override (now a path to main.py, not a bare command name) in
+# case a future packaged install wants to point elsewhere.
+_DEFAULT_GEPER_MAIN_PATH = str((Path(__file__).resolve().parent.parent / "main.py"))
+
+# Root directory under which each submission gets its own --output-dir
+# (submission.id-scoped). geper/main.py's own default (./geper_output,
+# config.py:2706) is a single shared relative path -- concurrent
+# submissions would silently overwrite each other's geper_results.json.
+# Same env-var-with-file-relative-default pattern main() below already
+# uses for GEPER_SUBMISSION_STORE_PATH.
+_DEFAULT_OUTPUT_ROOT = str(Path(__file__).parent / ".submission_outputs")
+
+
+def _hpo_terms_to_cli_arg(hpo_terms) -> str:
+    """
+    Converts the platform's `hpo_terms` JSON into the comma-separated
+    "HP:#######" string geper/main.py's --hpo-terms wants
+    (main.py:175-189's own help text). The platform spec
+    (GEPER_CLINICAL_PLATFORM_SPEC.md:457) declares hpo_terms as a plain
+    list -- ["HP:0000001", ...] -- but the implemented request model
+    (api/main.py:209) is Optional[Dict[str, Any]], so in practice a dict
+    is what reaches here; the one shape attested anywhere in this repo
+    (test_interpretations_api.py:77, test_submission_worker.py) is
+    {"terms": [...]}. Accepts either shape.
+
+    Raises ValueError, naming exactly what's wrong, on anything that
+    isn't a non-empty list of well-formed HPO IDs -- ruled 2026-09-08:
+    "the silent degradation is the real defect... convert, and IF
+    CONVERSION FAILS, RAISE RATHER THAN PROCEED. A submission that can't
+    pass its phenotype data is a precondition failure, not a degraded
+    run." Deliberately does NOT reuse main.py's own malformed-ID
+    handling (pipeline/hpo/utils.py::parse_hpo_terms_arg, which logs a
+    warning and silently drops bad IDs, main.py:183-187) -- that
+    silent-drop behavior is exactly what this conversion exists to keep
+    this caller from ever triggering. Reuses is_well_formed_hpo_id
+    (pipeline/hpo/utils.py:84-87) for the same "HP:" + 7 digits check
+    main.py's own parsing uses, rather than a second regex.
+    """
+    if isinstance(hpo_terms, dict):
+        terms = hpo_terms.get("terms")
+    else:
+        terms = hpo_terms
+
+    if not isinstance(terms, list) or not terms:
+        raise ValueError(
+            f"hpo_terms did not contain a non-empty list of HPO IDs (got {hpo_terms!r}); "
+            "expected {'terms': ['HP:#######', ...]} or ['HP:#######', ...]."
+        )
+
+    malformed = [t for t in terms if not (isinstance(t, str) and is_well_formed_hpo_id(t))]
+    if malformed:
+        raise ValueError(f"hpo_terms contained malformed HPO ID(s): {malformed!r} (expected 'HP:#######').")
+
+    return ",".join(terms)
+
 
 class InterpretationWorker:
     """Poll and process Bij AI interpretation submissions."""
@@ -34,7 +115,8 @@ class InterpretationWorker:
     def __init__(self, store: SubmissionStore, data_access=None):
         self.store = store
         self.data_access = data_access
-        self.bij_ai_cli = os.getenv("BIJ_AI_CLI_PATH", "bij-interpret")
+        self.geper_main_path = os.getenv("BIJ_AI_CLI_PATH", _DEFAULT_GEPER_MAIN_PATH)
+        self.output_root = os.getenv("GEPER_SUBMISSION_OUTPUT_ROOT", _DEFAULT_OUTPUT_ROOT)
 
     def _create_submission_failure_exception(self, submission, reason_code: str, error_message: str) -> None:
         """
@@ -84,28 +166,102 @@ class InterpretationWorker:
         # Update status to running
         self.store.update_status(submission.id, "running")
 
-        # Build Bij AI CLI command
-        cmd = [
-            self.bij_ai_cli,
-            "--vcf",
-            submission.vcf_path,
-            "--assembly",
-            submission.assembly,
-            "--sample-ref",
-            submission.sample_ref,
-            "--consent-ref",
-            submission.consent_ref,
-        ]
-
-        # Add optional parameters
-        if submission.hpo_terms:
-            cmd.extend(["--hpo-terms", json.dumps(submission.hpo_terms)])
-        if submission.qc_metrics:
-            cmd.extend(["--qc-metrics", json.dumps(submission.qc_metrics)])
-
-        logger.info(f"Executing: {' '.join(cmd)}")
-
         try:
+            # One output directory per submission -- see
+            # _DEFAULT_OUTPUT_ROOT. Scoped by submission.id, which the
+            # platform already generated and uses to correlate this run
+            # (same reasoning behind dropping --sample-ref/--consent-ref
+            # below).
+            output_dir = os.path.join(self.output_root, submission.id)
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Build the geper/main.py invocation. sys.executable, not a
+            # bare command name -- see _DEFAULT_GEPER_MAIN_PATH.
+            cmd = [
+                sys.executable,
+                self.geper_main_path,
+                "--vcf",
+                submission.vcf_path,
+                "--assembly",
+                submission.assembly,
+                "--output-dir",
+                output_dir,
+            ]
+            # --sample-ref / --consent-ref DELIBERATELY DROPPED (2026-09-08
+            # ruling): geper/main.py's build_arg_parser() has never accepted
+            # either flag. They exist on the Submission/API/DB so the
+            # platform can correlate a submission without passing patient
+            # identity to the CLI -- the platform already knows which
+            # submission it started (submission.id, used for output_dir
+            # above), so the CLI does not need them. The columns, the API
+            # fields, and submission.sample_ref/consent_ref themselves are
+            # UNCHANGED -- only the command-line invocation stops passing them.
+
+            # Add optional parameters. Both of these can raise (ValueError
+            # from the hpo conversion below, OSError from the qc sidecar
+            # write) -- deliberately built INSIDE this try block (moved
+            # here 2026-09-08) so any such failure is caught by this
+            # function's own existing generic `except Exception` handler
+            # below: "an exception via the same path you already use"
+            # (2026-09-08 ruling), rather than a second, bespoke
+            # error-handling block for this one precondition.
+            if submission.hpo_terms:
+                # CONVERT, DO NOT DEGRADE (2026-09-08 ruling, correcting
+                # this file's own prior "not fixed in this change" note):
+                # main.py:175-189's --hpo-terms wants a comma-separated
+                # "HP:#######" string, not JSON. Passing the JSON blob
+                # through unconverted wouldn't crash -- main.py's own
+                # malformed-ID handling (main.py:183-187) would silently
+                # drop it and report PP4 as "not_evaluated" -- which is
+                # the actual defect: "a submission with clinical
+                # phenotype data produces an interpretation that ignored
+                # it, and nothing says so... a wrong clinical answer
+                # delivered quietly." So: convert for real
+                # (_hpo_terms_to_cli_arg), and if conversion fails, this
+                # raises -- caught below, submission marked failed with a
+                # clear reason, exception created. A submission that
+                # can't pass its phenotype data is a precondition
+                # failure, not a degraded run.
+                #
+                # NOT FIXED, FLAGGED INSTEAD (checked per the same
+                # ruling): bridge/combined_pipeline.py:394/448-449 passes
+                # its own `hpo_terms: Optional[str]` straight through to
+                # --hpo-terms with zero conversion or validation --
+                # whatever string its own caller (run_combined.py:76-83,
+                # 112) hands it reaches main.py unchecked. That caller
+                # reads a text/JSON FILE of HPO IDs (run_combined.py's
+                # own --hpo-terms help text), not this submission's JSON
+                # shape, so it isn't exposed to the SAME bug this fix
+                # closes -- but main.py:183-187's silent-drop-and-warn
+                # behavior itself is still live and unremoved (the CLI
+                # does not move, per every prior ruling this phase) and
+                # still reachable by ANY caller that hands it a malformed
+                # ID, bridge/combined_pipeline.py included if its own
+                # caller ever passes one. That underlying engine
+                # behavior is out of this diff's scope -- reported here,
+                # not touched.
+                cmd.extend(["--hpo-terms", _hpo_terms_to_cli_arg(submission.hpo_terms)])
+            if submission.qc_metrics:
+                # --qc-metrics-json (renamed from --qc-metrics, 2026-09-08
+                # ruling) wants a PATH TO A JSON FILE (main.py:157-173's own
+                # help text), not inline JSON -- confirmed by
+                # _parse_qc_metrics's file-open branch
+                # (report/clinical_report_builder.py:1519-1524, `with
+                # open(qc_metrics, "r")` when the value isn't already a
+                # dict). bridge/combined_pipeline.py:452, the reference
+                # implementation the human named for this flag, never passes
+                # qc_metrics inline either -- it writes a sidecar file first
+                # (write_qc_metrics_sidecar, combined_pipeline.py:228-236)
+                # and passes that path. Mirrored here (not reused directly --
+                # that helper is shaped around a kim_pipeline checkpoint
+                # dict, not this submission's already-final qc_metrics dict).
+                qc_metrics_path = os.path.join(output_dir, "qc_metrics.json")
+                with open(qc_metrics_path, "w", encoding="utf-8") as fh:
+                    json.dump(submission.qc_metrics, fh)
+                cmd.extend(["--qc-metrics-json", qc_metrics_path])
+
+            logger.info(f"Executing: {' '.join(cmd)}")
+
             # Spawn process — must be tracked for cancellation support
             proc = spawn_tracked(
                 cmd,
@@ -134,7 +290,14 @@ class InterpretationWorker:
                 )
                 return True
 
-            # Check return code
+            # Success/failure is the EXIT CODE (2026-09-08 ruling):
+            # geper/main.py:206-281 returns 0 on success, 1 on
+            # PipelineError, 130 on KeyboardInterrupt -- not a stdout
+            # run_complete flag. main.py never prints JSON to stdout
+            # (grepped main.py for run_complete/run_document/
+            # print(json/json.dumps-as-output -- zero hits); its output
+            # is files under --output-dir plus this exit code. stderr is
+            # still surfaced in the error message for diagnosis, as before.
             if proc.returncode != 0:
                 error_msg = f"Bij AI returned exit code {proc.returncode}"
                 if stderr:
@@ -153,19 +316,23 @@ class InterpretationWorker:
                 )
                 return True
 
-            # Process succeeded — parse output for interpretation details
-            # Bij AI CLI outputs a JSON document with run_complete flag
-            try:
-                result = json.loads(stdout)
-            except json.JSONDecodeError as e:
-                error_msg = f"Failed to parse Bij AI output: {e}"
+            # The run document is a FILE main.py already writes
+            # (geper_results.json, orchestrator.py:712) under the
+            # --output-dir this call passed -- not a second, stdout-based
+            # output path to keep consistent with the first (human's
+            # reasoning, 2026-09-08 ruling: "a stdout JSON envelope is
+            # the wrong thing to add"). Exit 0 without that file existing
+            # is a contract violation worth surfacing distinctly rather
+            # than crashing on open() below.
+            results_path = os.path.join(output_dir, "geper_results.json")
+            if not os.path.isfile(results_path):
+                error_msg = f"Bij AI exited 0 but did not write {results_path}"
                 logger.error(f"[{submission.id}] {error_msg}")
                 self.store.update_status(
                     submission.id,
                     "failed",
                     error_message=error_msg,
                 )
-                # Create exception for parse error
                 self._create_submission_failure_exception(
                     submission,
                     "bij_ai_error_other",
@@ -173,28 +340,37 @@ class InterpretationWorker:
                 )
                 return True
 
-            # Check run_complete flag — not file presence
-            if not result.get("run_complete"):
-                error_msg = "Interpretation did not complete (run_complete=false)"
-                logger.warning(f"[{submission.id}] {error_msg}")
-                self.store.update_status(
-                    submission.id,
-                    "failed",
-                    error_message=error_msg,
-                )
-                # Create exception for incomplete interpretation
-                self._create_submission_failure_exception(
-                    submission,
-                    "bij_ai_error_other",
-                    error_msg,
-                )
-                return True
+            # interpretation_id: THE PLATFORM MINTS IT (2026-09-08 ruling,
+            # correcting this file's own prior "left None" note -- that
+            # was right while unresolved and is now resolved the other
+            # way). geper/main.py's real output (geper_results.json) has
+            # no run-id/interpretation-id concept anywhere -- confirmed
+            # again: grepped orchestrator.py and report/json_builder.py,
+            # zero hits -- so this was never the engine's to supply, and
+            # the ruling is explicit that it also isn't submission.id
+            # reused ("generate one rather than leaving the column empty
+            # or borrowing the response id" -- that would make this
+            # column redundant with the API's own response `id` field,
+            # the objection this file raised and which the ruling
+            # answered by minting a genuinely distinct id, not by
+            # dropping the column). Minted here, at completion, the same
+            # way submission_store.py:165 mints submission.id itself
+            # (uuid.uuid4()) -- this worker is "the platform" at the one
+            # layer it actually touches; wiring this to
+            # clinical/data_access.py::create_interpretation() (the
+            # OTHER, Postgres-side "platform creates the interpretations
+            # row" -- clinical/schema.sql:438-440, data_access.py:
+            # 1703-1773) would need a vcf_id and an authenticated Session
+            # this SQLite-backed submission has neither of; that's a real
+            # architecture decision, out of this diff's scope, and not
+            # what was ruled on.
+            interpretation_id = str(uuid.uuid4())
+            # run_document_ref: the PATH to the file main.py wrote, not a
+            # re-serialization of its content -- "the run document IS
+            # ALREADY A FILE the platform stores" (human's ruling).
+            run_document_ref = results_path
 
-            # Extract interpretation ID and run document reference
-            interpretation_id = result.get("interpretation_id")
-            run_document_ref = json.dumps(result.get("run_document", {}))
-
-            logger.info(f"[{submission.id}] Interpretation complete: {interpretation_id}")
+            logger.info(f"[{submission.id}] Interpretation complete: {results_path}")
             self.store.update_status(
                 submission.id,
                 "complete",
@@ -204,6 +380,14 @@ class InterpretationWorker:
             return True
 
         except FileNotFoundError as e:
+            # NOTE (2026-09-08): with cmd = [sys.executable, main_path,
+            # ...], this branch no longer fires for "main.py doesn't
+            # exist at that path" -- sys.executable itself always exists,
+            # so Popen succeeds; Python then exits nonzero when it can't
+            # open the script argument, which surfaces via the exit-code
+            # branch above instead, with a less specific message. This
+            # branch still covers spawn_tracked/subprocess machinery
+            # itself being unavailable.
             error_msg = f"Bij AI CLI not found: {e}"
             logger.error(f"[{submission.id}] {error_msg}")
             self.store.update_status(

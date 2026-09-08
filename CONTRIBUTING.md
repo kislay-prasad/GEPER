@@ -33,8 +33,29 @@ git ci -m "your message"          # instead of: git commit -m "your message"
 - Requires `extensions.worktreeConfig=true` (already set here). Per-worktree
   `user.name` is *not* the mechanism -- it sets author **and** committer, which
   would lose the committer of record.
+- The alias reads `git config --worktree agent.author`, **scoped deliberately**.
+  An unscoped read would walk worktree -> local -> global, so a repo-level or
+  global `agent.author` would make an unconfigured worktree commit silently
+  under someone else's name -- a false record of who performed the work, which
+  is worse than an absent one. Scoping the read keeps identity per-worktree by
+  construction, and keeps the refusal above working.
 - `git commit` still works and is untouched. It produces the old, unattributed
   form.
+
+### `git log` now has three eras, not two
+
+Do not read "authored `kislay-prasad`" as "the human wrote it". After the
+cutover there are **three** kinds of commit, and two of them look identical:
+
+1. **Before 2026-09-08** -- authored `kislay-prasad`, whoever wrote it.
+2. **After, from a worktree with an identity set** -- authored by that agent.
+3. **After, from a worktree with no identity, or via plain `git commit`** --
+   authored `kislay-prasad` again.
+
+**(1) and (3) are indistinguishable by author alone.** Attribution being "live"
+does not make the whole log readable; it makes *some* commits readable and
+leaves the rest exactly as ambiguous as they were. A reader who knows only that
+attribution was enabled will over-read the log precisely here.
 
 ### Checking who wrote something
 

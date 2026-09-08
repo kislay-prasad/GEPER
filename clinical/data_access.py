@@ -4579,6 +4579,90 @@ class DataAccess:
 
         return receipt_id
 
+    # ── Phase 8: FASTQ ingestion ─────────────────────────────────────────────
+    #
+    # These two live here rather than in `ingestion.py` for the reason every
+    # other write does: this class owns org scoping, the audit trail and the
+    # SQL, and a second module issuing its own INSERTs would be a parallel
+    # mechanism rather than a reuse of this one. The scanner decides WHAT is a
+    # complete, stable, verified FASTQ set; it does not decide how a row is
+    # written or how an organisation is isolated.
+
+    @auditable(
+        auditable=False,
+        action="find_fastq_set_by_checksums",
+        resource_type="fastq_set",
+        requires_session=False,
+        reason="idempotency probe on every scan; auditing it would bury the detections in noise",
+    )
+    def find_fastq_set_by_checksums(self, org_id: uuid.UUID, r1_checksum: str, r2_checksum: str) -> Optional[uuid.UUID]:
+        """
+        The existing row for this exact pair of file contents, if any.
+
+        THE CHECKSUM PAIR IS THE IDEMPOTENCY KEY, NOT THE PATH (human ruling,
+        2026-09-08). A moved or renamed file with the same content is the SAME
+        observation; a reused path with new content is a DIFFERENT one. This is
+        why `fastq_sets` deliberately carries no `UNIQUE (org_id, r1_path)`: a
+        path-based constraint would have been wrong in both directions.
+        Scoped to org_id like every other read here.
+        """
+        row = self._query_one(
+            "SELECT fastq_set_id FROM fastq_sets WHERE org_id = %s AND r1_checksum = %s AND r2_checksum = %s",
+            (org_id, r1_checksum, r2_checksum),
+        )
+        return None if row is None else row[0]
+
+    @auditable(
+        action="fastq_set_detected",
+        resource_type="fastq_set",
+        requires_session=False,
+    )
+    def record_fastq_set(
+        self,
+        org_id: uuid.UUID,
+        sample_id: uuid.UUID,
+        r1_path: str,
+        r2_path: str,
+        r1_checksum: str,
+        r2_checksum: str,
+        detected_at: _datetime.datetime,
+    ) -> uuid.UUID:
+        """
+        Append one `fastq_sets` row for a sample IN THIS ORGANISATION.
+
+        Raises `NotFoundError` if the sample does not resolve. That exception
+        already carries the property this needs and its docstring says so:
+        "deliberately indistinguishable from does not exist at all". ANOTHER
+        ORGANISATION'S SAMPLE MUST BE INDISTINGUISHABLE FROM UNKNOWN, not
+        merely refused -- a distinct error for "exists but not yours" tells the
+        caller which sample ids exist elsewhere. So the resolution below
+        filters on org_id and the caller cannot tell the two cases apart.
+
+        No `session` argument: a scheduled scan has no logged-in user. The
+        audit row is written by `@auditable(requires_session=False)`, which
+        takes `org_id` from the bound parameters and leaves the actor null --
+        the existing provisioning-method path, not a second one. An earlier
+        draft called `self._audit` by hand as well and would have written TWO
+        rows per detection; `test_every_public_method_has_auditable_decorator`
+        is what caught the missing decorator, and the duplicate was the thing
+        that fix removed.
+        """
+        sample = self._query_one(
+            "SELECT sample_id FROM samples WHERE sample_id = %s AND org_id = %s",
+            (sample_id, org_id),
+        )
+        if sample is None:
+            raise NotFoundError(f"Sample {sample_id} not found")
+
+        fastq_set_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO fastq_sets (fastq_set_id, org_id, sample_id, r1_path, r2_path, "
+            "r1_checksum, r2_checksum, detected_at, state) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'detected')",
+            (fastq_set_id, org_id, sample_id, r1_path, r2_path, r1_checksum, r2_checksum, detected_at),
+        )
+        return fastq_set_id
+
 
 # A real bcrypt hash of a value nobody holds, used only to spend verification
 # work when no user matched. Generated once, constant thereafter.

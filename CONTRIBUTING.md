@@ -92,7 +92,7 @@ target to match.
 
 | from | passed | skipped | other |
 |---|---|---|---|
-| `geper/` | 2483 | 22 | 29 deselected, **32 errors**, 603 subtests passed |
+| `geper/` | 2483 | 22 | 29 deselected, **31-32 errors** (teardown only -- see below), 603 subtests passed |
 | `kim_pipeline/` | 1219 | 29 | 3 subtests passed |
 | `clinical/` | 33 | **466** | **see below -- 33 is not this suite's number** |
 | `bridge/` | 24 | 0 | -- |
@@ -104,12 +104,27 @@ target to match.
   [the same command, two answers](#the-same-command-two-answers-clinical-needs-a-database)
   below -- it is the clearest argument on this page for why a bare pass
   count means nothing.
-- **`geper/`'s 32 errors are pre-existing** and are not a regression:
-  Windows `PermissionError [WinError 32]` during *teardown* of the
-  `db_path` tempdir fixture in `api/tests/test_submission_worker.py`.
-  The tests themselves pass; the tempdir cleanup cannot delete a
-  still-open SQLite file. Unfixed, and unrelated to whatever you are
-  changing.
+- **`geper/`'s errors are pre-existing, teardown-only, and the count is
+  not stable.** Every one is a Windows `PermissionError [WinError 32]`
+  raised *at teardown*, never at setup or during a test: the tempdir
+  cleanup cannot delete a SQLite file that is still open. **The tests
+  themselves pass.** Enumerated on 2026-09-08 at `7e4d32c`:
+
+  | file | errors |
+  |---|---|
+  | `api/tests/test_interpretations_api.py` | 13 |
+  | `api/tests/test_submission_store.py` | 11 |
+  | `api/tests/test_submission_worker.py` | 8 |
+  | **total** | **32** |
+
+  **A different total is not automatically a regression.** Ryan
+  enumerated the same three files on byte-identical `geper/` code and
+  got 12 + 11 + 8 = **31**, differing by one in
+  `test_interpretations_api.py`. Whether a given file handle has been
+  released by the time the cleanup runs is a timing question, so this
+  count moves. **Compare the enumeration, not the total** -- a new file
+  appearing in that list, or an error at setup rather than teardown, is
+  the thing that would actually mean something.
 - **`geper/` deselects 29 opt-in tests by default** (`addopts` in
   [geper/pytest.ini](geper/pytest.ini)): `real_pip` and `live_network`.
   A green `geper/` run therefore does **not** mean the live-network

@@ -464,6 +464,12 @@ RUN rm -rf /app/geper/hyena-dna && cp -r /opt/hyena-dna-src /app/geper/hyena-dna
 # progress in real time during a long run instead of only at exit.
 ENV PYTHONUNBUFFERED=1
 
+# PYTHONPATH must include /app so that when bridge/combined_pipeline.py runs
+# kim_pipeline/main.py in a subprocess with cwd=kim_pipeline, the 'shared'
+# module at /app/shared/ remains importable. Without this, Kim's subprocess
+# fails with "ModuleNotFoundError: No module named 'shared'".
+ENV PYTHONPATH=/app:${PYTHONPATH}
+
 # GEPER_NCBI_EMAIL / GEPER_NCBI_API_KEY are deliberately NOT baked in with
 # real values here (they're per-user credentials, and geper/config.py's
 # own committed default is a placeholder NCBI's usage policy explicitly

@@ -1026,7 +1026,13 @@ CREATE INDEX idx_exception_events_exception ON exception_events (exception_id, t
 -- is what an append-only log means. If UPDATE is ever granted back, this
 -- table stops being evidence.
 
--- CREATE ROLE clinical_app LOGIN PASSWORD '...';   -- deployment, not here
+-- clinical_app is CREATED BY clinical/bootstrap.py, which must run against an
+-- empty database BEFORE this file is applied. The grants below are real
+-- statements and fail outright if the role does not exist; this comment used
+-- to read "deployment, not here" and name no "there", so applying this schema
+-- to a fresh database was impossible. See tests/test_bootstrap_empty_database.py,
+-- which deliberately does not use the fixture that hid it.
+--   CREATE ROLE clinical_app LOGIN PASSWORD '...';   -- done by clinical/bootstrap.py
 
 -- Explicit grant required for hardened deployments. Stock Postgres grants
 -- USAGE on the default 'public' schema to PUBLIC, so this omission is
@@ -1175,7 +1181,9 @@ REVOKE DELETE
 -- an omission -- if it lands, it needs its own commit and its own grant,
 -- exactly as this commit needed one.
 
--- CREATE ROLE clinical_retention LOGIN PASSWORD '...';   -- deployment, not here
+-- clinical_retention is likewise created by clinical/bootstrap.py; see the note
+-- above clinical_app's grants.
+--   CREATE ROLE clinical_retention LOGIN PASSWORD '...';   -- done by clinical/bootstrap.py
 
 GRANT  USAGE                       ON SCHEMA public TO clinical_retention;
 GRANT  SELECT                      ON retention_policies, release_events, amendments, users TO clinical_retention;

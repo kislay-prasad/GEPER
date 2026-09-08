@@ -18,14 +18,14 @@ geper/main.py directly via the running interpreter instead of a
 nonexistent named binary -- geper/ has no [project.scripts] entry
 anywhere (confirmed in the same finding), so there is no real console
 script to point at without inventing packaging; (2) drops --sample-ref/
---consent-ref from the command line (main.py's build_arg_parser(),
-main.py:43-203, has never accepted either) while leaving them on the
+--consent-ref from the command line (geper/main.py's build_arg_parser(),
+geper/main.py:43-203, has never accepted either) while leaving them on the
 Submission object, the DB schema, and the API model untouched -- the
 platform already knows which submission it started and does not need
 the CLI to correlate it; (3) reads success/failure from the exit code
 and the run document from disk instead of parsing a stdout JSON envelope
-main.py has never produced (main.py:206-281 never prints to stdout;
-its output is files under --output-dir plus an exit code).
+geper/main.py has never produced (geper/main.py:206-281 never prints to
+stdout; its output is files under --output-dir plus an exit code).
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ _DEFAULT_GEPER_MAIN_PATH = str((Path(__file__).resolve().parent.parent / "main.p
 
 # Root directory under which each submission gets its own --output-dir
 # (submission.id-scoped). geper/main.py's own default (./geper_output,
-# config.py:2706) is a single shared relative path -- concurrent
+# geper/config.py:2706) is a single shared relative path -- concurrent
 # submissions would silently overwrite each other's geper_results.json.
 # Same env-var-with-file-relative-default pattern main() below already
 # uses for GEPER_SUBMISSION_STORE_PATH.
@@ -70,26 +70,27 @@ def _hpo_terms_to_cli_arg(hpo_terms) -> str:
     """
     Converts the platform's `hpo_terms` JSON into the comma-separated
     "HP:#######" string geper/main.py's --hpo-terms wants
-    (main.py:175-189's own help text). The platform spec
+    (geper/main.py:175-189's own help text). The platform spec
     (GEPER_CLINICAL_PLATFORM_SPEC.md:457) declares hpo_terms as a plain
     list -- ["HP:0000001", ...] -- but the implemented request model
-    (api/main.py:209) is Optional[Dict[str, Any]], so in practice a dict
-    is what reaches here; the one shape attested anywhere in this repo
-    (test_interpretations_api.py:77, test_submission_worker.py) is
-    {"terms": [...]}. Accepts either shape.
+    (geper/api/main.py:209) is Optional[Dict[str, Any]], so in practice a
+    dict is what reaches here; the one shape attested anywhere in this
+    repo (geper/api/tests/test_interpretations_api.py:77,
+    geper/api/tests/test_submission_worker.py) is {"terms": [...]}.
+    Accepts either shape.
 
     Raises ValueError, naming exactly what's wrong, on anything that
     isn't a non-empty list of well-formed HPO IDs -- ruled 2026-09-08:
     "the silent degradation is the real defect... convert, and IF
     CONVERSION FAILS, RAISE RATHER THAN PROCEED. A submission that can't
     pass its phenotype data is a precondition failure, not a degraded
-    run." Deliberately does NOT reuse main.py's own malformed-ID
-    handling (pipeline/hpo/utils.py::parse_hpo_terms_arg, which logs a
-    warning and silently drops bad IDs, main.py:183-187) -- that
-    silent-drop behavior is exactly what this conversion exists to keep
-    this caller from ever triggering. Reuses is_well_formed_hpo_id
-    (pipeline/hpo/utils.py:84-87) for the same "HP:" + 7 digits check
-    main.py's own parsing uses, rather than a second regex.
+    run." Deliberately does NOT reuse geper/main.py's own malformed-ID
+    handling (geper/pipeline/hpo/utils.py::parse_hpo_terms_arg, which
+    logs a warning and silently drops bad IDs, geper/main.py:183-187) --
+    that silent-drop behavior is exactly what this conversion exists to
+    keep this caller from ever triggering. Reuses is_well_formed_hpo_id
+    (geper/pipeline/hpo/utils.py:84-87) for the same "HP:" + 7 digits
+    check geper/main.py's own parsing uses, rather than a second regex.
     """
     if isinstance(hpo_terms, dict):
         terms = hpo_terms.get("terms")
@@ -208,51 +209,53 @@ class InterpretationWorker:
             if submission.hpo_terms:
                 # CONVERT, DO NOT DEGRADE (2026-09-08 ruling, correcting
                 # this file's own prior "not fixed in this change" note):
-                # main.py:175-189's --hpo-terms wants a comma-separated
-                # "HP:#######" string, not JSON. Passing the JSON blob
-                # through unconverted wouldn't crash -- main.py's own
-                # malformed-ID handling (main.py:183-187) would silently
-                # drop it and report PP4 as "not_evaluated" -- which is
-                # the actual defect: "a submission with clinical
-                # phenotype data produces an interpretation that ignored
-                # it, and nothing says so... a wrong clinical answer
-                # delivered quietly." So: convert for real
-                # (_hpo_terms_to_cli_arg), and if conversion fails, this
-                # raises -- caught below, submission marked failed with a
-                # clear reason, exception created. A submission that
-                # can't pass its phenotype data is a precondition
-                # failure, not a degraded run.
+                # geper/main.py:175-189's --hpo-terms wants a
+                # comma-separated "HP:#######" string, not JSON. Passing
+                # the JSON blob through unconverted wouldn't crash --
+                # geper/main.py's own malformed-ID handling
+                # (geper/main.py:183-187) would silently drop it and
+                # report PP4 as "not_evaluated" -- which is the actual
+                # defect: "a submission with clinical phenotype data
+                # produces an interpretation that ignored it, and nothing
+                # says so... a wrong clinical answer delivered quietly."
+                # So: convert for real (_hpo_terms_to_cli_arg), and if
+                # conversion fails, this raises -- caught below,
+                # submission marked failed with a clear reason, exception
+                # created. A submission that can't pass its phenotype
+                # data is a precondition failure, not a degraded run.
                 #
                 # NOT FIXED, FLAGGED INSTEAD (checked per the same
                 # ruling): bridge/combined_pipeline.py:394/448-449 passes
                 # its own `hpo_terms: Optional[str]` straight through to
                 # --hpo-terms with zero conversion or validation --
-                # whatever string its own caller (run_combined.py:76-83,
-                # 112) hands it reaches main.py unchecked. That caller
-                # reads a text/JSON FILE of HPO IDs (run_combined.py's
-                # own --hpo-terms help text), not this submission's JSON
+                # whatever string its own caller
+                # (bridge/run_combined.py:76-83, 112) hands it reaches
+                # geper/main.py unchecked. That caller reads a text/JSON
+                # FILE of HPO IDs (bridge/run_combined.py's own
+                # --hpo-terms help text), not this submission's JSON
                 # shape, so it isn't exposed to the SAME bug this fix
-                # closes -- but main.py:183-187's silent-drop-and-warn
-                # behavior itself is still live and unremoved (the CLI
-                # does not move, per every prior ruling this phase) and
-                # still reachable by ANY caller that hands it a malformed
-                # ID, bridge/combined_pipeline.py included if its own
-                # caller ever passes one. That underlying engine
-                # behavior is out of this diff's scope -- reported here,
-                # not touched.
+                # closes -- but geper/main.py:183-187's
+                # silent-drop-and-warn behavior itself is still live and
+                # unremoved (the CLI does not move, per every prior
+                # ruling this phase) and still reachable by ANY caller
+                # that hands it a malformed ID,
+                # bridge/combined_pipeline.py included if its own caller
+                # ever passes one. That underlying engine behavior is out
+                # of this diff's scope -- reported here, not touched.
                 cmd.extend(["--hpo-terms", _hpo_terms_to_cli_arg(submission.hpo_terms)])
             if submission.qc_metrics:
                 # --qc-metrics-json (renamed from --qc-metrics, 2026-09-08
-                # ruling) wants a PATH TO A JSON FILE (main.py:157-173's own
-                # help text), not inline JSON -- confirmed by
-                # _parse_qc_metrics's file-open branch
-                # (report/clinical_report_builder.py:1519-1524, `with
-                # open(qc_metrics, "r")` when the value isn't already a
-                # dict). bridge/combined_pipeline.py:452, the reference
-                # implementation the human named for this flag, never passes
-                # qc_metrics inline either -- it writes a sidecar file first
-                # (write_qc_metrics_sidecar, combined_pipeline.py:228-236)
-                # and passes that path. Mirrored here (not reused directly --
+                # ruling) wants a PATH TO A JSON FILE
+                # (geper/main.py:157-173's own help text), not inline
+                # JSON -- confirmed by _parse_qc_metrics's file-open
+                # branch (geper/report/clinical_report_builder.py:
+                # 1519-1524, `with open(qc_metrics, "r")` when the value
+                # isn't already a dict). bridge/combined_pipeline.py:452,
+                # the reference implementation the human named for this
+                # flag, never passes qc_metrics inline either -- it
+                # writes a sidecar file first (write_qc_metrics_sidecar,
+                # bridge/combined_pipeline.py:228-236) and passes that
+                # path. Mirrored here (not reused directly --
                 # that helper is shaped around a kim_pipeline checkpoint
                 # dict, not this submission's already-final qc_metrics dict).
                 qc_metrics_path = os.path.join(output_dir, "qc_metrics.json")
@@ -316,8 +319,9 @@ class InterpretationWorker:
                 )
                 return True
 
-            # The run document is a FILE main.py already writes
-            # (geper_results.json, orchestrator.py:712) under the
+            # The run document is a FILE geper/main.py already writes
+            # (geper_results.json, geper/pipeline/orchestrator.py:712)
+            # under the
             # --output-dir this call passed -- not a second, stdout-based
             # output path to keep consistent with the first (human's
             # reasoning, 2026-09-08 ruling: "a stdout JSON envelope is
@@ -345,8 +349,9 @@ class InterpretationWorker:
             # was right while unresolved and is now resolved the other
             # way). geper/main.py's real output (geper_results.json) has
             # no run-id/interpretation-id concept anywhere -- confirmed
-            # again: grepped orchestrator.py and report/json_builder.py,
-            # zero hits -- so this was never the engine's to supply, and
+            # again: grepped geper/pipeline/orchestrator.py and
+            # geper/report/json_builder.py, zero hits -- so this was
+            # never the engine's to supply, and
             # the ruling is explicit that it also isn't submission.id
             # reused ("generate one rather than leaving the column empty
             # or borrowing the response id" -- that would make this
@@ -354,13 +359,14 @@ class InterpretationWorker:
             # the objection this file raised and which the ruling
             # answered by minting a genuinely distinct id, not by
             # dropping the column). Minted here, at completion, the same
-            # way submission_store.py:165 mints submission.id itself
-            # (uuid.uuid4()) -- this worker is "the platform" at the one
-            # layer it actually touches; wiring this to
+            # way geper/api/submission_store.py:165 mints submission.id
+            # itself (uuid.uuid4()) -- this worker is "the platform" at
+            # the one layer it actually touches; wiring this to
             # clinical/data_access.py::create_interpretation() (the
             # OTHER, Postgres-side "platform creates the interpretations
-            # row" -- clinical/schema.sql:438-440, data_access.py:
-            # 1703-1773) would need a vcf_id and an authenticated Session
+            # row" -- clinical/schema.sql:438-440,
+            # clinical/data_access.py:1703-1773) would need a vcf_id and
+            # an authenticated Session
             # this SQLite-backed submission has neither of; that's a real
             # architecture decision, out of this diff's scope, and not
             # what was ruled on.

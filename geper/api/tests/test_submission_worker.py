@@ -231,10 +231,11 @@ class TestInterpretationWorker:
         """Worker includes optional metadata in CLI command, under the
         real flag names (2026-09-08: --qc-metrics-json, not
         --qc-metrics), writes qc_metrics to a sidecar file rather than
-        passing it inline (main.py:157-173 wants a file path), and
+        passing it inline (geper/main.py:157-173 wants a file path), and
         CONVERTS hpo_terms to the real comma-separated "HP:#######"
-        format main.py:175-189 wants (2026-09-08 ruling: convert, don't
-        degrade) rather than passing the JSON blob through unconverted."""
+        format geper/main.py:175-189 wants (2026-09-08 ruling: convert,
+        don't degrade) rather than passing the JSON blob through
+        unconverted."""
         sub = store.create_submission(
             org_id="default",
             submission_key="key-7",

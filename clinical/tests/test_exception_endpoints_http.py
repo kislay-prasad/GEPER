@@ -147,6 +147,11 @@ def client(clinical_dsn):
     that build `app` with an import of it; nothing else in this file changes.
     """
     pytest.importorskip("fastapi", reason="fastapi not installed")
+    # httpx is named separately because starlette's TestClient raises a
+    # RuntimeError -- not an ImportError -- when it is missing, so
+    # importorskip("fastapi") alone would let a missing httpx surface as an
+    # unexplained error at setup rather than as a named missing package.
+    pytest.importorskip("httpx", reason="httpx not installed (starlette TestClient requires it)")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 

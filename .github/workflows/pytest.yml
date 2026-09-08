@@ -227,7 +227,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install psycopg[binary] bcrypt pytest
+          # fastapi + httpx are needed by tests/test_exception_endpoints_http.py, the
+          # HTTP-level suite. Without them its nine tests SKIP, and CLINICAL_REQUIRE_DB
+          # turns each skip into a failure -- which is the guard working, not a bug.
+          pip install psycopg[binary] bcrypt pytest fastapi httpx
 
       - name: Run pytest
         run: python -m pytest tests/ -v

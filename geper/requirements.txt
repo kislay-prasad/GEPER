@@ -203,6 +203,37 @@ pydantic>=2.0,<3.0
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 
+# --- Clinical database driver (api/submission_worker.py, ------------------
+# --- api/exception_retry_worker.py) ---------------------------------------
+# Both workers `import psycopg` inside main() to open a connection to
+# CLINICAL_DSN, so geper cannot run either of them without it.
+#
+# It is only unconditionally required as of the CLINICAL_DSN fail-closed
+# change (2026-09-08). Before it, submission_worker.py reached the import
+# only when CLINICAL_DSN was set, and ran fine without either -- so the
+# driver was genuinely optional for that worker and the missing
+# declaration cost nothing. Now both workers refuse to start without a
+# DSN, and a DSN means this import must succeed. It was
+# imported by this tree for weeks while being declared by no requirements
+# file at all: nothing under geper/ imported it during a CI run, so the
+# gap was real but unreachable, and a green tick meant only that nothing
+# had tried yet. The 2026-09-08 CLINICAL_DSN fail-closed tests
+# (api/tests/test_worker_clinical_dsn_fail_closed.py) were the first thing
+# to import it under CI, and they failed with ModuleNotFoundError on a
+# defect they did not introduce.
+#
+# The `[binary]` extra, not bare `psycopg`: it ships a self-contained
+# libpq, so importing does not depend on a system libpq being present on
+# the runner. It also matches the only other psycopg installation in this
+# repository -- the clinical/ CI job's `pip install psycopg[binary]` in
+# .github/workflows/pytest.yml.
+#
+# Unpinned deliberately. Nothing in this repository pins psycopg (that
+# clinical/ line is unpinned too), so pinning it here would invent a
+# constraint on one of the two installs and silently let them diverge.
+# Pin both together or neither.
+psycopg[binary]
+
 # --- Clinical PDF report generation (report/summary.py) --------------------
 # BSD-licensed (License :: OSI Approved :: BSD License, verified against
 # PyPI's own package metadata) -- no commercial-use restriction, unlike

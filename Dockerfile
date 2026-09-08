@@ -74,7 +74,7 @@ FROM python:3.12-slim-bookworm AS builder
 # against a live daemon during this pass (see the file-level note above) --
 # if it fails, this line is the first thing to check. See DOCKER.md
 # "Known open questions."
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends \
         build-essential cmake git \
         zlib1g-dev libbz2-dev liblzma-dev \
         libcurl4-openssl-dev libssl-dev libncurses5-dev pkg-config \
@@ -122,7 +122,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # non-development build. `meson test` (CI's own correctness-verification
 # step) is deliberately skipped here -- it validates freebayes itself,
 # which is out of scope for building this image.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends \
         samtools bc parallel \
         libvcflib-tools libvcflib-dev \
         libseqlib2 libseqlib-dev \
@@ -230,8 +230,8 @@ RUN pip install --no-cache-dir --upgrade pip
 COPY geper/requirements.txt /tmp/geper-requirements.txt
 COPY kim_pipeline/requirements.txt /tmp/kim-requirements.txt
 
-RUN pip install --no-cache-dir -r /tmp/geper-requirements.txt \
-    && pip install --no-cache-dir -r /tmp/kim-requirements.txt
+RUN pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 -r /tmp/geper-requirements.txt \
+    && pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 -r /tmp/kim-requirements.txt
 
 # -----------------------------------------------------------------------
 # Enformer / Borzoi (CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI both
@@ -424,7 +424,7 @@ LABEL org.opencontainers.image.title="GEPER" \
 #                                first thing to check.
 #   ca-certificates            -- every provider lookup in this pipeline
 #                                is HTTPS (ClinVar, gnomAD, ClinGen, ...)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends \
         bwa samtools bcftools tabix minimap2 \
         git git-lfs \
         r-base-core \

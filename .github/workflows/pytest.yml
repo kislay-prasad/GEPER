@@ -227,10 +227,14 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          # fastapi + httpx are needed by tests/test_exception_endpoints_http.py, the
-          # HTTP-level suite. Without them its nine tests SKIP, and CLINICAL_REQUIRE_DB
-          # turns each skip into a failure -- which is the guard working, not a bug.
-          pip install psycopg[binary] bcrypt pytest fastapi httpx
+          # ONE DECLARATION, NOT TWO. This was an inline list until clinical/
+          # requirements.txt existed; now that it does, an inline list here would be a
+          # second source of truth for one answer, and the two would drift the way any
+          # pair does -- silently, and in whichever direction nobody is looking. The
+          # earlier form of this line had to be patched in a hotfix precisely because
+          # it was missing fastapi and httpx while the service's real needs lived
+          # nowhere. cache-dependency-path above already points at this file.
+          pip install -r requirements.txt
 
       - name: Run pytest
         run: python -m pytest tests/ -v

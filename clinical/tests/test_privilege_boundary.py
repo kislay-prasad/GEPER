@@ -70,8 +70,25 @@ _LOCAL_TEST_PASSWORD = "not-a-secret-local-test-only"
 
 _ROLES = ("clinical_app", "clinical_retention")
 
-# The six append-only tables. clinical_app may SELECT and INSERT; UPDATE and
+# The append-only tables. clinical_app may SELECT and INSERT; UPDATE and
 # DELETE are revoked from it and from PUBLIC.
+#
+# NO COUNT IN THE PROSE, DELIBERATELY. This comment said "six" and the section
+# header below said "five" while the tuple held six -- a hand-maintained count
+# is a claim with no mechanism behind it, and nothing makes the two numbers
+# agree except someone noticing. A `len()` assertion cannot fix that, because
+# a comment is not executed: it would add a second place to update rather than
+# remove the first. Deleting the number is the only change that makes the
+# drift impossible, and the tuple below is the count.
+#
+# fastq_sets joins them here and NOT in DELETE_REVOKED below, deliberately: the
+# two lists are disjoint and mean different things. DELETE_REVOKED is "tables
+# clinical_app may still SELECT, INSERT and UPDATE, on which D0b revoked
+# DELETE", and UPDATE_STILL_PERMITTED is derived from it by subtraction -- so a
+# table added there without also being excluded would be asserted UPDATABLE,
+# which for an append-only table is the opposite of what its grant block says.
+# This list already covers everything the other one would: SELECT permitted,
+# UPDATE refused, DELETE refused.
 APPEND_ONLY = (
     "audit_log",
     "reviewer_claims",
@@ -79,6 +96,7 @@ APPEND_ONLY = (
     "amendments",
     "amendment_notifications",
     "notification_read_receipts",
+    "fastq_sets",
 )
 
 # The three retention-managed tables. clinical_retention may SELECT and UPDATE
@@ -319,7 +337,7 @@ class TestTheConnectionsAreRealAndWorking:
         )
 
 
-# ─── clinical_app: UPDATE and DELETE refused on the five append-only tables ──
+# ─── clinical_app: UPDATE and DELETE refused on the append-only tables ──────
 
 
 class TestClinicalAppCannotRewriteAppendOnlyTables:

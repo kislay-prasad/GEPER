@@ -56,7 +56,12 @@ all = [
 ]
 
 [project.scripts]
-geper = "main:cli"
+# Named for the project this CLI belongs to. It was `geper` until
+# 2026-09-09, which installed a command called `geper` that ran KIM --
+# and the root `geper` package declares no console script at all, so the
+# name was not contested, it was simply taken by the wrong project. That
+# is why nothing ever errored and nobody noticed.
+kim-pipeline = "main:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]

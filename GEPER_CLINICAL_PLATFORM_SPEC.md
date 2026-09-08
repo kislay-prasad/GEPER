@@ -29,6 +29,25 @@ production readiness, or medical safety.** Bij AI is in development, is not
 publicly available, and is not clinically validated. Every report it produces is a
 draft requiring qualified human review.
 
+**On the ISO 15189 clause citations in this document, added 2026-09-08:** every
+ISO 15189 clause citation below is tagged `[UNVERIFIED-AGAINST-ISO-TEXT]`. These
+citations came from cards written without access to the standard's actual text —
+the only machine-readable ISO 15189 text on disk in this repository is three
+OCR'd pages containing none of the clauses cited here. The first citation anyone
+checked against a human reading of the real standard (7.4.1.5 c) for reviewer/
+approver identity, at the two sites below) was wrong — a one-for-one failure rate
+on the only sample checked so far — and has been corrected to 7.4.1.6 j). The tag
+does not mean a citation is wrong; it means nobody on this floor has been able to
+check it, which the 7.4.1.5 c) case shows is a live risk, not a formality.
+**Scope of the tag, added 2026-09-08:** it applies to *every* ISO 15189 clause
+citation in this document, not only the six originally reviewed for the 7.4.1.5 c)
+correction, and for a reason that does not require inspecting any citation
+individually: no one who wrote any of them had the standard's own text. That is a
+fact about this floor's access to the source, uniform across every citation, not
+a per-citation judgement — so a citation appearing later in this document without
+the tag is an anomaly to be checked, not a citation that is assumed clean by
+default.
+
 ---
 
 ## 1. Boundaries
@@ -89,9 +108,11 @@ properties of the current system, and the Platform exists partly to solve them.
   Nothing verifies them.
 - There are no users, no roles, no sessions.
 
-**Consequence for ISO 15189 7.4.1.5 c):** the standard requires that the identity
-of the reviewer be retrievable. A sign-off record holding an unauthenticated
-string does not satisfy this, even though the record exists.
+**Consequence for ISO 15189 7.4.1.6 j) `[UNVERIFIED-AGAINST-ISO-TEXT]`
+(corrected 2026-09-08, was 7.4.1.5 c) — see note at top of file):** the
+standard requires that the identity of the reviewer be retrievable. A
+sign-off record holding an unauthenticated string does not satisfy this,
+even though the record exists.
 
 **Consequence for build order:** audit logging cannot be built before identity.
 There is nothing to attribute entries to. Identity is the first component.
@@ -113,7 +134,7 @@ cross-tree join key, and the DELETE guard's collision check. Every identity and
 lineage problem in the system traces to that one overloaded field.
 
 **Consequence:** even holding all three artefacts, nothing proves they belong to
-the same sample. Impact analysis under ISO 15189 7.5 d) — identifying which
+the same sample. Impact analysis under ISO 15189 7.5 d) `[UNVERIFIED-AGAINST-ISO-TEXT]` — identifying which
 released reports are affected by a discovered nonconformance — is impossible
 without lineage.
 
@@ -147,8 +168,10 @@ Role-based, evaluated per action, scoped by organisation. Every permission check
 is on `(actor, action, resource, organisation)`.
 
 **The Approver role is special and must be treated as such.** It is the only role
-whose action releases a report for clinical use, and ISO 15189 7.4.1.5 c) requires
-the approver's identity be retrievable. An Approver assignment must record who
+whose action releases a report for clinical use, and ISO 15189 7.4.1.6 j)
+`[UNVERIFIED-AGAINST-ISO-TEXT]` (corrected 2026-09-08, was 7.4.1.5 c) — see
+note at top of file) requires the approver's identity be retrievable. An
+Approver assignment must record who
 granted it, when, and on what basis of qualification.
 
 **EXPERT:** what qualification is required to hold the Approver role. This is a
@@ -199,7 +222,7 @@ access goes through a layer that will not construct a query without it. Not a
 **DECISION:** can Organisation A send a sample to Organisation B for sequencing or
 interpretation, and see the result?
 
-ISO 15189 6.8.2 covers referral laboratories, so this is a real clinical pattern.
+ISO 15189 6.8.2 `[UNVERIFIED-AGAINST-ISO-TEXT]` covers referral laboratories, so this is a real clinical pattern.
 But it is the single largest source of complexity in a tenancy model, and it
 changes the isolation rule from "never crosses" to "crosses under these
 conditions."
@@ -351,7 +374,7 @@ Plus `cancelled` at any point before `reported`.
 | Type | Blood, saliva, tissue, extracted DNA |
 | Collected at | Timestamp and collector identity |
 | Received at | Timestamp and receiver identity |
-| Condition on receipt | ISO 15189 6.6 requires this for reagents; the same applies to samples |
+| Condition on receipt | ISO 15189 6.6 `[UNVERIFIED-AGAINST-ISO-TEXT]` requires this for reagents; the same applies to samples |
 | QC status | See §8.3 |
 
 ### 8.2 The sample_id problem, solved
@@ -547,7 +570,7 @@ for any report, which interpretation produced it, which VCF that interpreted,
 which sequencing run produced the VCF, which sample, which order, which patient.
 And in reverse.
 
-**This is what makes ISO 15189 7.5 d) achievable.** Given a discovered
+**This is what makes ISO 15189 7.5 d) `[UNVERIFIED-AGAINST-ISO-TEXT]` achievable.** Given a discovered
 nonconformance — a wrong model version, a failed data source — the platform can
 identify every affected report.
 
@@ -710,7 +733,7 @@ unaffected, still implemented, and still tested.
 
 ### 15.2 Amendment
 
-**ISO 15189 7.4.1.8 requires:** the reason for change recorded and included in the
+**ISO 15189 7.4.1.8 `[UNVERIFIED-AGAINST-ISO-TEXT]` requires:** the reason for change recorded and included in the
 revised report; revised results delivered as an additional document clearly
 identified as revised, with the original's date and patient identity indicated;
 the user made aware of the revision; a completely new report uniquely identified
@@ -748,7 +771,7 @@ Options:
 - **Patient portal.** Patients see their own approved reports.
 
 **Recommendation: no patient access in v1.** A genomic report is not
-self-explanatory, and ISO 15189 7.4.1.4 d) requires that genetic results needing
+self-explanatory, and ISO 15189 7.4.1.4 d) `[UNVERIFIED-AGAINST-ISO-TEXT]` requires that genetic results needing
 counselling not reach a patient without the opportunity for adequate counselling.
 A portal that hands over a variant classification without a counsellor is a
 clinical safety problem, not a feature.
@@ -1049,7 +1072,7 @@ replay, and per-model calibration status.
 **Requirement for the platform:** store these indexed, so the impact-analysis
 query in §11.2 is a query and not a filesystem walk.
 
-**ISO 15189 7.3.3 and 7.6.3 a) both require change control** — a change to a
+**ISO 15189 7.3.3 and 7.6.3 a) `[UNVERIFIED-AGAINST-ISO-TEXT]` both require change control** — a change to a
 validated method must be reviewed and a decision recorded before implementation.
 The platform must be able to state which version of everything produced a given
 report.
@@ -1101,7 +1124,7 @@ when Geper never holds patient data.
 
 ### 30.3 Commercial status
 
-**ISO 15189 7.3.2 versus 7.3.3:** verification checks that a laboratory can
+**ISO 15189 7.3.2 versus 7.3.3 `[UNVERIFIED-AGAINST-ISO-TEXT]`:** verification checks that a laboratory can
 achieve performance the manufacturer specified; validation is required for
 laboratory-developed or modified methods.
 
@@ -1133,13 +1156,13 @@ behaviour.
   unavailable sources and failed lookups are shown as such, never as absence of
   finding
 - A disagreement between the interpreter and Bij AI is recorded, not overwritten
-- **ISO 15189 7.4.1.6 i):** the report identifies that it derives from a research
+- **ISO 15189 7.4.1.6 i) `[UNVERIFIED-AGAINST-ISO-TEXT]`:** the report identifies that it derives from a research
   or development programme for which no specific performance claims are available.
   That is Bij AI's exact current status.
 
 ### 31.3 Rapid suspension
 
-**ISO 15189 7.4.1.5 d)** requires that automated selection, review, release and
+**ISO 15189 7.4.1.5 d) `[UNVERIFIED-AGAINST-ISO-TEXT]`** requires that automated selection, review, release and
 reporting can be rapidly suspended.
 
 **Requirement:** an administrator can suspend automatic submission platform-wide,
@@ -1211,7 +1234,7 @@ Phases 3, 6 and 7 cannot complete without:
 ### 32.3 Blocked on validation
 
 Nothing in this specification claims Bij AI's outputs are correct. **ISO 15189
-7.3.3 requires validation**, and no measurement runs have been performed. The
+7.3.3 `[UNVERIFIED-AGAINST-ISO-TEXT]` requires validation**, and no measurement runs have been performed. The
 validation study design exists with 25 expert-judgement decisions unfilled.
 
 **The platform can be built before validation completes.** It cannot be used

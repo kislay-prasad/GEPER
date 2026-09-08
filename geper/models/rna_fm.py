@@ -273,9 +273,13 @@ def _allow_argparse_namespace_in_checkpoints() -> None:
         argparse.Namespace was not an allowed global by default.
 
     Nothing is wrong with the file. It is a trusted first-party
-    checkpoint (same trust level as HyenaDNA's, which loads with
-    `weights_only=False` explicitly -- see hyenadna.py) that simply
-    predates PyTorch's stricter unpickling allowlist.
+    checkpoint that simply predates PyTorch's stricter unpickling
+    allowlist. HyenaDNA's checkpoint has the same problem and is
+    handled the same way (`_allow_lightning_checkpoint_globals` in
+    hyenadna.py) -- but with a DIFFERENT set of classes, established
+    there by its own probe: a Lightning checkpoint carries omegaconf
+    config containers, not an `argparse.Namespace`. The set has to be
+    measured per checkpoint, never carried across.
 
     WHY THE OBVIOUS FIX -- RE-SAVING THE CHECKPOINT WITHOUT THE
     `Namespace` -- DOES NOT WORK. `args`/`cfg` are load-bearing for

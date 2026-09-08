@@ -29,6 +29,7 @@ function, scoped to GEPER's configured model and without the
 unconditional call.
 """
 
+import collections
 import importlib.util
 import json
 import os
@@ -254,6 +255,88 @@ def _build_character_tokenizer(model_max_length: int):
     )
 
 
+def _allow_lightning_checkpoint_globals() -> None:
+    """
+    Registers the classes the official HyenaDNA `weights.ckpt` contains
+    on PyTorch's strict-unpickling allowlist, so it loads with
+    `weights_only` left at PyTorch's own default. Idempotent -- safe to
+    call on every load.
+
+    WHAT TRIPS THE NEWER DEFAULT. PyTorch 2.6 flipped `torch.load`'s
+    `weights_only` default from `False` to `True`. This checkpoint is a
+    PyTorch Lightning one, so its non-tensor payload is a Lightning
+    training envelope (`epoch`, `global_step`, `loops`, `callbacks`,
+    `optimizer_states`, `hyper_parameters`, ...) wrapped around the
+    `state_dict` this loader actually uses. PyTorch names one rejected
+    class at a time:
+
+        WeightsUnpickler error: Unsupported global: GLOBAL
+        omegaconf.listconfig.ListConfig was not an allowed global by
+        default.
+
+    Iterating that message to exhaustion against the pinned checkpoint
+    gives exactly the ten classes below, after which the file loads
+    with `weights_only=True`. THIS SET WAS ESTABLISHED BY PROBE, NOT BY
+    ANALOGY: RNA-FM's equivalent problem is a single `argparse.Namespace`
+    (see rna_fm.py), and NOT ONE OF THESE TEN IS THAT CLASS -- a
+    different producer puts different things in the file, so the set
+    has to be measured per checkpoint rather than assumed.
+
+    WHY ALLOWLISTING THESE IS NARROW. Five are builtins/typing
+    (`list`, `dict`, `int`, `collections.defaultdict`, `typing.Any`);
+    the other five are omegaconf's config containers, which is a
+    configuration library, not a code carrier. And omegaconf is ALREADY
+    a hard requirement for reading this file at all -- unpickling the
+    embedded config imports it either way, which is exactly why
+    requirements.txt pins it (see the `omegaconf==2.3.1` note there).
+    So this permits a fixed, inspected list of data holders instead of
+    `weights_only=False`, which permits ANY global in the file.
+
+    WHAT IT STILL PERMITS, STATED RATHER THAN GLOSSED: allowlisting a
+    class lets the unpickler construct it, so omegaconf's own
+    `__setstate__`/constructor runs during the load. That is a real
+    surface -- far smaller than arbitrary globals, but not zero.
+
+    CAVEAT, ACCEPTED KNOWINGLY: `add_safe_globals` is process-global.
+    Once called, any `torch.load` in this process will also accept
+    these ten classes.
+
+    SCOPE: this set is the set for the PINNED checkpoint revision this
+    module downloads (see `_HYENADNA_CHECKPOINT_REVISIONS`). A different
+    variant or a re-pinned revision could contain more, and the failure
+    mode if so is a loud `UnpicklingError` naming the missing class --
+    not a silent wrong answer.
+    """
+    try:
+        from omegaconf.base import ContainerMetadata, Metadata
+        from omegaconf.dictconfig import DictConfig
+        from omegaconf.listconfig import ListConfig
+        from omegaconf.nodes import AnyNode
+    except ImportError as exc:  # pragma: no cover - dependency is pinned
+        raise ModelLoadError(
+            "Reading the HyenaDNA checkpoint requires the 'omegaconf' "
+            "package (it is embedded in the checkpoint's Lightning "
+            "hyper-parameters and is needed to deserialize it at all, "
+            "with or without weights_only) -- install it with "
+            "`pip install omegaconf==2.3.1`."
+        ) from exc
+
+    torch.serialization.add_safe_globals(
+        [
+            ListConfig,
+            DictConfig,
+            AnyNode,
+            ContainerMetadata,
+            Metadata,
+            Any,
+            list,
+            dict,
+            int,
+            collections.defaultdict,
+        ]
+    )
+
+
 def _load_hyenadna_checkpoint(path: str, model_name: str, device: str):
     """
     Reimplementation of HazyResearch/hyena-dna's
@@ -312,10 +395,13 @@ def _load_hyenadna_checkpoint(path: str, model_name: str, device: str):
         hyena_config = json.load(f)
 
     scratch_model = _HyenaDNABackbone(**hyena_config, use_head=False, n_classes=2)
+    # Strict unpickling stays ON; the ten data classes this official
+    # checkpoint contains are allowlisted instead of disabling it (see
+    # `_allow_lightning_checkpoint_globals` for the full reasoning).
+    _allow_lightning_checkpoint_globals()
     loaded_ckpt = torch.load(
         weights_path,
         map_location=torch.device(device),
-        weights_only=False,  # official PyTorch Lightning checkpoint (trusted source)
     )
 
     # "State dict surgery": the checkpoint's keys are prefixed with

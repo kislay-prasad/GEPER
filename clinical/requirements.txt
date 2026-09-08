@@ -32,6 +32,16 @@ psycopg[binary]
 # service starts happily and fails at the first login.
 bcrypt
 
+# ── MFA ──────────────────────────────────────────────────────────────────────
+# Imported lazily by clinical/data_access.py::PyOtpVerifier.verify(), same
+# shape as bcrypt above. Declared preemptively: PyOtpVerifier is dormant
+# today (never instantiated in production; DataAccess's totp_verifier
+# defaults to None), so this dependency is currently unused. Do not delete it
+# as dead weight -- the moment someone wires MFA in, an undeclared pyotp
+# means the first TOTP verification meets a ModuleNotFoundError instead of a
+# code prompt.
+pyotp
+
 # ── Tests ────────────────────────────────────────────────────────────────────
 # httpx is required by starlette's TestClient, which raises RuntimeError --
 # not ImportError -- when it is missing, so pytest.importorskip does not catch

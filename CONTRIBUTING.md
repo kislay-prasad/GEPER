@@ -1,5 +1,53 @@
 # Contributing
 
+## Commit attribution -- read this before trusting `git log`
+
+**Commits in this repository dated before 2026-09-08 are all authored
+`kislay-prasad <kislay30@gmail.com>`, regardless of who or what actually wrote
+them.** Much of that work was done by automated agents committing through the
+repository owner's git identity. The log is accurate about *what changed* and
+about *when*; before that date it is **not** evidence of *who* performed the
+work.
+
+**This is not retroactive and will not be made so.** Existing history is not
+rewritten here, so the ambiguity above is permanent. Do not read a uniform
+author column in the early history as a claim that one person wrote it all.
+
+### How attribution works from 2026-09-08 onward
+
+Each working tree sets its own **author** identity, while the **committer**
+stays the repository owner:
+
+```
+git config --worktree agent.author "your-name <your-name@agents.hive>"
+git ci -m "your message"          # instead of: git commit -m "your message"
+```
+
+- `git ci` is an alias defined in this repository's `.git/config`. It is a
+  normal commit -- hooks run, nothing is bypassed -- with `--author` supplied
+  from the current worktree's `agent.author`.
+- If `agent.author` is not set in the worktree, **`git ci` refuses and prints
+  the one-line fix**. That refusal is deliberate: a silent fall back to a plain
+  commit would look exactly like attribution working while quietly not
+  happening.
+- Requires `extensions.worktreeConfig=true` (already set here). Per-worktree
+  `user.name` is *not* the mechanism -- it sets author **and** committer, which
+  would lose the committer of record.
+- `git commit` still works and is untouched. It produces the old, unattributed
+  form.
+
+### Checking who wrote something
+
+`git log` shows the author by default, so a plain log conceals the split. To
+see both roles:
+
+```
+git log --format='%h %an | %cn | %s'
+```
+
+Author is the agent (after the cutover); committer is the repository owner
+throughout.
+
 ## Pre-commit hooks
 
 This repo uses [pre-commit](https://pre-commit.com/) to run a few checks

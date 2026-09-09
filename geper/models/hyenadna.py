@@ -77,6 +77,35 @@ _AUTO_INSTALL_RESULT = None
 # than the one this integration was tested against.
 _HYENADNA_REPO_COMMIT = "d553021b483b82980aa4b868b37ec2d4332e198a"
 
+# Where the vendored HazyResearch/hyena-dna checkout lives, RESOLVED FROM
+# THIS FILE rather than from the process's working directory.
+#
+# This was `"./hyena-dna"` -- a bare CWD-relative path -- and that is a
+# defect rather than a style question. The Docker image ships the source at
+# /app/geper/hyena-dna and runs with WORKDIR=/app, so `./hyena-dna` pointed
+# at a directory that does not exist, the loader could not see the checkout
+# already sitting next to it, and under `docker run --network none` it fell
+# through to `git clone` and failed with
+#   fatal: unable to access 'https://github.com/HazyResearch/hyena-dna.git/':
+#   Could not resolve host: github.com
+# The image was only offline-capable because an `ENV PYTHONPATH` entry made
+# `find_spec("standalone_hyenadna")` succeed before this path was consulted
+# -- i.e. offline BY ACCIDENT, and only when launched from the right
+# directory. Resolving from `__file__` makes it a property of the checkout
+# instead of a property of whoever invoked the process.
+#
+# This file is geper/models/hyenadna.py, so two dirnames up is the `geper/`
+# package root and the vendored checkout is its sibling of `models/`. That
+# is the SAME location the Dockerfile already installs to; the path is not
+# being moved, it is being addressed correctly.
+#
+# It is also the clone DESTINATION when the source is genuinely absent, and
+# that fixes a second instance of the same bug: a clone into the CWD is
+# invisible to the next process started from anywhere else, so the "already
+# cloned by a previous run" branch below could never fire and every run
+# re-cloned. Now the clone lands where the next process will look.
+_VENDORED_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hyena-dna")
+
 # Pinned HuggingFace revision (commit SHA) for each supported
 # HYENADNA_MODEL_NAME's checkpoint repo (huggingface.co/LongSafari/
 # {model_name}), verified live via `git ls-remote <repo-url> HEAD`,
@@ -137,7 +166,7 @@ def install_hyenadna_colab(checkpoint_dir: str = None) -> bool:
     the clone happens) rather than relying on the automatic trigger.
     """
     checkpoint_dir = checkpoint_dir or CONFIG.models.HYENADNA_CHECKPOINT_DIR
-    repo_dir = "./hyena-dna"
+    repo_dir = _VENDORED_REPO_DIR
     try:
         if not is_hyenadna_installed():
             if os.path.isdir(repo_dir):

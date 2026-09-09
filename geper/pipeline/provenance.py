@@ -302,6 +302,63 @@ class DataSourceProvenance(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stale-cache-fallback registry -- Packaging Part 3 mechanism.
+#
+# Every auto-fetch bootstrap module (`clingen/`, `hpo/bootstrap.py`,
+# `hpo/ontology.py`, `mane/`, `orphanet/`, `uniprot/`, `ensembl/`) falls
+# back to an existing on-disk cache file when a refresh fails, and used
+# to only `logger.warning` about it -- a warning nobody reads is not a
+# warning (the floor's standing rule). Each of those seven call sites
+# now ALSO calls `record_stale_fallback` here, on the exact branch that
+# decides to serve the stale copy, so the fact reaches
+# `report/json_builder.py`'s document and, from there,
+# `report/report_generator.py`'s rendered text -- not just the log.
+#
+# Module-level, not per-`RunProvenanceCollector`-instance: the bootstrap
+# functions are free functions with no collector to write into (they
+# run lazily, on first use, deep inside per-source modules that predate
+# this mechanism and are not being refactored to thread one through --
+# out of scope per the dispatch, "this is the mechanism, not a
+# bootstrap-module rewrite"). Matches this codebase's existing pattern
+# of module-level mutable state for cache bookkeeping (each bootstrap
+# module's own `_fetch_lock`), so a fresh pipeline run should clear it
+# -- `RunProvenanceCollector.__init__` does that, see below.
+# ---------------------------------------------------------------------------
+
+_STALE_FALLBACKS: List[Dict[str, str]] = []
+
+
+def record_stale_fallback(*, source: str, path: str, reason: str) -> None:
+    """Records that `source` fell back to an existing, possibly-stale
+    on-disk cache file at `path` after a failed refresh, `reason`-ed.
+    Never raises -- provenance bookkeeping must never break a bootstrap
+    fallback that is itself already the resilient path."""
+    _STALE_FALLBACKS.append(
+        {
+            "source": source,
+            "path": path,
+            "reason": reason,
+            "recorded_at": _utc_now_iso(),
+        }
+    )
+
+
+def get_stale_fallbacks() -> List[Dict[str, str]]:
+    """A copy of every stale-cache fallback recorded so far this
+    process -- consumed by `report/json_builder.py` so the fact reaches
+    the report, not just the log."""
+    return list(_STALE_FALLBACKS)
+
+
+def reset_stale_fallbacks() -> None:
+    """Clears the registry -- called at the start of a `RunProvenanceCollector`
+    (i.e. a new pipeline run) and by tests, so one run's stale-cache
+    fallbacks never leak into the next run's report in a long-lived
+    process."""
+    _STALE_FALLBACKS.clear()
+
+
+# ---------------------------------------------------------------------------
 # Content hashing + bootstrap-dataset sidecar metadata
 # ---------------------------------------------------------------------------
 
@@ -903,6 +960,11 @@ class RunProvenanceCollector:
         self._records: Dict[str, DataSourceProvenance] = {
             name: DataSourceProvenance(source=name, status=VersionStatus.NOT_CONSULTED) for name in KNOWN_SOURCES
         }
+        # A new pipeline run's stale-cache fallbacks must not include a
+        # PRIOR run's (see `reset_stale_fallbacks`'s own docstring) --
+        # one collector per run (this class's own docstring), so this
+        # is the right place to draw that line.
+        reset_stale_fallbacks()
 
     def record(
         self,

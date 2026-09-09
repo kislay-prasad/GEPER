@@ -56,7 +56,7 @@ from typing import Optional
 import requests
 
 from config import CONFIG
-from pipeline.provenance import write_dataset_provenance_sidecar
+from pipeline.provenance import record_stale_fallback, write_dataset_provenance_sidecar
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -75,6 +75,7 @@ def _release_date_from_headers(headers) -> Optional[str]:
     content_disposition = headers.get("Content-Disposition", "")
     match = _FILENAME_DATE_RE.search(content_disposition)
     return match.group(1) if match else None
+
 
 _GENE_VALIDITY_CACHE_FILENAME = "gene_validity.csv"
 _DOSAGE_CACHE_FILENAME = "dosage_sensitivity.tsv"
@@ -142,7 +143,9 @@ def _download(url: str, dest_path: str) -> bool:
     # which ClinGen snapshot it's using, without re-downloading. Never
     # blocks a successful fetch: a sidecar-write failure is logged
     # inside `write_dataset_provenance_sidecar` itself, not raised here.
-    write_dataset_provenance_sidecar(dest_path, url, response_headers=response.headers, release_date=_release_date_from_headers(response.headers))
+    write_dataset_provenance_sidecar(
+        dest_path, url, response_headers=response.headers, release_date=_release_date_from_headers(response.headers)
+    )
     return True
 
 
@@ -167,13 +170,16 @@ def _ensure(url: str, filename: str, label: str) -> Optional[str]:
     # more useful than silently returning "not found" for every gene).
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         logger.warning(f"Using stale cached ClinGen {label} at '{dest_path}' after a failed refresh.")
+        record_stale_fallback(source=f"ClinGen ({label})", path=dest_path, reason="failed refresh")
         return dest_path
     return None
 
 
 def ensure_gene_validity_file() -> Optional[str]:
     """Path to a local copy of ClinGen's Gene-Disease Clinical Validity download, fetching/refreshing it first if needed. None if unavailable."""
-    return _ensure(CONFIG.clingen.GENE_VALIDITY_DOWNLOAD_URL, _GENE_VALIDITY_CACHE_FILENAME, "gene-disease validity dataset")
+    return _ensure(
+        CONFIG.clingen.GENE_VALIDITY_DOWNLOAD_URL, _GENE_VALIDITY_CACHE_FILENAME, "gene-disease validity dataset"
+    )
 
 
 def ensure_dosage_sensitivity_file() -> Optional[str]:

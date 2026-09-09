@@ -283,6 +283,10 @@ class ReportGenerator:
         lines.append("---")
         lines.append("")
 
+        lines.extend(self._render_data_freshness_warnings(json_document))
+        lines.append("---")
+        lines.append("")
+
         # Run-level, like provenance above: describes the whole run rather
         # than one finding, so it belongs before the per-variant sections.
         lines.extend(_render_qc_metrics(json_document))
@@ -463,6 +467,48 @@ class ReportGenerator:
                 lines.append(f"  - Endpoint: {record['endpoint']}")
             if record.get("notes"):
                 lines.append(f"  - _{record['notes']}_")
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _render_data_freshness_warnings(json_document: Dict[str, Any]) -> List[str]:
+        """
+        Packaging Part 3 mechanism: surfaces every stale-cache fallback
+        this run hit (`pipeline/provenance.py::record_stale_fallback`,
+        called from the seven bootstrap modules' "Using stale cached
+        ... after a failed refresh" branches). Run-level, next to
+        `_render_provenance` above, for the same reason: it describes
+        the whole run, not one finding.
+
+        The standing rule this section exists to satisfy: a warning
+        nobody sees is not a warning, and for THIS finding that bar is
+        higher than a log level -- the reader needs to know an
+        interpretation was built on a snapshot from a DATE, not just
+        that a stale-cache event happened. `recorded_at` is therefore
+        always rendered, never dropped for brevity.
+        """
+        lines = ["## Data Freshness Warnings", ""]
+        warnings = json_document.get("data_freshness_warnings") or []
+        if not warnings:
+            lines.append(
+                "*No data-source cache fell back to a stale copy this run -- every "
+                "auto-fetched dataset this run consulted was either fresh or not consulted at all.*"
+            )
+            lines.append("")
+            return lines
+
+        lines.append(
+            "*The following data source(s) could not be refreshed this run and this report "
+            "was built using an existing, possibly-outdated local copy instead. This matters most for "
+            "sources that can REVISE a past conclusion (e.g. ClinVar reclassification) -- a stale copy "
+            "of those can make an interpretation actively wrong, not just incomplete.*"
+        )
+        lines.append("")
+        for warning in warnings:
+            lines.append(f"- **{warning.get('source')}:** stale cache used ({warning.get('reason')})")
+            lines.append(f"  - Recorded stale at (UTC): {warning.get('recorded_at')}")
+            if warning.get("path"):
+                lines.append(f"  - Cache file: `{warning['path']}`")
         lines.append("")
         return lines
 

@@ -35,7 +35,7 @@ from typing import Optional
 import requests
 
 from config import CONFIG
-from pipeline.provenance import write_dataset_provenance_sidecar
+from pipeline.provenance import record_stale_fallback, write_dataset_provenance_sidecar
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -122,7 +122,9 @@ def ensure_gene_disorder_file() -> Optional[str]:
     with _fetch_lock:
         if _is_fresh(dest_path):  # re-check inside the lock
             return dest_path
-        logger.info(f"Fetching Orphanet gene-disorder dataset from '{CONFIG.orphanet.DOWNLOAD_URL}' (cache miss or stale)...")
+        logger.info(
+            f"Fetching Orphanet gene-disorder dataset from '{CONFIG.orphanet.DOWNLOAD_URL}' (cache miss or stale)..."
+        )
         if _download(CONFIG.orphanet.DOWNLOAD_URL, dest_path):
             logger.info(f"Cached Orphanet gene-disorder dataset to '{dest_path}'.")
             return dest_path
@@ -133,5 +135,6 @@ def ensure_gene_disorder_file() -> Optional[str]:
     # "not found" for every gene).
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         logger.warning(f"Using stale cached Orphanet dataset at '{dest_path}' after a failed refresh.")
+        record_stale_fallback(source="Orphanet", path=dest_path, reason="failed refresh")
         return dest_path
     return None

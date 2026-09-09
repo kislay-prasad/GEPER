@@ -58,7 +58,7 @@ from typing import Dict, FrozenSet, Optional, Set
 import requests
 
 from config import CONFIG
-from pipeline.provenance import write_dataset_provenance_sidecar
+from pipeline.provenance import record_stale_fallback, write_dataset_provenance_sidecar
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -144,6 +144,7 @@ def ensure_ontology_file() -> Optional[str]:
 
     if os.path.exists(dest_path) and os.path.getsize(dest_path) > 0:
         logger.warning(f"Using stale cached HPO ontology at '{dest_path}' after a failed refresh.")
+        record_stale_fallback(source="HPO (ontology)", path=dest_path, reason="failed refresh")
         return dest_path
     return None
 

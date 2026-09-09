@@ -670,3 +670,249 @@ class TestPurgeSkipsRowsWithNoResolvedRetentionDays:
         result = retention.purge_expired(session_a.org_id, "report", now=NOW)
 
         assert chain["report_id"] not in result.tombstoned_ids
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TOMBSTONE-CASCADE, human ruling (2026-09-09, following D2): when a parent
+# is purged, ALSO stamp tombstoned_at on reviewer_claims, release_events,
+# amendments and amendment_notifications, IN THE SAME TRANSACTION -- "an
+# amendment to an interpretation of data that no longer exists is
+# incoherent; a reviewer claim about a purged variant has no meaning."
+#
+# THE PARENT -> CHILD MAPPING, stated explicitly before it was wired (per
+# the dispatch's own instruction), because the four do not all hang off the
+# same parent:
+#   reviewer_claims.interpretation_id       -> _purge_interpretations (run_document path)
+#   release_events.report_id                -> _purge_reports (report path)
+#   amendments.original_report_id           -> _purge_reports (report path) -- the
+#       ORIGINAL side, not amendment_report_id: D6's existing guard already
+#       requires amendment_report_id's own report to be tombstoned FIRST, so
+#       original_report_id is always the later, deterministic trigger for a
+#       given amendments row. No amendments row can be reached by both sides,
+#       because a report is either an "original" for a given amendments row
+#       or an "amendment" for it, never both for the SAME row.
+#   amendment_notifications.amendment_report_id -> _purge_reports, but found
+#       via the amendments row above (looked up by that row's own
+#       amendment_report_id), not by an independent report-purge trigger --
+#       it has no path of its own that a report purge could hit twice.
+# So no child is reachable by more than one path, and every path is fired
+# from exactly one purge event.
+#
+# notification_read_receipts is EXPLICITLY NOT extended: the human's own
+# acceptance criterion below names "the full unit" as interpretation +
+# claims + release events + amendment + notification -- five things -- so
+# read receipts are outside what was actually ruled on. See schema.sql's
+# GRANT-block comment for the same note. Flagged here too rather than only
+# in one place: a receipt for a since-tombstoned notification remains
+# readable in isolation after this commit.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _full_unit(dao, conn, session, suffix="1", dob=_ADULT_DOB):
+    """
+    Builds the complete unit the ruling names: an interpretation carrying a
+    reviewer_claims row, and a report carrying a release_events row and an
+    amendment of it (which itself creates a fresh reports row, an
+    amendments row, and an amendment_notifications row). Returns every id
+    needed to check the whole unit's readability after a purge.
+    """
+    chain = _full_chain(dao, conn, session, suffix=suffix, dob=dob)
+    claim_id = dao._record_accept(
+        session, interpretation_id=chain["interp_id"], actor_id=session.user_id, reason="Concur."
+    )
+
+    released_at = NOW - timedelta(days=chain["retention_days"] + 1)
+    _release(conn, session, chain["report_id"], released_at)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reports SET state = 'approved', approver_id = %s, approved_at = %s, content_hash = %s "
+            "WHERE id = %s",
+            (session.user_id, released_at, "a" * 64, chain["report_id"]),
+        )
+    conn.commit()
+
+    amendment_report_id, notification_id = dao.create_amendment(session, chain["report_id"], "revised findings")
+    amendment_id = _fetchone(
+        conn,
+        "SELECT id FROM amendments WHERE org_id = %s AND original_report_id = %s",
+        (session.org_id, chain["report_id"]),
+    )[0]
+    release_event_id = _fetchone(
+        conn,
+        "SELECT id FROM release_events WHERE org_id = %s AND report_id = %s",
+        (session.org_id, chain["report_id"]),
+    )[0]
+
+    return {
+        **chain,
+        "claim_id": claim_id,
+        "release_event_id": release_event_id,
+        "amendment_id": amendment_id,
+        "amendment_report_id": amendment_report_id,
+        "notification_id": notification_id,
+    }
+
+
+def _tombstone_amendment_report_directly(conn, session, amendment_report_id, at):
+    """Simulates the amendment's OWN report having already cleared a prior,
+    separate purge cycle -- same shorthand the pre-existing D6 guard tests
+    use (raw UPDATE) rather than driving a second full report lifecycle."""
+    system_id = _fetchone(
+        conn, "SELECT user_id FROM users WHERE org_id = %s AND is_system_account = true", (session.org_id,)
+    )[0]
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE reports SET tombstoned_at = %s, tombstoned_by = %s WHERE id = %s",
+            (at, system_id, amendment_report_id),
+        )
+    conn.commit()
+
+
+def _live(conn, table, row_id):
+    """True if `row_id` is still readable through the ordinary live-row
+    filter every query in this codebase already uses (tombstoned_at IS
+    NULL) -- the acceptance criterion's actual claim, not merely "the
+    column got written"."""
+    row = _fetchone(conn, f"SELECT id FROM {table} WHERE id = %s AND tombstoned_at IS NULL", (row_id,))
+    return row is not None
+
+
+class TestTombstoneCascadeFourTables:
+    """
+    THE ACCEPTANCE TEST, human ruling (2026-09-09): "construct the full
+    unit ... purge, then assert the whole unit is unreadable." Declared
+    BEFORE running, against master 81cef2b (before this dispatch's schema/
+    retention.py changes): EXPECTED RESULT was FAILURE -- none of
+    reviewer_claims, release_events, amendments, or amendment_notifications
+    had a tombstoned_at column at all, so a query for it must raise
+    psycopg.errors.UndefinedColumn, for every one of the four, the same
+    schema-gap failure mode the retention-age-conditional-floor dispatch's
+    own red-first evidence used. Confirmed failing (see the commit history:
+    the test-only commit on this branch precedes the schema/retention.py
+    commit, so the failure is checkable independent of any comment's
+    say-so) before any production code changed.
+    """
+
+    def test_the_whole_unit_becomes_unreadable_after_purge(self, dao, conn, session_a, retention):
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+
+        # Every piece is live before any purge runs.
+        for table, row_id in (
+            ("reviewer_claims", unit["claim_id"]),
+            ("release_events", unit["release_event_id"]),
+            ("amendments", unit["amendment_id"]),
+            ("amendment_notifications", unit["notification_id"]),
+        ):
+            assert _live(conn, table, row_id), f"{table} row should start live"
+
+        # D6 precondition: the amendment's OWN report must already be
+        # tombstoned before the original can purge -- simulated directly,
+        # same shorthand the pre-existing D6 tests use.
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+
+        report_result = retention.purge_expired(session_a.org_id, "report", now=NOW)
+        assert unit["report_id"] in report_result.tombstoned_ids
+
+        interp_result = retention.purge_expired(session_a.org_id, "run_document", now=NOW)
+        assert unit["interp_id"] in interp_result.tombstoned_ids
+
+        # THE REAL CLAIM: nothing in the unit is still readable.
+        for table, row_id in (
+            ("reviewer_claims", unit["claim_id"]),
+            ("release_events", unit["release_event_id"]),
+            ("amendments", unit["amendment_id"]),
+            ("amendment_notifications", unit["notification_id"]),
+        ):
+            assert not _live(conn, table, row_id), f"{table} row should be unreadable after purge"
+
+        # Nothing is deleted (D4): every row still physically exists.
+        for table, row_id in (
+            ("reviewer_claims", unit["claim_id"]),
+            ("release_events", unit["release_event_id"]),
+            ("amendments", unit["amendment_id"]),
+            ("amendment_notifications", unit["notification_id"]),
+        ):
+            assert _fetchone(conn, f"SELECT id FROM {table} WHERE id = %s", (row_id,)) is not None
+
+    def test_each_tombstoned_child_names_the_same_actor_and_time_as_its_parent(self, dao, conn, session_a, retention):
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+
+        retention.purge_expired(session_a.org_id, "report", now=NOW)
+
+        parent_row = _fetchone(
+            conn, "SELECT tombstoned_at, tombstoned_by FROM reports WHERE id = %s", (unit["report_id"],)
+        )
+        for table, row_id in (
+            ("release_events", unit["release_event_id"]),
+            ("amendments", unit["amendment_id"]),
+            ("amendment_notifications", unit["notification_id"]),
+        ):
+            child_row = _fetchone(conn, f"SELECT tombstoned_at, tombstoned_by FROM {table} WHERE id = %s", (row_id,))
+            assert child_row == parent_row, f"{table} did not inherit the same tombstone stamp as its parent report"
+
+    def test_amendment_and_notification_do_not_cascade_until_the_original_report_purges(
+        self, dao, conn, session_a, retention
+    ):
+        """The amendment's OWN report purging (as a plain report, via a
+        completely separate purge_expired("report") pass) must NOT itself
+        cascade the amendments/notification row -- only the ORIGINAL
+        report's purge does, per the stated mapping."""
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+
+        # A no-op purge pass for "report" that finds nothing new to
+        # tombstone yet, because the ORIGINAL is not past its window here --
+        # the amendment's report was already tombstoned directly above, not
+        # through this call, so this call cascades nothing.
+        retention.purge_expired(session_a.org_id, "report", now=NOW - timedelta(days=100000))
+
+        assert _live(conn, "amendments", unit["amendment_id"])
+        assert _live(conn, "amendment_notifications", unit["notification_id"])
+
+    def test_a_report_never_amended_needs_no_amendment_cascade(self, dao, conn, session_a, retention):
+        """The common case -- no amendments row exists at all -- must not
+        raise or behave differently just because there is nothing to cascade."""
+        dao._create_system_session(session_a.org_id)
+        chain = _full_chain(dao, conn, session_a)
+        _release(conn, session_a, chain["report_id"], NOW - timedelta(days=chain["retention_days"] + 1))
+
+        result = retention.purge_expired(session_a.org_id, "report", now=NOW)
+
+        assert chain["report_id"] in result.tombstoned_ids
+
+
+class TestTombstoneCascadeAtomicity:
+    """
+    ACCEPTANCE CRITERION 3: "same transaction as the parent stamp -- prove
+    atomicity rather than asserting it." RetentionPrincipal never calls
+    connection.commit() anywhere (see this module's own docstring) -- every
+    write purge_expired() makes stays uncommitted until the CALLER commits.
+    So an explicit rollback after a purge call, with no commit in between,
+    must undo EVERY write the cascade made, parent and children alike -- if
+    any of them had been committed separately (a different connection, or a
+    stray commit() inside the cascade), the rollback could not have touched
+    it, and this test would see that row still stamped afterward.
+    """
+
+    def test_rollback_after_purge_undoes_the_parent_and_every_cascaded_child(self, dao, conn, session_a, retention):
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+        conn.commit()  # commit the D6 precondition itself, so ONLY the purge below is what gets rolled back
+
+        result = retention.purge_expired(session_a.org_id, "report", now=NOW)
+        assert unit["report_id"] in result.tombstoned_ids  # the purge did happen, within this uncommitted transaction
+
+        conn.rollback()
+
+        for table, row_id in (
+            ("reports", unit["report_id"]),
+            ("release_events", unit["release_event_id"]),
+            ("amendments", unit["amendment_id"]),
+            ("amendment_notifications", unit["notification_id"]),
+        ):
+            assert _live(conn, table, row_id), f"{table} should have rolled back to live -- it was never committed"

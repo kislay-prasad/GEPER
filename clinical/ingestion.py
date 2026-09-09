@@ -23,18 +23,33 @@ a query of its own. That is deliberate -- a second module writing its own
 INSERTs would be a parallel mechanism, which is the divergence that costs more
 than the duplication saves.
 
-THE FILENAME CONTRACT, AND A DECISION I HAD TO MAKE: the ruling names "filename
-contract" as a required check without fixing its shape, so this is the shape and
-it is narrow on purpose:
+THE FILENAME CONTRACT IS RULED, NOT CHOSEN, AND IT IS NARROW ON PURPOSE:
 
     {sample_id}_{tag}_R1_001.fastq.gz
     {sample_id}_{tag}_R2_001.fastq.gz
 
-`sample_id` is the UUID of a `samples` row; `tag` is whatever the sequencer put
-between them (`S1_L001` in Illumina output) and is opaque here beyond having to
-match across the two mates. A file that does not match is REJECTED AND NAMED
-rather than ignored, because a set that silently never appears is
-indistinguishable from a directory nobody wrote to.
+`sample_id` IS THE UUID OF A `samples` ROW -- THE PLATFORM'S OWN IDENTIFIER --
+because a lab-supplied accession in a filename is a CALLER-SUPPLIED IDENTIFIER
+ARRIVING WHERE THE PLATFORM'S IDENTIFIER BELONGS. That is not an analogy, it is
+a defect this repository has already fixed once: `ResolutionRequest` in
+`clinical/endpoints.py` used to carry an `actor` field, and whatever the caller
+typed became the record of who resolved an exception. THE FIELD WAS REMOVED
+RATHER THAN VALIDATED -- a validated claim is still a claim -- and the actor is
+now derived from the authenticated session. WIDENING THIS PATTERN TO ACCEPT AN
+ACCESSION WOULD RE-OPEN AT THE INGESTION BOUNDARY EXACTLY WHAT THAT CHANGE
+CLOSED AT THE API BOUNDARY, and it would do so without the resolution step or
+the column that would make an accession mean anything.
+
+A SITE THAT CANNOT EMIT A UUID HAS A MAPPING PROBLEM, SOLVED AT THE SITE. It is
+not grounds to loosen the contract, and the mapping is an anticipated
+deployment artefact rather than an edge case. If ingestion ever genuinely needs
+to know a lab-local id exists, that is a resolution step with a provenance
+trail -- a schema conversation, not a wider pattern. Human ruling, 2026-09-08.
+
+`tag` is whatever the sequencer put between them (`S1_L001` in Illumina output)
+and is opaque here beyond having to match across the two mates. A file that
+does not match is REJECTED AND NAMED rather than ignored, because a set that
+silently never appears is indistinguishable from a directory nobody wrote to.
 """
 
 from __future__ import annotations

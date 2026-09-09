@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from config import CONFIG
 from pipeline.gnomad.models import POPULATION_LABELS
 from pipeline.hgvs_utils import is_mitochondrial_chrom
-from pipeline.interpretation_outcome import determine_interpretation_outcome
+from pipeline.interpretation_outcome import determine_interpretation_outcome, determine_review_required_reasons
 from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
 from pipeline.ps1_pm5.models import PS1PM5Evaluation
 from pipeline.pvs1.models import TranscriptContext
@@ -1028,6 +1028,16 @@ class ACMGRuleEngine:
             evidence_queries_completed=evidence_queries_completed,
             pathogenic_points=combine_result.pathogenic_points,
             benign_points=combine_result.benign_points,
+            classification=combine_result.classification,
+        )
+        # Human ruling, 2026-09-09/10 (round 2): the answer to "if both
+        # [review_required triggers] need to be visible, say so" -- see
+        # `pipeline/interpretation_outcome.py`'s own docstring. Always a
+        # list, never omitted, even when empty.
+        review_required_reasons = determine_review_required_reasons(
+            pathogenic_points=combine_result.pathogenic_points,
+            benign_points=combine_result.benign_points,
+            classification=combine_result.classification,
         )
 
         return {
@@ -1054,6 +1064,7 @@ class ACMGRuleEngine:
             # from `pipeline/stage_schemas.py::StageStatus`. See
             # `pipeline/interpretation_outcome.py`.
             "interpretation_outcome": interpretation_outcome.value,
+            "review_required_reasons": review_required_reasons,
         }
 
     # ------------------------------------------------------------------

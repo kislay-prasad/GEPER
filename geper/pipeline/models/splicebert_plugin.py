@@ -103,6 +103,7 @@ from typing import Any, Dict, List
 import requests
 import torch
 
+import config
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
@@ -114,13 +115,24 @@ from utils.auto_install import is_pip_package_installed
 # pipeline/models/splicebert/loader.py for the config.json sourcing.
 SPLICEBERT_MAX_CONTENT_LENGTH = splicebert_loader.MAX_CONTENT_LENGTH
 
+
 # Same classification thresholds pipeline/models/spliceformer_plugin.py,
 # enformer_plugin.py, and borzoi_plugin.py already use for their own
 # single-model delta-score summaries -- reused here so a SpliceBERT
 # score sits on the same documented 0..~1 scale as the other
 # splicing/regulatory plugins' `score`/`classification` fields.
-_NO_EFFECT_THRESHOLD = 0.1
-_MODERATE_EFFECT_THRESHOLD = 0.5
+# READ AT CALL TIME, NOT BOUND AT IMPORT: `config.SPLICE_DELTA_*` is looked up
+# inside `_classify` rather than copied into a module-level name here. A
+# module-level copy would be a private literal again by another route -- it
+# would stop tracking config the moment anything changed the value.
+def _classify(score: float) -> str:
+    """Three-way bucketing shared with ensemble/enformer/borzoi/spliceformer."""
+    if score < config.SPLICE_DELTA_NO_EFFECT_THRESHOLD:
+        return "no_significant_effect"
+    if score < config.SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD:
+        return "moderate_effect"
+    return "large_effect"
+
 
 # Upper bound on how many differing ref/alt positions get their own
 # masked forward pass. A SNV differs at exactly one position (the
@@ -456,12 +468,7 @@ class SpliceBERTPlugin(PluginModel):
 
         max_abs_change = max(abs(v) for v in prob_changes)
 
-        if max_abs_change < _NO_EFFECT_THRESHOLD:
-            classification = "no_significant_effect"
-        elif max_abs_change < _MODERATE_EFFECT_THRESHOLD:
-            classification = "moderate_effect"
-        else:
-            classification = "large_effect"
+        classification = _classify(max_abs_change)
 
         # Not a calibrated probability -- see the caveat above. Already
         # bounded to [0, 1] since it's a difference of two softmax

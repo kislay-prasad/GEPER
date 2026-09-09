@@ -30,8 +30,9 @@ is asserted without the concrete per-model numbers that produced it
 also being present in `individual_scores` and `reasoning`.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
+import config
 from pipeline.models.manager import ModelManager
 from pipeline.models.pending_plugins import build_default_registry
 from utils.logger import get_logger
@@ -41,15 +42,13 @@ logger = get_logger(__name__)
 # Only these two participate in the ensemble (see module docstring).
 _ENSEMBLE_MODEL_KEYS = ("enformer", "borzoi")
 
-# Same thresholds EnformerPlugin/BorzoiPlugin each already use
-# individually for their own single-model classification (see
-# pipeline/models/enformer_plugin.py::_infer_impl and
-# pipeline/models/borzoi_plugin.py::_infer_impl) -- reused here so the
+# Classification thresholds come from config's SHARED splice-family pair, the
+# same one EnformerPlugin/BorzoiPlugin each already use individually for their
+# own single-model classification (see pipeline/models/enformer_plugin.py::
+# _infer_impl and pipeline/models/borzoi_plugin.py::_infer_impl) -- so the
 # ensemble's consensus classification is drawn from the identical,
 # already-documented scale, not a second, inconsistent one.
-_NO_EFFECT_THRESHOLD = 0.1
-_MODERATE_EFFECT_THRESHOLD = 0.5
-
+#
 # Score-spread beyond this (on the same 0..~1+ scale the individual
 # plugins use) is treated as complete disagreement (0% score
 # agreement); linearly scaled between 0 and this value.
@@ -64,10 +63,16 @@ _CLASSIFICATION_DISAGREEMENT_CAP = 50.0
 
 
 def _classify(score: float) -> str:
-    """Same bucketing EnformerPlugin/BorzoiPlugin each use individually."""
-    if score < _NO_EFFECT_THRESHOLD:
+    """
+    Same bucketing EnformerPlugin/BorzoiPlugin each use individually.
+
+    READ AT CALL TIME, NOT BOUND AT IMPORT: a module-level copy of
+    `config.SPLICE_DELTA_*` would be a private literal again by another
+    route -- it would stop tracking config the moment anything changed it.
+    """
+    if score < config.SPLICE_DELTA_NO_EFFECT_THRESHOLD:
         return "no_significant_effect"
-    if score < _MODERATE_EFFECT_THRESHOLD:
+    if score < config.SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD:
         return "moderate_effect"
     return "large_effect"
 
@@ -171,7 +176,9 @@ class EnsembleManager:
         """
         values = list(scores.values())
         score_spread = max(values) - min(values)
-        score_agreement = max(0.0, 100.0 * (1.0 - min(score_spread, _MAX_MEANINGFUL_SCORE_SPREAD) / _MAX_MEANINGFUL_SCORE_SPREAD))
+        score_agreement = max(
+            0.0, 100.0 * (1.0 - min(score_spread, _MAX_MEANINGFUL_SCORE_SPREAD) / _MAX_MEANINGFUL_SCORE_SPREAD)
+        )
 
         classes = list(classifications.values())
         classes_agree = len(set(classes)) == 1

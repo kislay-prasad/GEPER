@@ -138,6 +138,55 @@ def _load_yaml_config_overrides() -> None:
 _load_yaml_config_overrides()
 
 
+# --- Shared splice/regulatory delta-score classification thresholds -------
+# The single source of truth for the three-way
+# no_significant_effect / moderate_effect / large_effect bucketing used by
+# SpliceFormer, SpliceBERT, Enformer/Borzoi and the ensemble.
+#
+# SCALE, STATED BECAUSE THE WRONG NAME WOULD BE BELIEVED: these are on the
+# 0..~1 PROBABILITY-DELTA scale those models' summaries share -- SpliceFormer's
+# "raw acceptor/donor probability delta", SpliceBERT's masked-marginal
+# P(ref)-P(alt) change. They are NOT on MMSplice's delta_logit_psi scale, which
+# lives in MMSpliceConfig below, is an unbounded logit scale, and where 2.0 is
+# the SMALL value. Naming these "delta_logit" was proposed and rejected for
+# exactly that reason: a constant whose name asserts the wrong scale is worse
+# than the bare literal it replaces, because the name gets believed while a
+# literal would at least have been looked up.
+#
+# PROVENANCE -- THESE ARE OURS, NOT A PAPER'S. No published SpliceFormer or
+# SpliceBERT threshold sets 0.1/0.5. They are this repository's own
+# presentational bucketing, adopted from the convention already used for
+# Enformer/Borzoi so every plugin's `classification` field sits on one scale
+# rather than several. Both plugins additionally carry an explicit "NOT a
+# clinically calibrated score" caveat, and that caveat is unchanged by naming
+# these constants. No citation is attached deliberately: attaching a paper to a
+# number the paper never chose would be a fabricated provenance, and it would be
+# believed by exactly the readers least able to check it.
+#
+# WHY SHARED RATHER THAN PER-MODEL: these two numbers previously existed as
+# identical private literals in five files. They agreed only because nobody had
+# edited them. Extracting some but not all would have left the rest holding
+# literals, so a later edit here would silently fail to reach them -- see
+# tests/test_splice_delta_thresholds_shared.py, which changes these values and
+# asserts every call site follows.
+#
+# *** ONE UNREPOINTED MIRROR EXISTS, AND IT IS NAMED HERE BECAUSE IT CANNOT BE
+# NAMED THERE: kaggle_bp7_verification/bp7_kaggle_verification.py:397-398 still
+# holds its own `_NO_EFFECT_THRESHOLD = 0.1` / `_MODERATE_EFFECT_THRESHOLD = 0.5`.
+# IF YOU CHANGE THE VALUES ABOVE, CHANGE THEM THERE TOO. ***
+# That script is a STANDALONE Kaggle GPU notebook export (its own first
+# docstring line) which imports nothing from geper, because it runs where the
+# geper package is not installed -- importing config would break it exactly
+# where it is meant to run. It also cannot carry this warning as a comment of
+# its own: editing it at all pulls it into pre-commit's ruff scope, where its
+# cell-style mid-file imports are pre-existing E402 failures. So the warning
+# lives here, next to the values whose change would invalidate it.
+SPLICE_DELTA_NO_EFFECT_THRESHOLD: float = float(os.environ.get("GEPER_SPLICE_DELTA_NO_EFFECT_THRESHOLD", "0.1"))
+SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD: float = float(
+    os.environ.get("GEPER_SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD", "0.5")
+)
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     """HuggingFace model identifiers for each pretrained model."""

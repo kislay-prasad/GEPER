@@ -92,19 +92,39 @@ from typing import Any, Dict, List
 
 import requests
 
+import config
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
 from pipeline.models.spip import loader as spip_loader
 
-# Same classification thresholds pipeline/models/spliceformer_plugin.py,
-# splicebert_plugin.py, enformer_plugin.py, and borzoi_plugin.py already
-# use for their own single-model summaries -- reused here (for the
-# moderate/large split only; see _infer_impl's own comment for why
-# "no effect" is instead read directly from SPiP's own "NTR"
-# interpretation rather than a reapplied 0.1 cutoff) so a SPiP score
-# sits on the same documented 0..~1 scale as the rest of this family.
-_MODERATE_EFFECT_THRESHOLD = 0.5
+# SPiP shares this family's MODERATE/LARGE split -- config's
+# SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD, the same one spliceformer_plugin.py,
+# splicebert_plugin.py, enformer_plugin.py and borzoi_plugin.py bucket against
+# -- so a SPiP score sits on the same documented 0..~1 scale as the rest.
+#
+# *** SPiP DELIBERATELY HAS NO NO-EFFECT CONSTANT. DO NOT "COMPLETE THE PAIR". ***
+# Every sibling plugin uses config.SPLICE_DELTA_NO_EFFECT_THRESHOLD (0.1) for its
+# bottom bucket. SPiP does not, and that asymmetry is correct rather than an
+# oversight: SPiP publishes its OWN "NTR" (no-transcript-result) interpretation,
+# which is a more accurate no-effect signal for this tool than reapplying this
+# family's generic 0.1 cutoff would be. See `_classify` below.
+# Adding a no-effect threshold here would CHANGE SPiP'S BEHAVIOUR, not tidy it.
+# tests/test_splice_delta_thresholds_shared.py::test_spip_keeps_its_own_no_effect_shape
+# fails if anyone does, so this is enforced rather than merely requested.
+
+
+def _classify(interpretation: str, raw_score: float, score: float) -> str:
+    """
+    SPiP's bucketing: its own NTR interpretation decides "no effect", then the
+    SHARED moderate/large split. Reads config at call time, not at import.
+    """
+    if interpretation == "NTR" or raw_score < 0:
+        return "no_significant_effect"
+    if score < config.SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD:
+        return "moderate_effect"
+    return "large_effect"
+
 
 # Network-shaped failures only -- NOT bare OSError. `spip_loader.
 # prepare_runtime_dir` fetches reference data via `requests.get(...)`
@@ -327,12 +347,7 @@ class SpipPlugin(PluginModel):
         # split below still reuses the shared family threshold so
         # SPiP's classification bucket sits on the same scale as
         # SpliceFormer/SpliceBERT/Enformer/Borzoi's own.
-        if interpretation == "NTR" or raw_score < 0:
-            classification = "no_significant_effect"
-        elif score < _MODERATE_EFFECT_THRESHOLD:
-            classification = "moderate_effect"
-        else:
-            classification = "large_effect"
+        classification = _classify(interpretation, raw_score, score)
 
         return {
             "score": score,

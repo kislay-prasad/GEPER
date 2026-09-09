@@ -76,6 +76,7 @@ import numpy as np
 import requests
 import torch
 
+import config
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
@@ -90,14 +91,25 @@ from utils.auto_install import PackageCheckStatus, check_pip_package_availabilit
 # "45k" in "Spliceformer-45k".
 SPLICEFORMER_TOTAL_INPUT_LENGTH = spliceformer_loader.TOTAL_INPUT_LENGTH
 
-# Same classification thresholds pipeline/models/enformer_plugin.py,
-# borzoi_plugin.py, and pipeline/models/ensemble.py already use for
-# their own single-model delta-score summaries -- reused here so a
-# SpliceFormer score sits on the same documented 0..~1 scale as the
-# other splicing/regulatory plugins' `score`/`classification` fields,
-# rather than a third, inconsistent scale.
-_NO_EFFECT_THRESHOLD = 0.1
-_MODERATE_EFFECT_THRESHOLD = 0.5
+
+# Classification thresholds come from config's SHARED splice-family pair --
+# the same one pipeline/models/enformer_plugin.py, borzoi_plugin.py and
+# pipeline/models/ensemble.py bucket against -- so a SpliceFormer score sits on
+# the same documented 0..~1 scale as the other splicing/regulatory plugins'
+# `score`/`classification` fields, rather than a third, inconsistent scale.
+#
+# READ AT CALL TIME, NOT BOUND AT IMPORT: `config.SPLICE_DELTA_*` is looked up
+# inside `_classify` rather than copied into a module-level name here. A
+# module-level copy would be a private literal again by another route -- it
+# would stop tracking config the moment anything changed the value.
+def _classify(score: float) -> str:
+    """Three-way bucketing shared with ensemble/enformer/borzoi/splicebert."""
+    if score < config.SPLICE_DELTA_NO_EFFECT_THRESHOLD:
+        return "no_significant_effect"
+    if score < config.SPLICE_DELTA_MODERATE_EFFECT_THRESHOLD:
+        return "moderate_effect"
+    return "large_effect"
+
 
 # Integer base encoding used by the official repo's own delta-scoring
 # notebook (Code/get_clinvar_delta_for_transformer.ipynb::seqToArray):
@@ -352,12 +364,7 @@ class SpliceFormerPlugin(PluginModel):
 
         max_abs_delta = max(abs(top_a_creation), abs(top_d_creation), abs(top_a_disruption), abs(top_d_disruption))
 
-        if max_abs_delta < _NO_EFFECT_THRESHOLD:
-            classification = "no_significant_effect"
-        elif max_abs_delta < _MODERATE_EFFECT_THRESHOLD:
-            classification = "moderate_effect"
-        else:
-            classification = "large_effect"
+        classification = _classify(max_abs_delta)
 
         # Not a calibrated probability -- see the caveat above. Bounded
         # to [0, 1] purely so it's a well-formed number for downstream

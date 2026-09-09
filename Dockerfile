@@ -434,13 +434,13 @@ LABEL org.opencontainers.image.title="GEPER" \
 #   ca-certificates            -- every provider lookup in this pipeline
 #                                is HTTPS (ClinVar, gnomAD, ClinGen, ...)
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa samtools bcftools tabix libtabixpp0 libseqlib2 \
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa samtools bcftools tabix minimap2 libtabixpp0 libseqlib2 \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
     && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends libcurl4 libssl3 zlib1g libbz2-1.0 liblzma5 libncurses6 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends git git-lfs \
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends git git-lfs r-base-core ncbi-blast+ \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/*
 

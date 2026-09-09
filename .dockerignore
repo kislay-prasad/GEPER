@@ -58,6 +58,29 @@ docker-compose.yml
 geper/config.yaml
 !geper/config.yaml.example
 
+# --- Offline model-cache seed ------------------------------------------
+# NOT an optimisation, and do not remove it to "let the image carry the
+# models". It cannot: the seed's HuggingFace layout contains five
+# relative symlinks (models--facebook--esm2_t33_650M_UR50D/snapshots/
+# <sha>/{config.json,model.safetensors,special_tokens_map.json,
+# tokenizer_config.json,vocab.txt} -> ../../blobs/<sha>), and BuildKit
+# refuses to load a context containing them:
+#
+#     ERROR: invalid file request model_cache_seed/models--facebook--
+#     esm2_t33_650M_UR50D/snapshots/08e4846e.../config.json
+#
+# Measured twice, on 2026-09-09, by two agents on two different
+# Dockerfiles. Without this line the repository does not build AT ALL
+# from a checkout that has the seed on disk -- and the error names a
+# model cache rather than anything to do with the change being made, so
+# whoever hits it searches their own diff and finds nothing.
+#
+# The seed reaches a container by RUNTIME BIND MOUNT, never through the
+# build context -- see DOCKER.md. Excluding it therefore costs a
+# capability that has never existed.
+model_cache_seed/
+model_cache_seed.tar.gz
+
 # Note: geper/testdata/, geper/testdata_bench/, and the repo-root
 # test_data/ are intentionally NOT excluded here (same reasoning
 # .gitignore documents) -- they're tiny, purpose-built fixtures, not the

@@ -464,6 +464,22 @@ CREATE TABLE vcfs (
     tombstoned_at   TIMESTAMPTZ,
     tombstoned_by   UUID,
 
+    -- Human ruling D2 (2026-09-09): retention resolves PER ARTEFACT from
+    -- the patient's age at collection, not as one flat number per class
+    -- (retention_policies, below, no longer determines a VCF's own
+    -- period by itself -- see clinical/retention.py's docstring for the
+    -- resolution rule and clinical/data_access.py::create_vcf for where
+    -- this is computed once, at creation). NULLABLE, not NOT NULL: a
+    -- handful of existing tests insert this table directly, bypassing
+    -- create_vcf, and have no reason to resolve a real period -- NULL
+    -- here means "no resolved period", which retention.py's purge
+    -- queries treat as never-eligible (the safe direction: absence of a
+    -- resolved period blocks a purge, it never permits one). Every VCF
+    -- created through create_vcf() gets a real value; this is a
+    -- deliberately permissive column, not a deliberately optional
+    -- policy.
+    retention_days  INTEGER     CHECK (retention_days IS NULL OR retention_days > 0),
+
     CONSTRAINT fk_vcf_sequ_run
         FOREIGN KEY (org_id, sequencing_run_id) REFERENCES sequencing_runs (org_id, id),
     CONSTRAINT fk_vcf_creator
@@ -501,6 +517,14 @@ CREATE TABLE interpretations (
     -- vcfs.tombstoned_at/tombstoned_by above.
     tombstoned_at   TIMESTAMPTZ,
     tombstoned_by   UUID,
+
+    -- Human ruling D2 (2026-09-09): INHERITED from vcfs.retention_days at
+    -- creation (create_interpretation()/create_reanalysis()), never
+    -- independently configured and never recomputed -- see
+    -- vcfs.retention_days's own comment above. Same NULLABLE-for-tests
+    -- reasoning: a row inserted directly by a test that predates this
+    -- column carries NULL, and NULL is never-eligible for purge.
+    retention_days  INTEGER     CHECK (retention_days IS NULL OR retention_days > 0),
 
     CONSTRAINT fk_interp_vcf
         FOREIGN KEY (org_id, vcf_id) REFERENCES vcfs (org_id, id),
@@ -560,6 +584,13 @@ CREATE TABLE reports (
     -- recording the outcome of approval rather than gating it.
     tombstoned_at       TIMESTAMPTZ,
     tombstoned_by       UUID,
+
+    -- Human ruling D2 (2026-09-09): INHERITED from interpretations.retention_days
+    -- at creation (create_report()/create_amendment()), never independently
+    -- configured -- see vcfs.retention_days's comment above for the full
+    -- rule and interpretations.retention_days for the same NULLABLE
+    -- reasoning.
+    retention_days      INTEGER     CHECK (retention_days IS NULL OR retention_days > 0),
 
     CONSTRAINT fk_report_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
@@ -973,31 +1004,38 @@ CREATE INDEX idx_receipt_org_notification
 
 -- ─── Phase 7 commit 4: Retention policy configuration (spec 22) ────────────
 --
--- Human ruling D2: retention periods are CONFIGURABLE PER ARTEFACT CLASS,
--- never hardcoded. This table is that configuration surface and nothing
--- more -- it holds no logic and enforces no retention by itself. Deliberately
--- empty: no row is seeded by this schema for any artefact_class, because
--- NABL 112A's >=5y figure (spec line 826) is a FLOOR, not a value, and every
--- other period is a counsel question (D2, D5) not yet answered. A class with
--- no row here is not "retained forever by default" -- it is unconfigured,
--- and clinical/retention.py's RetentionPrincipal fails loudly rather than
--- silently skipping or defaulting when it is asked to purge a class with no
--- policy row, per the same ruling: "make an unset period FAIL LOUDLY rather
--- than defaulting -- a silent default here would be a retention policy
--- nobody chose."
+-- Human ruling D2 (2026-09-04): retention periods are CONFIGURABLE, never
+-- hardcoded. RE-RULED 2026-09-09: "everything downstream of a VCF inherits
+-- the VCF period -- five years minimum, ten for minors ... configurable per
+-- organisation: a site with a stricter obligation sets its own; a site with
+-- none inherits ours." THESE TWO NUMBERS ARE A FLOOR THE PRODUCT CHOSE,
+-- WITHIN NABL 112A 7.8.5(b)(iv)'s stated range (>=5y, "at least 5-10 years"
+-- for a minor) -- NOT a legal finding; see clinical/retention.py's
+-- DEFAULT_ADULT_VCF_RETENTION_DAYS/DEFAULT_MINOR_VCF_RETENTION_DAYS for
+-- where that same caveat travels with the numbers in code.
 --
--- artefact_class values wired to an actual purge path in this commit: 'vcf',
--- 'run_document' (the interpretations table -- named this way because spec
--- 22.1's artefact list says "run documents", and interpretations.run_document
--- is the column that IS one), 'report'. Ordinary clinical_app privileges
--- (below) -- this is policy configuration, not evidentiary data, and an
--- Administrator sets it the same way any other configuration is set.
+-- ONLY 'vcf' is configured here as of the 2026-09-09 ruling -- run_document
+-- and report are no longer independently configurable: their period is
+-- INHERITED from the vcf at creation (interpretations.retention_days,
+-- reports.retention_days), never looked up here. A row that could be set
+-- but silently ignored by every purge path is worse than no row at all, so
+-- the surface was narrowed rather than left present-but-inert (an
+-- engineering decision, not part of the ruling -- see
+-- clinical/data_access.py::RETENTION_ARTEFACT_CLASSES).
+--
+-- retention_days is the ADULT override; retention_days_minor is the MINOR
+-- override, independently nullable -- an organisation may set either, both,
+-- or neither. Either column, when NULL, falls back to this codebase's own
+-- product default (see clinical/retention.py) rather than to the other
+-- column: an org that overrides only the adult number has not implicitly
+-- chosen a minor number too.
 CREATE TABLE retention_policies (
-    org_id          UUID        NOT NULL,
-    artefact_class  TEXT        NOT NULL,
-    retention_days  INTEGER     NOT NULL CHECK (retention_days > 0),
-    created_at      TIMESTAMPTZ NOT NULL,
-    created_by      UUID        NOT NULL,
+    org_id              UUID        NOT NULL,
+    artefact_class      TEXT        NOT NULL,
+    retention_days      INTEGER     NOT NULL CHECK (retention_days > 0),
+    retention_days_minor INTEGER    CHECK (retention_days_minor IS NULL OR retention_days_minor > 0),
+    created_at          TIMESTAMPTZ NOT NULL,
+    created_by          UUID        NOT NULL,
 
     -- Org-scoped, like every reference in this schema (see fk_interp_parent's
     -- comment on the same point) -- one organisation's retention policy is
@@ -1219,13 +1257,26 @@ REVOKE DELETE
 -- Scope of what clinical_retention can touch is deliberately narrow and
 -- named explicitly rather than inherited: the three artefact classes wired
 -- to an actual purge path this commit (vcfs, interpretations, reports),
--- retention_policies (to read configured periods), release_events and
--- amendments (read-only, to compute a release anchor and a live-descendant
--- check), users (read-only, to attribute a purge to the org's existing
--- Phase 5c system principal -- see clinical/retention.py), and INSERT-only
--- on audit_log, matching clinical_app's own audit_log privilege exactly:
--- the retention principal can account for what it did and can rewrite
--- nothing, including its own account of itself.
+-- retention_policies, release_events and amendments (read-only, to compute
+-- a release anchor and a live-descendant check), users (read-only, to
+-- attribute a purge to the org's existing Phase 5c system principal --
+-- see clinical/retention.py), and INSERT-only on audit_log, matching
+-- clinical_app's own audit_log privilege exactly: the retention principal
+-- can account for what it did and can rewrite nothing, including its own
+-- account of itself.
+--
+-- retention_policies's SELECT grant here PREDATES human ruling D2's
+-- 2026-09-09 age-conditional re-ruling and is UNUSED by
+-- RetentionPrincipal as of that change: each of vcfs/interpretations/
+-- reports now carries its own already-resolved retention_days (set once,
+-- at creation, by clinical_app -- see clinical/data_access.py::create_vcf),
+-- and purge_expired() reads that column directly rather than re-consulting
+-- retention_policies per purge. Left in place rather than revoked: an
+-- unused SELECT grant is not a hazard the way an unused UPDATE/DELETE
+-- grant would be, and this commit's boundary is the age-conditional floor
+-- and its propagation, not clinical_retention's privilege surface (see
+-- the open FINDING-clinical-retention-holds-TABLE-level-UPDATE card,
+-- deliberately untouched here for the same reason).
 --
 -- reviewer_claims and amendment_notifications are deliberately untouched:
 -- no policy exists to purge them (human ruling D2: Phase 6/7 tables absent

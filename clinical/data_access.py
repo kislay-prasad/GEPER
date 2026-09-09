@@ -49,6 +49,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Protocol, Sequence
 
+from clinical.retention import resolve_vcf_retention_days
+
 if TYPE_CHECKING:
     from clinical.models.exception import ExceptionDTO
 
@@ -70,15 +72,15 @@ ROLES = (
     "System",
 )
 
-# Phase 7 commit 4 (spec 22, human ruling D2). The artefact classes wired to
-# an actual retention purge path -- see clinical/retention.py. Not every
-# class spec 22.1 names (raw reads is explicitly out of scope, D1 -- see
-# schema.sql's retention_policies comment) and not every evidentiary table
-# this codebase has (reviewer_claims/amendments/amendment_notifications have
-# no purge path yet, D2: "inherit nothing by default"). A policy for a class
-# outside this tuple is refused at set time rather than silently accepted
-# and never actionable.
-RETENTION_ARTEFACT_CLASSES = ("vcf", "run_document", "report")
+# Phase 7 commit 4 (spec 22, human ruling D2). RE-RULED 2026-09-09:
+# "everything downstream of a VCF inherits the VCF period" -- so
+# "run_document" and "report" are NO LONGER independently configurable.
+# Narrowed to just "vcf" here rather than left present-but-ignored: a
+# config knob no purge path any longer consults is a control that looks
+# live and does nothing, which is worse than an absent one. THIS NARROWING
+# IS AN ENGINEERING DECISION, not part of the human's ruling -- see
+# clinical/retention.py's module docstring for the reasoning in full.
+RETENTION_ARTEFACT_CLASSES = ("vcf",)
 
 # Assembly name normalization: maps variant names to canonical form
 # Only explicitly mapped names are recognised; unknown assemblies are rejected
@@ -1638,6 +1640,39 @@ class DataAccess:
         )
         return run_id
 
+    def _resolve_vcf_retention_days(self, session: Session, sequencing_run_id: uuid.UUID) -> int:
+        """
+        Human ruling D2 (2026-09-09): resolve the age-conditional retention
+        floor ONCE, here, at VCF creation -- the value returned is persisted
+        on vcfs.retention_days and every downstream artefact inherits it
+        rather than ever calling this again. See
+        clinical/retention.py::resolve_vcf_retention_days for the rule
+        itself (pure, unit-testable without a connection) -- this method is
+        only the DB-side plumbing: trace sequencing_run -> sample -> order
+        -> patient for dob, use the sample's own collected_at as "age at
+        collection", and read this org's 'vcf' policy overrides, if any.
+        """
+        row = self._query_one(
+            "SELECT p.dob, s.collected_at, rp.retention_days, rp.retention_days_minor "
+            "FROM sequencing_runs run "
+            "JOIN samples s ON s.org_id = run.org_id AND s.sample_id = run.sample_id "
+            "JOIN orders o ON o.org_id = s.org_id AND o.order_id = s.order_id "
+            "JOIN patients p ON p.org_id = o.org_id AND p.patient_id = o.patient_id "
+            "LEFT JOIN retention_policies rp "
+            "  ON rp.org_id = run.org_id AND rp.artefact_class = 'vcf' "
+            "WHERE run.id = %s AND run.org_id = %s",
+            (sequencing_run_id, session.org_id),
+        )
+        if row is None:
+            raise NotFoundError(f"Sequencing run {sequencing_run_id} not found")
+        dob, collected_at, policy_adult_days, policy_minor_days = row
+        return resolve_vcf_retention_days(
+            dob,
+            collected_at.date() if hasattr(collected_at, "date") else collected_at,
+            policy_adult_days=policy_adult_days,
+            policy_minor_days=policy_minor_days,
+        )
+
     @auditable(
         action="vcf_created",
         resource_type="vcf",
@@ -1653,6 +1688,12 @@ class DataAccess:
         Create a VCF (variant call format) record for a sequencing run.
         Reads the VCF file, computes its SHA-256 hash, and stores the path and hash.
         Raises ValueError if the file cannot be read or hashed.
+
+        Human ruling D2 (2026-09-09): also resolves and persists this VCF's
+        own retention_days here, once -- see _resolve_vcf_retention_days
+        and clinical/retention.py's module docstring. Every downstream
+        artefact (interpretation, report, amendment) inherits this same
+        value at ITS OWN creation rather than recomputing it.
         """
         # Validate sequencing_run exists in this org
         run = self._query_one(
@@ -1661,6 +1702,8 @@ class DataAccess:
         )
         if run is None:
             raise NotFoundError(f"Sequencing run {sequencing_run_id} not found")
+
+        retention_days = self._resolve_vcf_retention_days(session, sequencing_run_id)
 
         # Read file and compute SHA-256 hash
         try:
@@ -1684,9 +1727,9 @@ class DataAccess:
         now = self._clock.now()
         self._execute(
             "INSERT INTO vcfs (org_id, id, sequencing_run_id, vcf_path, content_hash, "
-            "created_at, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (session.org_id, vcf_id, sequencing_run_id, vcf_path, content_hash, now, session.user_id),
+            "created_at, created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (session.org_id, vcf_id, sequencing_run_id, vcf_path, content_hash, now, session.user_id, retention_days),
         )
         return vcf_id
 
@@ -1713,15 +1756,17 @@ class DataAccess:
         Raises ValueError if there is a sample_id mismatch.
         Raises database constraint error (duplicate submission_key) if the submission already exists.
         """
-        # Validate vcf exists and get its content_hash
+        # Validate vcf exists and get its content_hash and its already-resolved
+        # retention_days -- human ruling D2 (2026-09-09): INHERITED here, never
+        # recomputed (see clinical/retention.py's module docstring).
         vcf = self._query_one(
-            "SELECT id, content_hash FROM vcfs WHERE id = %s AND org_id = %s",
+            "SELECT id, content_hash, retention_days FROM vcfs WHERE id = %s AND org_id = %s",
             (vcf_id, session.org_id),
         )
         if vcf is None:
             raise NotFoundError(f"VCF {vcf_id} not found")
 
-        _, content_hash = vcf
+        _, content_hash, retention_days = vcf
 
         # Get the sample_id by tracing the chain: vcf → sequencing_run → sample
         # First get the sequencing_run_id from vcf
@@ -1758,8 +1803,8 @@ class DataAccess:
         now = self._clock.now()
         self._execute(
             "INSERT INTO interpretations (org_id, id, vcf_id, run_document, submission_key, "
-            "created_at, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "created_at, created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 session.org_id,
                 interpretation_id,
@@ -1768,6 +1813,7 @@ class DataAccess:
                 submission_key,
                 now,
                 session.user_id,
+                retention_days,
             ),
         )
         return interpretation_id
@@ -1786,19 +1832,23 @@ class DataAccess:
         Create a report linked to an interpretation.
         Validates that the interpretation exists in this organisation.
         """
-        # Validate interpretation exists in this org
+        # Validate interpretation exists in this org, and read its already-
+        # resolved retention_days -- human ruling D2 (2026-09-09): INHERITED
+        # here, never recomputed.
         interp = self._query_one(
-            "SELECT id FROM interpretations WHERE id = %s AND org_id = %s",
+            "SELECT id, retention_days FROM interpretations WHERE id = %s AND org_id = %s",
             (interpretation_id, session.org_id),
         )
         if interp is None:
             raise NotFoundError(f"Interpretation {interpretation_id} not found")
+        _, retention_days = interp
 
         report_id = uuid.uuid4()
         now = self._clock.now()
         self._execute(
-            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s)",
-            (session.org_id, report_id, interpretation_id, now, session.user_id),
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (session.org_id, report_id, interpretation_id, now, session.user_id, retention_days),
         )
         return report_id
 
@@ -1854,12 +1904,15 @@ class DataAccess:
         so it gets a key that is unconditionally unique per call instead of
         idempotent on content.
         """
+        # retention_days: INHERITED from the vcf, same as create_interpretation
+        # -- human ruling D2 (2026-09-09), never recomputed for a re-analysis.
         vcf = self._query_one(
-            "SELECT id FROM vcfs WHERE id = %s AND org_id = %s",
+            "SELECT id, retention_days FROM vcfs WHERE id = %s AND org_id = %s",
             (vcf_id, session.org_id),
         )
         if vcf is None:
             raise NotFoundError(f"VCF {vcf_id} not found")
+        _, retention_days = vcf
 
         parent = self._query_one(
             "SELECT vcf_id FROM interpretations WHERE org_id = %s AND id = %s",
@@ -1879,8 +1932,8 @@ class DataAccess:
         submission_key = f"reanalysis:{parent_interpretation_id}:{interpretation_id}"
         self._execute(
             "INSERT INTO interpretations (org_id, id, vcf_id, run_document, submission_key, "
-            "parent_interpretation_id, created_at, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            "parent_interpretation_id, created_at, created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 session.org_id,
                 interpretation_id,
@@ -1890,6 +1943,7 @@ class DataAccess:
                 parent_interpretation_id,
                 now,
                 session.user_id,
+                retention_days,
             ),
         )
         return interpretation_id
@@ -1942,20 +1996,35 @@ class DataAccess:
         details_builder=lambda params, result: {
             "artefact_class": params.get("artefact_class"),
             "retention_days": params.get("retention_days"),
+            "retention_days_minor": params.get("retention_days_minor"),
         },
     )
     @transactional
-    def set_retention_policy(self, session: Session, artefact_class: str, retention_days: int) -> None:
+    def set_retention_policy(
+        self,
+        session: Session,
+        artefact_class: str,
+        retention_days: int,
+        retention_days_minor: Optional[int] = None,
+    ) -> None:
         """
-        Spec 22, human ruling D2: periods are configuration, never code, and
-        an unset period fails loudly rather than defaulting. This is the
-        write side of that configuration surface -- Administrator-gated, the
-        same governance level as assign_role, because a retention period is
-        a policy decision about clinical data, not routine data entry.
+        Spec 22, human ruling D2 (re-ruled 2026-09-09, age-conditional):
+        periods are configuration, never code -- this is the write side of
+        that configuration surface, Administrator-gated, the same
+        governance level as assign_role, because a retention period is a
+        policy decision about clinical data, not routine data entry.
 
-        Restricted to RETENTION_ARTEFACT_CLASSES: a policy for a class with
-        no purge path is not configuration, it is a policy nobody can ever
-        act on, and accepting it here would let one exist unnoticed.
+        `retention_days` is the ADULT override; `retention_days_minor` is
+        the MINOR override, independently optional -- an org may set
+        either, both, or neither. Either one left unset falls back to this
+        codebase's own product default (clinical/retention.py
+        ::DEFAULT_ADULT_VCF_RETENTION_DAYS/DEFAULT_MINOR_VCF_RETENTION_DAYS)
+        rather than to the other override.
+
+        Restricted to RETENTION_ARTEFACT_CLASSES (now just "vcf" -- see
+        that tuple's own comment): a policy for a class with no purge path
+        is not configuration, it is a policy nobody can ever act on, and
+        accepting it here would let one exist unnoticed.
         """
         self._require_role(session, "Administrator")
         if artefact_class not in RETENTION_ARTEFACT_CLASSES:
@@ -1965,15 +2034,20 @@ class DataAccess:
             )
         if retention_days <= 0:
             raise ValueError(f"retention_days must be positive, got {retention_days}")
+        if retention_days_minor is not None and retention_days_minor <= 0:
+            raise ValueError(f"retention_days_minor must be positive, got {retention_days_minor}")
 
         now = self._clock.now()
         self._execute(
-            "INSERT INTO retention_policies (org_id, artefact_class, retention_days, created_at, created_by) "
-            "VALUES (%s, %s, %s, %s, %s) "
+            "INSERT INTO retention_policies "
+            "(org_id, artefact_class, retention_days, retention_days_minor, created_at, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (org_id, artefact_class) DO UPDATE SET "
-            "retention_days = EXCLUDED.retention_days, created_at = EXCLUDED.created_at, "
+            "retention_days = EXCLUDED.retention_days, "
+            "retention_days_minor = EXCLUDED.retention_days_minor, "
+            "created_at = EXCLUDED.created_at, "
             "created_by = EXCLUDED.created_by",
-            (session.org_id, artefact_class, retention_days, now, session.user_id),
+            (session.org_id, artefact_class, retention_days, retention_days_minor, now, session.user_id),
         )
 
     @auditable(
@@ -1985,9 +2059,27 @@ class DataAccess:
     )
     @transactional
     def get_retention_policy(self, session: Session, artefact_class: str) -> Optional[int]:
-        """Returns the configured retention_days for this org and class, or None if unset."""
+        """Returns the configured ADULT retention_days for this org and class, or None if unset."""
         row = self._query_one(
             "SELECT retention_days FROM retention_policies WHERE org_id = %s AND artefact_class = %s",
+            (session.org_id, artefact_class),
+        )
+        return row[0] if row else None
+
+    @auditable(
+        action="retention_policy_read",
+        resource_type="retention_policy",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_retention_policy_minor(self, session: Session, artefact_class: str) -> Optional[int]:
+        """Returns the configured MINOR retention_days override for this org and
+        class, or None if this org has not overridden the product default for
+        minors -- see clinical/retention.py::DEFAULT_MINOR_VCF_RETENTION_DAYS."""
+        row = self._query_one(
+            "SELECT retention_days_minor FROM retention_policies WHERE org_id = %s AND artefact_class = %s",
             (session.org_id, artefact_class),
         )
         return row[0] if row else None
@@ -4446,14 +4538,19 @@ class DataAccess:
 
         Returns: tuple of (amendment_report_id, notification_id)
         """
+        # retention_days: INHERITED from the original report (which itself
+        # inherited it from its interpretation, which inherited it from its
+        # vcf) -- human ruling D2 (2026-09-09). An amendment IS a new report
+        # row for the same lineage, so it carries the same already-resolved
+        # value, never recomputed.
         original = self._query_one(
-            "SELECT state, interpretation_id FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT state, interpretation_id, retention_days FROM reports WHERE id = %s AND org_id = %s",
             (original_report_id, session.org_id),
         )
         if original is None:
             raise NotFoundError(f"Original report {original_report_id} not found")
 
-        state, interpretation_id = original
+        state, interpretation_id, retention_days = original
 
         if state not in ("approved", "released"):
             raise ValueError(
@@ -4482,8 +4579,9 @@ class DataAccess:
         # to start, linked to the same interpretation as the original.
         amendment_report_id = uuid.uuid4()
         self._execute(
-            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by) VALUES (%s, %s, %s, %s, %s)",
-            (session.org_id, amendment_report_id, interpretation_id, now, session.user_id),
+            "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (session.org_id, amendment_report_id, interpretation_id, now, session.user_id, retention_days),
         )
 
         amendment_id = uuid.uuid4()

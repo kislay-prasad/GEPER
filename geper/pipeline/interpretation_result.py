@@ -59,6 +59,14 @@ class InterpretationResult:
     acmg_net_points: Optional[float] = None
     acmg_pathogenic_points: Optional[float] = None
     acmg_benign_points: Optional[float] = None
+    # Interpretation-outcome state (human ruling, 2026-09-09/10) --
+    # carried ALONGSIDE acmg_classification above, never replacing it,
+    # never derived from it or from the per-source retrieval states.
+    # One of "interpreted" / "insufficient_evidence" /
+    # "conflicting_evidence" / "review_required" (the last currently
+    # never produced -- its trigger set is held for human ruling). See
+    # `pipeline/interpretation_outcome.py`.
+    interpretation_outcome: Optional[str] = None
 
     # Aggregated evidence (deduplicated, sourced from the ACMG criteria
     # plus the legacy free-text evidence list -- nothing new is derived
@@ -178,6 +186,7 @@ class InterpretationResult:
             "acmg_net_points": self.acmg_net_points,
             "acmg_pathogenic_points": self.acmg_pathogenic_points,
             "acmg_benign_points": self.acmg_benign_points,
+            "interpretation_outcome": self.interpretation_outcome,
             "supporting_evidence": self.supporting_evidence,
             "conflicting_evidence": self.conflicting_evidence,
             "ai_consensus": self.ai_consensus,
@@ -579,6 +588,7 @@ def build_interpretation_result(
         acmg_net_points=acmg.get("net_points"),
         acmg_pathogenic_points=acmg.get("pathogenic_points"),
         acmg_benign_points=acmg.get("benign_points"),
+        interpretation_outcome=acmg.get("interpretation_outcome"),
         supporting_evidence=_dedupe(supporting_evidence),
         conflicting_evidence=_dedupe(conflicting_evidence),
         ai_consensus=ai_consensus,

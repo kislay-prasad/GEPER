@@ -1278,6 +1278,12 @@ class ReportGenerator:
         if ir.get("acmg_classification"):
             lines.append(f"**ACMG Classification:** {ir['acmg_classification']}")
             lines.append("")
+        # Interpretation-outcome state (human ruling, 2026-09-09/10):
+        # rendered ALONGSIDE the ACMG classification above, never in
+        # place of it. See `pipeline/interpretation_outcome.py`.
+        if ir.get("interpretation_outcome"):
+            lines.append(f"**Interpretation Outcome:** {ir['interpretation_outcome']}")
+            lines.append("")
         if not ir.get("confidence_pending", True):
             lines.append(f"**Evidence Completeness:** {ir.get('confidence_score')}% ({ir.get('confidence_label')})")
             breakdown = (ir.get("confidence_breakdown") or {}).get("category_breakdown", [])

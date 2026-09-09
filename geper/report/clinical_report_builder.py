@@ -439,6 +439,10 @@ def build_clinical_report(
     return {
         "executive_summary": _executive_summary(ir, variant_dict),
         "acmg_classification": _acmg_section(ir),
+        # Human ruling, 2026-09-09/10: carried ALONGSIDE
+        # acmg_classification above, never replacing it. See
+        # `pipeline/interpretation_outcome.py`.
+        "interpretation_outcome": ir.get("interpretation_outcome"),
         "confidence": _confidence_section(ir),
         "priority": _priority_section(ir),
         "supporting_evidence": ir.get("supporting_evidence", []),

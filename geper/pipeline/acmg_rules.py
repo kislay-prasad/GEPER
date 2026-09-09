@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from config import CONFIG
 from pipeline.gnomad.models import POPULATION_LABELS
 from pipeline.hgvs_utils import is_mitochondrial_chrom
+from pipeline.interpretation_outcome import determine_interpretation_outcome
 from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
 from pipeline.ps1_pm5.models import PS1PM5Evaluation
 from pipeline.pvs1.models import TranscriptContext
@@ -987,6 +988,48 @@ class ACMGRuleEngine:
         not_triggered = [c.to_dict() for c in criteria.values() if c.status == "not_triggered"]
         not_evaluated = [c.to_dict() for c in criteria.values() if c.status == "not_evaluated"]
 
+        # Interpretation-outcome state (human ruling, 2026-09-09/10) --
+        # a DIFFERENT axis from the criteria above, computed here because
+        # this is the one place every evidence-query result this variant
+        # received is already in scope. `gene_resolved` reads ClinGen's
+        # own resolution verdict, never re-derived; `evidence_queries_completed`
+        # is False the moment ANY evidence-query result this variant
+        # actually attempted carries a genuine `error` key -- a `found:
+        # False` or a structural skip (e.g. the mtDNA compartment gate's
+        # pre-built skip dicts, which never set `error`) is not a
+        # failure and does not count. See
+        # `pipeline/interpretation_outcome.py`'s own docstring for why
+        # this gate exists and must not be loosened.
+        gene_resolved = (clingen_result or {}).get("gene_resolution_status") == "resolved"
+        _evidence_query_results = (
+            clinvar_result,
+            dbsnp_result,
+            protein_result,
+            alphamissense_result,
+            mmsplice_result,
+            gnomad_result,
+            conservation_result,
+            interpro_result,
+            ensemble_result,
+            transcript_result,
+            clinvar_codon_result,
+            uniprot_result,
+            spliceformer_result,
+            splicebert_result,
+            hpo_result,
+            phenotype_result,
+            functional_evidence_result,
+        )
+        evidence_queries_completed = all(
+            result is None or result.get("error") is None for result in _evidence_query_results
+        )
+        interpretation_outcome = determine_interpretation_outcome(
+            gene_resolved=gene_resolved,
+            evidence_queries_completed=evidence_queries_completed,
+            pathogenic_points=combine_result.pathogenic_points,
+            benign_points=combine_result.benign_points,
+        )
+
         return {
             "classification": combine_result.classification,
             "combining_rule_trace": combine_result.trace,
@@ -1006,6 +1049,11 @@ class ACMGRuleEngine:
             "not_triggered_criteria": not_triggered,
             "not_evaluated_criteria": not_evaluated,
             "all_criteria": {code: c.to_dict() for code, c in criteria.items()},
+            # Human ruling, 2026-09-09/10: carried ALONGSIDE
+            # `classification` above, never replacing it, never derived
+            # from `pipeline/stage_schemas.py::StageStatus`. See
+            # `pipeline/interpretation_outcome.py`.
+            "interpretation_outcome": interpretation_outcome.value,
         }
 
     # ------------------------------------------------------------------

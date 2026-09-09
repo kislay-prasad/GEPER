@@ -283,98 +283,170 @@ a layer ran, never the `docker run` flags that produced it, so it
 cannot answer "how did this file arrive" -- and the answer is the
 entire difficulty here.**
 
-**How to put the seed back into an image -- and the two mechanisms that
-look like they work and do not.** This procedure is Kelly's; it was
-executed on 2026-09-08 and is recorded here from her own account of the
-run, not reconstructed. **The failing mechanisms are the load-bearing
-half of it.** Anyone rebuilding this will reach for one of them first,
-it will appear to succeed, and the cache will be broken in a way that
-a directory listing cannot see.
+**What a working cache has to look like -- stated as a REQUIRED END
+STATE, not as a sequence of steps.** That framing is deliberate and is
+Kelly's, who ran the repair and then checked the file mtimes rather
+than trusting her own account of it: the two halves are **three days
+apart** (the five symlinks at `2026-09-05 07:09 UTC`, `refs/main` at
+`2026-09-08 04:51 UTC`), and each appears at the same instant in the
+host seed and in the image. So this was never one atomic recipe --
+anything that reads as a single tidy procedure, including the one-line
+summary that started this section, is a reconstruction. **The end state
+is what can be evidenced; the sequence is not, so only the end state is
+written down as fact.**
 
-The whole difficulty is five symlinks. HuggingFace stores each file
-once in `blobs/` under its hash and links it into
-`snapshots/<revision>/` under its real name; those links are what
-`from_pretrained` resolves. They exist in the host seed as genuine
-POSIX symlinks:
+The evidence is an A/B between two images that are both still on this
+machine, which is stronger than any recollection: `3cf41395`
+(`geper:bridge-ready-BROKEN-esm2-offline`) is the *before* state of
+exactly this repair, and `a8a5fe67` (`geper:bridge-ready`) is the
+*after*. Under
+`/app/model_cache_seed/models--facebook--esm2_t33_650M_UR50D/`:
+
+| | BROKEN `3cf41395` | FIXED `a8a5fe67` |
+|---|---|---|
+| `refs/` | **directory absent entirely** | `refs/main`, 40 bytes |
+| `snapshots/08e4846e.../` | **exists and is empty** | 5 symlinks |
+| `blobs/` | all 5, incl. the 2,609,506,392-byte safetensors | **identical, same sizes** |
+| `.no_exist/08e4846e.../` | 3 zero-byte files | **identical** |
+
+**The blobs are the same in both. 2.6 GB of correct weights sat in the
+broken image the whole time.** That single row is why a directory
+listing lies here, and it is the reason this section exists.
+
+**1 -- `refs/main`.** `models--facebook--esm2_t33_650M_UR50D/refs/main`
+containing `08e4846e537177426273712802403f7ba8261b6c` --
+**40 bytes, no trailing newline** (read with `xxd`, not `cat`, because a
+trailing newline is exactly what a document loses). The parent `refs/`
+directory must be created; in the broken image it does not exist at
+all. This is the sha `_ESM2_REVISION` pins in `geper/models/esm2.py`.
+
+**2 -- five symlinks**, all in
+`snapshots/08e4846e537177426273712802403f7ba8261b6c/` -- note the
+snapshot directory name *is* the commit sha, the same string as
+`refs/main`:
 
 ```
-snapshots/08e4846e.../config.json             -> ../../blobs/a956a25d277f30bd870d3760b9a116f19ead885e
-snapshots/08e4846e.../model.safetensors       -> ../../blobs/a08adabb949fa67ad3c14b509d04fd60368b35007b0095e3358f81200c4f4db0
-snapshots/08e4846e.../special_tokens_map.json -> ../../blobs/ba0f9b53dbbf27934f7555e5d31e37bdea9317f1
-snapshots/08e4846e.../tokenizer_config.json   -> ../../blobs/3f0d47e841e1cb75257aeaf76d156802899a217e
-snapshots/08e4846e.../vocab.txt               -> ../../blobs/6b946952cc35537226f07fd70957ee2f848880d2
+config.json             -> ../../blobs/a956a25d277f30bd870d3760b9a116f19ead885e
+model.safetensors       -> ../../blobs/a08adabb949fa67ad3c14b509d04fd60368b35007b0095e3358f81200c4f4db0
+special_tokens_map.json -> ../../blobs/ba0f9b53dbbf27934f7555e5d31e37bdea9317f1
+tokenizer_config.json   -> ../../blobs/3f0d47e841e1cb75257aeaf76d156802899a217e
+vocab.txt               -> ../../blobs/6b946952cc35537226f07fd70957ee2f848880d2
 ```
 
-**DOES NOT WORK (1): `docker cp`.** It cannot encode a POSIX symlink
-from a Windows host; it reports `unknown file mode ?rw-rw-rw-`.
+**The targets are RELATIVE (`../../blobs/...`), and that is what lets
+the tree survive being moved to a different root at all. A rebuild that
+writes absolute targets will pass on the machine that made it and fail
+inside the image.** `model.safetensors`' target is a 64-hex sha256
+while the other four are 40-hex git blob shas -- do not "normalise"
+them. And a number worth having: `find model_cache_seed -type l` over
+the whole 4.6 GB tree returns **exactly these five**. The entire
+symlink hazard is concentrated in one directory.
 
-**DOES NOT WORK (2): the build context** -- `COPY`, and equally
-BuildKit's `RUN --mount=type=bind` with `cp -a`. The context loader
-rejects the same links outright:
+**There is no third thing.** An earlier summary of this repair --
+Kelly's own, and quoted here because it is the kind of line that
+propagates -- said "two metadata writes + five symlinks". The A/B shows
+**one** metadata file. `.no_exist/<revision>/`'s three zero-byte markers
+(`added_tokens.json`, `chat_template.jinja`, `tokenizer.json`) are
+**identical in the broken image**, and on the host tree their mtimes sit
+in the original download window rather than the repair window. They are
+HuggingFace's negative-cache markers, they arrived with the download,
+and they are **not part of the repair**.
+
+**The mechanisms that do not work.** Two of them lose the symlinks in
+transit; two more defeat a cache that is otherwise correct.
+
+**(A) `docker cp` -- and this is the one that hides.** It cannot encode
+a POSIX symlink from a Windows host: it prints
+`unknown file mode ?rw-rw-rw-`. **That line is the failure, not a
+symptom of it.** It reads like a warning, the copy continues, the exit
+status is fine -- and at the far end `refs/` and the snapshot contents
+are simply gone while `blobs/` arrives whole. The result is the BROKEN
+column above: complete-looking directory, matching file count, matching
+`du`, no usable cache.
+
+**(B) The build context** -- `COPY`, and equally BuildKit's
+`RUN --mount=type=bind` with `cp -a`. The context loader rejects the
+same links outright:
 `ERROR: invalid file request model_cache_seed/models--facebook--esm2_t33_650M_UR50D/snapshots/08e4846e.../config.json`.
-This is the one that costs a rebuild, because it is the *clean* route --
-one derived layer, no `docker commit` -- and it is the route a careful
-person picks.
+This one fails **loudly**, but it is the expensive failure, because it
+is the *clean* route -- one derived layer, no `docker commit` -- and so
+it is the route a careful person picks first.
 
-**WHAT IT LOOKS LIKE WHEN IT WRONGLY LOOKS FINE, which is the reason
-this paragraph exists.** Mechanism 2 fails loudly. **Mechanism 1 does
-not.** The 2.6 GB of blobs arrive intact, the directory listing is
-complete, the file count matches, `du` matches -- and the load is a
-**CACHE MISS**, because `snapshots/<revision>/` holds no usable
-entries and `refs/main` is absent. Every check short of a load passes.
-That is Kelly's rule, and it is the acceptance test for this whole
-procedure: **a cache is proven by a LOAD, never by a directory
-listing.** If a rebuild is verified by looking at files, it has not
-been verified.
+**(C) `VOLUME` shadowing, which is not about symlinks at all and will
+bite a rebuilder before either of the above.**
+`docker inspect --format '{{json .Config.Volumes}}'` on **both** images
+returns `/app/geper/geper_output`, `/app/geper/model_cache`, and
+`/root/.cache/huggingface`. **The two obvious places to put a model
+cache are both declared volumes, and `docker commit` does not capture
+volume contents** -- so a seed written to either builds cleanly, commits
+cleanly, and is **absent at run time**. That is why the working image
+re-points all three variables away from both, measured off the image
+rather than read off a Dockerfile:
+`GEPER_CACHE_DIR=`, `HF_HUB_CACHE=` and `HF_HOME=`, all
+`/app/model_cache_seed`.
 
-**WHAT DOES WORK: a runtime bind mount.** `docker run -v <seed>:/seed:ro`
-and then `cp -a /seed/. <dest>/` *inside* the container -- the copy is
-executed by Linux, which handles the links natively. The three steps as
-run:
+**(D) `HF_HOME` used where `HF_HUB_CACHE` is meant.** The correct
+variable for the model cache **root** is `HF_HUB_CACHE`. Setting only
+`HF_HOME` makes HuggingFace look in `$HF_HOME/hub`, one level off --
+the older image had `HF_HOME=/app/model_cache_seed/hf` and therefore
+searched a directory that does not exist while the models sat at the
+root. The symptom is, again, a full-looking directory and a miss. The
+three variables above are **not** interchangeable.
 
-1. An ENV-only layer built from a Dockerfile with an **empty build
-   context**, so there is nothing for the context loader to choke on.
-2. `docker run -v <seed>:/seed:ro <image>` then
-   `cp -a /seed/. /app/model_cache_seed/`.
-3. `docker commit` (597 s). The destination must **not** be a `VOLUME`
-   path -- see above; that is the operative condition, not the choice
-   of `commit` itself.
+**What does work for getting an existing seed into an image: a runtime
+bind mount.** `docker run -v <seed>:/seed:ro` and then `cp -a /seed/.`
+*inside* the container, so the copy is executed by Linux, which handles
+the links natively; then `docker commit` to a path that is **not** a
+`VOLUME`. This is the route that produced `a8a5fe67`, and it is
+corroborated by that image's own `docker history`, which records the
+`cp -a /seed/.` and the three `ENV` lines.
 
-**The `refs/main` repair, separately, because it is a fix to the host
-seed and not to any image.** `refs/main` maps a revision name to a
-commit hash; without it the cache misses even when every blob and link
-is present. It was written as
-`models--facebook--esm2_t33_650M_UR50D/refs/main` =
-`08e4846e537177426273712802403f7ba8261b6c`, **40 bytes exactly -- no
-BOM, no trailing newline, no CRLF** (written with Python `write_bytes`,
-then read back and byte-compared). On Windows that precision is the
-point: a text-mode write adds a byte and the file is wrong. The value
-is the same sha `_ESM2_REVISION` pins in `geper/models/esm2.py`.
+**The acceptance test -- and it deliberately carries no time
+threshold.**
 
-**A second defect was found and fixed in the same pass, and it would
-have defeated a correct cache on its own:** the older image set
-`HF_HOME=/app/model_cache_seed/hf`, so HuggingFace looked in
-`$HF_HOME/hub` -- a directory that does not exist -- while the models
-sit at the cache root. Setting `HF_HUB_CACHE=/app/model_cache_seed`
-is what makes default resolution work with **no explicit `cache_dir`**
-argument. A restore that fixes the symlinks and leaves this alone still
-misses.
+```
+docker run --rm --network none -e PYTHONPATH=/app:/app/geper \
+  -v <probe>:/probe.py:ro --entrypoint python <image-id> /probe.py
+# probe: from geper.models.esm2 import ESM2Model; m = ESM2Model(); m.load()
+#        then sum(p.numel() for p in m.model.parameters())
+```
 
-**How it was verified, at both ends.** The host seed first, before
-anything was built -- mounted read-only into a throwaway container:
-**CACHE HIT in 8.2 s**, all five snapshot entries reporting
-`symlink=True, resolves=OK`, `model.safetensors` at 2,609,506,392 B.
-Then the finished image, `docker run --network none` with
-`HF_HUB_OFFLINE=1`, **run against the image ID rather than the tag**
-(tags on this floor have moved under a build before):
-**CACHE HIT 12.3 s, `EsmModel`, 651.0M parameters** -- the real
-checkpoint materialised from the 2.6 GB safetensors with no network,
-not metadata and not a stub.
+PASS is: **it loads at all under `--network none`, and reports
+`651.0M` parameters.** The parameter count is in the probe on purpose --
+a load that returned a randomly-initialised model would otherwise also
+"succeed".
 
-Verifying the seed *before* building paid for itself twice: it is what
-established that the links survive a bind mount at all, and it caught a
-stray file inside the seed that a rebuild would otherwise have baked
-into the authoritative image.
+FAIL, run against `3cf41395` today, is the signature to recognise:
+
+```
+utils.exceptions.ModelLoadError: Failed to load model 'esm2': We couldn't connect to
+'https://huggingface.co' to load the files, and couldn't find them in the cached files.
+```
+
+**Said with 2.6 GB of correct weights on disk in that image.** "Couldn't
+find them in the cached files" is what a complete-looking `blobs/` says
+when the pointers are missing.
+
+Two deliberate omissions, both of which would make this test worse:
+
+- **No seconds figure.** Measurements of this same load exist at 7.7 s,
+  12.1 s and 27.9 s, and they cannot be reconciled. A threshold would
+  fail on a busy machine and teach the next person to distrust a working
+  cache.
+- **The probe does not set `HF_HUB_OFFLINE`.** Telling the library not
+  to try is a weaker test than letting it try and be unable to reach the
+  network.
+
+And one thing not to misread: Transformers prints a `pooler.dense`
+re-initialisation notice **on a hit and on a miss alike**. It is not a
+cache warning, and treating it as one will scare somebody off a passing
+run.
+
+**The rule this whole section reduces to, and the reason it is written
+as an end state plus a load rather than as a recipe: A CACHE IS PROVEN
+BY A LOAD, NEVER BY A DIRECTORY LISTING.** Every cheaper check --
+listing, file count, `du`, even total byte size -- passes on the broken
+image.
 
 **Which artefact to restore from, because the two are not
 interchangeable in the way their names suggest.** `model_cache_seed/`
@@ -383,23 +455,36 @@ they appear as `lrwxrwxrwx ... -> ../../blobs/...` in `tar -tvzf`, so
 transporting the seed through it does not destroy them -- but it was
 written before the `refs/main` repair and **does not contain that
 file**. Restoring from the tarball alone therefore reproduces the
-original cache-miss unless `refs/main` is written afterwards. Re-read
-on 2026-09-09: the tree still holds it (40 bytes, correct sha) and the
+broken state above unless `refs/main` is written afterwards. Re-read on
+2026-09-09: the tree still holds it (40 bytes, correct sha) and the
 tarball still does not (`tar -tzf | grep -c refs/main` -> 0).
 
 **Still UNKNOWN, with the method that would settle each** -- stated
 because a confident procedure that has never run is discovered wrong
 only after the seed is already lost:
 
-- **Whether these steps reproduce the seed from nothing.** They restore
-  an *existing* seed into an image. Cold-cache acquisition is the
-  separate question below, and it has not been executed.
-- **Whether `refs/main` is the only metadata write a from-scratch
-  restore needs.** It was the only one the host seed turned out to be
-  missing. The `.no_exist/<revision>/` markers (three zero-byte files)
-  are present in both artefacts and were never absent, so whether a
-  cache works without them is untested. Settled by removing them from a
-  copy and running the same load.
+- **The command that created the five symlinks on Windows.** Searched
+  the tracked tree for anything carrying `refs/main` or the sha: only
+  this file and `geper/models/esm2.py` match, and neither records a
+  command. One constraint narrows it -- host tree and image carry the
+  links at the same instant, so one was copied from the other
+  preserving mtimes (`cp -a`-shaped) rather than created twice -- but
+  **which side was authored is not on disk.** Nothing in the repository
+  will settle this; it needs that session's shell history, or it stays
+  unknown.
+- **Whether `.no_exist` is required.** It was present in every state
+  tested, so no passing run speaks to its necessity. Settled by deleting
+  it from a copy of the seed and re-running the acceptance test.
+- **The with-network failure mode.** The broken cache has been shown to
+  fail *loudly* under `--network none`. The genuinely dangerous case --
+  a network **is** available and the miss is absorbed by a silent
+  re-download rather than an error -- **has not been measured and is not
+  asserted here.** Settled by running the same probe on `3cf41395`
+  *without* `--network none` and watching for download progress and a
+  wall-clock in the tens of minutes.
+- **Whether any of this reproduces the seed from nothing.** It does not
+  claim to: everything above restores or repairs an *existing* seed.
+  Cold-cache acquisition is the separate question below.
 
 **How to regenerate it if lost.** No single script populates this
 cache -- searched the tracked file list, not assumed; acquisition is

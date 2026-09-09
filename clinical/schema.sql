@@ -1054,10 +1054,41 @@ CREATE TABLE notification_read_receipts (
 
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    -- Human ruling, notification_read_receipts cascade (2026-09-09/10,
+    -- following the tombstone-cascade dispatch's own D2 fallout): a read
+    -- receipt for a notification that no longer exists has no meaning.
+    -- Stamped by clinical_retention alongside the amendment_notifications
+    -- row it belongs to, IN THE SAME TRANSACTION -- looked up by this
+    -- row's own notification_id.
+    --
+    -- NOTE ON THE CHECK CONSTRAINT BELOW: the originating brief specified
+    -- CHECK (tombstoned_at IS NOT NULL OR read_at IS NOT NULL), which
+    -- would reject a live, unread receipt (a freshly-inserted row has
+    -- both tombstoned_at NULL and, since read_at is itself NOT NULL,
+    -- would need read_at populated at INSERT time regardless -- but the
+    -- clause as written would ALSO forbid a row that is simply not yet
+    -- tombstoned, since tombstoned_at IS NOT NULL is false for every live
+    -- row and the OR would then hinge entirely on read_at, which is
+    -- unrelated to tombstoning). This was flagged by god as wrong before
+    -- implementation and NOT implemented as written; see this dispatch's
+    -- report for the full argument. What is implemented instead is the
+    -- same complete-pair check already used on the other five tombstoned
+    -- tables (reviewer_claims, release_events, amendments,
+    -- amendment_notifications, and reports/interpretations/vcfs before
+    -- them): tombstoned_at and tombstoned_by are either both NULL or
+    -- both set, independent of read_at entirely.
+    tombstoned_at           TIMESTAMPTZ,
+    tombstoned_by           UUID,
+
     CONSTRAINT fk_receipt_notification
         FOREIGN KEY (org_id, notification_id) REFERENCES amendment_notifications (org_id, id),
     CONSTRAINT fk_receipt_reader
         FOREIGN KEY (org_id, read_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_receipt_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT receipt_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_receipt_org_id UNIQUE (org_id, id)
 );
 
@@ -1360,22 +1391,24 @@ REVOKE DELETE
 -- boundary) precisely so this commit does not introduce a fresh instance
 -- of the same over-broad-grant shape into the schema.
 --
--- notification_read_receipts is NOT extended: the human's own acceptance
--- criterion for this ruling names "the full unit" as interpretation +
--- claims + release events + amendment + notification -- five things, not
--- six -- so read receipts are outside what was actually ruled. Flagged as
--- a residual, adjacent gap in the dispatch report rather than silently
--- extended to or silently left out unremarked: a read receipt for a
--- since-tombstoned notification remains readable in isolation.
+-- notification_read_receipts: EXTENDED here too (human ruling,
+-- 2026-09-09/10, in direct answer to the residual gap named above --
+-- this comment previously said it was NOT extended; that was true only
+-- through the prior dispatch). A receipt for a since-tombstoned
+-- notification is now cascade-tombstoned alongside it, IN THE SAME
+-- TRANSACTION, looked up by the receipt's own notification_id -- one
+-- more hop past amendment_notifications, same column-level-grant shape
+-- as the other four, same "no independent audit entry, no independent
+-- purge" reasoning.
 GRANT  USAGE                       ON SCHEMA public TO clinical_retention;
 GRANT  SELECT                      ON retention_policies, release_events, amendments, users TO clinical_retention;
-GRANT  SELECT                      ON reviewer_claims, amendment_notifications TO clinical_retention;
+GRANT  SELECT                      ON reviewer_claims, amendment_notifications, notification_read_receipts TO clinical_retention;
 GRANT  SELECT, UPDATE              ON vcfs, interpretations, reports TO clinical_retention;
 GRANT  UPDATE (tombstoned_at, tombstoned_by)
-    ON reviewer_claims, release_events, amendments, amendment_notifications
+    ON reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts
     TO clinical_retention;
 REVOKE DELETE
-    ON vcfs, interpretations, reports, reviewer_claims, release_events, amendments, amendment_notifications
+    ON vcfs, interpretations, reports, reviewer_claims, release_events, amendments, amendment_notifications, notification_read_receipts
     FROM clinical_retention;
 GRANT  INSERT                      ON audit_log TO clinical_retention;
 GRANT  USAGE, SELECT               ON SEQUENCE audit_log_log_id_seq TO clinical_retention;

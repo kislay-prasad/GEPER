@@ -698,13 +698,22 @@ class TestPurgeSkipsRowsWithNoResolvedRetentionDays:
 # So no child is reachable by more than one path, and every path is fired
 # from exactly one purge event.
 #
-# notification_read_receipts is EXPLICITLY NOT extended: the human's own
-# acceptance criterion below names "the full unit" as interpretation +
-# claims + release events + amendment + notification -- five things -- so
-# read receipts are outside what was actually ruled on. See schema.sql's
-# GRANT-block comment for the same note. Flagged here too rather than only
-# in one place: a receipt for a since-tombstoned notification remains
-# readable in isolation after this commit.
+# notification_read_receipts was NOT extended in that dispatch: the
+# human's own acceptance criterion named "the full unit" as
+# interpretation + claims + release events + amendment + notification --
+# five things -- so read receipts were outside what was actually ruled
+# on at the time. That gap is what THIS dispatch closes: see
+# TestTombstoneCascadeNotificationReadReceipts below.
+#
+# THE PARENT -> CHILD MAPPING FOR THIS DISPATCH (one more hop past the
+# mapping above): notification_read_receipts.notification_id ->
+# amendment_notifications.id, cascaded from INSIDE the same loop that
+# already stamps a given amendment_notifications row (see
+# _cascade_tombstone_report_dependents in retention.py) -- so a receipt
+# is stamped at the exact same moment, in the exact same transaction, as
+# the notification it belongs to. No new trigger point: the existing
+# amendment_notifications loop is itself the single, deterministic
+# trigger, so a receipt cannot be reached by more than one path either.
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -742,6 +751,7 @@ def _full_unit(dao, conn, session, suffix="1", dob=_ADULT_DOB):
         "SELECT id FROM release_events WHERE org_id = %s AND report_id = %s",
         (session.org_id, chain["report_id"]),
     )[0]
+    receipt_id = dao.record_notification_read_receipt(session, notification_id, session.user_id)
 
     return {
         **chain,
@@ -750,6 +760,7 @@ def _full_unit(dao, conn, session, suffix="1", dob=_ADULT_DOB):
         "amendment_id": amendment_id,
         "amendment_report_id": amendment_report_id,
         "notification_id": notification_id,
+        "receipt_id": receipt_id,
     }
 
 
@@ -916,3 +927,104 @@ class TestTombstoneCascadeAtomicity:
             ("amendment_notifications", unit["notification_id"]),
         ):
             assert _live(conn, table, row_id), f"{table} should have rolled back to live -- it was never committed"
+
+
+class TestTombstoneCascadeNotificationReadReceipts:
+    """
+    Human ruling (2026-09-09/10), closing the residual gap named in this
+    file's own tombstone-cascade section above: extend the cascade one
+    more hop, from amendment_notifications to notification_read_receipts.
+
+    Declared BEFORE running, against master c548f807 (the merged four-
+    table cascade, before this dispatch's schema/retention.py changes):
+    EXPECTED RESULT was FAILURE -- notification_read_receipts has no
+    tombstoned_at column at all yet, so `_live(conn, "notification_read_receipts", ...)`
+    must raise psycopg.errors.UndefinedColumn, the same schema-gap failure
+    mode every prior red-first run in this file has used. Confirmed
+    failing (see the commit history: the test-only commit on this branch
+    precedes the schema/retention.py commit) before any production code
+    changed.
+
+    Also covers the correction god made to the brief's own CHECK
+    constraint: the brief specified
+    CHECK (tombstoned_at IS NOT NULL OR read_at IS NOT NULL), which would
+    reject a live, unread receipt at INSERT time (a fresh row has
+    tombstoned_at NULL, and the OR does not save it). What ships instead
+    is the same complete-pair check already used on every other
+    tombstoned table: (tombstoned_at IS NULL) = (tombstoned_by IS NULL).
+    test_a_freshly_created_unread_receipt_is_insertable_and_live below is
+    the test for that correction -- it is exactly the row the brief's own
+    constraint would have rejected.
+    """
+
+    def test_receipt_becomes_unreadable_after_its_notification_cascades(self, dao, conn, session_a, retention):
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+        assert _live(conn, "notification_read_receipts", unit["receipt_id"]), "receipt should start live"
+
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+        retention.purge_expired(session_a.org_id, "report", now=NOW)
+        retention.purge_expired(session_a.org_id, "run_document", now=NOW)
+
+        assert not _live(conn, "notification_read_receipts", unit["receipt_id"]), (
+            "receipt should be unreadable once its notification is tombstoned"
+        )
+        # Not deleted (D4): the row still physically exists.
+        assert (
+            _fetchone(conn, "SELECT id FROM notification_read_receipts WHERE id = %s", (unit["receipt_id"],))
+            is not None
+        )
+
+        receipt_row = _fetchone(
+            conn,
+            "SELECT tombstoned_at, tombstoned_by FROM notification_read_receipts WHERE id = %s",
+            (unit["receipt_id"],),
+        )
+        notification_row = _fetchone(
+            conn,
+            "SELECT tombstoned_at, tombstoned_by FROM amendment_notifications WHERE id = %s",
+            (unit["notification_id"],),
+        )
+        assert receipt_row == notification_row, "receipt did not inherit the same tombstone stamp as its notification"
+
+    def test_rollback_after_purge_undoes_the_cascaded_receipt_too(self, dao, conn, session_a, retention):
+        dao._create_system_session(session_a.org_id)
+        unit = _full_unit(dao, conn, session_a)
+        _tombstone_amendment_report_directly(conn, session_a, unit["amendment_report_id"], NOW)
+        conn.commit()  # commit the D6 precondition itself, so ONLY the purge below is what gets rolled back
+
+        result = retention.purge_expired(session_a.org_id, "report", now=NOW)
+        assert unit["report_id"] in result.tombstoned_ids
+
+        conn.rollback()
+
+        assert _live(conn, "notification_read_receipts", unit["receipt_id"]), (
+            "receipt should have rolled back to live -- it was never committed"
+        )
+
+    def test_a_freshly_created_unread_receipt_is_insertable_and_live(self, dao, conn, session_a, retention):
+        """
+        The row the brief's own (rejected) CHECK constraint would have
+        made impossible: a brand-new receipt, never tombstoned. Proves
+        the complete-pair check that actually shipped does not reject
+        the ordinary case -- god's correction, verified rather than only
+        asserted in the report.
+        """
+        dao._create_system_session(session_a.org_id)
+        chain = _full_chain(dao, conn, session_a)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE reports SET state = 'approved', approver_id = %s, approved_at = %s, content_hash = %s "
+                "WHERE id = %s",
+                (session_a.user_id, NOW, "a" * 64, chain["report_id"]),
+            )
+        conn.commit()
+        amendment_report_id, notification_id = dao.create_amendment(session_a, chain["report_id"], "typo fix")
+
+        receipt_id = dao.record_notification_read_receipt(session_a, notification_id, session_a.user_id)
+
+        assert _live(conn, "notification_read_receipts", receipt_id)
+        row = _fetchone(
+            conn, "SELECT tombstoned_at, tombstoned_by FROM notification_read_receipts WHERE id = %s", (receipt_id,)
+        )
+        assert row == (None, None)

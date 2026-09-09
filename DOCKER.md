@@ -222,11 +222,20 @@ member size matches, except that the tree has one file the tarball
 does not --
 `models--facebook--esm2_t33_650M_UR50D/refs/main` (40 bytes, created
 after the tarball was written). Its content is the ESM2 commit sha
-that `geper/models/esm2.py`'s `_ESM2_REVISION` already pins, and
+that `geper/models/esm2.py`'s `_ESM2_REVISION` already pins.
+**That sentence used to end "so a restore from the tarball should be
+functionally complete", reasoning that
 `from_pretrained(..., revision=<sha>)` resolves `snapshots/<sha>`
-directly rather than through `refs/main`, so a restore from the
-tarball should be functionally complete -- *should*, because that is
-read from the pin, not measured. **Caveat stated rather than glossed:
+directly rather than through `refs/main`. It was read from the pin and
+never measured, and the rebuild below measured it: the image that
+works resolves by DEFAULT with no `cache_dir` and no explicit
+revision, and on that path `refs/main` is required -- its absence is a
+CACHE MISS with every blob intact.** So the honest statement is the
+opposite of the old one: **a restore from the tarball alone is NOT
+complete, and `refs/main` must be written afterwards.** The claim is
+left visible rather than quietly swapped, because the reasoning that
+produced it is the kind that will look convincing again.
+**A further caveat stated rather than glossed:
 paths and sizes were compared, contents were not hashed** (that costs
 two full 4.6 GB reads). A same-size, different-bytes file would not
 have been caught.
@@ -244,7 +253,7 @@ is written down rather than reconstructed later.
 
 **How the image actually consumes it** -- read from `docker history`,
 not from the `Dockerfile.bridge-ready*` variants, **none of which built
-this image**. The seed was `docker cp`-ed into a running container and
+this image**. The seed was copied into a running container and
 `docker commit`-ed:
 
 ```
@@ -260,6 +269,137 @@ because that path is a `VOLUME`, **and `docker commit` does not
 capture volume contents** -- a seed written there would vanish from the
 committed image. Anyone restoring must preserve that, or the models
 appear absent.
+
+**A correction to this paragraph, left visible because the mistake is
+instructive:** it previously said the seed was **`docker cp`**-ed into
+the container. `docker history` shows the `cp -a /seed/.` that ran
+*inside* the container; it does not show how `/seed` got there, and
+`docker cp` was an inference filling that gap. It is the wrong one --
+`docker cp` cannot carry these symlinks at all, which is exactly why
+the *previous* image was the one tagged
+`geper:bridge-ready-BROKEN-esm2-offline`. `/seed` was a **read-only
+bind mount**, as set out below. **`docker history` records the command
+a layer ran, never the `docker run` flags that produced it, so it
+cannot answer "how did this file arrive" -- and the answer is the
+entire difficulty here.**
+
+**How to put the seed back into an image -- and the two mechanisms that
+look like they work and do not.** This procedure is Kelly's; it was
+executed on 2026-09-08 and is recorded here from her own account of the
+run, not reconstructed. **The failing mechanisms are the load-bearing
+half of it.** Anyone rebuilding this will reach for one of them first,
+it will appear to succeed, and the cache will be broken in a way that
+a directory listing cannot see.
+
+The whole difficulty is five symlinks. HuggingFace stores each file
+once in `blobs/` under its hash and links it into
+`snapshots/<revision>/` under its real name; those links are what
+`from_pretrained` resolves. They exist in the host seed as genuine
+POSIX symlinks:
+
+```
+snapshots/08e4846e.../config.json             -> ../../blobs/a956a25d277f30bd870d3760b9a116f19ead885e
+snapshots/08e4846e.../model.safetensors       -> ../../blobs/a08adabb949fa67ad3c14b509d04fd60368b35007b0095e3358f81200c4f4db0
+snapshots/08e4846e.../special_tokens_map.json -> ../../blobs/ba0f9b53dbbf27934f7555e5d31e37bdea9317f1
+snapshots/08e4846e.../tokenizer_config.json   -> ../../blobs/3f0d47e841e1cb75257aeaf76d156802899a217e
+snapshots/08e4846e.../vocab.txt               -> ../../blobs/6b946952cc35537226f07fd70957ee2f848880d2
+```
+
+**DOES NOT WORK (1): `docker cp`.** It cannot encode a POSIX symlink
+from a Windows host; it reports `unknown file mode ?rw-rw-rw-`.
+
+**DOES NOT WORK (2): the build context** -- `COPY`, and equally
+BuildKit's `RUN --mount=type=bind` with `cp -a`. The context loader
+rejects the same links outright:
+`ERROR: invalid file request model_cache_seed/models--facebook--esm2_t33_650M_UR50D/snapshots/08e4846e.../config.json`.
+This is the one that costs a rebuild, because it is the *clean* route --
+one derived layer, no `docker commit` -- and it is the route a careful
+person picks.
+
+**WHAT IT LOOKS LIKE WHEN IT WRONGLY LOOKS FINE, which is the reason
+this paragraph exists.** Mechanism 2 fails loudly. **Mechanism 1 does
+not.** The 2.6 GB of blobs arrive intact, the directory listing is
+complete, the file count matches, `du` matches -- and the load is a
+**CACHE MISS**, because `snapshots/<revision>/` holds no usable
+entries and `refs/main` is absent. Every check short of a load passes.
+That is Kelly's rule, and it is the acceptance test for this whole
+procedure: **a cache is proven by a LOAD, never by a directory
+listing.** If a rebuild is verified by looking at files, it has not
+been verified.
+
+**WHAT DOES WORK: a runtime bind mount.** `docker run -v <seed>:/seed:ro`
+and then `cp -a /seed/. <dest>/` *inside* the container -- the copy is
+executed by Linux, which handles the links natively. The three steps as
+run:
+
+1. An ENV-only layer built from a Dockerfile with an **empty build
+   context**, so there is nothing for the context loader to choke on.
+2. `docker run -v <seed>:/seed:ro <image>` then
+   `cp -a /seed/. /app/model_cache_seed/`.
+3. `docker commit` (597 s). The destination must **not** be a `VOLUME`
+   path -- see above; that is the operative condition, not the choice
+   of `commit` itself.
+
+**The `refs/main` repair, separately, because it is a fix to the host
+seed and not to any image.** `refs/main` maps a revision name to a
+commit hash; without it the cache misses even when every blob and link
+is present. It was written as
+`models--facebook--esm2_t33_650M_UR50D/refs/main` =
+`08e4846e537177426273712802403f7ba8261b6c`, **40 bytes exactly -- no
+BOM, no trailing newline, no CRLF** (written with Python `write_bytes`,
+then read back and byte-compared). On Windows that precision is the
+point: a text-mode write adds a byte and the file is wrong. The value
+is the same sha `_ESM2_REVISION` pins in `geper/models/esm2.py`.
+
+**A second defect was found and fixed in the same pass, and it would
+have defeated a correct cache on its own:** the older image set
+`HF_HOME=/app/model_cache_seed/hf`, so HuggingFace looked in
+`$HF_HOME/hub` -- a directory that does not exist -- while the models
+sit at the cache root. Setting `HF_HUB_CACHE=/app/model_cache_seed`
+is what makes default resolution work with **no explicit `cache_dir`**
+argument. A restore that fixes the symlinks and leaves this alone still
+misses.
+
+**How it was verified, at both ends.** The host seed first, before
+anything was built -- mounted read-only into a throwaway container:
+**CACHE HIT in 8.2 s**, all five snapshot entries reporting
+`symlink=True, resolves=OK`, `model.safetensors` at 2,609,506,392 B.
+Then the finished image, `docker run --network none` with
+`HF_HUB_OFFLINE=1`, **run against the image ID rather than the tag**
+(tags on this floor have moved under a build before):
+**CACHE HIT 12.3 s, `EsmModel`, 651.0M parameters** -- the real
+checkpoint materialised from the 2.6 GB safetensors with no network,
+not metadata and not a stub.
+
+Verifying the seed *before* building paid for itself twice: it is what
+established that the links survive a bind mount at all, and it caught a
+stray file inside the seed that a rebuild would otherwise have baked
+into the authoritative image.
+
+**Which artefact to restore from, because the two are not
+interchangeable in the way their names suggest.** `model_cache_seed/`
+is the one to use. The tarball preserves the five symlinks correctly --
+they appear as `lrwxrwxrwx ... -> ../../blobs/...` in `tar -tvzf`, so
+transporting the seed through it does not destroy them -- but it was
+written before the `refs/main` repair and **does not contain that
+file**. Restoring from the tarball alone therefore reproduces the
+original cache-miss unless `refs/main` is written afterwards. Re-read
+on 2026-09-09: the tree still holds it (40 bytes, correct sha) and the
+tarball still does not (`tar -tzf | grep -c refs/main` -> 0).
+
+**Still UNKNOWN, with the method that would settle each** -- stated
+because a confident procedure that has never run is discovered wrong
+only after the seed is already lost:
+
+- **Whether these steps reproduce the seed from nothing.** They restore
+  an *existing* seed into an image. Cold-cache acquisition is the
+  separate question below, and it has not been executed.
+- **Whether `refs/main` is the only metadata write a from-scratch
+  restore needs.** It was the only one the host seed turned out to be
+  missing. The `.no_exist/<revision>/` markers (three zero-byte files)
+  are present in both artefacts and were never absent, so whether a
+  cache works without them is untested. Settled by removing them from a
+  copy and running the same load.
 
 **How to regenerate it if lost.** No single script populates this
 cache -- searched the tracked file list, not assumed; acquisition is

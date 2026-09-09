@@ -350,7 +350,73 @@ class RetentionPrincipal:
                 (now, actor_id, org_id, report_id),
             )
             self._write_purge_audit_entry(org_id, actor_id, "report", report_id, "report")
+            self._cascade_tombstone_report_dependents(org_id, report_id, now, actor_id)
         return PurgeResult(org_id=org_id, artefact_class="report", tombstoned_ids=ids)
+
+    def _cascade_tombstone_report_dependents(
+        self, org_id: uuid.UUID, report_id: uuid.UUID, now: datetime, actor_id: uuid.UUID
+    ) -> None:
+        """
+        Human ruling, tombstone-cascade (2026-09-09, following D2): "an
+        amendment to an interpretation of data that no longer exists is
+        incoherent; a reviewer claim about a purged variant has no
+        meaning." When a report is tombstoned, IN THE SAME TRANSACTION
+        (no commit happens anywhere in this class -- see this module's
+        docstring), also tombstone everything hanging off it that has no
+        standing of its own:
+
+          1. release_events keyed directly on this report_id.
+          2. amendments where THIS report is the ORIGINAL
+             (original_report_id) -- not the amendment side
+             (amendment_report_id). By the time a report purges, D6's own
+             guard (see _purge_reports's docstring) has already required
+             any amendment OF it to have its own report tombstoned first,
+             so original_report_id is always the later, deterministic
+             trigger for a given amendments row -- see that column's own
+             schema.sql comment for the full argument.
+          3. For each amendments row just stamped, the amendment_notifications
+             row that names the SAME amendment_report_id -- the
+             notification about that specific amendment event.
+
+        NO separate audit_log entry per cascaded row -- MY OWN DECISION,
+        not something the ruling settled: these three tables are not
+        independently-purged artefact classes, they are fallout of the
+        one parent report purge that already carries its own D7 audit
+        entry. Cascading the AUDIT of a purge would misrepresent three
+        (or more) rows as three separate purge decisions when there was
+        only ever one.
+        """
+        release_event_rows = self._query(
+            "SELECT id FROM release_events WHERE org_id = %s AND report_id = %s AND tombstoned_at IS NULL",
+            (org_id, report_id),
+        )
+        for (release_event_id,) in release_event_rows:
+            self._execute(
+                "UPDATE release_events SET tombstoned_at = %s, tombstoned_by = %s WHERE org_id = %s AND id = %s",
+                (now, actor_id, org_id, release_event_id),
+            )
+
+        amendment_rows = self._query(
+            "SELECT id, amendment_report_id FROM amendments "
+            "WHERE org_id = %s AND original_report_id = %s AND tombstoned_at IS NULL",
+            (org_id, report_id),
+        )
+        for amendment_id, amendment_report_id in amendment_rows:
+            self._execute(
+                "UPDATE amendments SET tombstoned_at = %s, tombstoned_by = %s WHERE org_id = %s AND id = %s",
+                (now, actor_id, org_id, amendment_id),
+            )
+            notification_rows = self._query(
+                "SELECT id FROM amendment_notifications "
+                "WHERE org_id = %s AND amendment_report_id = %s AND tombstoned_at IS NULL",
+                (org_id, amendment_report_id),
+            )
+            for (notification_id,) in notification_rows:
+                self._execute(
+                    "UPDATE amendment_notifications SET tombstoned_at = %s, tombstoned_by = %s "
+                    "WHERE org_id = %s AND id = %s",
+                    (now, actor_id, org_id, notification_id),
+                )
 
     def _purge_interpretations(self, org_id: uuid.UUID, now: datetime) -> PurgeResult:
         """
@@ -411,7 +477,29 @@ class RetentionPrincipal:
                 (now, actor_id, org_id, interp_id),
             )
             self._write_purge_audit_entry(org_id, actor_id, "interpretation", interp_id, "run_document")
+            self._cascade_tombstone_interpretation_dependents(org_id, interp_id, now, actor_id)
         return PurgeResult(org_id=org_id, artefact_class="run_document", tombstoned_ids=ids)
+
+    def _cascade_tombstone_interpretation_dependents(
+        self, org_id: uuid.UUID, interpretation_id: uuid.UUID, now: datetime, actor_id: uuid.UUID
+    ) -> None:
+        """
+        Human ruling, tombstone-cascade (2026-09-09, following D2): "a
+        reviewer claim about a purged variant has no meaning." When an
+        interpretation is tombstoned, IN THE SAME TRANSACTION, also
+        tombstone every reviewer_claims row keyed on it. No separate
+        audit_log entry per claim -- same reasoning as
+        _cascade_tombstone_report_dependents's own docstring.
+        """
+        claim_rows = self._query(
+            "SELECT id FROM reviewer_claims WHERE org_id = %s AND interpretation_id = %s AND tombstoned_at IS NULL",
+            (org_id, interpretation_id),
+        )
+        for (claim_id,) in claim_rows:
+            self._execute(
+                "UPDATE reviewer_claims SET tombstoned_at = %s, tombstoned_by = %s WHERE org_id = %s AND id = %s",
+                (now, actor_id, org_id, claim_id),
+            )
 
     def _purge_vcfs(self, org_id: uuid.UUID, now: datetime) -> PurgeResult:
         """

@@ -797,12 +797,30 @@ CREATE TABLE reviewer_claims (
     -- -- is the same rule one level down.
     supersedes          UUID,
 
+    -- Human ruling, tombstone-cascade (2026-09-09, following D2): a
+    -- reviewer claim about a variant in a PURGED interpretation has no
+    -- meaning -- it is an artefact of a specific clinical action on a
+    -- specific VCF, not a record with standing of its own. Stamped by
+    -- clinical_retention IN THE SAME TRANSACTION as its parent
+    -- interpretation's own tombstoned_at (RetentionPrincipal
+    -- ::_purge_interpretations), never independently. Same
+    -- discipline as vcfs.tombstoned_at/tombstoned_by: NULL means live,
+    -- nothing is ever removed, every other column is left exactly as
+    -- written.
+    tombstoned_at       TIMESTAMPTZ,
+    tombstoned_by       UUID,
+
     CONSTRAINT fk_claim_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
     CONSTRAINT fk_claim_actor
         FOREIGN KEY (org_id, actor_id) REFERENCES users (org_id, user_id),
     CONSTRAINT fk_claim_supersedes
         FOREIGN KEY (org_id, supersedes) REFERENCES reviewer_claims (org_id, id),
+    CONSTRAINT fk_claim_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT claim_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_claim_org_id UNIQUE (org_id, id)
 );
 
@@ -838,10 +856,23 @@ CREATE TABLE release_events (
     released_by     UUID        NOT NULL,
     content_hash    VARCHAR(64) NOT NULL,
 
+    -- Human ruling, tombstone-cascade (2026-09-09, following D2): a
+    -- delivery record for a PURGED report has no meaning of its own.
+    -- Stamped by clinical_retention IN THE SAME TRANSACTION as its
+    -- parent report's own tombstoned_at (RetentionPrincipal
+    -- ::_purge_reports), never independently.
+    tombstoned_at   TIMESTAMPTZ,
+    tombstoned_by   UUID,
+
     CONSTRAINT fk_release_report
         FOREIGN KEY (org_id, report_id) REFERENCES reports (org_id, id),
     CONSTRAINT fk_release_releaser
         FOREIGN KEY (org_id, released_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_release_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT release_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_release_org_id UNIQUE (org_id, id)
 );
 
@@ -902,6 +933,20 @@ CREATE TABLE amendments (
     created_at          TIMESTAMPTZ NOT NULL,
     created_by          UUID        NOT NULL,
 
+    -- Human ruling, tombstone-cascade (2026-09-09, following D2): "an
+    -- amendment to an interpretation of data that no longer exists is
+    -- incoherent." Stamped by clinical_retention IN THE SAME TRANSACTION
+    -- as ITS OWN original_report_id's tombstoned_at
+    -- (RetentionPrincipal::_purge_reports) -- NOT the amendment_report_id
+    -- side. By the time original_report_id purges, D6's existing guard
+    -- has already required amendment_report_id's own report to be
+    -- tombstoned first (see that guard's own comment), so this is always
+    -- the LAST of the two reports named here to become eligible; keying
+    -- the cascade off original_report_id gives one deterministic trigger
+    -- per amendments row rather than two competing ones.
+    tombstoned_at       TIMESTAMPTZ,
+    tombstoned_by       UUID,
+
     CONSTRAINT fk_amendment_original
         FOREIGN KEY (org_id, original_report_id) REFERENCES reports (org_id, id),
     CONSTRAINT fk_amendment_report
@@ -910,6 +955,11 @@ CREATE TABLE amendments (
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
     CONSTRAINT fk_amendment_supersedes
         FOREIGN KEY (org_id, supersedes_amendment_id) REFERENCES amendments (org_id, id),
+    CONSTRAINT fk_amendment_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT amendment_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_amendment_org_id UNIQUE (org_id, id)
 );
 
@@ -957,10 +1007,25 @@ CREATE TABLE amendment_notifications (
     created_at              TIMESTAMPTZ NOT NULL,
     created_by              UUID        NOT NULL,
 
+    -- Human ruling, tombstone-cascade (2026-09-09, following D2): a
+    -- notification about an amendment that no longer exists has no
+    -- meaning. Stamped by clinical_retention alongside its amendments
+    -- row, IN THE SAME TRANSACTION as that row's own tombstoned_at and
+    -- the original report's (RetentionPrincipal::_purge_reports) --
+    -- looked up by this row's own amendment_report_id, which is the
+    -- same value the amendments row it belongs to carries.
+    tombstoned_at           TIMESTAMPTZ,
+    tombstoned_by           UUID,
+
     CONSTRAINT fk_notification_amendment
         FOREIGN KEY (org_id, amendment_report_id) REFERENCES reports (org_id, id),
     CONSTRAINT fk_notification_creator
         FOREIGN KEY (org_id, created_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT fk_notification_tombstoner
+        FOREIGN KEY (org_id, tombstoned_by) REFERENCES users (org_id, user_id),
+    CONSTRAINT notification_tombstone_complete CHECK (
+        (tombstoned_at IS NULL) = (tombstoned_by IS NULL)
+    ),
     CONSTRAINT uk_notification_org_id UNIQUE (org_id, id)
 );
 
@@ -1278,22 +1343,40 @@ REVOKE DELETE
 -- the open FINDING-clinical-retention-holds-TABLE-level-UPDATE card,
 -- deliberately untouched here for the same reason).
 --
--- reviewer_claims and amendment_notifications are deliberately untouched:
--- no policy exists to purge them (human ruling D2: Phase 6/7 tables absent
--- from spec 22.1's list "inherit nothing by default; each needs a period
--- named"), so clinical_retention has no grant on them and no code path
--- writes to them. Extending retention to those tables is future work, not
--- an omission -- if it lands, it needs its own commit and its own grant,
--- exactly as this commit needed one.
-
--- clinical_retention is likewise created by clinical/bootstrap.py; see the note
--- above clinical_app's grants.
---   CREATE ROLE clinical_retention LOGIN PASSWORD '...';   -- done by clinical/bootstrap.py
-
+-- reviewer_claims, release_events, amendments and amendment_notifications:
+-- EXTENDED here (human ruling, tombstone-cascade, 2026-09-09, following
+-- D2) -- these four are no longer untouched. Each gains a
+-- tombstoned_at/tombstoned_by pair (see each table's own comment above)
+-- that clinical_retention stamps IN THE SAME TRANSACTION as the parent
+-- artefact it hangs off (an interpretation for reviewer_claims; a report
+-- for release_events and, via original_report_id, amendments and
+-- amendment_notifications) -- never independently audited, never
+-- independently purged, per the human's ruling that these four "are
+-- artefacts of a specific clinical action on a specific VCF, not records
+-- with standing of their own." Column-level UPDATE grants, not table-
+-- level -- a deliberate choice for these four NEW grants (unlike
+-- vcfs/interpretations/reports above, which predate this decision and
+-- are Ryan's own open finding, untouched here per the dispatch's
+-- boundary) precisely so this commit does not introduce a fresh instance
+-- of the same over-broad-grant shape into the schema.
+--
+-- notification_read_receipts is NOT extended: the human's own acceptance
+-- criterion for this ruling names "the full unit" as interpretation +
+-- claims + release events + amendment + notification -- five things, not
+-- six -- so read receipts are outside what was actually ruled. Flagged as
+-- a residual, adjacent gap in the dispatch report rather than silently
+-- extended to or silently left out unremarked: a read receipt for a
+-- since-tombstoned notification remains readable in isolation.
 GRANT  USAGE                       ON SCHEMA public TO clinical_retention;
 GRANT  SELECT                      ON retention_policies, release_events, amendments, users TO clinical_retention;
+GRANT  SELECT                      ON reviewer_claims, amendment_notifications TO clinical_retention;
 GRANT  SELECT, UPDATE              ON vcfs, interpretations, reports TO clinical_retention;
-REVOKE DELETE                      ON vcfs, interpretations, reports FROM clinical_retention;
+GRANT  UPDATE (tombstoned_at, tombstoned_by)
+    ON reviewer_claims, release_events, amendments, amendment_notifications
+    TO clinical_retention;
+REVOKE DELETE
+    ON vcfs, interpretations, reports, reviewer_claims, release_events, amendments, amendment_notifications
+    FROM clinical_retention;
 GRANT  INSERT                      ON audit_log TO clinical_retention;
 GRANT  USAGE, SELECT               ON SEQUENCE audit_log_log_id_seq TO clinical_retention;
 

@@ -148,6 +148,44 @@ stated research-use scope.
 > independently sound: the removal decision below is unaffected and stands
 > exactly as made.
 
+> **[2026-09-05] Propagation record -- APPENDED, nothing above altered.**
+> The three corrections in this file (this one, the OMIM commercial-use
+> conflict entry below, and the IndiGenomes entry above) were enumerated
+> repo-wide on 2026-09-05 to find every other place still stating the
+> retracted premise. **One live site was found and it was already
+> corrected: `kim_pipeline/docs/INSTALL.md:65`, in `685178a`.** No other
+> live site exists. Method, so the absence is reproducible rather than
+> asserted: a term sweep of every `.md` and every non-`.md` doc-like file
+> using terms chosen to catch the claim WITHOUT the word "diagnostic"
+> (clinical use, clinical deployment, accredited, CLIA, IVD, medical
+> device, purely research); following every citation of this file and of
+> `LICENSE_AUDIT.md` to catch a justification resting on the premise
+> without restating it; reading every OMIM and IndiGenomes rationale in
+> context including the four code-side ones (`config.py`,
+> `pipeline/orchestrator.py`, `annotation/indigenomes.py`,
+> `annotation/thousand_genomes_sas.py`, all of which already say
+> commercial); reading `INSTALL.md` end to end for a step that only makes
+> sense under the premise; and a search on OMIM's own quoted terms string
+> for a FORKED copy of the paragraph, since duplicated docs across the two
+> trees are where a second live site would hide.
+>
+> **SCOPE OF THE RETRACTION -- READ THIS BEFORE CORRECTING ANYTHING.**
+> What was retracted is the **licensing premise**: that a source's terms
+> conflict *because GEPER is diagnostic*. They conflict because GEPER is
+> **commercial**, independent of diagnostic function, exactly as the
+> correction above says. **GEPER's ratified assisted-clinical-use
+> positioning is NOT retracted and is unaffected** -- see EJ-01
+> (2026-08-22), "assists qualified clinicians and pathologists... requires
+> qualified human review and final sign-off before any clinical use", and
+> this file's own opening statement that GEPER is developed for commercial
+> clinical deployment. `GEPER_CLINICAL_PLATFORM_SPEC.md` rests on that
+> positioning.
+> So the phrase "clinical" appearing near a licensing decision is **not**
+> by itself a defect, and a sweep run on the broad reading would convert
+> live, ratified, correct statements into a new false claim that GEPER is
+> not for clinical use. Correct a site only where a *licence or regulatory
+> conclusion is made to rest on GEPER being diagnostic*.
+
 Unlike IndiGenomes (which persists in GEPER
 itself for potential reinstatement with a future commercial license),
 OMIM integration in kim_pipeline has been fully removed: `kim_pipeline/pipeline/omim/`

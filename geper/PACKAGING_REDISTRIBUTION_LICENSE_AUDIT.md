@@ -84,7 +84,7 @@ each.
 | SpliceFormer | MIT (code) / MIT (weights) | **May redistribute** | Preserve copyright notice. |
 | SpliceBERT | BSD-3-Clause (code) / CC BY 4.0 (weights, Zenodo record 7995778) | **May redistribute** | BSD-3-Clause copyright notice (code) + CC BY 4.0 attribution notice (weights). Currently disabled by default (`ENABLE_SPLICEBERT=false`, a runtime-stability gate, unrelated to this licensing verdict) -- if baked into an offline image while disabled, the obligation still applies to the bytes shipped, whether or not the flag is on. |
 | SPiP | MIT (code) / public-domain-equivalent reference data (RefSeq transcript annotation, genome sequence -- same category as data every other GEPER stage reads, not a third party's trained weights) | **May redistribute** | Preserve MIT copyright notice for the code; no separate condition for the reference data. |
-| DNABERT-2 (`kim_pipeline/pipeline/ai/engine.py::DnaBertEngine`, `zhihan1996/DNABERT-2-117M`) | **UNVERIFIED** -- `LICENSE_AUDIT.md` already flagged this as an open, unreviewed licensing gap (the 2026-08-20 security review fetched the model's *code* to assess `trust_remote_code=True` RCE risk, not its licence metadata); re-attempted a direct fetch of the HF model card in this pass and the licence field was **not visible in the extracted content** -- could not establish the clause. | **UNVERIFIED -- cannot state a redistribution verdict** | See "Would force a product change," below. This is the one model row where "ships or doesn't ship" genuinely cannot be answered from what is on record. |
+| DNABERT-2 (`kim_pipeline/pipeline/ai/engine.py::DnaBertEngine`, `zhihan1996/DNABERT-2-117M`) | **RESOLVED 2026-09-09: Apache-2.0.** The prior "UNVERIFIED" reading came from fetching the HF **model card body** (the rendered README prose), which carries no `license:` key in its own YAML frontmatter -- confirmed again this pass, fetching `huggingface.co/zhihan1996/DNABERT-2-117M/raw/main/README.md` directly: frontmatter is `metrics: [...] tags: [biology, medical, genomics]`, no licence field. **The card is a view; it does not render the repo's own `LICENSE` file.** Fetching the HF **model-info API endpoint** (`huggingface.co/api/models/zhihan1996/DNABERT-2-117M`) shows `"gated": false` and a `siblings` array that includes a file literally named `LICENSE` -- absent from `cardData`'s own license tag, present in the actual repo. Fetched that file directly (`huggingface.co/zhihan1996/DNABERT-2-117M/raw/main/LICENSE`): the complete, unmodified canonical **Apache License, Version 2.0** text (Sections 1-9 plus the standard appendix; the appendix's own `Copyright [yyyy] [name of copyright owner]` line is unfilled boilerplate, which is normal for the appendix -- it is instructions for downstream re-users, not this repo's own copyright declaration, and does not weaken the fact that the file *is* the full Apache-2.0 licence text). Cross-checked against the *code* repository independently: GitHub's own license-detection API for `github.com/MAGICS-LAB/DNABERT_2` (`api.github.com/repos/MAGICS-LAB/DNABERT_2/license`) returns `spdx_id: Apache-2.0` -- consistent with the HF weights repo, not contradicting it. No `NOTICE` file exists in the HF repo's `siblings` list (checked explicitly), so there is nothing beyond the `LICENSE` file itself to preserve. | **May redistribute** | Preserve the `LICENSE` file (Apache-2.0 text) alongside the baked-in weights, same as every other Apache-2.0 row in this table -- no NOTICE file exists for this repo, so no separate NOTICE-preservation step applies. |
 | ESM-2 (kim_pipeline's copy, same model as geper's row) | MIT / MIT | **May redistribute** | Same as geper's ESM-2 row -- listed separately only because it is a second load site in a second subproject, not a second licence question. |
 
 **Evaluated and explicitly not integrated (not currently loaded by either
@@ -134,25 +134,19 @@ technical change independent of the legal answer.
 
 ## Which sources, if any, would force a product change
 
-**One, clearly: DNABERT-2's licence is unverified, and `kim_pipeline` --
-which the shipped Dockerfile does bundle (confirmed by grep: `Dockerfile`
-copies `kim_pipeline/requirements.txt` and invokes `kim_pipeline/main.py`
-as a subprocess) -- loads it via `from_pretrained`, i.e. from the
-network, with no baked weights confirmed anywhere in the packaging work
-done so far.** This is not a "may not redistribute" finding -- it is a
-**"cannot yet say" finding**, which is a different and in one sense more
-urgent problem: every other row in this file has an answer a build
-engineer can act on today; this one does not. Until DNABERT-2's actual
-licence is established (fetch the HF repo's licence metadata directly,
-not the model card body, which is where this pass's attempt came up
-empty), the offline image cannot honestly claim DNABERT-2 is baked in
-*or* that it is safe to bake in. If it turns out non-permissive, the
-product change is not hypothetical: `kim_pipeline`'s FASTQ-to-VCF engine
-would either lose its DNABERT-2 DNA-sequence scoring at offline sites, or
-require a licensed/relicensed alternative -- HyenaDNA already fills the
-equivalent role in `geper/`'s pipeline per `LICENSE_AUDIT.md`'s "removed
-from geper entirely" note, which is the closest existing precedent for
-what that substitution would look like.
+**None, as of 2026-09-09.** DNABERT-2 was the one open item -- resolved
+this pass to Apache-2.0, permissive, no hard blocker (see the model
+table above). Read as a collision, this also resolves the seam finding
+raised after the first pass of this audit: `kim_pipeline` is both the
+only place in the repository with a working offline ClinVar path
+(bulk `variant_summary.txt.gz`, per `PACKAGING-P3`) and, until now, the
+one component whose licensing status was genuinely unknown rather than
+merely unfavorable. With DNABERT-2 resolved permissive, that collision
+dissolves: there is no longer a licensing reason to consider dropping
+`kim_pipeline` from the shipped image, and the offline ClinVar path does
+not need a replacement. This does not retroactively bless anything else
+about `kim_pipeline` -- only this one licensing question, which is the
+only thing this file was ever asked to answer about it.
 
 **Everything else in this file is a "may redistribute" or "may
 redistribute, conditionally," and every condition found is a tractable
@@ -178,8 +172,7 @@ file does not conflate them.
 ## Re-verify this audit if
 
 Any new model or database source is integrated into either `geper/` or
-`kim_pipeline/`; DNABERT-2's licence is ever established (this file's one
-open item); any source currently accessed live (AlphaFold DB, BLAST,
+`kim_pipeline/`; any source currently accessed live (AlphaFold DB, BLAST,
 Ensembl/1000G SAS) is converted to a bundled local copy for offline
 packaging, at which point its *scale* of redistribution changes even if
 its licence does not; or as part of general periodic license-compliance

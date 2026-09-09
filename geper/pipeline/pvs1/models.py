@@ -207,7 +207,7 @@ class TranscriptContext:
     # -- see `pipeline/pvs1/utils.py::coding_consequence`.
     cds_sequence: Optional[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         ordered = sorted(self.exons, key=lambda e: e.start, reverse=self.strand < 0)
         self.exons = [ExonSpan(start=e.start, end=e.end, rank=i) for i, e in enumerate(ordered, start=1)]
 

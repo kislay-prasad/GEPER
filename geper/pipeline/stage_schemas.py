@@ -64,7 +64,7 @@ path would defeat the entire point of this module.
 from __future__ import annotations
 
 import enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NoReturn, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -100,7 +100,7 @@ class StageStatus(str, enum.Enum):
     NOT_FOUND = "not_found"
     FOUND = "found"
 
-    def __bool__(self):
+    def __bool__(self) -> NoReturn:
         raise TypeError(
             "StageStatus has no truth value -- every member of a `str` enum is truthy, "
             "so `if x:`/`if not x:` silently collapses NOT_RUN, ERROR, NOT_FOUND and FOUND "

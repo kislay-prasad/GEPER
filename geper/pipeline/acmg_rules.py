@@ -35,12 +35,14 @@ any caller that already consumes the older shape.
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from config import CONFIG
 from pipeline.gnomad.models import POPULATION_LABELS
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.ps1_pm5.decision import PS1PM5Evaluator, PS1PM5Thresholds
+from pipeline.ps1_pm5.models import PS1PM5Evaluation
+from pipeline.pvs1.models import TranscriptContext
 from pipeline.ps1_pm5.utils import matches_from_clinvar_codon_result
 from pipeline.pvs1.decision_tree import PVS1DecisionTree
 from pipeline.pvs1.models import (
@@ -56,6 +58,7 @@ from pipeline.pvs1.utils import (
     alphamissense_evidence_sentence,
     build_pvs1_input,
     classify_pm4_variant,
+    CodingConsequenceDetail,
     coding_consequence_detail,
     lof_mechanism_from_clingen,
     null_variant_term,
@@ -1090,7 +1093,7 @@ class ACMGRuleEngine:
     @staticmethod
     def _ps1_pm5_query_context(
         variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
-    ) -> "tuple":
+    ) -> Tuple[Optional[TranscriptContext], Optional[int], str, str, Optional[CodingConsequenceDetail]]:
         """
         Shared setup for `_ps1`/`_pm5`: the transcript, the query
         variant's own genomic coordinates, and its amino-acid
@@ -1112,7 +1115,7 @@ class ACMGRuleEngine:
         return transcript, (int(pos) if pos is not None else None), ref, alt, query
 
     @staticmethod
-    def _ps1_pm5_result(evaluation, direction: str, nominal_strength: str) -> CriterionResult:
+    def _ps1_pm5_result(evaluation: PS1PM5Evaluation, direction: str, nominal_strength: str) -> CriterionResult:
         """
         Adapt a `pipeline/ps1_pm5/models.py::PS1PM5Evaluation` into this
         module's `CriterionResult`, matching `_pvs1`'s status-mapping
@@ -1770,7 +1773,7 @@ class ACMGRuleEngine:
         score_key: str,
         conserved_threshold: float,
         not_conserved_threshold: float,
-    ):
+    ) -> Tuple[Optional[str], Optional[float]]:
         """
         Classifies one conservation score type from a
         `pipeline.conservation.lookup.ConservationLookup` result into
@@ -1959,8 +1962,8 @@ class ACMGRuleEngine:
             return na, nb
 
         sources: List[str] = []
-        damaging: List[tuple] = []  # (source_label, evidence_text)
-        benign: List[tuple] = []
+        damaging: List[Tuple[str, str]] = []  # (source_label, evidence_text)
+        benign: List[Tuple[str, str]] = []
 
         if alphamissense_result and not alphamissense_result.get("skipped") and alphamissense_result.get("found"):
             am_class = (alphamissense_result.get("am_class") or "").strip().lower()
@@ -2271,7 +2274,7 @@ class ACMGRuleEngine:
         return pp3, bp4
 
     @staticmethod
-    def _ba1_bs1(gnomad_result: Optional[Dict[str, Any]]):
+    def _ba1_bs1(gnomad_result: Optional[Dict[str, Any]]) -> Tuple[CriterionResult, CriterionResult]:
         ba1_dir, ba1_strength = _STRENGTH["BA1"]
         bs1_dir, bs1_strength = _STRENGTH["BS1"]
         if (

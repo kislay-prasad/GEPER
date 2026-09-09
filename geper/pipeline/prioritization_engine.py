@@ -116,7 +116,7 @@ class PrioritizationEngine:
     confidence result, passed in as inputs -- never recomputed here).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         # Reused only for its static AlphaFold-band mapping (see
         # `_structural_factor`) -- no confidence state is read or
         # written here.
@@ -127,21 +127,21 @@ class PrioritizationEngine:
         *,
         acmg_classification: Optional[str],
         confidence_score: Optional[float],
-        triggered_rule_codes: List[str],
-        clinvar_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        dbsnp_result: Dict[str, Any] = None,
-        alphamissense_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
-        dna_models_used: List[str] = None,
-        rna_result: Dict[str, Any] = None,
-        protein_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        alphafold_result: Dict[str, Any] = None,
-        blast_result: Dict[str, Any] = None,
-        ai_consensus: List[Dict[str, Any]] = None,
-        real_conflicts: List[Any] = None,
+        triggered_rule_codes: List[Optional[str]],
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        dbsnp_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        dna_models_used: Optional[List[str]] = None,
+        rna_result: Optional[Dict[str, Any]] = None,
+        protein_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        blast_result: Optional[Dict[str, Any]] = None,
+        ai_consensus: Optional[List[Dict[str, Any]]] = None,
+        real_conflicts: Optional[List[Any]] = None,
         critical_conflict: bool = False,
     ) -> PriorityResult:
         cfg = CONFIG.prioritization

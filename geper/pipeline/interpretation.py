@@ -51,7 +51,7 @@ _CONFLICT_DETECTION_COMPONENT = "Conflict detection (internal)"
 class InterpretationEngine:
     """Combines multi-stage evidence into one unified interpretation block."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._acmg_engine = ACMGRuleEngine()
         self._confidence_engine = ConfidenceEngine()
         self._prioritization_engine = PrioritizationEngine()
@@ -1101,7 +1101,9 @@ class InterpretationEngine:
         return lines
 
     @staticmethod
-    def _build_summary(chrom, pos, ref, alt, score: float, has_clinvar: bool) -> "tuple[str, str]":
+    def _build_summary(
+        chrom: object, pos: object, ref: object, alt: object, score: float, has_clinvar: bool
+    ) -> "tuple[str, str]":
         variant_label = f"{chrom}:{pos} {ref}>{alt}"
 
         if not has_clinvar:

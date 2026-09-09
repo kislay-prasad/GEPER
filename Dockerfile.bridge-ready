@@ -1,0 +1,109 @@
+# =============================================================================
+# Dockerfile.bridge-ready -- the offline-capable GEPER image
+# =============================================================================
+# THIS FILE CANNOT PRODUCE `bridge-ready` ON ITS OWN, AND THAT IS A FINDING
+# RATHER THAN AN OMISSION. Read this header before assuming a step is missing.
+#
+# `bridge-ready` is the base image plus the 4.6 GB offline model-cache seed.
+# THE SEED CANNOT ENTER AN IMAGE THROUGH THE BUILD CONTEXT. Its HuggingFace
+# layout contains five relative symlinks
+# (models--facebook--esm2_t33_650M_UR50D/snapshots/<sha>/* -> ../../blobs/<sha>)
+# and BuildKit refuses to load a context containing them:
+#
+#     ERROR: invalid file request model_cache_seed/models--facebook--
+#     esm2_t33_650M_UR50D/snapshots/08e4846e.../config.json
+#
+# Measured three times by three agents on three different Dockerfiles, which
+# is why `.dockerignore` now excludes the seed BY DESIGN -- without that line
+# the repository does not build at all from a checkout that has the seed on
+# disk. `docker cp` fails too, and worse: it prints
+# `unknown file mode ?rw-rw-rw-`, continues, exits zero, and leaves the blobs
+# whole and the pointers gone.
+#
+# The only mechanism that carries them is a RUNTIME BIND MOUNT, and that is
+# not a Dockerfile instruction. So the image is produced by this file PLUS one
+# named, scripted, committed step: `scripts/build_bridge_ready.sh`.
+#
+# THE STEP IS EXPLICIT ON PURPOSE. The existing `geper:bridge-ready` was
+# hand-assembled, and `docker history` cannot say how its files arrived --
+# it records the command a layer ran, never the `docker run` flags behind it.
+# A Dockerfile that looked complete while quietly depending on an unwritten
+# hand step is the exact defect this replaces.
+#
+# BUILD (do not invoke this file directly -- the script drives both halves):
+#     scripts/build_bridge_ready.sh --base geper:latest --tag geper:bridge-ready
+#
+# =============================================================================
+
+# The base built by the tracked `Dockerfile` (docker-compose tags it
+# `geper:latest`). Declared as an ARG rather than hard-coded so the seed step
+# can be re-run against a rebuilt base without editing this file.
+ARG BASE_IMAGE=geper:latest
+FROM ${BASE_IMAGE}
+
+# --- The cache location, which is the whole of what a Dockerfile CAN do here.
+#
+# `/app/model_cache_seed` is chosen because it is NOT a declared VOLUME, and
+# that is load-bearing rather than cosmetic. The base image declares
+# /app/geper/geper_output, /app/geper/model_cache and /root/.cache/huggingface
+# as volumes, and `docker commit` DOES NOT CAPTURE VOLUME CONTENTS -- a seed
+# written to any of them builds cleanly, commits cleanly, and is ABSENT AT RUN
+# TIME. The two most obvious places to put a model cache are both traps, and
+# the tracked Dockerfile's own `GEPER_CACHE_DIR=/app/geper/model_cache` points
+# at one of them.
+#
+# All three variables point at the same directory, and they are NOT
+# interchangeable -- seeing them equal here is exactly what invites the
+# mistake:
+#   GEPER_CACHE_DIR  GEPER's own cache root; every loader derives its subpath
+#                    from it (TORCH_HOME, HYENADNA_CHECKPOINT_DIR, ...).
+#   HF_HUB_CACHE     the HuggingFace hub cache ROOT. This is the one that
+#                    matters for ESM2 and the one that used to be wrong.
+#   HF_HOME          HuggingFace's home directory. Setting only this sends the
+#                    library to $HF_HOME/hub -- one level too deep. An earlier
+#                    image had HF_HOME=/app/model_cache_seed/hf and therefore
+#                    searched a directory that did not exist while the models
+#                    sat at the root. Symptom: a full-looking cache and a miss.
+ENV GEPER_CACHE_DIR=/app/model_cache_seed \
+    HF_HUB_CACHE=/app/model_cache_seed \
+    HF_HOME=/app/model_cache_seed
+
+# --- HyenaDNA's vendored source, WITHOUT WHICH THIS IMAGE IS NOT OFFLINE.
+#
+# MEASURED, NOT ANTICIPATED: with only /app and /app/geper on the path, a
+# HyenaDNA load under `--network none` fails with
+#   `fatal: unable to access 'https://github.com/HazyResearch/hyena-dna.git/':
+#    Could not resolve host: github.com`
+# -- the image reaches for GitHub at model-load time. Three of four models
+# loaded; this was the fourth.
+#
+# The mechanism is a bare CWD-relative path in the loader
+# (`geper/models/hyenadna.py`: `repo_dir = "./hyena-dna"`). It first asks
+# `importlib.util.find_spec("standalone_hyenadna")`, and only if that fails
+# does it clone. The vendored source IS in the image, at
+# /app/geper/hyena-dna -- but `./hyena-dna` resolves against the working
+# directory, which is /app, so the loader cannot see what is already there
+# and tries to fetch it.
+#
+# Putting the vendored directory on PYTHONPATH makes `find_spec` succeed, so
+# the clone branch is never entered. That is a fix to THIS IMAGE, not to the
+# loader: the CWD-relative path is still a latent defect and is reported as
+# one -- the offline property currently depends on the process's working
+# directory, which is not a property anybody chose.
+ENV PYTHONPATH=/app:/app/geper:/app/geper/hyena-dna
+
+# Created here so the directory exists with the right ownership even before
+# the seed step runs; an image built from this file alone is a valid,
+# network-dependent GEPER image, not a broken one.
+RUN mkdir -p /app/model_cache_seed
+
+# The acceptance test travels IN the image, so the image can be verified
+# wherever it lands rather than only on a machine that has this repository.
+COPY scripts/verify_offline_models.py /app/scripts/verify_offline_models.py
+
+WORKDIR /app
+
+# No ENTRYPOINT and no CMD, deliberately: the base image documents three
+# independently valid ways to run this pipeline and hard-coding one would make
+# the other two second-class. That decision is the base image's; this file
+# does not overturn it.

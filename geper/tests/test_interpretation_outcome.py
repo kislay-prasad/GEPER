@@ -55,7 +55,13 @@ def _evaluate(**overrides):
         protein_result={},
         alphamissense_result={"skipped": True},
         mmsplice_result={"predicted": False},
-        gnomad_result={"found": False},
+        # `None`, not `{"found": False}`: a confirmed absence from
+        # gnomAD is itself PM2 evidence (a real, nonzero pathogenic
+        # point), so it is not a "no evidence at all" baseline -- see
+        # `pipeline.acmg_rules.ACMGRuleEngine._pm2`'s own `not
+        # gnomad_result` check. `None` means "never queried", which is
+        # what an actually-empty baseline requires.
+        gnomad_result=None,
         conservation_result={},
         clingen_result={"gene_resolution_status": "resolved", "gene_symbol": "BRCA1"},
         interpro_result={},

@@ -20,16 +20,43 @@ FASTQ-to-VCF engine) retains and actively uses DNABERT-2 independently
 `revision` on `from_pretrained()` to mitigate the `trust_remote_code=True`
 RCE surface -- see root `DATA_PROVENANCE.md` for the security review.
 This audit file does not cover kim_pipeline's own model/dependency
-license posture. kim_pipeline's DNABERT-2 usage was reviewed for
+license posture generally (that remains a separate, real, open card --
+not undertaken here). kim_pipeline's DNABERT-2 usage was reviewed for
 **security** on 2026-08-20 (the `trust_remote_code=True` RCE surface,
 mitigated with a pinned `revision` -- see root `DATA_PROVENANCE.md`);
-as of 2026-08-28 it has **not been reviewed for licensing**: no one
-has independently fetched and confirmed `zhihan1996/DNABERT-2-117M`'s
-Hugging Face license frontmatter (the security review fetched the
-model's *code* to read for RCE risk, not its license metadata), and
-`kim_pipeline/docs/DATA_PROVENANCE.md` -- the only license/provenance
-document kim_pipeline has -- does not mention DNABERT-2 or its license
-at all. This is an open, unreviewed gap, not a completed review.
+as of 2026-08-28 it had **not been reviewed for licensing**: no one
+had independently fetched and confirmed `zhihan1996/DNABERT-2-117M`'s
+license -- the security review fetched the model's *code* to read for
+RCE risk, not its license metadata -- and `kim_pipeline/docs/
+DATA_PROVENANCE.md`, the only license/provenance document kim_pipeline
+has, does not mention DNABERT-2 or its license at all. That was an
+open, unreviewed gap, not a completed review.
+
+**RESOLVED 2026-09-09: DNABERT-2 is Apache-2.0.** The 2026-08-28 gap
+above stood because the one thing fetched to date was the HuggingFace
+**model card body** (the rendered README) -- its own YAML frontmatter
+carries no `license:` key, and reading that absence as "unlicensed" or
+"unreviewable" was the mistake: a rendered card is a *view*, and it
+does not necessarily surface every field the underlying repository
+metadata holds. Fetching the **model-info API endpoint**
+(`huggingface.co/api/models/zhihan1996/DNABERT-2-117M`) instead shows
+a `siblings` array that lists a file literally named `LICENSE` --
+present in the repository, absent from the card. Fetching that file
+directly (`huggingface.co/zhihan1996/DNABERT-2-117M/raw/main/LICENSE`)
+returns the complete, unmodified canonical **Apache License, Version
+2.0** text. Cross-checked independently against the code repository:
+GitHub's own license-detection API for `github.com/MAGICS-LAB/
+DNABERT_2` returns `spdx_id: Apache-2.0`, consistent with the weights
+repo, not contradicting it. No `NOTICE` file exists in either repo.
+Both code and weights are therefore Apache-2.0 -- permissive,
+commercially usable, with the same NOTICE/LICENSE-preservation
+obligation as every other Apache-2.0 entry in this document. Full
+redistribution analysis (does Apache-2.0 permit *bundling* the weights
+into a customer-shipped image, not just using them) is in
+`PACKAGING_REDISTRIBUTION_LICENSE_AUDIT.md`, a separate file scoped to
+that separate question; this entry records the underlying licence
+fact the redistribution analysis depends on, not the redistribution
+verdict itself.
 
 ## Models GEPER loads and runs
 

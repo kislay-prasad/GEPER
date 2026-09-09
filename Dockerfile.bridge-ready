@@ -85,12 +85,29 @@ ENV GEPER_CACHE_DIR=/app/model_cache_seed \
 # directory, which is /app, so the loader cannot see what is already there
 # and tries to fetch it.
 #
-# Putting the vendored directory on PYTHONPATH makes `find_spec` succeed, so
-# the clone branch is never entered. That is a fix to THIS IMAGE, not to the
-# loader: the CWD-relative path is still a latent defect and is reported as
-# one -- the offline property currently depends on the process's working
-# directory, which is not a property anybody chose.
-ENV PYTHONPATH=/app:/app/geper:/app/geper/hyena-dna
+# That was first fixed HERE, by putting the vendored directory on PYTHONPATH
+# so `find_spec` succeeded and the clone branch was never entered. THAT ENTRY
+# HAS SINCE BEEN REMOVED DELIBERATELY, and this comment exists so that the
+# PYTHONPATH below is not read as under-specified and "repaired".
+#
+# WHY IT IS GONE. The real defect was in the loader, and it is fixed there
+# now: `geper/models/hyenadna.py` resolves the vendored checkout from
+# `__file__` instead of from the working directory. Once the module finds its
+# own source, the ENV entry is LOAD-BEARING FOR NOTHING.
+#
+# *** DO NOT RESTORE IT. *** It would not be inert. `/app/geper/hyena-dna` on
+# PYTHONPATH makes `find_spec("standalone_hyenadna")` succeed no matter where
+# the process was launched from -- which means it SILENTLY ABSORBS any future
+# regression of the module's path handling. The offline proof would stay green
+# while the loader was broken again. Removing this entry is precisely what
+# gives that proof the ability to fail.
+#
+# The removal is tested, not assumed: with this line absent and the module
+# fix in place, all four models construct under `--network none` from /var/tmp,
+# / and /app/geper. With this line absent and the OLD module, HyenaDNA fails
+# with `Could not resolve host: github.com` -- the negative control that makes
+# the pass mean something.
+ENV PYTHONPATH=/app:/app/geper
 
 # Created here so the directory exists with the right ownership even before
 # the seed step runs; an image built from this file alone is a valid,

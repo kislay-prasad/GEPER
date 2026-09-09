@@ -24,9 +24,9 @@ than fabricating a conflict.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
-from config import CONFIG
+from config import CONFIG, ConflictConfig
 
 _SEVERITY_WEIGHT_KEY = {
     "Minor": "MINOR_WEIGHT",
@@ -68,7 +68,7 @@ _UNCERTAIN_LEANING_CLASSIFICATIONS = (
 )
 
 
-def _ai_directions(ai_consensus: List[Dict[str, Any]]) -> Dict[str, str]:
+def _ai_directions(ai_consensus: Optional[List[Dict[str, Any]]]) -> Dict[str, str]:
     """Same direction-extraction rule used consistently in Phase 3/4."""
     out = {}
     for v in ai_consensus or []:
@@ -181,7 +181,7 @@ class ConflictResolutionEngine:
         self,
         *,
         acmg_classification: Optional[str],
-        acmg_conflicting_evidence: List[Dict[str, Any]],
+        acmg_conflicting_evidence: Sequence[Union[str, Dict[str, Any]]],
         ai_consensus: List[Dict[str, Any]],
         confidence_conflict_penalty: float,
         confidence_conflict_explanation: str,
@@ -279,7 +279,7 @@ class ConflictResolutionEngine:
         self,
         *,
         acmg_classification: Optional[str],
-        acmg_conflicting_evidence: List[Dict[str, Any]],
+        acmg_conflicting_evidence: Sequence[Union[str, Dict[str, Any]]],
         ai_consensus: List[Dict[str, Any]],
         clinvar_result: Optional[Dict[str, Any]] = None,
         clingen_result: Optional[Dict[str, Any]] = None,
@@ -335,7 +335,7 @@ class ConflictResolutionEngine:
         self,
         *,
         acmg_classification: Optional[str],
-        acmg_conflicting_evidence: List[Dict[str, Any]],
+        acmg_conflicting_evidence: Sequence[Union[str, Dict[str, Any]]],
         ai_consensus: List[Dict[str, Any]],
         confidence_conflict_penalty: float,
         confidence_conflict_explanation: str,
@@ -390,7 +390,9 @@ class ConflictResolutionEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _acmg_criterion_conflicts(acmg_conflicting_evidence: List[Dict[str, Any]]) -> List[ConflictItem]:
+    def _acmg_criterion_conflicts(
+        acmg_conflicting_evidence: Sequence[Union[str, Dict[str, Any]]],
+    ) -> List[ConflictItem]:
         # Re-surfaces Phase 1/2's already-computed, already-tagged
         # per-criterion caveats (e.g. PM1's position-estimate caveat,
         # PVS1's insufficient-dosage-evidence caveat) as first-class
@@ -428,7 +430,9 @@ class ConflictResolutionEngine:
         return items
 
     @staticmethod
-    def _expert_panel_disagreement_conflict(acmg_classification, clinvar_result) -> Optional[ConflictItem]:
+    def _expert_panel_disagreement_conflict(
+        acmg_classification: Optional[str], clinvar_result: Optional[Dict[str, Any]]
+    ) -> Optional[ConflictItem]:
         """
         Critical-tier conflict, and deliberately the only detector in
         this engine at that tier: GEPER's own bottom-line ACMG
@@ -546,7 +550,9 @@ class ConflictResolutionEngine:
         return clinvar_tier != geper_tier
 
     @staticmethod
-    def _curated_clinvar_disagreement_conflict(acmg_classification, clinvar_result) -> Optional[ConflictItem]:
+    def _curated_clinvar_disagreement_conflict(
+        acmg_classification: Optional[str], clinvar_result: Optional[Dict[str, Any]]
+    ) -> Optional[ConflictItem]:
         """
         Moderate-tier counterpart to `_expert_panel_disagreement_conflict`
         (report review round 4, E3): a matched ClinVar record still
@@ -609,7 +615,9 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _clinical_conflict(clinvar_result, clingen_result) -> Optional[ConflictItem]:
+    def _clinical_conflict(
+        clinvar_result: Optional[Dict[str, Any]], clingen_result: Optional[Dict[str, Any]]
+    ) -> Optional[ConflictItem]:
         if not (
             clinvar_result and clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record")
         ):
@@ -642,7 +650,11 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _population_conflict(acmg_classification, clinvar_result, gnomad_result) -> Optional[ConflictItem]:
+    def _population_conflict(
+        acmg_classification: Optional[str],
+        clinvar_result: Optional[Dict[str, Any]],
+        gnomad_result: Optional[Dict[str, Any]],
+    ) -> Optional[ConflictItem]:
         gcfg = CONFIG.gnomad
         if not (gnomad_result and gnomad_result.get("found")):
             return None
@@ -698,7 +710,11 @@ class ConflictResolutionEngine:
 
     @staticmethod
     def _ai_conflict(
-        ai_consensus, confidence_penalty, confidence_explanation, priority_penalty, priority_explanation
+        ai_consensus: Optional[List[Dict[str, Any]]],
+        confidence_penalty: float,
+        confidence_explanation: str,
+        priority_penalty: float,
+        priority_explanation: str,
     ) -> Optional[ConflictItem]:
         directions = _ai_directions(ai_consensus)
         distinct = set(directions.values())
@@ -732,7 +748,9 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _protein_conflict(uniprot_result, interpro_result) -> Optional[ConflictItem]:
+    def _protein_conflict(
+        uniprot_result: Optional[Dict[str, Any]], interpro_result: Optional[Dict[str, Any]]
+    ) -> Optional[ConflictItem]:
         if not (uniprot_result and uniprot_result.get("found") and uniprot_result.get("reviewed")):
             return None
         if interpro_result and interpro_result.get("found"):
@@ -753,7 +771,9 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _structural_conflict(alphafold_result, ai_consensus) -> Optional[ConflictItem]:
+    def _structural_conflict(
+        alphafold_result: Optional[Dict[str, Any]], ai_consensus: Optional[List[Dict[str, Any]]]
+    ) -> Optional[ConflictItem]:
         """
         Only fires against a genuine residue-specific confidence value
         (`affected_residue_band`) -- NOT a fallback to `mean_plddt_band`
@@ -805,7 +825,7 @@ class ConflictResolutionEngine:
         )
 
     @staticmethod
-    def _sequence_conflict_note(blast_result) -> ConflictItem:
+    def _sequence_conflict_note(blast_result: Optional[Dict[str, Any]]) -> ConflictItem:
         # Per the Phase 6 "do not fabricate evidence" requirement: BLAST
         # returns a homology hit count with no pathogenic/benign
         # direction, and Ensembl is not exposed as a separate per-variant
@@ -838,7 +858,7 @@ class ConflictResolutionEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _score(real_conflicts: List[ConflictItem], cfg) -> float:
+    def _score(real_conflicts: List[ConflictItem], cfg: ConflictConfig) -> float:
         if not real_conflicts:
             return 0.0
         total_weight = sum(getattr(cfg, _SEVERITY_WEIGHT_KEY[c.severity]) for c in real_conflicts)
@@ -846,7 +866,7 @@ class ConflictResolutionEngine:
         return min(100.0, 100.0 * total_weight / max_weight) if max_weight > 0 else 0.0
 
     @staticmethod
-    def _overall_severity(score: float, real_conflicts: List[ConflictItem], cfg) -> str:
+    def _overall_severity(score: float, real_conflicts: List[ConflictItem], cfg: ConflictConfig) -> str:
         if not real_conflicts:
             return "None"
         # A single Critical-tier item (currently only

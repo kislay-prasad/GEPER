@@ -47,7 +47,7 @@ and the final percentage is that sum divided by the maximum possible
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import CONFIG
 
@@ -110,21 +110,21 @@ class ConfidenceEngine:
     def score(
         self,
         *,
-        clinvar_result: Dict[str, Any] = None,
-        clingen_result: Dict[str, Any] = None,
-        gnomad_result: Dict[str, Any] = None,
-        dbsnp_result: Dict[str, Any] = None,
-        alphamissense_result: Dict[str, Any] = None,
-        mmsplice_result: Dict[str, Any] = None,
-        dna_models_used: List[str] = None,
-        rna_result: Dict[str, Any] = None,
-        protein_result: Dict[str, Any] = None,
-        uniprot_result: Dict[str, Any] = None,
-        interpro_result: Dict[str, Any] = None,
-        alphafold_result: Dict[str, Any] = None,
-        blast_result: Dict[str, Any] = None,
-        real_conflicts: List[Any] = None,
-        ai_consensus: List[Dict[str, Any]] = None,
+        clinvar_result: Optional[Dict[str, Any]] = None,
+        clingen_result: Optional[Dict[str, Any]] = None,
+        gnomad_result: Optional[Dict[str, Any]] = None,
+        dbsnp_result: Optional[Dict[str, Any]] = None,
+        alphamissense_result: Optional[Dict[str, Any]] = None,
+        mmsplice_result: Optional[Dict[str, Any]] = None,
+        dna_models_used: Optional[List[str]] = None,
+        rna_result: Optional[Dict[str, Any]] = None,
+        protein_result: Optional[Dict[str, Any]] = None,
+        uniprot_result: Optional[Dict[str, Any]] = None,
+        interpro_result: Optional[Dict[str, Any]] = None,
+        alphafold_result: Optional[Dict[str, Any]] = None,
+        blast_result: Optional[Dict[str, Any]] = None,
+        real_conflicts: Optional[List[Any]] = None,
+        ai_consensus: Optional[List[Dict[str, Any]]] = None,
     ) -> ConfidenceResult:
         cfg = CONFIG.confidence
 

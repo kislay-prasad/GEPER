@@ -22,7 +22,7 @@ is enough to explain which sources did or didn't contribute.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 # Canonical evidence-source names this pipeline can draw on, mapped to
 # their key in `raw_evidence` (see interpretation_result.py). Used only
@@ -96,7 +96,7 @@ class ExplainabilityEngine:
         not_triggered_rules: List[Dict[str, Any]],
         not_evaluated_rules: List[Dict[str, Any]],
         combining_rule_trace: List[str],
-        conflicting_evidence: List[Dict[str, Any]],
+        conflicting_evidence: Sequence[Union[str, Dict[str, Any]]],
         ai_consensus: List[Dict[str, Any]],
         ai_context_models: List[str],
         confidence_score: Optional[float],

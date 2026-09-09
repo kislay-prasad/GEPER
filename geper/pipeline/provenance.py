@@ -112,7 +112,7 @@ import json
 import os
 import subprocess
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -151,7 +151,7 @@ class VersionStatus(str, enum.Enum):
     HASH_ONLY = "hash_only"  # no release version, but a content hash of the actual bytes used is known
     VERSION_KNOWN = "version_known"  # a real, source-published version/release/build identifier is known
 
-    def __bool__(self):
+    def __bool__(self) -> NoReturn:
         raise TypeError(
             "VersionStatus has no truth value -- every member of a `str` enum is truthy, "
             "so `if x:`/`if not x:` silently collapses NOT_CONSULTED (never queried) and UNKNOWN (queried, nothing obtainable) "
@@ -206,7 +206,7 @@ class RetrievalMode(str, enum.Enum):
     CACHE_REPLAY = "cache_replay"  # every answer used this run was replayed from a local cache written by an EARLIER run; the source itself was not contacted, and this run cannot verify the answer is still current
     MIXED = "mixed"  # both happened this run -- some answers live, some replayed (see note_retrieval: recording either alone would be a false claim about the other)
 
-    def __bool__(self):
+    def __bool__(self) -> NoReturn:
         raise TypeError(
             "RetrievalMode has no truth value -- same reason as VersionStatus: every member of a "
             "`str` enum is truthy, so `if x:` would silently collapse NOT_RETRIEVED (tried nothing) "

@@ -14,7 +14,10 @@ records that as an unchecked caveat instead of silently taking a branch.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:  # circular at runtime; see `build_pvs1_input`'s docstring
+    from pipeline.pvs1.decision_tree import PVS1Input
 
 from config import CONFIG
 from pipeline.pvs1.models import (
@@ -997,7 +1000,7 @@ def build_pvs1_input(
     transcript_result: Optional[Dict[str, Any]] = None,
     mmsplice_result: Optional[Dict[str, Any]] = None,
     config: Any = None,
-):
+) -> "PVS1Input":
     """
     Assemble a `PVS1Input` from the provider-result dicts the
     orchestrator already collects. Imported lazily inside the function

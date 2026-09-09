@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from utils.logger import get_logger
 from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER, build_clinical_report
+from pipeline.provenance import get_stale_fallbacks
 from pipeline.stage_schemas import build_raw_evidence_bundle, validate_interpretation_result_for_report
 
 logger = get_logger(__name__)
@@ -308,6 +309,17 @@ class JSONResultBuilder:
             # source that was consulted but yielded no version
             # (`status: "unknown"`). See pipeline/provenance.py.
             "provenance": self.provenance_collector.to_list() if self.provenance_collector is not None else [],
+            # Packaging Part 3 mechanism: every "Using stale cached ...
+            # after a failed refresh" bootstrap fallback this process has
+            # hit (`pipeline/provenance.py::record_stale_fallback`),
+            # always present as a list (empty when nothing went stale)
+            # so a reader can tell "checked, nothing stale" from "never
+            # checked" -- same reasoning as `provenance` above always
+            # listing every known source. THE report layer this must
+            # reach per the standing rule that a warning nobody sees is
+            # not a warning; see `report/report_generator.py
+            # ::_render_data_freshness_warnings`.
+            "data_freshness_warnings": get_stale_fallbacks(),
             # DPDP Act 2023 consent metadata (minimal, capture-only --
             # see this class's __init__ docstring comment and
             # report/summary.py::_parse_consent). Explicit `null` in

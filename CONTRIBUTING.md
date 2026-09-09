@@ -174,6 +174,59 @@ python -m clinical.bootstrap --apply-schema
 worktree, commit `e1c696b`), so it is not on `master` yet. If it is not
 there when you look, that is why.
 
+### `clinical/`'s "5 pre-existing errors" are not a property of the code
+
+If you run `clinical/` with `CLINICAL_TEST_DSN` set against the shared
+`kelly-clinical-test` container (Postgres 16, port 5433 -- the one most
+people on this floor point at, because standing one up yourself is more
+setup than reusing it), you will likely see 5 errors in
+`test_bootstrap_empty_database.py`, all the same shape:
+
+```
+psycopg.errors.DependentObjectsStillExist: role "clinical_app" cannot
+be dropped because some objects depend on it
+DETAIL:  21 objects in database clinical
+27 objects in database kelly_read_receipts_20260904_141520
+```
+
+**This has been reported as a stable constant twice** (Kelly, then Andy)
+and it is not one. It is accumulated state in that one shared container:
+two leftover databases --
+`kelly_read_receipts_20260904_141520` and `test_debug_e0ccfcda02` --
+that some earlier run left behind and whose objects now block
+`clinical_app`'s teardown from dropping the role. **The number will
+drift as more leftovers accumulate, and it will differ between people
+who run the same commit against the same container on different days.**
+Do not treat "5" as this suite's score any more than the unconditioned
+33/504/513/516 spread above.
+
+The method matters more than the fact, because the obvious way to prove
+this -- revert your changes, rerun, get the same number, restore -- is
+correct and still cannot find the cause. Kelly did exactly that (revert,
+run, same 5, restore) to prove her change didn't cause the errors, which
+it didn't -- but reverting code never touches container state, so both
+of her runs hit the same leftover databases regardless. What actually
+found the cause was reading the exception's **`DETAIL:` line** instead
+of stopping at the exception **type** -- the type alone (
+`DependentObjectsStillExist`) looks like a code problem; the detail
+names a database from 2026-09-04 that nothing in the current diff could
+have created. And even the detail only shows what it shows: it names
+databases *whose objects block this particular drop*, so
+`test_debug_e0ccfcda02` was invisible until someone listed the container
+directly -- a partial explanation can still hide a second cause.
+
+**Do not clean the container. Do not drop either database.** Dropping
+the stale databases would make the 5 errors vanish -- and that is
+exactly why it is not a fix: either one may be another agent's evidence
+(a read-receipts run, a debug session) that nobody has reviewed yet, and
+a suite that goes green because the evidence is gone is indistinguishable,
+from the outside, from a suite that went green because something was
+actually fixed. The prohibition is not "be careful with the container";
+it is "this container is not yours to tidy," full stop -- the same
+standing the floor already gives `bad-*` and `.triaged` artifacts, for
+the same reason: nobody who didn't create something gets to decide it is
+disposable.
+
 ### Why not just `pytest` at the repo root
 
 It fails collection outright:

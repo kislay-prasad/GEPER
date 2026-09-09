@@ -377,13 +377,21 @@ class RetentionPrincipal:
           3. For each amendments row just stamped, the amendment_notifications
              row that names the SAME amendment_report_id -- the
              notification about that specific amendment event.
+          4. For each amendment_notifications row just stamped, every
+             notification_read_receipts row keyed on it (human ruling,
+             2026-09-09/10, closing the residual gap named when the first
+             three of these four were wired: a receipt for a notification
+             that no longer exists has no meaning either). Same trigger
+             point as step 3's own loop body -- a receipt is stamped at
+             the exact moment its notification is, never as a separate
+             pass.
 
         NO separate audit_log entry per cascaded row -- MY OWN DECISION,
-        not something the ruling settled: these three tables are not
+        not something the ruling settled: these four tables are not
         independently-purged artefact classes, they are fallout of the
         one parent report purge that already carries its own D7 audit
-        entry. Cascading the AUDIT of a purge would misrepresent three
-        (or more) rows as three separate purge decisions when there was
+        entry. Cascading the AUDIT of a purge would misrepresent four
+        (or more) rows as four separate purge decisions when there was
         only ever one.
         """
         release_event_rows = self._query(
@@ -417,6 +425,17 @@ class RetentionPrincipal:
                     "WHERE org_id = %s AND id = %s",
                     (now, actor_id, org_id, notification_id),
                 )
+                receipt_rows = self._query(
+                    "SELECT id FROM notification_read_receipts "
+                    "WHERE org_id = %s AND notification_id = %s AND tombstoned_at IS NULL",
+                    (org_id, notification_id),
+                )
+                for (receipt_id,) in receipt_rows:
+                    self._execute(
+                        "UPDATE notification_read_receipts SET tombstoned_at = %s, tombstoned_by = %s "
+                        "WHERE org_id = %s AND id = %s",
+                        (now, actor_id, org_id, receipt_id),
+                    )
 
     def _purge_interpretations(self, org_id: uuid.UUID, now: datetime) -> PurgeResult:
         """

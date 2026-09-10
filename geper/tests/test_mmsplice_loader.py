@@ -258,13 +258,16 @@ class TestModelDirNeverTouchesTheNetwork(unittest.TestCase):
         self.assertIs(instance.model, instance._keras_models)
         self.assertEqual(load_model.call_count, len(MODEL_FILENAMES))
 
-    def test_incomplete_model_dir_fails_immediately_naming_model_dir_and_the_missing_file(self):
-        """THE NEGATIVE CASE, and the one that proves this isn't just a
-        looser check that moves the failure without improving the
-        message: MODEL_DIR set but missing one required file must fail
-        WITHOUT any pip/network attempt (spied, not inferred), and the
-        raised error must name both `GEPER_MMSPLICE_MODEL_DIR` and the
-        specific missing filename."""
+    def test_incomplete_model_dir_falls_through_to_todays_pip_check_unchanged(self):
+        """HOLD (human, 2026-09-10, relayed by god): whether a
+        set-but-incomplete MODEL_DIR should instead fail immediately,
+        naming MODEL_DIR and the missing file, is a separate clinical
+        failure-path decision (silent degradation vs hard failure vs
+        disclose-on-report) this card does not own -- withdrawn pending
+        that ruling. Until it lands, an incomplete MODEL_DIR must behave
+        EXACTLY as it did before this card: fall through to
+        `_ensure_mmsplice_package_files_available` (the pip path) and
+        today's original message, same as the unset case below."""
         instance = self._instance()
         with tempfile.TemporaryDirectory() as root:
             _populate_valid_model_dir(root)
@@ -276,16 +279,18 @@ class TestModelDirNeverTouchesTheNetwork(unittest.TestCase):
                     "pipeline.models.mmsplice.loader.check_pip_package_availability",
                     return_value=PackageCheckStatus.PRESENT,
                 ),
-                mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available") as mock_ensure,
+                mock.patch(
+                    "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available",
+                    return_value=PackageCheckStatus.ABSENT,
+                ) as mock_ensure,
             ):
                 with self.assertRaises(ModelLoadError) as ctx:
                     instance._load_impl()
 
-            mock_ensure.assert_not_called()
-
+        mock_ensure.assert_called_once()
         message = str(ctx.exception)
-        self.assertIn("GEPER_MMSPLICE_MODEL_DIR", message)
-        self.assertIn("Donor.h5", message)
+        self.assertIn("could not be installed automatically", message)
+        self.assertNotIn("Donor.h5", message)
 
     def test_model_dir_unset_keeps_todays_pip_fallback_behaviour(self):
         """The unset case must be untouched: `_ensure_mmsplice_package_files_
@@ -317,34 +322,38 @@ class TestModelDirNeverTouchesTheNetwork(unittest.TestCase):
                     self.assertTrue(MMSpliceModel.is_available())
         mock_ensure.assert_not_called()
 
-    def test_is_available_reflects_an_incomplete_model_dir_without_calling_pip(self):
+    def test_is_available_reflects_an_incomplete_model_dir_by_still_consulting_pip(self):
+        """HOLD, mirrors the _load_impl test above: an incomplete
+        MODEL_DIR must not short-circuit is_available() -- it falls
+        through to the pip check exactly as an unset MODEL_DIR does."""
         with tempfile.TemporaryDirectory() as root:
             _populate_valid_model_dir(root)
             os.remove(os.path.join(root, "layers.py"))
             self._set_model_dir(root)
-            with mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available") as mock_ensure:
+            with mock.patch(
+                "pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available",
+                return_value=PackageCheckStatus.ABSENT,
+            ) as mock_ensure:
                 with mock.patch("pipeline.models.mmsplice.loader.ensure_pip_package_available", return_value=True):
                     self.assertFalse(MMSpliceModel.is_available())
-        mock_ensure.assert_not_called()
+        mock_ensure.assert_called_once()
 
-    def test_unavailability_reason_names_model_dir_not_a_pip_failure(self):
-        """Same accuracy principle as the raised ModelLoadError: a reader
-        of `unavailability_reason()` (surfaced in startup status/reports)
-        must not be told a pip install was attempted or failed when
-        MODEL_DIR being set means one never was."""
+    def test_unavailability_reason_for_an_incomplete_model_dir_is_unchanged(self):
+        """HOLD: unavailability_reason() must not mention MODEL_DIR for
+        the incomplete case either -- same withdrawal as the two tests
+        above, same reason."""
         with tempfile.TemporaryDirectory() as root:
             _populate_valid_model_dir(root)
             os.remove(os.path.join(root, "models", "Exon.h5"))
             self._set_model_dir(root)
-            with mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available") as mock_ensure:
-                with mock.patch("pipeline.models.mmsplice.loader.check_pip_package_availability") as mock_tf:
-                    mock_tf.return_value = PackageCheckStatus.PRESENT
-                    reason = MMSpliceModel.unavailability_reason()
+            with mock.patch(
+                "pipeline.models.mmsplice.loader.check_pip_package_availability",
+                return_value=PackageCheckStatus.PRESENT,
+            ):
+                reason = MMSpliceModel.unavailability_reason()
 
-        mock_ensure.assert_not_called()
-        self.assertIn("GEPER_MMSPLICE_MODEL_DIR", reason)
-        self.assertIn("Exon.h5", reason)
-        self.assertNotIn("pip", reason.lower())
+        self.assertNotIn("GEPER_MMSPLICE_MODEL_DIR", reason)
+        self.assertNotIn("Exon.h5", reason)
 
 
 if __name__ == "__main__":

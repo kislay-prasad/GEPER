@@ -15,10 +15,18 @@ Design constraints (deliberate, do not "fix"):
     it would be invoked standalone. No annotation/ACMG/ClinVar/AI-model
     logic is copied or reimplemented here.
   * Kim is invoked with `analyze --mode vcf_only`, so it stops right
-    after Variant Calling. Its own VEP/annotation/ACMG/PGx/ancestry/
+    after Variant Calling. Its own VEP/annotation/ACMG/ancestry/
     reporting stages never run in the combined workflow, but the modules
     implementing them are completely untouched and still work when Kim
     is run standalone (mode="full", the default).
+    PGx IS NO LONGER IN THAT LIST, AND ITS ABSENCE IS NOT AN OVERSIGHT:
+    `kim_pipeline/pipeline/pgx/` was DELETED on 2026-09-10 (merge
+    51320e1) when the human ruled pharmacogenomics off the clinical
+    report and the computation removed with it. The guarantee above is
+    unchanged for the four stages it still names; there is simply no
+    PGx module left for it to be true or false of. The bridge never
+    imported it -- this is a correction to what this file promises, not
+    a change to what it does.
   * GEPER is invoked with its existing `--vcf` CLI flag -- the same
     entry point used when a user runs GEPER directly against a VCF.
 """
@@ -295,10 +303,13 @@ def run_kim_fastq_to_vcf(
     """Run Kim's own `main.py analyze --mode vcf_only` entry point in a
     subprocess and return the path to the resulting filtered_variants.vcf.
 
-    Nothing about Kim's annotation/ACMG/PGx/ancestry/reporting modules is
+    Nothing about Kim's annotation/ACMG/ancestry/reporting modules is
     touched -- `--mode vcf_only` simply tells Kim's existing
     `PipelineRunner.run()` to stop after Variant Calling (Stage 1 of this
     integration), which Kim's own regression suite continues to verify.
+    PGx used to be named here too. It was deleted on 2026-09-10 (merge
+    51320e1), not quietly dropped from this sentence -- see the module
+    docstring at the top of this file.
     """
     kim_root = Path(kim_root).expanduser().resolve()
     if not (kim_root / "main.py").exists():

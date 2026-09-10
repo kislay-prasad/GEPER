@@ -1067,19 +1067,35 @@ class ReportGenerator:
         lines.append("### 10. Population Evidence")
         lines.append("")
         g = pop["gnomad"]
-        if g["queried"]:
+        if g.get("skip_reason"):
+            lines.append(f"- **gnomAD:** {g['skip_reason']}")
+        elif g.get("error") is not None:
+            # A genuine crash, not "gnomAD was never asked" -- see this
+            # section's own producer, `_population_evidence`, for why this
+            # branch exists (2026-09-11 fix: the field used to be dropped
+            # entirely, and both cases rendered as the generic "lookup
+            # unavailable" line below).
+            lines.append(
+                f"- **gnomAD:** _lookup failed (external service issue: {g['error']}) -- not evidence "
+                "of an absent variant, see Annotation Detail below._"
+            )
+        elif g["queried"]:
             lines.append(
                 f"- **gnomAD:** {'found, AF=' + str(g['global_af']) if g['found'] else 'variant not found (absent from gnomAD)'}"
             )
-        elif g.get("skip_reason"):
-            lines.append(f"- **gnomAD:** {g['skip_reason']}")
         else:
             lines.append("- **gnomAD:** lookup unavailable for this variant.")
         d = pop["dbsnp"]
-        if d["queried"]:
-            lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
-        elif d.get("skip_reason"):
+        if d.get("skip_reason"):
             lines.append(f"- **dbSNP:** {d['skip_reason']}")
+        elif d.get("error") is not None:
+            # Same distinction and same fix as gnomAD above.
+            lines.append(
+                f"- **dbSNP:** _lookup failed (external service issue: {d['error']}) -- not evidence "
+                "of no dbSNP record, see Annotation Detail below._"
+            )
+        elif d["queried"]:
+            lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
         else:
             lines.append("- **dbSNP:** lookup unavailable for this variant.")
         lines.append("")
@@ -1088,7 +1104,17 @@ class ReportGenerator:
         lines.append("### 11. Indian Population Frequency")
         lines.append("")
         gnomad_sas_af = ipf.get("gnomad_af_sas")
-        if ipf.get("gnomad_sas_queried"):
+        if ipf.get("gnomad_sas_error") is not None:
+            # Same distinction and same fix as Section 10's gnomAD line
+            # above -- this reads the identical gnomAD stage result for
+            # its South Asian subpopulation figure and had the same
+            # collapse (2026-09-11 fix).
+            lines.append(
+                f"- **gnomAD (South Asian, SAS):** _lookup failed (external service issue: "
+                f"{ipf['gnomad_sas_error']}) -- not evidence of no South Asian subpopulation data, "
+                "see Annotation Detail below._"
+            )
+        elif ipf.get("gnomad_sas_queried"):
             lines.append(
                 f"- **gnomAD (South Asian, SAS):** {'AF=' + str(gnomad_sas_af) if gnomad_sas_af is not None else 'no South Asian subpopulation data for this variant'}"
             )

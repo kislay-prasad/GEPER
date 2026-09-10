@@ -788,6 +788,18 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             # regardless of whether this was a deliberate skip or a
             # genuine outage.
             "skip_reason": gnomad.get("reason") if gnomad.get("skipped") else None,
+            # `error` distinguishes a failed lookup from either of the
+            # above -- see `_protein_knowledge`'s docstring for the same
+            # distinction. Before this field existed, `queried=False` with
+            # no `skip_reason` (an error is not a skip, so `skip_reason`
+            # stays `None` for it too) was indistinguishable from a
+            # deliberate skip whose `reason` happened to be falsy, and the
+            # renderer rendered both as generic "lookup unavailable" --
+            # collapsing "gnomAD broke" into "gnomAD was never asked",
+            # inside the clinician-facing summary section specifically
+            # (Section 10), while the Annotation Detail audit trail
+            # (`_render_gnomad`) already got this right.
+            "error": gnomad.get("error"),
         },
         "dbsnp": {
             "queried": not (dbsnp.get("skipped") or dbsnp.get("error") is not None),
@@ -801,6 +813,8 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             # deliberate-skip path has somewhere to put its reason
             # without a second silent-drop defect.
             "skip_reason": dbsnp.get("reason") if dbsnp.get("skipped") else None,
+            # Same reasoning and same fix as gnomAD's `error` field above.
+            "error": dbsnp.get("error"),
         },
     }
 
@@ -884,6 +898,14 @@ def _indian_population_frequency(
     return {
         "gnomad_af_sas": gnomad_sas_af,
         "gnomad_sas_queried": not (gnomad.get("skipped") or gnomad.get("error") is not None),
+        # Same fix, same reasoning as `_population_evidence`'s gnomad
+        # `error` field: this is the same underlying gnomAD stage result,
+        # re-read here for its South Asian subpopulation figure, and it
+        # had the identical collapse -- a failed lookup and a lookup
+        # never attempted both left `gnomad_sas_queried=False` with no
+        # way for the renderer to tell them apart, so both used to
+        # print the generic "lookup unavailable for this variant."
+        "gnomad_sas_error": gnomad.get("error"),
         "common_af_threshold": threshold,
         "common_in_indian_population": common_in_indian_population,
         "sas_shown": sas_shown,

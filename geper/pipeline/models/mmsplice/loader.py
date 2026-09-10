@@ -138,6 +138,38 @@ def _resolve_mmsplice_package_dir() -> Optional[str]:
     return list(spec.submodule_search_locations)[0]
 
 
+def _mmsplice_model_dir_missing_files(model_dir: str) -> List[str]:
+    """
+    Human-ruled 2026-09-10: `GEPER_MMSPLICE_MODEL_DIR` set is a
+    declaration of intent by an operator who knows their host is
+    air-gapped -- once set, MMSplice must never attempt a pip install,
+    complete or not. This is the completeness check that decision
+    depends on: returns the required files missing from `model_dir`
+    (empty list means complete), checked against the EXACT same
+    `layers.py` + `MODEL_FILENAMES` entries `_load_impl` itself
+    verifies further down (:289-317+) -- kept in lock-step so this can
+    never claim "complete" for a directory `_load_impl` would still
+    reject, and never claim "incomplete" for one it would accept.
+
+    Follows the RNA-FM `_cached_weights_path` precedent (check local
+    first, rather than failing into a local check only after a network
+    attempt already failed): this runs BEFORE
+    `_ensure_mmsplice_package_files_available` is ever called, so a
+    complete MODEL_DIR is used immediately with no pip/network attempt,
+    and an incomplete one fails immediately with an accurate reason
+    instead of a misleading "could not be installed automatically"
+    after a network attempt that could never have succeeded anyway
+    (there is no network on the host this setting exists for).
+    """
+    missing = []
+    if not os.path.isfile(os.path.join(model_dir, "layers.py")):
+        missing.append("layers.py")
+    for filename in MODEL_FILENAMES.values():
+        if not os.path.isfile(os.path.join(model_dir, "models", filename)):
+            missing.append(f"models/{filename}")
+    return missing
+
+
 def _load_module_from_path(module_name: str, file_path: str):
     """Load a single .py file as a standalone module, bypassing any parent package __init__."""
     spec = importlib.util.spec_from_file_location(module_name, file_path)
@@ -185,6 +217,12 @@ class MMSpliceModel(BaseGenomicModel):
             return False
         if not ensure_pip_package_available("tensorflow"):
             return False
+        if CONFIG.mmsplice.MODEL_DIR and not _mmsplice_model_dir_missing_files(CONFIG.mmsplice.MODEL_DIR):
+            # REACHABILITY FIX ONLY (human-ruled 2026-09-10) -- see
+            # _load_impl's identical branch for the full comment and
+            # what remains on hold (a set-but-incomplete MODEL_DIR
+            # falls through below, unchanged from before this card).
+            return True
         return _ensure_mmsplice_package_files_available() is PackageCheckStatus.PRESENT
 
     @classmethod
@@ -199,6 +237,11 @@ class MMSpliceModel(BaseGenomicModel):
             return "tensorflow availability not checked (auto-install disabled under pytest)"
         if tensorflow is PackageCheckStatus.ABSENT:
             return "tensorflow could not be installed automatically"
+        # A COMPLETE MODEL_DIR makes is_available() True, so this
+        # method is never reached for that case; a set-but-incomplete
+        # MODEL_DIR is deliberately UNCHANGED from before this card --
+        # HOLD (human-ruled 2026-09-10), see _load_impl's identical
+        # branch for the full context of what is and isn't decided yet.
         # Read the memo cache DIRECTLY rather than calling the seam. A
         # function named `unavailability_reason` must not be able to
         # trigger an install, and the seam's pytest guard is a property
@@ -242,19 +285,45 @@ class MMSpliceModel(BaseGenomicModel):
             )
         if tensorflow_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError("MMSplice requires 'tensorflow', which could not be installed automatically.")
-        package_files_status = _ensure_mmsplice_package_files_available()
-        if package_files_status is PackageCheckStatus.NOT_CHECKED:
-            raise ModelLoadError(
-                "MMSplice requires the 'mmsplice' package's bundled model files, whose "
-                "availability was not checked in this environment (auto-install is "
-                "disabled under pytest) -- they are not confirmed missing, they were "
-                "never looked for."
-            )
-        if package_files_status is PackageCheckStatus.ABSENT:
-            raise ModelLoadError(
-                "MMSplice requires the 'mmsplice' package's bundled model files, which "
-                "could not be installed automatically (pip install mmsplice --no-deps)."
-            )
+
+        # REACHABILITY FIX ONLY (human-ruled 2026-09-10), following the
+        # RNA-FM `_cached_weights_path` precedent (check local first,
+        # rather than failing into a local check only after a network
+        # attempt already failed): a COMPLETE MODEL_DIR is used
+        # directly below, with `_ensure_mmsplice_package_files_available`
+        # (which shells out to `pip install`) never called at all --
+        # closing the defect where the function that actually reads
+        # MODEL_DIR (`_resolve_mmsplice_package_dir`) was unreachable
+        # on this path. See `_mmsplice_model_dir_missing_files`'s own
+        # docstring.
+        #
+        # HOLD, DELIBERATELY NOT BUILT: whether a set-but-INCOMPLETE
+        # MODEL_DIR should instead fail immediately, naming MODEL_DIR
+        # and the missing file(s), is a separate clinical failure-path
+        # decision (silent degradation vs. hard failure vs.
+        # disclose-on-report) this card does not own -- an earlier
+        # version of this fix built that behaviour and it was withdrawn
+        # pending the human's own ruling. Until it lands, a
+        # set-but-incomplete MODEL_DIR falls through to the SAME
+        # branch as an unset one, unchanged: this is a one-branch edit
+        # away from wherever that ruling lands, not a rewrite.
+        model_dir_complete = bool(CONFIG.mmsplice.MODEL_DIR) and not _mmsplice_model_dir_missing_files(
+            CONFIG.mmsplice.MODEL_DIR
+        )
+        if not model_dir_complete:
+            package_files_status = _ensure_mmsplice_package_files_available()
+            if package_files_status is PackageCheckStatus.NOT_CHECKED:
+                raise ModelLoadError(
+                    "MMSplice requires the 'mmsplice' package's bundled model files, whose "
+                    "availability was not checked in this environment (auto-install is "
+                    "disabled under pytest) -- they are not confirmed missing, they were "
+                    "never looked for."
+                )
+            if package_files_status is PackageCheckStatus.ABSENT:
+                raise ModelLoadError(
+                    "MMSplice requires the 'mmsplice' package's bundled model files, which "
+                    "could not be installed automatically (pip install mmsplice --no-deps)."
+                )
 
         # Round 22: every raise below this point used to embed a local
         # filesystem path directly into the exception it raises. This

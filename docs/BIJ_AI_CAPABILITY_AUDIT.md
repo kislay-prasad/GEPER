@@ -567,6 +567,19 @@ which, do not assume either").
   and geper/ produces the interpretation (subprocess). This is a real,
   working entry point today. [bridge/run_combined.py:44-85;
   bridge/combined_pipeline.py:283-566]
+  **This bullet is silent on what running that one command actually
+  requires of the host — deliberately not duplicated here.** See
+  [DOCKER.md](../DOCKER.md): "Before you build" (:22-79, the three
+  pre-fetched torch wheels a fresh clone does not contain — the same
+  files this repository's `.gitignore:124-126` excludes and
+  `Dockerfile:237-239` `COPY`s by exact name), "What's baked into the
+  image vs. what's still a first-run cost" (:215-228, the invoked
+  system binaries and the volume-vs-baked-in model weights), "One
+  shared venv, not the `--kim-python`/`--geper-python` split" (:594-613,
+  the bridge's two-interpreter flags currently point at one merged
+  environment), and "Verified vs. not yet verified" (:726-734, **this
+  combined image has never actually been built or run** — only
+  statically reviewed, per that section's own words).
 
 ### CANNOT DO TODAY
 - geper/ alone cannot ingest FASTQ/BAM/CRAM — confirmed by the repo's own

@@ -19,10 +19,10 @@ journal mode + a busy_timeout so concurrent threads within one process
 the same Google-Drive-mounted cache file across Colab sessions don't
 corrupt the file or hit "database is locked" errors.
 """
+
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 import threading
 import time
@@ -87,7 +87,8 @@ class GnomadDiskCache:
             logger.warning(
                 "[gnomAD cache] Could not open SQLite cache at '%s' (%s) — "
                 "continuing without persistent cache for this run.",
-                self.path, exc,
+                self.path,
+                exc,
             )
             self._conn = None
             self._init_error = str(exc)
@@ -142,7 +143,7 @@ class GnomadDiskCache:
                 # SQLite has a default limit of 999 bound parameters —
                 # chunk defensively for large variant batches.
                 for i in range(0, len(keys), 500):
-                    chunk = keys[i:i + 500]
+                    chunk = keys[i : i + 500]
                     placeholders = ",".join("?" * len(chunk))
                     rows = self._conn.execute(
                         f"SELECT cache_key, outcome, af, af_popmax, ac, an, backend, cached_at "
@@ -154,8 +155,12 @@ class GnomadDiskCache:
                 if self.ttl_seconds is not None and (now - cached_at) > self.ttl_seconds:
                     continue
                 out[cache_key] = {
-                    "outcome": outcome, "af": af, "af_popmax": af_popmax,
-                    "ac": ac, "an": an, "backend": backend,
+                    "outcome": outcome,
+                    "af": af,
+                    "af_popmax": af_popmax,
+                    "ac": ac,
+                    "an": an,
+                    "backend": backend,
                 }
         except sqlite3.Error as exc:
             logger.warning("[gnomAD cache] bulk read failed: %s", exc)
@@ -184,7 +189,8 @@ class GnomadDiskCache:
             # rule — this is the one place that rule can be enforced once.
             logger.debug(
                 "[gnomAD cache] refusing to persist non-terminal outcome '%s' for '%s'",
-                outcome, cache_key,
+                outcome,
+                cache_key,
             )
             return
         try:

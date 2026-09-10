@@ -12,8 +12,6 @@ Confirms:
 import inspect
 import json
 
-import pytest
-
 
 SAMPLE_VCF = """##fileformat=VCFv4.2
 ##contig=<ID=chr1,length=248956422>
@@ -32,11 +30,13 @@ def _write_vcf(tmp_path):
 
 def test_iter_vcf_is_a_generator():
     from pipeline.annotation.stage import _iter_vcf
+
     assert inspect.isgeneratorfunction(_iter_vcf)
 
 
 def test_iter_vcf_matches_parse_vcf(tmp_path):
     from pipeline.annotation.stage import _iter_vcf, _parse_vcf
+
     vcf = _write_vcf(tmp_path)
     streamed = list(_iter_vcf(vcf))
     listed = _parse_vcf(vcf)
@@ -50,6 +50,7 @@ def test_iter_vcf_lazy_consumption_does_not_retain_all_records(tmp_path):
     memory simultaneously — a basic smoke test that the generator yields
     incrementally rather than building a list under the hood."""
     from pipeline.annotation.stage import _iter_vcf
+
     vcf = _write_vcf(tmp_path)
     gen = _iter_vcf(vcf)
     first = next(gen)
@@ -63,16 +64,23 @@ def test_iter_vcf_lazy_consumption_does_not_retain_all_records(tmp_path):
 
 def test_streaming_annotation_json_writer_matches_json_dumps(tmp_path):
     from pipeline.annotation.stage import (
-        _parse_vcf, _write_annotation_json_streaming, AnnotationResult,
+        _parse_vcf,
+        _write_annotation_json_streaming,
+        AnnotationResult,
     )
+
     vcf = _write_vcf(tmp_path)
     variants = _parse_vcf(vcf)
     result = AnnotationResult(
-        sample_id="s1", annotated_vcf_path=vcf,
+        sample_id="s1",
+        annotated_vcf_path=vcf,
         annotation_json_path=str(tmp_path / "ann.json"),
-        total_variants=len(variants), annotated_count=0,
-        unannotated_count=len(variants), gff3_source="",
-        elapsed_seconds=1.23, variants=variants,
+        total_variants=len(variants),
+        annotated_count=0,
+        unannotated_count=len(variants),
+        gff3_source="",
+        elapsed_seconds=1.23,
+        variants=variants,
     )
     out_stream = tmp_path / "stream.json"
     out_dumps = tmp_path / "dumps.json"
@@ -87,6 +95,7 @@ def test_annotation_stage_run_uses_iter_vcf_not_full_list_upfront():
     calling the list-materializing _parse_vcf() before processing."""
     import inspect as _inspect
     from pipeline.annotation import stage as stage_mod
+
     src = _inspect.getsource(stage_mod.AnnotationStage.run)
     assert "_iter_vcf(filtered_vcf_path" in src
     assert "_parse_vcf(filtered_vcf_path)" not in src

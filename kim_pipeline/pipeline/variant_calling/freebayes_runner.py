@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from geper.pipeline.fastq.pipeline import FastqPipelineError, _require, _run
 
@@ -81,7 +81,8 @@ def run_freebayes(
         raise FastqPipelineError(f"BAM not found: {bam_path!r}", stage="variant_calling.freebayes")
     if not Path(reference_fasta).exists():
         raise FastqPipelineError(
-            f"Reference FASTA not found: {reference_fasta!r}", stage="variant_calling.freebayes",
+            f"Reference FASTA not found: {reference_fasta!r}",
+            stage="variant_calling.freebayes",
         )
 
     freebayes = _require("freebayes", "variant_calling.freebayes")
@@ -91,11 +92,16 @@ def run_freebayes(
     Path(output_vcf_path).parent.mkdir(parents=True, exist_ok=True)
 
     base_args = [
-        "-f", reference_fasta,
-        "--min-base-quality", str(min_base_quality),
-        "--min-mapping-quality", str(min_mapping_quality),
-        "--min-alternate-fraction", str(min_alternate_fraction),
-        "--min-alternate-count", str(min_alternate_count),
+        "-f",
+        reference_fasta,
+        "--min-base-quality",
+        str(min_base_quality),
+        "--min-mapping-quality",
+        str(min_mapping_quality),
+        "--min-alternate-fraction",
+        str(min_alternate_fraction),
+        "--min-alternate-count",
+        str(min_alternate_count),
     ]
 
     use_parallel = (

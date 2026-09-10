@@ -5,17 +5,28 @@ from unittest import mock
 
 from pipeline.interpro.cache import InterProCache
 from pipeline.interpro.lookup import InterProLookup
-from pipeline.interpro.models import InterProAnnotation, InterProDomainMatch
+from pipeline.interpro.models import InterProDomainMatch
 from pipeline.interpro.utils import accession_cache_key, normalize_accession, parse_interpro_response
 
 _SAMPLE_PAYLOAD = {
     "results": [
         {
-            "metadata": {"accession": "IPR002117", "name": "p53 tumour suppressor family", "type": "family", "source_database": "interpro"},
+            "metadata": {
+                "accession": "IPR002117",
+                "name": "p53 tumour suppressor family",
+                "type": "family",
+                "source_database": "interpro",
+            },
             "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 94, "end": 289}]}]}],
         },
         {
-            "metadata": {"accession": "PF00870", "name": "P53", "type": "domain", "source_database": "pfam", "integrated": "IPR002117"},
+            "metadata": {
+                "accession": "PF00870",
+                "name": "P53",
+                "type": "domain",
+                "source_database": "pfam",
+                "integrated": "IPR002117",
+            },
             "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 100, "end": 280}]}]}],
         },
     ]
@@ -160,7 +171,11 @@ class TestInterProLookupQueryVariant(unittest.TestCase):
         # pipeline/interpro/lookup.py::query_variant's docstring.
         provider = mock.Mock()
         annotation = mock.Mock()
-        annotation.to_dict.return_value = {"found": True, "error": None, "domains": [{"name": "x", "start": 1, "end": 10}]}
+        annotation.to_dict.return_value = {
+            "found": True,
+            "error": None,
+            "domains": [{"name": "x", "start": 1, "end": 10}],
+        }
         annotation.error = None
         provider.query.return_value = annotation
 

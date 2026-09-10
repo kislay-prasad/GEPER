@@ -24,7 +24,6 @@ from pipeline.gnomad.provider import (
     GraphQLGnomadProvider,
     LocalIndexedGnomadProvider,
 )
-from utils.exceptions import ExternalAPIError
 
 _HAS_TABIX = shutil.which("tabix") is not None and shutil.which("bgzip") is not None
 
@@ -111,9 +110,14 @@ class TestGraphQLGnomadProviderMocked(unittest.TestCase):
             "data": {
                 "variant": {
                     "genome": {
-                        "ac": 10, "an": 2000, "af": 0.005,
-                        "homozygote_count": 0, "hemizygote_count": None,
-                        "populations": [{"id": "afr", "ac": 5, "an": 500, "homozygote_count": 0, "hemizygote_count": None}],
+                        "ac": 10,
+                        "an": 2000,
+                        "af": 0.005,
+                        "homozygote_count": 0,
+                        "hemizygote_count": None,
+                        "populations": [
+                            {"id": "afr", "ac": 5, "an": 500, "homozygote_count": 0, "hemizygote_count": None}
+                        ],
                     },
                     "exome": None,
                 }

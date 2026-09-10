@@ -16,7 +16,6 @@ from pipeline.utils.dependency_validator import (
     ToolSpec,
     check_tool,
     validate_dependencies,
-    assert_required_dependencies,
     DependencyValidationError,
     DependencyReport,
 )
@@ -35,6 +34,7 @@ def _fake_version(path: str, args):
 
 
 # ─── check_tool ────────────────────────────────────────────────────────────────
+
 
 def test_check_tool_found_required():
     spec = ToolSpec(name="samtools", candidates=("samtools",), required=True)
@@ -62,6 +62,7 @@ def test_check_tool_missing_optional_is_warning_not_missing():
 
 def test_check_tool_candidate_fallback():
     """bwa-mem2 missing, bwa present -> should resolve via second candidate."""
+
     def which_fn(name):
         return "/usr/bin/bwa" if name == "bwa" else None
 
@@ -72,6 +73,7 @@ def test_check_tool_candidate_fallback():
 
 
 # ─── validate_dependencies / DependencyReport ─────────────────────────────────
+
 
 def test_validate_dependencies_all_present():
     report = validate_dependencies(which_fn=_fake_which_all_present, version_fn=_fake_version)
@@ -89,7 +91,9 @@ def test_validate_dependencies_missing_required_tools():
 
 def test_validate_dependencies_require_minimap2_flag():
     report = validate_dependencies(
-        require_minimap2=True, which_fn=_fake_which_none_present, version_fn=_fake_version,
+        require_minimap2=True,
+        which_fn=_fake_which_none_present,
+        version_fn=_fake_version,
     )
     missing_names = {r.name for r in report.missing_required}
     assert "minimap2" in missing_names
@@ -97,7 +101,9 @@ def test_validate_dependencies_require_minimap2_flag():
 
 def test_validate_dependencies_require_vep_flag():
     report = validate_dependencies(
-        require_vep=True, which_fn=_fake_which_none_present, version_fn=_fake_version,
+        require_vep=True,
+        which_fn=_fake_which_none_present,
+        version_fn=_fake_version,
     )
     missing_names = {r.name for r in report.missing_required}
     assert "vep" in missing_names
@@ -124,6 +130,7 @@ def test_report_as_dict_roundtrip():
 
 
 # ─── assert_required_dependencies / DependencyValidationError ─────────────────
+
 
 def test_assert_required_dependencies_returns_report_type():
     report = assert_required_dependencies_with_mocks(_fake_which_all_present, _fake_version)

@@ -12,11 +12,11 @@ simply testable with plain strings.
 """
 
 import time
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from config import CONFIG
 from pipeline.models.mmsplice.loader import MMSpliceModel
-from pipeline.models.mmsplice.models import ModularScores, MMSpliceRawPrediction
+from pipeline.models.mmsplice.models import MMSpliceRawPrediction
 from pipeline.models.mmsplice.utils import predict_delta_logit_psi
 from utils.logger import get_logger
 

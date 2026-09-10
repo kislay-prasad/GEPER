@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.hpo.cache import HPOCache
-from pipeline.hpo.models import HPOGeneEvidence
 from pipeline.hpo.provider import CompositeHPOProvider
 from pipeline.hpo.utils import gene_cache_key, normalize_gene_symbol
 from utils.logger import get_logger
@@ -132,9 +131,20 @@ class HPOLookup:
         for gene_symbol in gene_symbols:
             gene_symbol = normalize_gene_symbol(gene_symbol)
             if not gene_symbol:
-                results.append({"skipped": False, "found": False, "gene_symbol": None, "reason": "no overlapping gene annotation resolved"})
+                results.append(
+                    {
+                        "skipped": False,
+                        "found": False,
+                        "gene_symbol": None,
+                        "reason": "no overlapping gene annotation resolved",
+                    }
+                )
                 continue
-            result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
+            result = (
+                cached_by_gene.get(gene_symbol)
+                or fetched_by_gene.get(gene_symbol)
+                or {"skipped": False, "found": False}
+            )
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
             results.append(result)

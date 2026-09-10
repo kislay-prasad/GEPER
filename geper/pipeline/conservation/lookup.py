@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.conservation.cache import ConservationCache
-from pipeline.conservation.models import ConservationAnnotation
 from pipeline.conservation.provider import CompositeConservationProvider
 from pipeline.conservation.utils import normalize_build, position_key
 from pipeline.vcf_parser import Variant
@@ -49,7 +48,11 @@ class ConservationLookup:
         """Look up conservation evidence for one variant's position. Never raises --
         matches GnomadLookup.query_variant's contract."""
         if not CONFIG.conservation.ENABLED:
-            return {"skipped": True, "reason": "conservation integration disabled via GEPER_ENABLE_CONSERVATION=false", "found": False}
+            return {
+                "skipped": True,
+                "reason": "conservation integration disabled via GEPER_ENABLE_CONSERVATION=false",
+                "found": False,
+            }
 
         build = normalize_build(assembly)
         key = position_key(variant.chrom, variant.pos, build)
@@ -75,7 +78,11 @@ class ConservationLookup:
         """Synchronous batch lookup (thread-pooled), for an up-front prefetch pass over a whole VCF."""
         if not CONFIG.conservation.ENABLED:
             return [
-                {"skipped": True, "reason": "conservation integration disabled via GEPER_ENABLE_CONSERVATION=false", "found": False}
+                {
+                    "skipped": True,
+                    "reason": "conservation integration disabled via GEPER_ENABLE_CONSERVATION=false",
+                    "found": False,
+                }
                 for _ in variants
             ]
         build = normalize_build(assembly)
@@ -94,9 +101,7 @@ class ConservationLookup:
                 to_fetch.append((idx, variant))
 
         if to_fetch:
-            fetched = self.provider.batch_query(
-                [(v.chrom, v.pos, v.ref, v.alt, build) for _, v in to_fetch]
-            )
+            fetched = self.provider.batch_query([(v.chrom, v.pos, v.ref, v.alt, build) for _, v in to_fetch])
             for (idx, variant), annotation in zip(to_fetch, fetched):
                 result = annotation.to_dict()
                 result["skipped"] = False

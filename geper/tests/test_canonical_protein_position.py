@@ -21,7 +21,7 @@ import json
 import os
 import unittest
 
-from pipeline.pvs1.utils import canonical_protein_position, transcript_context_from_dict
+from pipeline.pvs1.utils import canonical_protein_position
 
 _FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "pvs1_transcripts.json")
 

@@ -43,7 +43,6 @@ import shutil
 import sys
 import tempfile
 import time
-from typing import Dict
 from unittest import mock
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -91,7 +90,9 @@ def main() -> int:
             r3 = client.search(seq)  # in-memory hit again
 
         calls_after_same_instance = _search_call_count["n"]
-        print(f"  Real search calls for 3x identical search() on one instance: {calls_after_same_instance} (expected 1)")
+        print(
+            f"  Real search calls for 3x identical search() on one instance: {calls_after_same_instance} (expected 1)"
+        )
         print(f"  r1 == r2 == r3: {r1 == r2 == r3}")
 
         part1_ok = calls_after_same_instance == 1 and r1 == r2 == r3
@@ -111,7 +112,9 @@ def main() -> int:
             calls_after = _search_call_count["n"]
 
         part2_ok = calls_after == calls_before and r4 == r1
-        print(f"  New instance, same cache_dir, same sequence -> real search calls: {calls_after - calls_before} (expected 0)")
+        print(
+            f"  New instance, same cache_dir, same sequence -> real search calls: {calls_after - calls_before} (expected 0)"
+        )
         print(f"  Result identical to PART 1's real search: {r4 == r1}")
         if not part2_ok:
             print("  FAILURE.")
@@ -141,7 +144,9 @@ def main() -> int:
             batch_elapsed = time.perf_counter() - batch_start
 
         expected_serial = len(distinct_sequences) * _FAKE_REMOTE_LATENCY_SECS
-        print(f"  Serial: {len(distinct_sequences)} sequences took {serial_elapsed:.2f}s (~{expected_serial:.2f}s expected)")
+        print(
+            f"  Serial: {len(distinct_sequences)} sequences took {serial_elapsed:.2f}s (~{expected_serial:.2f}s expected)"
+        )
         print(f"  Batched (search_many, 6 concurrent): took {batch_elapsed:.2f}s")
         print(f"  search_many returned {len(results)} results for {len(distinct_sequences)} distinct inputs")
 
@@ -161,11 +166,15 @@ def main() -> int:
         print("=" * 78)
         _search_call_count["n"] = 0
         with mock.patch.object(BLASTClient, "_search_remote", _fake_search_remote):
-            client_d = BLASTClient(mode="remote", disabled=False, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_"))
+            client_d = BLASTClient(
+                mode="remote", disabled=False, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_")
+            )
             dup_seq = "GATTACA" * 10
             batch_results = client_d.search_many([dup_seq, dup_seq, dup_seq, dup_seq + "X"])
         part4_ok = _search_call_count["n"] == 2 and len(batch_results) == 2
-        print(f"  4 requested sequences (3 identical + 1 distinct) -> real search calls: {_search_call_count['n']} (expected 2)")
+        print(
+            f"  4 requested sequences (3 identical + 1 distinct) -> real search calls: {_search_call_count['n']} (expected 2)"
+        )
         print(f"  Unique results returned: {len(batch_results)} (expected 2)")
         if not part4_ok:
             print("  FAILURE.")
@@ -203,7 +212,9 @@ def main() -> int:
         print("=" * 78)
         _search_call_count["n"] = 0
         with mock.patch.object(BLASTClient, "_search_remote", _fake_search_remote):
-            disabled_client = BLASTClient(mode="remote", disabled=True, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_"))
+            disabled_client = BLASTClient(
+                mode="remote", disabled=True, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_")
+            )
             single = disabled_client.search("ACGTACGT")
             batch = disabled_client.search_many(["ACGTACGT", "TTTTGGGG"])
 
@@ -226,9 +237,7 @@ def main() -> int:
         print("=" * 78)
         import shutil as _shutil_mod
 
-        blast_tools_present = all(
-            _shutil_mod.which(t) for t in ("blastn", "makeblastdb", "blastdbcmd")
-        )
+        blast_tools_present = all(_shutil_mod.which(t) for t in ("blastn", "makeblastdb", "blastdbcmd"))
         if not blast_tools_present:
             print("  SKIPPED: blastn/makeblastdb/blastdbcmd not all present on PATH in this environment.")
             part7_ok = True  # not a failure of GEPER's logic -- just an untestable environment
@@ -242,16 +251,16 @@ def main() -> int:
             from database.blast_client import ensure_local_blast_db, _has_local_db_files
 
             first_build = ensure_local_blast_db(fasta_path, db_path)
-            db_files_after_first = sorted(
-                f for f in os.listdir(fasta_dir) if f.startswith("refdb")
-            )
+            db_files_after_first = sorted(f for f in os.listdir(fasta_dir) if f.startswith("refdb"))
             mtimes_after_first = {f: os.path.getmtime(os.path.join(fasta_dir, f)) for f in db_files_after_first}
 
             time.sleep(0.05)
             second_build = ensure_local_blast_db(fasta_path, db_path)  # must NOT rebuild
             mtimes_after_second = {f: os.path.getmtime(os.path.join(fasta_dir, f)) for f in db_files_after_first}
 
-            auto_client = BLASTClient(mode="auto", local_db_path=db_path, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_"))
+            auto_client = BLASTClient(
+                mode="auto", local_db_path=db_path, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_")
+            )
             live_result = auto_client.search("ACGTACGTACGTACGTGGGGCCCCAAAATTTT")
 
             part7_ok = (
@@ -264,7 +273,9 @@ def main() -> int:
                 and live_result.get("mode") == "local"
             )
             print(f"  First ensure_local_blast_db() call built DB at: {first_build}")
-            print(f"  Second call (DB already exists) returned: {second_build} (no rebuild -- file mtimes unchanged: {mtimes_after_first == mtimes_after_second})")
+            print(
+                f"  Second call (DB already exists) returned: {second_build} (no rebuild -- file mtimes unchanged: {mtimes_after_first == mtimes_after_second})"
+            )
             print(f"  mode='auto' with this DB resolved to: '{auto_client.mode}' (expected 'local')")
             print(f"  Real blastn search against the auto-built DB found {live_result.get('hit_count')} hit(s)")
             shutil.rmtree(fasta_dir, ignore_errors=True)
@@ -279,7 +290,9 @@ def main() -> int:
         print("PART 8 -- mode='auto' degrades to a graceful 'skip' when neither backend is usable")
         print("=" * 78)
         with mock.patch("database.blast_client.ensure_pip_package_available", return_value=False):
-            skip_client = BLASTClient(mode="auto", local_db_path=None, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_"))
+            skip_client = BLASTClient(
+                mode="auto", local_db_path=None, cache_dir=tempfile.mkdtemp(prefix="geper_blast_verify_")
+            )
             skip_single = skip_client.search("ACGTACGT")
             skip_batch = skip_client.search_many(["ACGTACGT", "TTTTGGGG"])
 
@@ -290,7 +303,9 @@ def main() -> int:
         )
         print(f"  No local DB, Biopython unavailable -> resolved mode: '{skip_client.mode}' (expected 'skip')")
         print(f"  search() short-circuits with skipped=True: {skip_single.get('skipped')}")
-        print(f"  search_many() short-circuits with skipped=True for all: {all(v.get('skipped') is True for v in skip_batch.values())}")
+        print(
+            f"  search_many() short-circuits with skipped=True for all: {all(v.get('skipped') is True for v in skip_batch.values())}"
+        )
         if not part8_ok:
             print("  FAILURE.")
         print("PART 8:", "PASSED" if part8_ok else "FAILED")

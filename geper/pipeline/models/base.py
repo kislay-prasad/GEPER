@@ -20,7 +20,7 @@ does today.
 
 import abc
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from utils.device_utils import get_device
@@ -118,14 +118,9 @@ class PluginModel(abc.ABC):
         try:
             self._load_impl()
         except Exception as exc:  # noqa: BLE001
-            raise ModelLoadError(
-                f"Failed to load plugin '{self.metadata().name}': {exc}"
-            ) from exc
+            raise ModelLoadError(f"Failed to load plugin '{self.metadata().name}': {exc}") from exc
         self._loaded = True
-        self.logger.info(
-            f"Loaded plugin '{self.metadata().name}' on {self.device} "
-            f"in {time.time() - start:.1f}s."
-        )
+        self.logger.info(f"Loaded plugin '{self.metadata().name}' on {self.device} in {time.time() - start:.1f}s.")
         return self
 
     def predict(self, *args, **kwargs) -> Dict[str, Any]:
@@ -135,9 +130,7 @@ class PluginModel(abc.ABC):
         try:
             result = self._infer_impl(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
-            raise ModelInferenceError(
-                f"Inference failed for plugin '{self.metadata().name}': {exc}"
-            ) from exc
+            raise ModelInferenceError(f"Inference failed for plugin '{self.metadata().name}': {exc}") from exc
         result.setdefault("meta", {})
         result["meta"].update(
             {

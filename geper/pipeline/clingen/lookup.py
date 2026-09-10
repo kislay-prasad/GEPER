@@ -23,15 +23,24 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.clingen.cache import ClinGenCache
-from pipeline.clingen.models import ClinGenGeneEvidence
 from pipeline.clingen.provider import CompositeClinGenProvider
-from pipeline.clingen.utils import GeneResolution, GeneResolutionStatus, gene_cache_key, normalize_gene_symbol, resolve_gene_symbol_detail
+from pipeline.clingen.utils import (
+    GeneResolution,
+    GeneResolutionStatus,
+    gene_cache_key,
+    normalize_gene_symbol,
+    resolve_gene_symbol_detail,
+)
 from pipeline.vcf_parser import Variant
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SKIPPED_RESULT = {"skipped": True, "reason": "ClinGen integration disabled via GEPER_ENABLE_CLINGEN=false", "found": False}
+_SKIPPED_RESULT = {
+    "skipped": True,
+    "reason": "ClinGen integration disabled via GEPER_ENABLE_CLINGEN=false",
+    "found": False,
+}
 
 
 class ClinGenLookup:
@@ -192,7 +201,11 @@ class ClinGenLookup:
                 )
                 continue
             gene_symbol = resolution.gene_symbol
-            result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
+            result = (
+                cached_by_gene.get(gene_symbol)
+                or fetched_by_gene.get(gene_symbol)
+                or {"skipped": False, "found": False}
+            )
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
             result["gene_resolution_status"] = resolution.status.value

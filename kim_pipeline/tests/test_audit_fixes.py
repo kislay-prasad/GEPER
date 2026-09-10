@@ -10,13 +10,13 @@ Regression tests for all bugs found during the Phase 2 audit:
            (PP4 uses phenotype_specific_for_gene — logic was actually correct,
             just the documentation was wrong; verified here)
 """
+
 from __future__ import annotations
 
 import dataclasses
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -25,6 +25,7 @@ from pipeline.orchestration.runner import PipelineResult
 
 
 # ─── BUG 1: BP4 missing AlphaMissense ────────────────────────────────────────
+
 
 class TestBp4AlphaMissense:
     """BP4 must include AlphaMissense in its benign vote (symmetric with PP3)."""
@@ -55,7 +56,9 @@ class TestBp4AlphaMissense:
         """AlphaMissense participates in the majority-vote — two benign, one damaging."""
         # CADD=5 (benign), AM=0.1 (benign), REVEL=0.9 (damaging)
         # 2/3 benign → majority benign → BP4 met
-        ev = VariantEvidence(cadd_phred=5.0, alphamissense_score=0.1, revel_score=0.9, is_missense=True)
+        ev = VariantEvidence(
+            cadd_phred=5.0, alphamissense_score=0.1, revel_score=0.9, is_missense=True
+        )
         r = self._clf().classify(ev)
         assert "BP4" in r.criteria_met
 
@@ -80,6 +83,7 @@ class TestBp4AlphaMissense:
 
 
 # ─── BUG 2: PM5 / PS1 double-counting ────────────────────────────────────────
+
 
 class TestPm5Ps1NoDuplication:
     """PM5 and PS1 must not both fire on the same evidence field."""
@@ -169,7 +173,7 @@ class TestPm5Ps1NoDuplication:
     def test_pm5_fires_without_ps1(self):
         """PM5 fires when novel_aa_at_known_pathogenic_codon=True and PS1 is NOT active."""
         ev = VariantEvidence(
-            same_aa_pathogenic=None,           # PS1 NOT active
+            same_aa_pathogenic=None,  # PS1 NOT active
             novel_aa_at_known_pathogenic_codon=True,
             is_missense=True,
         )
@@ -179,6 +183,7 @@ class TestPm5Ps1NoDuplication:
 
 
 # ─── BUG 3: PipelineResult.errors field ──────────────────────────────────────
+
 
 class TestPipelineResultErrorsField:
     """errors must be a declared dataclass field, not dynamically set."""
@@ -213,12 +218,12 @@ class TestPipelineResultErrorsField:
         r2 = PipelineResult()
         r1.errors.append("err")
         assert r2.errors == [], (
-            "errors lists must not be shared between instances — "
-            "use field(default_factory=list)"
+            "errors lists must not be shared between instances — use field(default_factory=list)"
         )
 
 
 # ─── BUG 4: PP1 / PP4 field independence ─────────────────────────────────────
+
 
 class TestPp1Pp4Independence:
     """PP1 uses segregates_with_disease; PP4 uses phenotype_specific_for_gene."""
@@ -255,6 +260,7 @@ class TestPp1Pp4Independence:
 
 
 # ─── Additional: novel_aa field in VariantEvidence ────────────────────────────
+
 
 class TestNovelAaField:
     """novel_aa_at_known_pathogenic_codon field behaves correctly."""

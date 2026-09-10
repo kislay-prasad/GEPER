@@ -9,7 +9,7 @@ imports it" shape `pipeline/sequence_context.py::SequenceContext` and
 `pipeline/vcf_parser.py::Variant` already use elsewhere in GEPER.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,9 @@ class SpliceWindow:
     window_genomic_end: int
     upstream_overhang: int  # actual bp of acceptor-side intron included (<= configured window)
     downstream_overhang: int  # actual bp of donor-side intron included (<= configured window)
-    variant_distance_to_acceptor: Optional[int]  # bp from variant to this exon's acceptor boundary (None if not applicable)
+    variant_distance_to_acceptor: Optional[
+        int
+    ]  # bp from variant to this exon's acceptor boundary (None if not applicable)
     variant_distance_to_donor: Optional[int]  # bp from variant to this exon's donor boundary (None if not applicable)
 
 

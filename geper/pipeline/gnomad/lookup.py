@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.gnomad.cache import GnomadCache
-from pipeline.gnomad.models import GnomadAnnotation
 from pipeline.gnomad.provider import CompositeGnomadProvider
 from pipeline.gnomad.utils import normalize_build, variant_key
 from pipeline.vcf_parser import Variant
@@ -54,7 +53,11 @@ class GnomadLookup:
         against it throwing.
         """
         if not CONFIG.gnomad.ENABLED:
-            return {"skipped": True, "reason": "gnomAD integration disabled via GEPER_ENABLE_GNOMAD=false", "found": False}
+            return {
+                "skipped": True,
+                "reason": "gnomAD integration disabled via GEPER_ENABLE_GNOMAD=false",
+                "found": False,
+            }
 
         build = normalize_build(assembly)
         key = variant_key(variant.chrom, variant.pos, variant.ref, variant.alt, build)
@@ -101,9 +104,7 @@ class GnomadLookup:
                 to_fetch.append((idx, variant))
 
         if to_fetch:
-            fetched = self.provider.batch_query(
-                [(v.chrom, v.pos, v.ref, v.alt, build) for _, v in to_fetch]
-            )
+            fetched = self.provider.batch_query([(v.chrom, v.pos, v.ref, v.alt, build) for _, v in to_fetch])
             for (idx, variant), annotation in zip(to_fetch, fetched):
                 result = annotation.to_dict()
                 result["skipped"] = False
@@ -114,7 +115,9 @@ class GnomadLookup:
 
         return [results[i] for i in range(len(variants))]
 
-    async def async_query_variants_batch(self, variants: List[Variant], assembly: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def async_query_variants_batch(
+        self, variants: List[Variant], assembly: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Async equivalent of `query_variants_batch`, for callers already running inside an event loop (e.g. an async API server)."""
         if not CONFIG.gnomad.ENABLED:
             return [
@@ -122,9 +125,7 @@ class GnomadLookup:
                 for _ in variants
             ]
         build = normalize_build(assembly)
-        annotations = await self.provider.async_batch_query(
-            [(v.chrom, v.pos, v.ref, v.alt, build) for v in variants]
-        )
+        annotations = await self.provider.async_batch_query([(v.chrom, v.pos, v.ref, v.alt, build) for v in variants])
         results = []
         for variant, annotation in zip(variants, annotations):
             result = annotation.to_dict()

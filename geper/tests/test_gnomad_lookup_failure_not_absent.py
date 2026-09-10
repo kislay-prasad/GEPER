@@ -49,7 +49,13 @@ COUNTED (an "all consumers are fine" claim that does not name them is
 agreeing with a number):
 
   acmg_rules.py::_pm2                              PM2 "triggered"  <-- the dangerous one
-  interpretation.py::_gnomad_acmg_evidence         +1.0 pathogenic evidence line
+  interpretation.py::_gnomad_acmg_evidence         +1.0 pathogenic score weight
+                                                   (it also built a sentence; since the
+                                                   HIGH 3 Q4-B/T3-F1 ruling that sentence
+                                                   is discarded by its only caller and
+                                                   reaches no reader -- the WEIGHT is the
+                                                   part that still gets out, via
+                                                   `_build_summary`'s Summary/Confidence)
   prioritization_engine.py::_population_rarity_factor
                                                    factor 1.0, "Variant absent from gnomAD."
   confidence_engine.py::_population_quality        quality 0.8, rationale asserting
@@ -344,7 +350,12 @@ class TestConfirmedAbsenceStillCountsAsEvidence(unittest.TestCase):
     def test_confirmed_absence_still_contributes_interpretation_evidence(self):
         evidence = InterpretationEngine._gnomad_acmg_evidence(CONFIRMED_ABSENT)
         self.assertEqual(len(evidence), 1)
-        self.assertIn("PM2", evidence[0][0])
+        # Asserted on the evidence SENTENCE until 2026-09-11. Since the
+        # HIGH 3 Q4-B/T3-F1 ruling that sentence is discarded by the only
+        # production caller, so a green/red here said nothing about the
+        # product; the weight is what survives and what a reader feels.
+        # See tests/test_gnomad_acmg.py's module docstring.
+        self.assertEqual(evidence[0][1], 1.0)
 
     def test_confirmed_absence_still_scores_as_rarity(self):
         reasons: list = []

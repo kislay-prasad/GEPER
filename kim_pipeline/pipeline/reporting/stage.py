@@ -167,6 +167,7 @@ _HTML_TEMPLATE = """\
 
 <div class="report-header">
   <h1>{pipeline_version} — Clinical Genomic Report</h1>
+  <div class="meta">Sequencing analysis from FASTQ — produced by the Kim pipeline: QC, alignment and variant calling, with ACMG classification of the variants called here.</div>
   <div class="meta">Generated: {generated_at}<br/>Reference genome: {reference_genome}</div>
 </div>
 

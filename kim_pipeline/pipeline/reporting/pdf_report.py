@@ -135,6 +135,15 @@ def render_clinical_pdf(
 
     # ── Header / patient banner ──
     story.append(Paragraph(f"{pipeline_version} — Clinical Genomic Report", title_style))
+    # WHAT THIS REPORT IS. Both trees in this repository render a "Clinical
+    # Genomic Report" under the same brand, so either one alone reads as the
+    # whole product. This names what produced THIS one and what it started from.
+    story.append(
+        Paragraph(
+            "Sequencing analysis from FASTQ — produced by the Kim pipeline: QC, alignment and variant calling, with ACMG classification of the variants called here.",
+            body_style,
+        )
+    )
     story.append(Spacer(1, 4))
     patient_table_data = [
         ["Sample ID", sample_id, "Patient Name", patient_meta.get("name", "")],

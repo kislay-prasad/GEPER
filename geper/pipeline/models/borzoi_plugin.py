@@ -50,6 +50,8 @@ from typing import Any, Dict
 import torch
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 
+from pipeline.provenance import capture_hf_cache_artifact
+
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
@@ -287,6 +289,9 @@ class BorzoiPlugin(PluginModel):
                 exc_info=True,
             )
             raise RuntimeError("Borzoi model unavailable") from exc
+
+        # See EnformerPlugin._load_impl: recorded only after a successful load.
+        capture_hf_cache_artifact("borzoi", repo_id, _BORZOI_REVISION, str(cache_dir))
 
         # Defensive hardening, not a fix for observed behavior: the shim
         # above must set a CLASS attribute (from_pretrained reads it

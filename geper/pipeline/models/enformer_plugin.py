@@ -46,6 +46,8 @@ from typing import Any, Dict
 import torch
 from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError
 
+from pipeline.provenance import capture_hf_cache_artifact
+
 from config import CONFIG
 from pipeline.models.base import ModelMetadata, PluginModel
 from pipeline.models.cache import WeightCache
@@ -274,6 +276,11 @@ class EnformerPlugin(PluginModel):
                 exc_info=True,
             )
             raise RuntimeError("Enformer model unavailable") from exc
+
+        # After a SUCCESSFUL load only: what the cache actually served for the
+        # pinned revision above. Never before, because there is nothing to
+        # observe about a load that did not happen.
+        capture_hf_cache_artifact("enformer", repo_id, _ENFORMER_REVISION, str(cache_dir))
 
         # Defensive hardening, not a fix for observed behavior: the shim
         # above must set a CLASS attribute (from_pretrained reads it

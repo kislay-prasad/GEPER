@@ -87,6 +87,8 @@ from pipeline.provenance import (
     get_model_checkpoint_identifiers,
     local_file_provenance,
     read_dataset_provenance_sidecar,
+    reset_loaded_model_artifacts,
+    verify_loaded_model_artifacts,
 )
 from pipeline.ps1_pm5.lookup import ClinVarCodonLookup
 from pipeline.pvs1.lookup import TranscriptLookup
@@ -496,6 +498,10 @@ class GeperPipeline:
         """
         self.geper_code_version = get_geper_code_version()
         self.model_checkpoints = get_model_checkpoint_identifiers()
+        # A previous run in this process observed a different set of files.
+        # Clearing here, at the same point the collector clears its own stale
+        # fallbacks, is what keeps `loaded_artifact` a claim about THIS run.
+        reset_loaded_model_artifacts()
 
         try:
             ensembl = capture_ensembl_release()
@@ -906,6 +912,13 @@ class GeperPipeline:
         # dict object `result_builder` was constructed with), so
         # `result_builder.build()` below picks up the enriched version.
         run_model_status = rollup_run_status([vr.get("ai_model_status") for vr in result_builder.variant_results])
+        # Opt-in and measured (~3.9s per 2.6GB model): every run records the
+        # hash the cache DECLARES for what it served; only a run that asks
+        # streams the bytes to find out whether that hash is true. Before the
+        # finalisation below, so a MISMATCH reaches the record rather than
+        # being discovered after it was written.
+        if CONFIG.VERIFY_MODEL_ARTIFACT_HASHES:
+            verify_loaded_model_artifacts()
         self.model_checkpoints.update(finalize_model_checkpoint_provenance(self.model_checkpoints, run_model_status))
 
         # Round 17: only true here, after the enrichment immediately

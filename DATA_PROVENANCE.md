@@ -530,3 +530,78 @@ so the Enformer shim remains live and load-bearing. Both shims are
 behaviorally inert either way: `{}` is the same value `post_init()`
 would have produced, so neither changes architecture, weights, or
 output.
+
+## What a run records about the weights it loaded, and what `service_health` can never answer (2026-09-10)
+
+Two separate limits, written down here because both are the kind that read as
+answers when they are not.
+
+### 1. The pin is not the observation
+
+Until this change, `model_checkpoints` recorded only what each run's config
+*intended* to load: a repo id and a pinned revision. An impact query built on
+it -- "which reports used weights X" -- was in fact answering "which reports
+DECLARED revision X". Those are the same sentence only while the cache is
+honest. They diverge exactly when it matters: a substituted, corrupted, or
+re-resolved cache entry, which is the case such a query exists to find.
+
+Each finalised entry now carries a `loaded_artifact` alongside the pin, never
+instead of it, because a disagreement between the two is only visible while
+both are present. What it contains, precisely:
+
+* `served_revision` -- the revision the cache actually resolved for the load.
+* `cache_declared_sha256` -- **the hash the cache's own filename declares.**
+  Deliberately not named `observed_sha256`: nothing has read the bytes.
+* `hash_verification` -- `UNVERIFIABLE` / `NOT_VERIFIED` / `VERIFIED` /
+  `MISMATCH`, on its own axis rather than folded into `VersionStatus`.
+
+**What this is, stated so it cannot be over-read.** It is the HuggingFace
+cache's own resolution for the same (repo, revision, cache dir) that the load
+just used, queried in the same process immediately after a *successful* load.
+It is strictly stronger than the pin and strictly weaker than intercepting the
+file handle `transformers` opened, which its public API does not expose.
+
+**Three real gaps, none of them silent:**
+
+* Only the three HF-cache-backed loaders are instrumented (ESM-2, Enformer,
+  Borzoi) -- the models where a pin and a served revision can actually
+  disagree. Every other model reports `loaded_artifact: null`, which means
+  "this run recorded no observation", not "there was nothing to observe".
+  A missing key would have read as the latter.
+* `VERIFIED` requires reading the bytes, which is opt-in
+  (`GEPER_VERIFY_MODEL_HASHES`) because the cost is measured, not guessed:
+  ~3.9s per 2.6GB model per run. Default runs record the free declared hash
+  and say `NOT_VERIFIED`, which is true.
+* On a host without symlink privilege (Windows without developer mode) the
+  hub copies blobs into the snapshot directory instead of linking. There is
+  then no content-addressed filename to read, and the record says
+  `UNVERIFIABLE` rather than inventing one.
+
+A `MISMATCH` is logged at ERROR with both hashes and is **never** promoted to
+`VersionStatus.HASH_ONLY`. A refuted hash is not a known hash.
+
+### 2. `service_health` is answerable at RUN granularity only -- never at interval granularity
+
+`ServiceHealthRegistry.snapshot()` (`geper/utils/service_health.py`) writes ten
+fields into every run document: `service`, `status`, `is_local_component`,
+`degraded`, `startup_status`, `failure_count`, `success_count`,
+`skipped_count`, `latency_ms`. **Not one of them is a time.**
+
+`ServiceRecord.latched_at` does exist, but it is `time.monotonic()` -- a clock
+with no relation to wall time and no meaning across processes -- and it is not
+in the snapshot at all. The only wall-clock stamp in the neighbourhood is the
+document's `generated_at`, which records when the *report was written*, not
+when a service failed.
+
+The consequence, concretely. A document can say "Ensembl failed 3 times during
+this run". It cannot say when, and the failures cannot be placed inside the
+run's own duration. So:
+
+* **Answerable:** "which runs experienced degraded Ensembl?" -- one row per run.
+* **NOT answerable:** "which runs were affected by the 14:20-14:40 outage?"
+
+Asking the second question of this data returns a confident, wrong answer,
+because a run that started at 13:00 and finished at 15:00 is indistinguishable
+from one that overlapped the outage window and one that did not. Anyone
+building an impact query on `service_health` must restrict it to run
+granularity, or add a wall-clock stamp at the point of failure first.

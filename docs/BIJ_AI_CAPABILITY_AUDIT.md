@@ -107,8 +107,14 @@ audit's subject.
   (the vcf_only terminal output — confirmed by the early-return at
   `runner.py:624-633`), `checkpoint.json`, `pipeline.log`.
 - **Outputs, full mode**: everything above, plus `vep_annotation/`,
-  `annotation/annotation.json`, ACMG/evidence results, `pgx/`, `ancestry/`,
+  `annotation/annotation.json`, ACMG/evidence results, `ancestry/`,
   `reporting/report.json`+`report.html`+`report.pdf` (see §2).
+  **[CORRECTED 2026-09-10 (angela-mszpsmyw), dated: this bullet originally
+  also listed `pgx/` as a full-mode output directory. `kim_pipeline/pipeline/pgx/`
+  was deleted 2026-09-10 (merge `51320e1`, the human's ruling to remove
+  pharmacogenomics from the clinical report) -- no `pgx/` output exists any
+  longer. Removed rather than struck through, since the claim is no longer
+  even conditionally true.]**
 - **Limits**: API upload size `_MAX_UPLOAD_MB` env, default 2048MB,
   enforced by streaming chunk check (api/main.py:640-658), HTTP 413 on
   exceed. QC memory guards (not pipeline-halting): `max_dup_sample=100_000`,
@@ -229,9 +235,26 @@ substitute**, raises if missing) → `bcftools norm` (best-effort) →
 `runner.py:624-633` if `stop_after=="variant_calling"` — confirmed exactly
 matching README_INTEGRATION.md's vcf_only claim.
 
-### kim_pipeline/ own annotation/AI/ACMG/PGx/ancestry/report stack (requires kim_pipeline, `full` mode)
+### kim_pipeline/ own annotation/AI/ACMG/ancestry/report stack (requires kim_pipeline, `full` mode)
 This is a **separate, independently-implemented** stack from geper/'s —
 not the same code, not shared.
+
+> **DATED AMENDMENT, 2026-09-10 (angela-mszpsmyw).** This section's heading
+> originally read "...annotation/AI/ACMG/PGx/ancestry/report stack", and the
+> bullet immediately below described PGx as a real, working stage,
+> verbatim: *"**PGx** (pipeline/pgx/) and **Ancestry** (pipeline/ancestry/)
+> — real, working stages with **no equivalent in geper/ at all**:
+> star-allele calling for 10 pharmacogenes with CPIC drug implications,
+> and population-ancestry estimation from a 101-marker AIM panel. Both
+> disclose real limitations in their own code (PGx: no independent
+> ground-truth validation, PharmVar licensing; ancestry: presence/absence
+> marker matching, not true genotype dosage)."* That was accurate when
+> written. **`kim_pipeline/pipeline/pgx/` was deleted 2026-09-10 (merge
+> `51320e1`), the human's ruling to remove pharmacogenomics from the
+> clinical report and delete the computation.** The heading and bullet
+> below are corrected to describe only what remains (Ancestry); this is
+> a documentation-currency fix, not a re-litigation of the deletion
+> itself, which is the human's ruling and stands.
 
 - **AI models**: only **two** — DNABERT-2 and ESM-2
   (pipeline/ai/engine.py:173,310) — both real inference (thinner than
@@ -240,21 +263,18 @@ not the same code, not shared.
   criteria with real logic; PS4 and BS2 are permanently
   `STATUS_NOT_EVALUATED` (automated-mode data unavailability, :457-470,
   993-1004).
-- **PGx** (pipeline/pgx/) and **Ancestry** (pipeline/ancestry/) — real,
-  working stages with **no equivalent in geper/ at all**: star-allele
-  calling for 10 pharmacogenes with CPIC drug implications, and
-  population-ancestry estimation from a 101-marker AIM panel. Both
-  disclose real limitations in their own code (PGx: no independent
-  ground-truth validation, PharmVar licensing; ancestry: presence/absence
-  marker matching, not true genotype dosage).
+- **Ancestry** (pipeline/ancestry/) — a real, working stage with **no
+  equivalent in geper/ at all**: population-ancestry estimation from a
+  101-marker AIM panel, disclosing a real limitation in its own code
+  (presence/absence marker matching, not true genotype dosage).
 - **Evidence aggregation** (pipeline/evidence/aggregator.py) is explicitly
   disclosed as exploratory-only and double-counting relative to the ACMG
   score (:14-38,146-161) — never a second independent clinical score.
 - **Reporting**: one `report.json`/`.html`/`.pdf` triple per sample
   (ReportLab → WeasyPrint → wkhtmltopdf fallback chain) — a **different
   output shape** from geper/'s four files (no split short/full PDF, no
-  Markdown, but includes PGx and ancestry sections geper/ has no
-  equivalent for). kim_pipeline's own report disclaimer text independently
+  Markdown, but includes an ancestry section geper/ has no equivalent
+  for). kim_pipeline's own report disclaimer text independently
   requires "qualified human review and final sign-off" — **not verified
   whether this is unified with or fully independent from
   geper/review/signoff.py's gate**; flagged as unconfirmed.
@@ -555,10 +575,13 @@ which, do not assume either").
   real gene/transcript/HGVS pipeline, score variants with two real AI
   models (DNABERT-2, ESM-2), classify 26 of 28 ACMG criteria (with
   PP5/BP6 on by default and PP3/BP4 via strict-majority voting — see §3
-  for how these differ from geper/'s defaults), call pharmacogenomic
-  star-alleles/phenotypes for 10 genes, estimate ancestry from a
+  for how these differ from geper/'s defaults), estimate ancestry from a
   101-marker panel, and produce its own JSON/HTML/PDF report.
-  [pipeline/{annotation,ai,acmg,pgx,ancestry,reporting}/*.py]
+  [pipeline/{annotation,ai,acmg,ancestry,reporting}/*.py]
+  **[CORRECTED 2026-09-10 (angela-mszpsmyw): originally also listed
+  "call pharmacogenomic star-alleles/phenotypes for 10 genes" and
+  included `pgx` in the module-path list. `pipeline/pgx/` was deleted
+  2026-09-10 (merge `51320e1`) -- see §2's dated amendment.]**
 
 *Requires kim_pipeline + geper/ + bridge/ deployed together:*
 - Run one command (`bridge/run_combined.py`) and get FASTQ → clinical
@@ -703,9 +726,14 @@ which, do not assume either").
     memory/wall-clock constraints — no code-enforced cap exists on either
     side, so the practical ceiling is a hardware question this repo does
     not answer. UNKNOWN — REQUIRES BENCHMARK/TESTING.
-  - Whether PGx diplotype calls or ancestry estimates are accurate against
-    independent ground truth — both stages disclose in their own code that
-    this has not been established. UNKNOWN — REQUIRES BENCHMARK/TESTING.
+  - Whether ancestry estimates are accurate against independent ground
+    truth — the stage discloses in its own code that this has not been
+    established. UNKNOWN — REQUIRES BENCHMARK/TESTING.
+    **[CORRECTED 2026-09-10 (angela-mszpsmyw): originally also asked this
+    of "PGx diplotype calls". `pipeline/pgx/` was deleted 2026-09-10
+    (merge `51320e1`) -- see §2's dated amendment. The question no longer
+    applies to a stage that does not exist; removed rather than left
+    open against nothing.]**
   - Whether the bridge actually functions against the real (non-mocked)
     Kim and geper/ binaries/models end to end, producing a report — no
     verified run exists; one half has an unverified self-reported claim,

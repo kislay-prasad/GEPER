@@ -99,6 +99,41 @@ class EnsembleManager:
         n = len(individual)
 
         if n == 0:
+            # `ModelManager.predict()` already distinguishes "plugin
+            # unavailable" (disabled/not installed -- `get()` raises
+            # `PluginUnavailableError` before `instance.predict()` is
+            # ever reached) from "plugin genuinely crashed during
+            # inference" (`ModelInferenceError`, caught inside
+            # `predict()` and recorded in `_last_inference_error`,
+            # retrievable via `last_inference_errors()`) -- its own
+            # docstring says so explicitly: "Callers that need to
+            # distinguish 'unavailable' from 'failed' should call
+            # `get()` themselves." This method used to never call it,
+            # so a genuine double crash collapsed into the same generic
+            # "disabled, not installed, or failed to load/run" text as
+            # a clean disable, and `_render_ai_splicing_ensemble`
+            # (report/report_generator.py) then returned an empty list
+            # for `models_used == []` regardless of which was true --
+            # the entire "AI Splicing Analysis" section vanished on a
+            # crash, not even a "Failed" line (2026-09-11 fix).
+            inference_errors = self.manager.last_inference_errors()
+            failed = {key: inference_errors[key] for key in _ENSEMBLE_MODEL_KEYS if key in inference_errors}
+            if failed:
+                detail = "; ".join(f"{key}: {message}" for key, message in failed.items())
+                return {
+                    "models_used": [],
+                    "individual_scores": {},
+                    "consensus_score": None,
+                    "confidence": None,
+                    "agreement_percentage": None,
+                    "classification": None,
+                    "basis": "no_models",
+                    "error": detail,
+                    "reasoning": (
+                        f"AI splicing ensemble inference failed ({detail}) -- this is a failed "
+                        "run, not evidence that Enformer/Borzoi found no splicing effect."
+                    ),
+                }
             return {
                 "models_used": [],
                 "individual_scores": {},
@@ -107,11 +142,11 @@ class EnsembleManager:
                 "agreement_percentage": None,
                 "classification": None,
                 "basis": "no_models",
+                "error": None,
                 "reasoning": (
                     "No splicing/regulatory AI model was available "
-                    "(Enformer and Borzoi are both disabled, not "
-                    "installed, or failed to load/run) -- no ensemble "
-                    "evidence was produced for this variant."
+                    "(Enformer and Borzoi are both disabled or not "
+                    "installed) -- no ensemble evidence was produced for this variant."
                 ),
             }
 

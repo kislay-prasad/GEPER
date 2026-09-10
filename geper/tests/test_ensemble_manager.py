@@ -22,8 +22,14 @@ def _result(score, classification, confidence=0.5):
 
 class TestZeroModelsAvailable(unittest.TestCase):
     def test_no_models_returns_empty_models_used(self):
+        # `last_inference_errors()` must return {} here, matching the
+        # real `ModelManager`'s contract for "both plugins cleanly
+        # unavailable, neither was ever attempted" -- see
+        # TestZeroModelsBecauseBothCrashed below for the crash case
+        # this same call site now also has to distinguish (2026-09-11).
         manager = mock.Mock()
         manager.predict.return_value = None
+        manager.last_inference_errors.return_value = {}
         ensemble = EnsembleManager(manager=manager)
 
         result = ensemble.evaluate("A" * 10, "T" * 10)
@@ -34,16 +40,82 @@ class TestZeroModelsAvailable(unittest.TestCase):
         self.assertIsNone(result["agreement_percentage"])
         self.assertIsNone(result["classification"])
         self.assertEqual(result["basis"], "no_models")
+        self.assertIsNone(result["error"])
         self.assertIn("No splicing/regulatory AI model was available", result["reasoning"])
 
     def test_no_models_never_raises(self):
         manager = mock.Mock()
         manager.predict.side_effect = lambda *a, **k: None
+        manager.last_inference_errors.return_value = {}
         ensemble = EnsembleManager(manager=manager)
         # Must not raise even when called repeatedly / with odd inputs.
         for _ in range(5):
             result = ensemble.evaluate("", "")
             self.assertEqual(result["models_used"], [])
+
+
+class TestZeroModelsBecauseBothCrashed(unittest.TestCase):
+    """
+    Sweep finding 3 (2026-09-11): `EnsembleManager.evaluate()` used to
+    never call `ModelManager.last_inference_errors()`, so a genuine
+    double crash (both Enformer and Borzoi raised `ModelInferenceError`
+    during inference, not "cleanly unavailable") was indistinguishable
+    from a clean double-disable -- both produced `models_used=[]` and
+    the same generic "disabled, not installed, or failed to load/run"
+    reasoning. `report/report_generator.py::_render_ai_splicing_ensemble`
+    then rendered NOTHING AT ALL for either case: not a wrong line, an
+    absent section.
+
+    THE CONTROL THAT MATTERS: `test_no_models_returns_empty_models_used`
+    above pins the OTHER direction -- a genuinely clean disable (no
+    entries in `last_inference_errors()`) must keep reading exactly as
+    it did before this fix, with `error=None` and the unchanged
+    reasoning text. Fixing the crash case must not turn a disabled
+    model into a false crash report.
+    """
+
+    def test_double_crash_is_distinguished_from_clean_disable(self):
+        manager = mock.Mock()
+        manager.predict.return_value = None
+        manager.last_inference_errors.return_value = {
+            "enformer": "CUDA out of memory",
+            "borzoi": "weights checksum mismatch",
+        }
+        ensemble = EnsembleManager(manager=manager)
+
+        result = ensemble.evaluate("A" * 10, "T" * 10)
+
+        self.assertEqual(result["models_used"], [])
+        self.assertIsNone(result["consensus_score"])
+        self.assertEqual(result["basis"], "no_models")
+        self.assertIsNotNone(result["error"])
+        self.assertIn("enformer", result["error"])
+        self.assertIn("CUDA out of memory", result["error"])
+        self.assertIn("borzoi", result["error"])
+        self.assertIn("weights checksum mismatch", result["error"])
+        self.assertNotIn(
+            "No splicing/regulatory AI model was available",
+            result["reasoning"],
+            "a genuine crash must not be reported with the clean-disable reasoning text",
+        )
+        self.assertIn("failed", result["reasoning"].lower())
+
+    def test_single_crash_alongside_a_cleanly_disabled_sibling_still_reported(self):
+        """One model crashed, the other was cleanly disabled (never
+        even attempted) -- still n==0 overall, and the error must name
+        only the one that actually crashed."""
+        manager = mock.Mock()
+        manager.predict.return_value = None
+        manager.last_inference_errors.return_value = {"enformer": "timed out after 30s"}
+        ensemble = EnsembleManager(manager=manager)
+
+        result = ensemble.evaluate("A" * 10, "T" * 10)
+
+        self.assertEqual(result["models_used"], [])
+        self.assertIsNotNone(result["error"])
+        self.assertIn("enformer", result["error"])
+        self.assertIn("timed out after 30s", result["error"])
+        self.assertNotIn("borzoi", result["error"])
 
 
 class TestSingleModelAvailable(unittest.TestCase):

@@ -1694,22 +1694,40 @@ class ReportGenerator:
         labeled summary lines. `ensemble_result` is always the clean,
         already-sanitized dict `pipeline.models.ensemble.
         EnsembleManager.evaluate` returns (see that module) -- never a
-        raw exception or traceback, so nothing here needs its own
-        try/except: there is no technical error text this function
-        could accidentally leak into a clinical report.
+        raw exception or traceback reaching this function directly.
 
         The section is hidden entirely (returns an empty list, adding
-        no heading at all) whenever no ensemble evidence exists for
-        this variant -- either because `ensemble_result` itself is
-        empty/missing, or because it exists but no model actually ran
-        (`models_used` is empty, e.g. both Enformer and Borzoi were
-        disabled/unavailable). This mirrors exactly what
-        `report/json_builder.py::build_variant_result` does: the
+        no heading at all) only when no ensemble evidence exists AND no
+        model genuinely crashed -- `ensemble_result` itself empty/
+        missing, or `models_used` empty because both Enformer and
+        Borzoi were cleanly disabled/unavailable. This mirrors exactly
+        what `report/json_builder.py::build_variant_result` does: the
         `ai_splicing_ensemble` key is only present in the JSON output
         under that same condition, so JSON and Markdown agree on when
         this evidence "exists."
+
+        WHEN `models_used` IS EMPTY BECAUSE A MODEL GENUINELY CRASHED
+        (2026-09-11 fix, sweep finding 3): `ensemble_result["error"]` is
+        set by `EnsembleManager.evaluate()` in that case specifically
+        (never set for a clean disable), and this function renders a
+        "_Failed: ..._" line instead of silently disappearing -- before
+        this fix, a genuine double crash produced a report with NO
+        SECTION AT ALL, not even a "Failed" line, which is a stronger
+        fabricated absence than a wrong statement would have been: a
+        reader has nothing here to be suspicious of. Matches the exact
+        wording `_render_mmsplice`/`_render_rna`/`_render_protein`/
+        `_render_alphamissense` already use for the identical situation
+        (a model that ran and crashed, not one that never ran).
         """
         if not ensemble_result or not ensemble_result.get("models_used"):
+            if ensemble_result and ensemble_result.get("error") is not None:
+                return [
+                    "### AI Splicing Analysis (Enformer + Borzoi Ensemble)",
+                    "",
+                    f"_Failed: {ensemble_result['error']} -- not evidence Enformer/Borzoi found no "
+                    "splicing effect, see the AI Model Status table above._",
+                    "",
+                ]
             return []
 
         lines = ["### AI Splicing Analysis (Enformer + Borzoi Ensemble)", ""]

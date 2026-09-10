@@ -8,14 +8,13 @@ All network access is mocked. All disk-cache paths use tmp_path so
 nothing here touches a real ~/.cache directory or persists between
 test runs.
 """
+
 from __future__ import annotations
 
-import sqlite3
 import threading
 import time
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from pipeline.gnomad.cache import GnomadDiskCache
 from pipeline.gnomad.lookup import GnomadLookup, GnomadHit, GnomadLookupOutcome
@@ -53,6 +52,7 @@ def _mock_graphql_response(af=0.001, populations=None, variant=True, variant_id_
 
 
 # ─── GnomadDiskCache unit tests ─────────────────────────────────────────────────
+
 
 class TestGnomadDiskCache:
     def test_put_and_get_present(self, tmp_path):
@@ -139,7 +139,15 @@ class TestGnomadDiskCache:
         def _writer(i):
             try:
                 for j in range(20):
-                    cache.put(f"17:{i}:{j}:T", "present", af=0.01, af_popmax=0.02, ac=1, an=100, backend="api")
+                    cache.put(
+                        f"17:{i}:{j}:T",
+                        "present",
+                        af=0.01,
+                        af_popmax=0.02,
+                        ac=1,
+                        an=100,
+                        backend="api",
+                    )
             except Exception as exc:  # pragma: no cover - failure path
                 errors.append(exc)
 
@@ -155,17 +163,23 @@ class TestGnomadDiskCache:
 
 # ─── lookup() backward compatibility ────────────────────────────────────────────
 
+
 class TestLookupBackwardCompatibility:
     def test_lookup_signature_and_return_types_unchanged(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.01)):
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.01)
+        ):
             result = gn.lookup("17", 1000, "A", "T")
         assert isinstance(result, GnomadHit)
         assert result.af == 0.01
 
     def test_lookup_absent_variant(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(variant=False)):
+        with patch(
+            "pipeline.gnomad.lookup.requests.post",
+            return_value=_mock_graphql_response(variant=False),
+        ):
             result = gn.lookup("17", 2000, "A", "T")
         assert result == GnomadLookupOutcome.ABSENT
 
@@ -182,17 +196,22 @@ class TestLookupBackwardCompatibility:
         max_concurrent/retry_backoff_secs must still construct and work."""
         cfg = {"gnomad": {"vcf_path": "/nonexistent/path.vcf.gz"}}
         gn = GnomadLookup(cfg=cfg)
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.02)):
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.02)
+        ):
             result = gn.lookup("17", 4000, "A", "T")
         assert isinstance(result, GnomadHit)
 
 
 # ─── Cache hits/misses (memory + disk) ──────────────────────────────────────────
 
+
 class TestLookupCaching:
     def test_second_lookup_is_memory_cache_hit(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.03)) as mock_post:
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.03)
+        ) as mock_post:
             gn.lookup("17", 5000, "A", "T")
             gn.lookup("17", 5000, "A", "T")
         assert mock_post.call_count == 1
@@ -201,8 +220,11 @@ class TestLookupCaching:
     def test_lookup_persists_to_disk_and_new_instance_hits_cache(self, tmp_path):
         cfg = _api_cfg(tmp_path)
         gn1 = GnomadLookup(cfg=cfg)
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.04)) as mock_post:
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.04)
+        ) as mock_post:
             gn1.lookup("17", 6000, "A", "T")
+        assert mock_post.call_count == 1
 
         # Fresh instance (simulates a new pipeline run / Colab session)
         # pointed at the same cache_dir — must not hit the network at all.
@@ -224,7 +246,9 @@ class TestLookupCaching:
         assert result1 == GnomadLookupOutcome.UNAVAILABLE
 
         gn2 = GnomadLookup(cfg=cfg)
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.05)) as mock_post2:
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.05)
+        ) as mock_post2:
             result2 = gn2.lookup("17", 7000, "A", "T")
         mock_post2.assert_called()  # retried, not silently blocked by a stale cache entry
         assert isinstance(result2, GnomadHit)
@@ -232,11 +256,14 @@ class TestLookupCaching:
 
 # ─── lookup_batch() ─────────────────────────────────────────────────────────────
 
+
 class TestLookupBatch:
     def test_batch_returns_result_for_every_distinct_variant(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
         variants = [("17", 1, "A", "T"), ("17", 2, "C", "G"), ("MT", 3243, "A", "G")]
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.01)):
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.01)
+        ):
             results = gn.lookup_batch(variants)
         assert len(results) == 3
         for chrom, pos, ref, alt in variants:
@@ -246,7 +273,9 @@ class TestLookupBatch:
     def test_duplicate_variants_trigger_only_one_remote_request(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
         variants = [("17", 100, "A", "T")] * 10  # 10x the same variant
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.02)) as mock_post:
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.02)
+        ) as mock_post:
             results = gn.lookup_batch(variants)
         assert mock_post.call_count == 1
         assert len(results) == 1
@@ -278,7 +307,9 @@ class TestLookupBatch:
         lookup() per-variant should be pure cache hits."""
         gn = GnomadLookup(cfg=_api_cfg(tmp_path))
         variants = [("17", 10, "A", "T"), ("17", 20, "C", "G")]
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.06)) as mock_post:
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.06)
+        ) as mock_post:
             gn.lookup_batch(variants)
             for chrom, pos, ref, alt in variants:
                 gn.lookup(chrom, pos, ref, alt)
@@ -287,7 +318,9 @@ class TestLookupBatch:
     def test_batch_uses_disk_cache_before_any_network_call(self, tmp_path):
         cfg = _api_cfg(tmp_path)
         gn1 = GnomadLookup(cfg=cfg)
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.07)):
+        with patch(
+            "pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.07)
+        ):
             gn1.lookup("17", 900, "A", "T")
 
         gn2 = GnomadLookup(cfg=cfg)
@@ -324,6 +357,7 @@ class TestLookupBatch:
 
 # ─── Retry / backoff / jitter ───────────────────────────────────────────────────
 
+
 class TestRetryBehavior:
     def test_retries_on_429_then_succeeds(self, tmp_path):
         gn = GnomadLookup(cfg=_api_cfg(tmp_path, max_retries=3, retry_backoff_secs=0.01))
@@ -336,8 +370,10 @@ class TestRetryBehavior:
                 return resp
             return _mock_graphql_response(af=0.09)
 
-        with patch("pipeline.gnomad.lookup.requests.post", side_effect=flaky), \
-             patch("pipeline.gnomad.lookup.time.sleep") as mock_sleep:
+        with (
+            patch("pipeline.gnomad.lookup.requests.post", side_effect=flaky),
+            patch("pipeline.gnomad.lookup.time.sleep") as mock_sleep,
+        ):
             result = gn.lookup("17", 8000, "A", "T")
         assert isinstance(result, GnomadHit)
         assert call_count["n"] == 3
@@ -349,8 +385,10 @@ class TestRetryBehavior:
         gn = GnomadLookup(cfg=_api_cfg(tmp_path, max_retries=2, retry_backoff_secs=0.01))
         resp = MagicMock(status_code=429, headers={})
         resp.raise_for_status.side_effect = req_lib.exceptions.HTTPError("429 Too Many Requests")
-        with patch("pipeline.gnomad.lookup.requests.post", return_value=resp), \
-             patch("pipeline.gnomad.lookup.time.sleep"):
+        with (
+            patch("pipeline.gnomad.lookup.requests.post", return_value=resp),
+            patch("pipeline.gnomad.lookup.time.sleep"),
+        ):
             result = gn.lookup("17", 8100, "A", "T")
         assert result == GnomadLookupOutcome.UNAVAILABLE
 
@@ -399,8 +437,10 @@ class TestRetryBehavior:
                 raise ReqConnErr("transient")
             return _mock_graphql_response(af=0.11)
 
-        with patch("pipeline.gnomad.lookup.requests.post", side_effect=flaky), \
-             patch("pipeline.gnomad.lookup.time.sleep"):
+        with (
+            patch("pipeline.gnomad.lookup.requests.post", side_effect=flaky),
+            patch("pipeline.gnomad.lookup.time.sleep"),
+        ):
             result = gn.lookup("17", 8200, "A", "T")
         assert isinstance(result, GnomadHit)
 
@@ -409,17 +449,29 @@ class TestRetryBehavior:
 
 # ─── HTML report renders real AF values, not just "Found" ──────────────────────
 
+
 class TestGnomadReportRendering:
     def test_html_report_shows_numeric_af_when_present(self):
         from pipeline.reporting.stage import _acmg_to_html_table
 
-        html = _acmg_to_html_table([{
-            "chrom": "MT", "pos": 3243, "ref": "A", "alt": "G",
-            "gene": "MT-TL1", "classification": "Uncertain_Significance",
-            "score": 0, "criteria_met": [], "criteria_unknown": [],
-            "gnomad_unavailable_reason": None,
-            "gnomad_af": 0.00012, "gnomad_af_popmax": 0.00034,
-        }])
+        html = _acmg_to_html_table(
+            [
+                {
+                    "chrom": "MT",
+                    "pos": 3243,
+                    "ref": "A",
+                    "alt": "G",
+                    "gene": "MT-TL1",
+                    "classification": "Uncertain_Significance",
+                    "score": 0,
+                    "criteria_met": [],
+                    "criteria_unknown": [],
+                    "gnomad_unavailable_reason": None,
+                    "gnomad_af": 0.00012,
+                    "gnomad_af_popmax": 0.00034,
+                }
+            ]
+        )
         assert "1.20e-04" in html
         assert "3.40e-04" in html
         # The gnomAD cell itself must be the number, not the bare word —
@@ -431,13 +483,24 @@ class TestGnomadReportRendering:
     def test_html_report_shows_reason_when_unavailable(self):
         from pipeline.reporting.stage import _acmg_to_html_table
 
-        html = _acmg_to_html_table([{
-            "chrom": "MT", "pos": 3243, "ref": "A", "alt": "G",
-            "gene": "MT-TL1", "classification": "Uncertain_Significance",
-            "score": 0, "criteria_met": [], "criteria_unknown": [],
-            "gnomad_unavailable_reason": "gnomAD lookup unavailable (network/tabix error)",
-            "gnomad_af": None, "gnomad_af_popmax": None,
-        }])
+        html = _acmg_to_html_table(
+            [
+                {
+                    "chrom": "MT",
+                    "pos": 3243,
+                    "ref": "A",
+                    "alt": "G",
+                    "gene": "MT-TL1",
+                    "classification": "Uncertain_Significance",
+                    "score": 0,
+                    "criteria_met": [],
+                    "criteria_unknown": [],
+                    "gnomad_unavailable_reason": "gnomAD lookup unavailable (network/tabix error)",
+                    "gnomad_af": None,
+                    "gnomad_af_popmax": None,
+                }
+            ]
+        )
         assert "gnomAD lookup unavailable" in html
 
     def test_shared_availability_fields_carries_af_forward(self, tmp_path):
@@ -447,9 +510,13 @@ class TestGnomadReportRendering:
         from pipeline.orchestration.shared import _availability_fields
 
         fields = _availability_fields(
-            gene="MT-TL1", gene_unavailable_reason=None,
-            clinvar_enabled=True, clinvar_significance=None,
-            gnomad_enabled=True, gnomad_af=0.001, gnomad_af_popmax=0.002,
+            gene="MT-TL1",
+            gene_unavailable_reason=None,
+            clinvar_enabled=True,
+            clinvar_significance=None,
+            gnomad_enabled=True,
+            gnomad_af=0.001,
+            gnomad_af_popmax=0.002,
             gnomad_af_absent=False,
         )
         assert fields["gnomad_af"] == 0.001
@@ -464,7 +531,10 @@ class TestThreadSafety:
 
         def _do_lookup(i):
             try:
-                with patch("pipeline.gnomad.lookup.requests.post", return_value=_mock_graphql_response(af=0.01 * i)):
+                with patch(
+                    "pipeline.gnomad.lookup.requests.post",
+                    return_value=_mock_graphql_response(af=0.01 * i),
+                ):
                     gn.lookup("17", i, "A", "T")
             except Exception as exc:  # pragma: no cover
                 errors.append(exc)

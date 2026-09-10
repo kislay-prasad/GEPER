@@ -6,12 +6,11 @@ Regression tests for the mitochondrial-only GFF3 auto-fetch bootstrap
 AnnotationStage / pipeline.orchestration.shared. All network access is
 mocked — these tests must run identically offline.
 """
+
 from __future__ import annotations
 
 import os
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 _MT_GFF3_FIXTURE = (
@@ -27,12 +26,15 @@ _MT_GFF3_FIXTURE = (
 
 # ─── fetch_mt_gff3 ─────────────────────────────────────────────────────────────
 
+
 class TestFetchMtGff3:
     def test_fetch_success_writes_cache_and_returns_path(self, tmp_path):
         from pipeline.annotation.mt_gff3_bootstrap import fetch_mt_gff3
 
         fake_resp = MagicMock(status_code=200, text=_MT_GFF3_FIXTURE)
-        with patch("pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp) as mock_get:
+        with patch(
+            "pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp
+        ) as mock_get:
             path = fetch_mt_gff3(cache_dir=str(tmp_path))
         assert path is not None
         assert os.path.exists(path)
@@ -44,8 +46,11 @@ class TestFetchMtGff3:
         from pipeline.annotation.mt_gff3_bootstrap import fetch_mt_gff3
 
         fake_resp = MagicMock(status_code=200, text=_MT_GFF3_FIXTURE)
-        with patch("pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp) as mock_get:
+        with patch(
+            "pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp
+        ) as mock_get:
             fetch_mt_gff3(cache_dir=str(tmp_path))
+        mock_get.assert_called_once()
         with patch("pipeline.annotation.mt_gff3_bootstrap._api_get") as mock_get2:
             path2 = fetch_mt_gff3(cache_dir=str(tmp_path))
         assert path2 is not None
@@ -77,11 +82,14 @@ class TestFetchMtGff3:
 
 # ─── resolve_gff3_source ───────────────────────────────────────────────────────
 
+
 class TestResolveGff3Source:
     def test_explicit_path_wins_and_never_fetches(self, tmp_path):
         from pipeline.annotation.mt_gff3_bootstrap import resolve_gff3_source
 
-        cfg = {"rna_analysis": {"refseq_gff": "/some/explicit/path.gff.gz", "auto_fetch_mt_gff3": True}}
+        cfg = {
+            "rna_analysis": {"refseq_gff": "/some/explicit/path.gff.gz", "auto_fetch_mt_gff3": True}
+        }
         with patch("pipeline.annotation.mt_gff3_bootstrap.fetch_mt_gff3") as mock_fetch:
             path, provenance = resolve_gff3_source(cfg)
         assert path == "/some/explicit/path.gff.gz"
@@ -102,7 +110,10 @@ class TestResolveGff3Source:
         from pipeline.annotation.mt_gff3_bootstrap import resolve_gff3_source
 
         cfg = {"rna_analysis": {"auto_fetch_mt_gff3": True, "gff3_cache_dir": str(tmp_path)}}
-        with patch("pipeline.annotation.mt_gff3_bootstrap.fetch_mt_gff3", return_value=str(tmp_path / "x.gff3")) as mock_fetch:
+        with patch(
+            "pipeline.annotation.mt_gff3_bootstrap.fetch_mt_gff3",
+            return_value=str(tmp_path / "x.gff3"),
+        ) as mock_fetch:
             path, provenance = resolve_gff3_source(cfg)
         assert provenance == "mt_bootstrap"
         assert path == str(tmp_path / "x.gff3")
@@ -112,7 +123,10 @@ class TestResolveGff3Source:
         from pipeline.annotation.mt_gff3_bootstrap import resolve_gff3_source
 
         monkeypatch.setenv("GEPER_AUTO_FETCH_MT_GFF3", "1")
-        with patch("pipeline.annotation.mt_gff3_bootstrap.fetch_mt_gff3", return_value=str(tmp_path / "x.gff3")):
+        with patch(
+            "pipeline.annotation.mt_gff3_bootstrap.fetch_mt_gff3",
+            return_value=str(tmp_path / "x.gff3"),
+        ):
             path, provenance = resolve_gff3_source({})
         assert provenance == "mt_bootstrap"
 
@@ -127,6 +141,7 @@ class TestResolveGff3Source:
 
 
 # ─── AnnotationStage wiring ─────────────────────────────────────────────────────
+
 
 class TestAnnotationStageMtBootstrap:
     def _write_vcf(self, tmp_path, chrom="MT", pos=3243, ref="A", alt="G"):
@@ -160,7 +175,9 @@ class TestAnnotationStageMtBootstrap:
         vcf = self._write_vcf(tmp_path)
         out = tmp_path / "out"
         fake_resp = MagicMock(status_code=200, text=_MT_GFF3_FIXTURE)
-        cfg = {"rna_analysis": {"auto_fetch_mt_gff3": True, "gff3_cache_dir": str(tmp_path / "cache")}}
+        cfg = {
+            "rna_analysis": {"auto_fetch_mt_gff3": True, "gff3_cache_dir": str(tmp_path / "cache")}
+        }
         with patch("pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp):
             stage = AnnotationStage(cfg=cfg)
             result = stage.run(vcf, str(out), sample_id="t")
@@ -184,7 +201,9 @@ class TestAnnotationStageMtBootstrap:
         vcf = self._write_vcf(tmp_path, chrom="chr17", pos=43057051, ref="A", alt="T")
         out = tmp_path / "out"
         fake_resp = MagicMock(status_code=200, text=_MT_GFF3_FIXTURE)
-        cfg = {"rna_analysis": {"auto_fetch_mt_gff3": True, "gff3_cache_dir": str(tmp_path / "cache")}}
+        cfg = {
+            "rna_analysis": {"auto_fetch_mt_gff3": True, "gff3_cache_dir": str(tmp_path / "cache")}
+        }
         with patch("pipeline.annotation.mt_gff3_bootstrap._api_get", return_value=fake_resp):
             stage = AnnotationStage(cfg=cfg)
             result = stage.run(vcf, str(out), sample_id="t")
@@ -196,6 +215,7 @@ class TestAnnotationStageMtBootstrap:
 
 
 # ─── shared.py gene_unavailable_reason wiring ──────────────────────────────────
+
 
 class TestSharedGeneUnavailableReason:
     def test_reason_mentions_mt_scope_when_bootstrap_active(self, tmp_path):
@@ -228,6 +248,7 @@ class TestSharedGeneUnavailableReason:
 
 
 # ─── GffIndex tRNA/rRNA/CDS extension ──────────────────────────────────────────
+
 
 class TestGffIndexNonMrnaFeatures:
     def test_trna_gene_resolves_gene_and_transcript(self, tmp_path):

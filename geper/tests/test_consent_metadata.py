@@ -26,6 +26,21 @@ try:
 except ImportError:
     _PYPDF_AVAILABLE = False
 
+# Resolved from THIS FILE's location, not from the process's cwd. Every
+# use below used to pass the bare string "patient_metadata.example.json",
+# which only resolves when pytest happens to be invoked from geper/ --
+# from the repo root the file is simply absent, and `_parse_patient_meta`
+# logs a warning and falls back to the de-identified default instead of
+# raising. That made this module's result depend on where you stood: the
+# one test that ASSERTS the file parses failed, and the two that assert
+# consent rows are ABSENT passed for the wrong reason -- the rows were
+# missing because the file was missing, not because patient_meta's
+# consent had stopped being authoritative, which is the whole claim they
+# exist to defend.
+_EXAMPLE_PATIENT_META = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "patient_metadata.example.json"
+)
+
 
 class TestParseConsent(unittest.TestCase):
     def test_full_consent_object(self):
@@ -96,10 +111,22 @@ class TestParsePatientMetaConsent(unittest.TestCase):
                 fh.write("{not valid json")
             self.assertIsNone(_parse_patient_meta(bad_path)["consent"])
 
+    def test_example_file_is_actually_present(self):
+        # The failure mode this guards is silence, not an exception:
+        # `_parse_patient_meta` treats an unreadable path as "no metadata"
+        # and returns the de-identified default. So if this file is ever
+        # moved or renamed, the tests below do not error -- they quietly
+        # stop testing anything, and the two that assert consent rows are
+        # ABSENT go on passing. This one names that case out loud.
+        self.assertTrue(
+            os.path.isfile(_EXAMPLE_PATIENT_META),
+            f"the shipped example metadata is missing: {_EXAMPLE_PATIENT_META}",
+        )
+
     def test_real_example_file_parses_consent(self):
         # patient_metadata.example.json ships a real consent example --
         # confirms it stays valid JSON and matches the documented shape.
-        patient = _parse_patient_meta("patient_metadata.example.json")
+        patient = _parse_patient_meta(_EXAMPLE_PATIENT_META)
         self.assertEqual(patient["consent"]["clinical_reporting"], True)
         self.assertEqual(patient["consent"]["research"], False)
         self.assertIsNotNone(patient["consent"]["timestamp"])
@@ -214,7 +241,7 @@ class TestFullReportConsentRows(unittest.TestCase):
         # (now-wrong) proxy would still be silently granting the claim.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "report.pdf")
-            generate_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            generate_pdf(_minimal_document(), out, patient_meta=_EXAMPLE_PATIENT_META)
             text = _all_text(out)
         self.assertNotIn("Consent --", text)
 
@@ -269,7 +296,7 @@ class TestShortReportConsentRows(unittest.TestCase):
         # TestFullReportConsentRows's identically-named test.
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "short.pdf")
-            generate_short_pdf(_minimal_document(), out, patient_meta="patient_metadata.example.json")
+            generate_short_pdf(_minimal_document(), out, patient_meta=_EXAMPLE_PATIENT_META)
             text = _all_text(out)
         self.assertNotIn("Consent --", text)
 

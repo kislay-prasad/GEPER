@@ -117,7 +117,7 @@ create_or_reopen_exception(
     reason_code=reason_code,
     error_message=specific_failure_descriptor,
     owner=REASON_CODE_TO_OWNER[reason_code],
-    actor="system" or human_actor
+    actor="system" or human_actor,
 )
 ```
 

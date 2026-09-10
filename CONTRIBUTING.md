@@ -270,7 +270,7 @@ or `shared/`, and the reverse holds too.
 exactly one name, to an absolute path:
 
 ```python
-MAPPING: dict[str, str] = {'shared': 'C:\\Users\\kisla\\GEPER\\shared'}
+MAPPING: dict[str, str] = {"shared": "C:\\Users\\kisla\\GEPER\\shared"}
 ```
 
 That path is **the shared checkout**, not your worktree. From a

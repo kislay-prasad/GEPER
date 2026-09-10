@@ -177,6 +177,81 @@ class SpliceAiScoresDoNotReachAClassification(unittest.TestCase):
         self.assertIsNone(_parse_info(f"{_INFO_BASE};DS_AG=0.95").spliceai_score)
 
 
+class SpliceAiIsNotConsultedEvenWhenAScoreIsForced(unittest.TestCase):
+    """
+    *** THE ONE CASE THE INPUT-LEVEL TESTS ABOVE CANNOT REACH: what
+    happens if a `spliceai_score` arrives on the evidence object anyway. ***
+    Everything above drives the classifier through `_parse_vcf`, so it can
+    only ever assert on inputs the pipeline actually produces. This class
+    sets the field DIRECTLY, which is the one way the old vote branches
+    could still have fired.
+
+    HISTORY, BECAUSE THIS TEST USED TO ASSERT THE OPPOSITE. It lived in
+    `test_acmg_audit_issue4.py` as
+    `test_spliceai_still_counted_regardless_of_missense_status` and
+    asserted that a forced score of 0.9 DID reach PP3. It passed -- and it
+    could only ever pass, because it supplied an input production cannot
+    produce and then checked that the unreachable branch fired.
+    *** A TEST WHOSE SUBJECT CANNOT OCCUR IN PRODUCTION IS NOT TESTING THE
+    PRODUCT, IT IS PINNING AN IMPLEMENTATION. *** It was the only thing
+    standing between the dead PP3/BP4 SpliceAI votes and their removal.
+
+    Converted rather than deleted: flipped, it asserts the property the
+    removal creates, and it CAN FAIL -- if anyone re-adds a SpliceAI vote,
+    or re-opens the input in a way the parse-level tests miss, this goes
+    red. Its predecessor could not go red for any reason a clinician would
+    care about.
+    """
+
+    def _classify_forced(self, **overrides):
+        ev = VariantEvidence(chrom="17", pos=1, ref="A", alt="T", gene="TESTGENE", **overrides)
+        return AcmgClassifier(cfg={}).classify(ev)
+
+    def test_spliceai_is_absent_from_pp3_regardless_of_missense_status(self):
+        """A forced damaging SpliceAI score must not appear in PP3.
+
+        Non-missense on purpose: PP3's SpliceAI vote was deliberately NOT
+        gated on `is_missense` (unlike REVEL and AlphaMissense), so this is
+        the arm where the old branch was reachable.
+        """
+        result = self._classify_forced(is_missense=False, spliceai_score=0.9)
+        pp3 = next(c for c in result.all_criteria if c.code == "PP3")
+        self.assertNotIn(
+            "SpliceAI",
+            pp3.reason,
+            "SpliceAI reached PP3 from a forced score -- a SpliceAI vote has been "
+            "re-added to the classifier, or the input is open again",
+        )
+
+    def test_spliceai_is_absent_from_bp4_regardless_of_missense_status(self):
+        """The benign arm, which the vote-count mechanism makes separate:
+        a SpliceAI score also changes the DENOMINATOR of the majority, so a
+        benign-voting score could flip a call without ever agreeing with the
+        pathogenic side (see this module's docstring)."""
+        result = self._classify_forced(is_missense=False, spliceai_score=0.01)
+        bp4 = next(c for c in result.all_criteria if c.code == "BP4")
+        self.assertNotIn(
+            "SpliceAI",
+            bp4.reason,
+            "SpliceAI reached BP4 from a forced score -- a SpliceAI vote has been "
+            "re-added to the classifier, or the input is open again",
+        )
+
+    def test_a_forced_score_does_not_change_the_pp3_outcome_either(self):
+        """Not just the reason string: the OUTCOME must be identical with
+        and without the forced score. Asserting only on `reason` would go
+        green if the vote were re-added under a different label."""
+        without = self._classify_forced(is_missense=False, cadd_phred=25.0)
+        with_forced = self._classify_forced(is_missense=False, cadd_phred=25.0, spliceai_score=0.9)
+        pp3_a = next(c for c in without.all_criteria if c.code == "PP3")
+        pp3_b = next(c for c in with_forced.all_criteria if c.code == "PP3")
+        self.assertEqual(
+            (pp3_a.status, pp3_a.reason),
+            (pp3_b.status, pp3_b.reason),
+            "a forced SpliceAI score changed the PP3 call -- it is being consulted",
+        )
+
+
 class LegitimateNonSpliceAiEvidenceStillContributes(unittest.TestCase):
     """
     *** THE CONTROL, AND IT IS THE HALF THAT A GREEN RUN ALONE CANNOT

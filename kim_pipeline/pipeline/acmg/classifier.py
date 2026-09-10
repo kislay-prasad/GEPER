@@ -224,11 +224,9 @@ class AcmgClassifier:
         "pm2_af_max": 0.0001,
         "pp3_cadd_phred": 20.0,
         "pp3_revel": 0.5,
-        "pp3_spliceai": 0.2,
         "pp3_alphamissense": 0.564,
         "bp4_cadd_phred": 10.0,
         "bp4_revel": 0.15,
-        "bp4_spliceai": 0.1,
         "bp4_alphamissense": 0.34,  # AlphaMissense < 0.34 = likely benign
     }
 
@@ -810,8 +808,6 @@ class AcmgClassifier:
             votes.append(("CADD", e.cadd_phred >= self._t["pp3_cadd_phred"]))
         if e.revel_score is not None and e.is_missense:
             votes.append(("REVEL", e.revel_score >= self._t["pp3_revel"]))
-        if e.spliceai_score is not None:
-            votes.append(("SpliceAI", e.spliceai_score >= self._t["pp3_spliceai"]))
         if e.alphamissense_score is not None and e.is_missense:
             votes.append(("AlphaMissense", e.alphamissense_score >= self._t["pp3_alphamissense"]))
 
@@ -1167,8 +1163,6 @@ class AcmgClassifier:
             votes.append(("CADD", e.cadd_phred < self._t["bp4_cadd_phred"]))
         if e.revel_score is not None and e.is_missense:
             votes.append(("REVEL", e.revel_score < self._t["bp4_revel"]))
-        if e.spliceai_score is not None:
-            votes.append(("SpliceAI", e.spliceai_score < self._t["bp4_spliceai"]))
         if e.alphamissense_score is not None and e.is_missense:
             # AlphaMissense < bp4_alphamissense threshold → likely benign
             votes.append(("AlphaMissense", e.alphamissense_score < self._t["bp4_alphamissense"]))

@@ -183,11 +183,9 @@ def _validate_acmg_thresholds(cfg: dict, errors: list) -> None:
         "pm2_af_max": (0.0, 1.0),
         "pp3_cadd_phred": (0.0, 100.0),
         "pp3_revel": (0.0, 1.0),
-        "pp3_spliceai": (0.0, 1.0),
         "pp3_alphamissense": (0.0, 1.0),
         "bp4_cadd_phred": (0.0, 100.0),
         "bp4_revel": (0.0, 1.0),
-        "bp4_spliceai": (0.0, 1.0),
     }
     for field_name, (lo, hi) in float_fields.items():
         val = acmg.get(field_name)

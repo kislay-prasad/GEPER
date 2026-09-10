@@ -62,9 +62,12 @@ class InterpretationResult:
     # Interpretation-outcome state (human ruling, 2026-09-09/10) --
     # carried ALONGSIDE acmg_classification above, never replacing it,
     # never derived from it or from the per-source retrieval states.
-    # One of "interpreted" / "insufficient_evidence" /
-    # "conflicting_evidence" (unreachable as of round 2 -- see below) /
-    # "review_required". See `pipeline/interpretation_outcome.py`.
+    # One of "interpreted" / "insufficient_evidence" / "review_required"
+    # -- "conflicting_evidence" was a fourth value through round 2 but
+    # was REMOVED from the public InterpretationOutcome enum by ruling
+    # (b), 2026-09-10 (round 3); the comparable-weight-conflict evidence
+    # pattern it used to name now always escalates straight to
+    # "review_required" instead. See `pipeline/interpretation_outcome.py`.
     interpretation_outcome: Optional[str] = None
     # Round 2 (RULED, 2026-09-09/10): which review_required trigger(s)
     # actually fired -- always a list (empty when interpretation_outcome

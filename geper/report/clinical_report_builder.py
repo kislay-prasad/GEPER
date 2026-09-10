@@ -1000,11 +1000,25 @@ def _limitations(ir: Dict[str, Any]) -> List[str]:
         # function `mtdna_interpretation_disclaimer` reads for its own
         # counts -- one source, so this sentence and that disclaimer
         # cannot describe the same list two contradictory ways again.
+        # 2026-09-10: this sentence used to send the reader to "the ACMG
+        # classification section... for the specific reason each
+        # not-evaluated one was skipped." That pointer was false on two
+        # independent grounds, not one: (1) not-evaluated is a third
+        # bucket, disjoint from the triggered/not-triggered criteria
+        # those tables are built from, so per-criterion not-evaluated
+        # detail cannot appear in either table regardless of format; and
+        # (2) the "checked-but-not-triggered" table it named is rendered
+        # only in the PDF (summary.py) -- report_generator.py's Markdown
+        # output never builds one at all, so the claim was additionally
+        # false, on that surface, independent of (1). Neither defect is
+        # fixed by inventing a destination; this report does not render
+        # each not-evaluated criterion's individual reason anywhere, on
+        # any surface, and says so rather than pointing at a place that
+        # cannot hold it.
         limitations.append(
             f"{len(not_evaluated)} of {n_total} ACMG criteria could not be evaluated for this variant"
-            f"{_not_evaluated_reason_clause(not_evaluated)} ({codes}); see the ACMG classification section "
-            f"(both the triggered and the checked-but-not-triggered tables) for the remaining criteria and "
-            f"the specific reason each not-evaluated one was skipped."
+            f"{_not_evaluated_reason_clause(not_evaluated)} ({codes}); the specific reason each individual "
+            f"one was skipped is not rendered elsewhere in this report."
         )
     if ir.get("confidence_pending", True):
         limitations.append("Confidence scoring did not complete for this variant.")

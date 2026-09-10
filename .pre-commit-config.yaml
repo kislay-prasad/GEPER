@@ -29,14 +29,16 @@ repos:
         # `pass_filenames: false` below. mypy.ini is in the list because a
         # commit changing only the type checker's configuration was otherwise
         # the one commit the type checker never ran on.
-        files: ^mypy\.ini$|^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas|conflict_resolution_engine|provenance)\.py$|^geper/pipeline/pvs1/(__init__|cache|decision_tree|lookup|models|utils)\.py$|^geper/pipeline/interpro/lookup\.py$|^geper/pipeline/models/status\.py$
+        files: ^mypy\.ini$|^\.pre-commit-config\.yaml$|^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas|conflict_resolution_engine|provenance)\.py$|^geper/pipeline/pvs1/(__init__|cache|decision_tree|lookup|models|utils)\.py$|^geper/pipeline/interpro/lookup\.py$|^geper/pipeline/models/status\.py$
         # REQUIRED, and not obvious: the upstream hook declares
         # `types_or: [python, pyi]`, which pre-commit ANDs with `files:`.
         # Adding mypy.ini to the regex alone therefore does NOTHING -- the
         # file is filtered out by TYPE before the regex is consulted, and the
         # hook still reports "(no files to check) Skipped". Measured, not
-        # assumed.
-        types_or: [python, pyi, ini]
+        # assumed -- twice: `ini` was added for mypy.ini, and `yaml` had to
+        # be added for THIS file for exactly the same reason. A regex entry
+        # without its type entry is inert.
+        types_or: [python, pyi, ini, yaml]
         # Adding mypy.ini as a trigger would be wrong on its own for a second
         # reason: pre-commit would hand mypy an .ini as a file to type-check.
         # `pass_filenames: false` is what makes it right -- mypy receives no

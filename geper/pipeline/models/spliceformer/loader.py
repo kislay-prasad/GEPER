@@ -18,13 +18,33 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Pinned to the v1.0.0 GitHub release tag (== the Zenodo-archived
-# release, DOI 10.5281/zenodo.14019451) rather than "main", so the
-# exact source/weights GEPER downloads never silently change
-# underneath a running deployment -- the same rationale
-# EnformerPlugin/BorzoiPlugin already apply by pinning a specific
-# HuggingFace repo id rather than "latest".
-DEFAULT_SOURCE_REF = "v1.0.0"
+# The v1.0.0 release, kept as a HUMAN LABEL ONLY. It names the
+# Zenodo-archived release (DOI 10.5281/zenodo.14019451), which is worth
+# recording, but it is NOT what the download resolves through -- see below.
+DEFAULT_SOURCE_TAG = "v1.0.0"
+
+# The COMMIT the v1.0.0 tag named when this was pinned, and what every
+# download actually resolves through.
+#
+# *** THIS USED TO BE THE TAG ITSELF, WITH A COMMENT CLAIMING THAT PINNING
+# IT MEANT THE SOURCE/WEIGHTS "NEVER SILENTLY CHANGE UNDERNEATH A RUNNING
+# DEPLOYMENT". THAT CLAIM WAS FALSE. *** A git tag is a movable label, and
+# this one is LIGHTWEIGHT -- `git ls-remote` against the real repository
+# returns no peeled `^{}` line, so it points straight at a commit and the
+# upstream owner can reassign it at any time. Two deployments that both
+# recorded "spliceformer v1.0.0" could have downloaded different bytes, and
+# nothing in the provenance record would have shown it.
+#
+# Verified against the real upstream repository on 2026-09-10, not assumed:
+#   git ls-remote https://github.com/benniatli/Spliceformer.git refs/tags/v1.0.0
+#     -> 2c225dc23794007d7fc0db6b710b5addf2330303   (no ^{} line: lightweight)
+# and the checkpoint URL returns 200 through the sha exactly as through the
+# tag, so this substitution changes which ref is trusted and nothing else.
+#
+# This also brings SpliceFormer into line with every other model here: ESM-2,
+# HyenaDNA, Enformer and Borzoi all pin 40-hex commit shas, and SpliceBERT
+# pins a fixed Zenodo record. This was the last mutable pin.
+DEFAULT_SOURCE_REF = "2c225dc23794007d7fc0db6b710b5addf2330303"
 
 # One of the ten "transformer_encoder_40k_171022_*" replicate
 # checkpoints shipped in Results/PyTorch_Models/ in the official repo
@@ -45,10 +65,7 @@ DEFAULT_SOURCE_REF = "v1.0.0"
 # SpliceFormerPlugin.metadata().license_notes.
 DEFAULT_CHECKPOINT = "transformer_encoder_40k_171022_0"
 
-_RAW_URL_TEMPLATE = (
-    "https://raw.githubusercontent.com/benniatli/Spliceformer/{ref}/"
-    "Results/PyTorch_Models/{checkpoint}"
-)
+_RAW_URL_TEMPLATE = "https://raw.githubusercontent.com/benniatli/Spliceformer/{ref}/Results/PyTorch_Models/{checkpoint}"
 
 # From the official repo's own inference/delta-scoring notebook
 # (Code/get_clinvar_delta_for_transformer.ipynb): SL=5000, CL_max=40000
@@ -104,9 +121,7 @@ def checkpoint_url(ref: str = DEFAULT_SOURCE_REF, checkpoint: str = DEFAULT_CHEC
     return _RAW_URL_TEMPLATE.format(ref=ref, checkpoint=checkpoint)
 
 
-def download_checkpoint(
-    dest_path: Path, ref: str = DEFAULT_SOURCE_REF, checkpoint: str = DEFAULT_CHECKPOINT
-) -> Path:
+def download_checkpoint(dest_path: Path, ref: str = DEFAULT_SOURCE_REF, checkpoint: str = DEFAULT_CHECKPOINT) -> Path:
     """
     Downloads one official pretrained checkpoint file (a raw
     `torch.save`d state_dict -- see `load_checkpoint_into` below for
@@ -162,5 +177,5 @@ def load_checkpoint_into(model, checkpoint_path: Path, device) -> None:
     """
     state_dict = torch.load(str(checkpoint_path), map_location=device)
     if all(key.startswith("module.") for key in state_dict):
-        state_dict = {key[len("module."):]: value for key, value in state_dict.items()}
+        state_dict = {key[len("module.") :]: value for key, value in state_dict.items()}
     model.load_state_dict(state_dict)

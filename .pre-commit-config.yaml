@@ -25,7 +25,28 @@ repos:
     hooks:
       - id: mypy
         name: mypy (ACMG interpretation path)
-        files: ^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas|conflict_resolution_engine|provenance)\.py$|^geper/pipeline/pvs1/(__init__|cache|decision_tree|lookup|models|utils)\.py$|^geper/pipeline/interpro/lookup\.py$|^geper/pipeline/models/status\.py$
+        # `files:` decides WHEN this hook fires, not what mypy checks -- see
+        # `pass_filenames: false` below. mypy.ini is in the list because a
+        # commit changing only the type checker's configuration was otherwise
+        # the one commit the type checker never ran on.
+        files: ^mypy\.ini$|^geper/pipeline/(acmg_rules|interpretation|interpretation_result|stage_schemas|conflict_resolution_engine|provenance)\.py$|^geper/pipeline/pvs1/(__init__|cache|decision_tree|lookup|models|utils)\.py$|^geper/pipeline/interpro/lookup\.py$|^geper/pipeline/models/status\.py$
+        # REQUIRED, and not obvious: the upstream hook declares
+        # `types_or: [python, pyi]`, which pre-commit ANDs with `files:`.
+        # Adding mypy.ini to the regex alone therefore does NOTHING -- the
+        # file is filtered out by TYPE before the regex is consulted, and the
+        # hook still reports "(no files to check) Skipped". Measured, not
+        # assumed.
+        types_or: [python, pyi, ini]
+        # Adding mypy.ini as a trigger would be wrong on its own for a second
+        # reason: pre-commit would hand mypy an .ini as a file to type-check.
+        # `pass_filenames: false` is what makes it right -- mypy receives no
+        # filenames and checks the `files =` scope from mypy.ini itself. This
+        # is the gitleaks shape: a hook that reads the commit cannot be
+        # silenced by which files the commit contains.
+        # COST, stated so nobody trims it later: mypy now checks the whole
+        # configured scope on any commit that touches it, not only the changed
+        # files. Slower, deliberately.
+        pass_filenames: false
         args: [--config-file=mypy.ini]
         # mypy's pre-commit hook runs in its own isolated environment
         # (language: python) -- it doesn't inherit this project's venv,

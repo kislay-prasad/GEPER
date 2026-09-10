@@ -22,6 +22,16 @@ class ZygosityResult:
     gq: Optional[int]
     ab: Optional[float]  # allele balance = AD[1] / sum(AD)
     phase_set: Optional[str]
+    # DEFECT-zygosity-collapses-absent-and-malformed: a GT token that is
+    # neither "." nor a non-negative integer string (e.g. an empty string
+    # from a truncated sample column, or non-numeric garbage) used to be
+    # scored through the same boolean logic as a real allele index and
+    # could land on any of the seven canonical `zygosity` values --
+    # indistinguishable from a genuinely valid call of that shape (e.g.
+    # gt="" and gt="1" both produce zygosity="hemizygous"). `zygosity`
+    # itself keeps its existing meaning (out of scope to redefine here);
+    # `malformed` is the discriminator a caller can check instead.
+    malformed: bool = False
 
     def is_het(self) -> bool:
         return self.zygosity == "heterozygous"
@@ -62,6 +72,14 @@ class ZygosityExtractor:
         # ── GT → alleles (strip phasing separator) ──────────────────────────
         # Normalise phased (|) and unphased (/) into a uniform list of alleles
         alleles = re.split(r"[/|]", gt_string)
+
+        # A well-formed allele token is either the no-call marker "." or a
+        # non-negative integer allele index. Anything else (empty string,
+        # non-numeric garbage) is malformed input that _determine_zygosity
+        # cannot actually validate -- it best-effort classifies it anyway,
+        # for backward compatibility, but the caller can now tell the two
+        # apart via `malformed`.
+        malformed = any(a != "." and not a.isdigit() for a in alleles)
 
         zygosity = ZygosityExtractor._determine_zygosity(alleles, gt_string)
 
@@ -117,6 +135,7 @@ class ZygosityExtractor:
             gq=gq,
             ab=ab,
             phase_set=phase_set,
+            malformed=malformed,
         )
 
     @staticmethod

@@ -45,16 +45,30 @@ mirroring `pipeline/provenance.py::get_stale_fallbacks`'s own
 "checked, nothing" vs "never checked" discipline) -- see
 `TestDetermineReviewRequiredReasons` below.
 
-AN OBSERVATION WORTH STATING PLAINLY (also mine): after this change,
-`InterpretationOutcome.CONFLICTING_EVIDENCE` becomes UNREACHABLE via
-the public `determine_interpretation_outcome()` -- every input that
-would have produced it now produces `review_required` instead, since
-trigger (1) IS that exact condition. The enum member still exists (for
-`determine_review_required_reasons()`'s own internal use and for any
-future caller), but no call to `determine_interpretation_outcome()` can
-return it anymore. `test_conflicting_evidence_is_now_unreachable_via_the_public_function`
-below tests this directly rather than leaving it as an implicit,
-undocumented side effect.
+ROUND 3 (2026-09-10, RULED (b)): `InterpretationOutcome.CONFLICTING_EVIDENCE`
+is REMOVED from the public enum entirely -- not merely unreachable as a
+return value (that was round 2's state, described above and no longer
+current). Ruling (c) -- change the escalation trigger to restore a
+directly-reachable conflicting_evidence -- was explicitly REJECTED: the
+escalation exists so a genuine evidence conflict reaches a human
+reviewer, and weakening it to tidy an enum would trade a safety
+behaviour for a naming problem. So nothing about WHICH inputs produce
+`review_required` may change here, only whether the now-permanently-
+unreachable member is still importable. The internal three-way
+distinction (`_base_outcome`'s own return type, now `_BaseOutcome`, a
+private enum never exported) is unchanged -- see
+`pipeline/interpretation_outcome.py`'s own docstring. The reason string
+`"conflicting_evidence"` in `determine_review_required_reasons()`'s
+returned list is a DIFFERENT, still-valid, still-reachable value --
+a reason code, not an outcome state, and the ruling did not touch it;
+see `TestDetermineReviewRequiredReasons` below, unchanged by round 3.
+`test_conflicting_evidence_enum_member_is_gone_but_escalation_still_fires`
+below replaces `test_conflicting_evidence_is_now_unreachable_via_the_public_function`
+(round 2's test, whose own premise -- "the member still exists" -- round
+3 made false) and pins the ACTUAL load-bearing claim: the same inputs
+that used to reach `CONFLICTING_EVIDENCE` still escalate to
+`REVIEW_REQUIRED`, identically, whether or not the member exists to be
+returned instead.
 
 Declared BEFORE running, against master da35c979 (this branch's own
 prior interpretation-outcome-state work, already merged, before THIS
@@ -288,14 +302,24 @@ class TestReviewRequiredTriggers(unittest.TestCase):
         )
         self.assertIs(outcome, InterpretationOutcome.REVIEW_REQUIRED)
 
-    def test_conflicting_evidence_is_now_unreachable_via_the_public_function(self):
-        """Explicit, stated observation (mine): no input combination
-        reaches CONFLICTING_EVIDENCE via determine_interpretation_outcome()
-        anymore -- trigger 1 IS that exact condition, so it always
-        escalates to REVIEW_REQUIRED instead. Swept across every
-        combination that used to produce CONFLICTING_EVIDENCE in round
-        1, plus points that clearly would if the escalation didn't
-        exist."""
+    def test_conflicting_evidence_enum_member_is_gone_but_escalation_still_fires(self):
+        """RULED (b), 2026-09-10: CONFLICTING_EVIDENCE is removed from
+        the public enum -- the member itself must no longer exist (not
+        merely be unreachable as a return value, which was round 2's
+        weaker claim). (c) -- weaken the escalation trigger instead --
+        was explicitly REJECTED, so the OTHER half of this test is the
+        load-bearing one: the exact same input combinations that used to
+        reach CONFLICTING_EVIDENCE (round 1) or collapse into it before
+        escalating (round 2) must still produce REVIEW_REQUIRED,
+        unchanged, whether or not the member exists to name the pattern.
+        A test that only checked the member's absence would pass even if
+        someone quietly broke the escalation while deleting the enum
+        line -- this one cannot."""
+        self.assertNotIn(
+            "CONFLICTING_EVIDENCE",
+            InterpretationOutcome.__members__,
+            "InterpretationOutcome.CONFLICTING_EVIDENCE must not exist -- ruled (b), 2026-09-10",
+        )
         for pathogenic_points, benign_points in ((4.0, 4.0), (8.0, 8.0), (2.0, 1.5), (12.0, 6.0)):
             with self.subTest(pathogenic_points=pathogenic_points, benign_points=benign_points):
                 outcome = determine_interpretation_outcome(
@@ -305,7 +329,7 @@ class TestReviewRequiredTriggers(unittest.TestCase):
                     benign_points=benign_points,
                     classification="Uncertain Significance",
                 )
-                self.assertIsNot(outcome, InterpretationOutcome.CONFLICTING_EVIDENCE)
+                self.assertIs(outcome, InterpretationOutcome.REVIEW_REQUIRED)
 
     def test_review_required_does_not_fire_outside_the_two_ruled_triggers(self):
         """Negative-space coverage carried over from round 1's blanket

@@ -26,7 +26,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .gff_index import GffIndex
 from pipeline.zygosity.extractor import ZygosityExtractor
@@ -215,11 +215,18 @@ def _parse_format_fields(format_str: str, sample_str: str) -> Dict[str, str]:
     return dict(zip(keys, vals))
 
 
-def _extract_genotype(format_str: str, sample_str: str) -> Dict[str, Optional[str]]:
+def _extract_genotype(format_str: str, sample_str: str) -> Dict[str, Any]:
     """Extract GT, AD, DP, Genotype, and Zygosity from a VCF record.
 
     NOTE: preserved for backward compatibility with test imports.
-    The annotation stage now uses ZygosityExtractor internally.
+    The annotation stage now uses ZygosityExtractor internally. This
+    fallback is unreachable in production (ZygosityExtractor.extract()
+    self-guards every conversion and cannot raise -- measured with 1493
+    adversarial trials, 0 exceptions; see DEFECT-zygosity-collapses-
+    absent-and-malformed). Kept anyway per that card's ruling: dead code
+    that is fixed and on the board is safer than dead code that is
+    deleted or left silently collapsing, should it ever be reached again
+    (directly, or via a future regression in ZygosityExtractor).
     """
     fields = _parse_format_fields(format_str, sample_str)
     gt = fields.get("GT", "./.")
@@ -229,12 +236,26 @@ def _extract_genotype(format_str: str, sample_str: str) -> Dict[str, Optional[st
     zygosity = _parse_zygosity(gt)
     genotype = gt
 
+    # DEFECT-zygosity-collapses-absent-and-malformed (fallback pair, Fix B):
+    # a malformed GT token (empty/non-numeric) is still scored by
+    # `_parse_zygosity` into a real category -- computed HERE, not inside
+    # `_parse_zygosity`, whose bare-str return is load-bearing in six
+    # direct unit tests (tests/test_annotation_stage.py::TestZygosity /
+    # ::TestExtractGenotype). Mirrors ZygosityExtractor.malformed
+    # (pipeline/zygosity/extractor.py) without redefining what `Zygosity`
+    # means. NOT wired to AnnotatedVariant or the report -- that decision
+    # is reserved (a second producer behind a report cell whose wording is
+    # still under review).
+    alleles = re.split(r"[/|]", gt)
+    zygosity_malformed = any(a != "." and not a.isdigit() for a in alleles)
+
     return {
         "GT": gt,
         "AD": ad,
         "DP": dp,
         "Genotype": genotype,
         "Zygosity": zygosity,
+        "ZygosityMalformed": zygosity_malformed,
     }
 
 

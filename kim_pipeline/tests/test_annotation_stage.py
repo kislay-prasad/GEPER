@@ -73,6 +73,51 @@ class TestExtractGenotype:
         assert geno["Zygosity"] == "No_call"
 
 
+# ── DEFECT-zygosity-collapses-absent-and-malformed: fallback pair (Fix B) ──────
+# The pair above is unreachable in production (measured: 1493 adversarial
+# trials against ZygosityExtractor.extract(), 0 exceptions -- see the card),
+# but is directly importable and still has the identical unvalidated
+# collapse ZygosityExtractor had before pipeline/zygosity/extractor.py's own
+# fix. `_parse_zygosity` itself is untouched -- its bare-str return is
+# load-bearing in TestZygosity and TestExtractGenotype above. The
+# discriminator lives only in `_extract_genotype`'s returned dict.
+
+
+class TestExtractGenotypeMalformedDiscriminator:
+    def test_valid_gt_not_flagged_malformed(self):
+        # NOTE: this legacy fallback has no "hemizygous" category at all
+        # (_parse_zygosity predates ZygosityExtractor) -- a haploid "1"
+        # lands on "Homozygous_alt" here, untouched by this fix.
+        geno = _extract_genotype("GT", "1")
+        assert geno["Zygosity"] == "Homozygous_alt"
+        assert geno["ZygosityMalformed"] is False
+
+    def test_no_call_not_flagged_malformed(self):
+        geno = _extract_genotype("GT", "./.")
+        assert geno["Zygosity"] == "No_call"
+        assert geno["ZygosityMalformed"] is False
+
+    def test_malformed_gt_flagged_and_still_produces_a_category(self):
+        """Documents the residual, same as the primary extractor: `Zygosity`
+        itself is unchanged by this fix (out of scope to redefine it) --
+        `ZygosityMalformed` is the only discriminator. A garbage GT token
+        still yields a real-looking category (the collapse this whole
+        defect family is about), but now a caller can tell."""
+        geno = _extract_genotype("GT", "BAD")
+        assert geno["Zygosity"] in (
+            "Homozygous_ref",
+            "Homozygous_alt",
+            "Heterozygous",
+            "Multi_allelic",
+            "No_call",
+        )
+        assert geno["ZygosityMalformed"] is True
+
+    def test_empty_gt_flagged_malformed(self):
+        geno = _extract_genotype("GT", "")
+        assert geno["ZygosityMalformed"] is True
+
+
 # ─── HGVS notation ────────────────────────────────────────────────────────────
 
 

@@ -105,10 +105,14 @@ class TestBwaAlignment:
             fastq_r2=fixture_set["fastq_r2"],
             sample_id="TESTBWA",
         )
-        assert Path(result.sorted_bam_path).name == "aligned.sorted.bam"
+        # sorted_bam_path is a deliberate alias of markdup_bam_path (see
+        # AlignmentStage.run). Assert the CONTRACT, not the filename: a
+        # literal here is what went stale when the markdup step landed, and
+        # it would go stale again the next time the chain changes.
+        assert result.sorted_bam_path == result.markdup_bam_path
         assert Path(result.sorted_bam_path).exists()
         assert Path(result.bai_path).exists()
-        assert result.bai_path.endswith("aligned.sorted.bam.bai")
+        assert result.bai_path == result.markdup_bam_path + ".bai"
 
     def test_metrics_are_real_not_fabricated(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})

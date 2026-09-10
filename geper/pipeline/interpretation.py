@@ -268,11 +268,31 @@ class InterpretationEngine:
         # Removing it is smaller than correcting it and eliminates the
         # divergence rather than maintaining it (ruling: HIGH 3 Q4-B
         # amendment). The `significance_score` contribution below is
-        # intentionally UNCHANGED -- that number is provably unread by
-        # every report renderer (verified by search, HIGH 3 Q4-B) and
-        # the underlying global_af-only inconsistency is its own,
-        # separately carded, deliberately-not-dispatched issue; only the
-        # reader-visible sentence is in scope here.
+        # intentionally UNCHANGED, and the underlying global_af-only
+        # inconsistency is its own, separately carded,
+        # deliberately-not-dispatched issue.
+        #
+        # CORRECTION (2026-09-11): this comment used to say that score
+        # was "provably unread by every report renderer (verified by
+        # search, HIGH 3 Q4-B)". THAT IS FALSE, AND THE WAY IT WENT
+        # WRONG IS WORTH MORE THAN THE CORRECTION: A SEARCH FOR THE
+        # FIELD NAME WAS RUN, AND IT WAS RIGHT ABOUT THE FIELD AND
+        # WRONG ABOUT THE VALUE. `legacy_pre_acmg_significance_score`
+        # is indeed printed by no renderer -- but the number is not the
+        # score's only output. `_build_summary(..., significance_score,
+        # ...)` turns it into `summary` and `confidence`, and
+        # `report/report_generator.py::_render_interpretation` renders
+        # both, as "**Summary:**" and "**Confidence (legacy):**".
+        # THE NUMBER IS NOT RENDERED; WHAT IT DECIDES IS. Measured, not
+        # argued: moving BA1's weight from -3.0 to -2.0 moves a
+        # stand-alone-benign variant's rendered summary from "has
+        # uncertain clinical significance"/low to "shows some evidence
+        # suggestive of clinical relevance"/moderate.
+        # `tests/test_gnomad_weight_reaches_the_reader.py` now pins that
+        # end to end so this cannot be re-asserted from a search again.
+        # THE DELETION ITSELF IS UNCHANGED AND MAY WELL STILL BE RIGHT:
+        # what was false is one argument recorded for it, and those are
+        # different claims.
         gnomad_criteria = self._gnomad_acmg_evidence(gnomad_result)
         for _text, weight in gnomad_criteria:
             significance_score += weight
@@ -809,14 +829,23 @@ class InterpretationEngine:
         # This branch is not a faithful mirror of that logic, though --
         # it is an older, simpler implementation that happens not to
         # have made the popmax mistake, but it also lacks the
-        # priority-population awareness the real evaluator has. Its
-        # output does not reach any report renderer regardless (see the
-        # `_gnomad_acmg_evidence` docstring and the comment at this
-        # function's call site): `evidence` text from this function is
-        # discarded by its caller, and the `weight` that survives only
-        # feeds the legacy, unread `significance_score` /
-        # `legacy_pre_acmg_significance_score` path. Left as `global_af`
-        # rather than made popmax-aware.
+        # priority-population awareness the real evaluator has.
+        #
+        # ITS TEXT does not reach any report renderer: `evidence` text
+        # from this function is discarded by its only caller
+        # (`interpret()` reads `for _text, weight in ...`).
+        # ITS WEIGHT DOES REACH ONE, and this comment used to deny it --
+        # it said the weight "only feeds the legacy, unread
+        # `significance_score` / `legacy_pre_acmg_significance_score`
+        # path". CORRECTED 2026-09-11: the raw number is printed
+        # nowhere, but `_build_summary` turns the accumulated score into
+        # `summary`/`confidence`, which `report_generator.py::
+        # _render_interpretation` renders. So every weight below is
+        # reader-visible through what it decides, even though none of
+        # them is reader-visible as a number, and
+        # `tests/test_gnomad_weight_reaches_the_reader.py` pins that.
+        # Left as `global_af` rather than made popmax-aware -- that is
+        # the separately carded issue, not this one.
         elif global_af is not None and global_af <= cfg.PM2_AF_THRESHOLD:
             results.append(
                 (

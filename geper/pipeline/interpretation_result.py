@@ -458,8 +458,15 @@ def build_interpretation_result(
 
     # Report review round 4, I8: `interpretation["supporting_evidence"]`
     # (the "legacy" pre-Phase-1 evidence list `InterpretationEngine.
-    # interpret()` builds for its own -- unused by any report view,
-    # confirmed by search -- `legacy_summary`/`legacy_pre_acmg_significance_score`)
+    # interpret()` builds for its own `legacy_summary`/
+    # `legacy_pre_acmg_significance_score` -- described here until
+    # 2026-09-11 as "unused by any report view, confirmed by search",
+    # which was right about the FIELDS and wrong about the VALUES:
+    # neither number is printed, but the score decides
+    # `summary`/`confidence`, which `report_generator.py::
+    # _render_interpretation` renders. See the correction at
+    # `interpretation.py`'s gnomAD call site and
+    # `tests/test_gnomad_weight_reaches_the_reader.py`.)
     # independently restates one fact PM2's own `supporting_evidence`
     # also states, worded differently ("gnomAD: variant not found in
     # the population database (PM2 evidence -- absent from gnomAD)."

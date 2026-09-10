@@ -62,6 +62,19 @@ class WeightCache:
         matches; False on a genuine mismatch. Never raises for a
         missing file -- callers should check `exists()`/`is_file()`
         first if that distinction matters to them.
+
+        A CALLER MUST DECIDE WHETHER "NOTHING TO VERIFY AGAINST" IS
+        SAFE TO TREAT AS PASSING -- this function cannot make that
+        judgment for you, and defaulting to True here means a caller
+        that forgets to check is silently unprotected, not silently
+        safe. `pipeline.provenance.verify_model_artifact` is today's
+        only production caller; it never reaches this function with
+        `expected_sha256=None` at all (see its own guard at
+        `cache_declared_sha256 is None`, `pipeline/provenance.py:334`
+        as of this writing), so a genuinely unrecorded hash there
+        surfaces as `HashVerification.UNVERIFIABLE`, never as a
+        default pass through here. A new caller must reproduce that
+        guard itself -- nothing in this file enforces it.
         """
         if expected_sha256 is None:
             return True
@@ -70,10 +83,7 @@ class WeightCache:
         actual = self.sha256_of(path)
         matches = actual.lower() == expected_sha256.lower()
         if not matches:
-            logger.error(
-                f"Checksum mismatch for cached weights at '{path}': "
-                f"expected {expected_sha256}, got {actual}."
-            )
+            logger.error(f"Checksum mismatch for cached weights at '{path}': expected {expected_sha256}, got {actual}.")
         return matches
 
     def clear(self, plugin_key: str) -> None:

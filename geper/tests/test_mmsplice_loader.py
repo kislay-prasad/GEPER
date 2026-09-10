@@ -327,6 +327,25 @@ class TestModelDirNeverTouchesTheNetwork(unittest.TestCase):
                     self.assertFalse(MMSpliceModel.is_available())
         mock_ensure.assert_not_called()
 
+    def test_unavailability_reason_names_model_dir_not_a_pip_failure(self):
+        """Same accuracy principle as the raised ModelLoadError: a reader
+        of `unavailability_reason()` (surfaced in startup status/reports)
+        must not be told a pip install was attempted or failed when
+        MODEL_DIR being set means one never was."""
+        with tempfile.TemporaryDirectory() as root:
+            _populate_valid_model_dir(root)
+            os.remove(os.path.join(root, "models", "Exon.h5"))
+            self._set_model_dir(root)
+            with mock.patch("pipeline.models.mmsplice.loader._ensure_mmsplice_package_files_available") as mock_ensure:
+                with mock.patch("pipeline.models.mmsplice.loader.check_pip_package_availability") as mock_tf:
+                    mock_tf.return_value = PackageCheckStatus.PRESENT
+                    reason = MMSpliceModel.unavailability_reason()
+
+        mock_ensure.assert_not_called()
+        self.assertIn("GEPER_MMSPLICE_MODEL_DIR", reason)
+        self.assertIn("Exon.h5", reason)
+        self.assertNotIn("pip", reason.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

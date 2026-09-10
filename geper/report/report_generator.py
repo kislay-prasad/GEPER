@@ -1067,19 +1067,35 @@ class ReportGenerator:
         lines.append("### 10. Population Evidence")
         lines.append("")
         g = pop["gnomad"]
-        if g["queried"]:
+        if g.get("skip_reason"):
+            lines.append(f"- **gnomAD:** {g['skip_reason']}")
+        elif g.get("error") is not None:
+            # A genuine crash, not "gnomAD was never asked" -- see this
+            # section's own producer, `_population_evidence`, for why this
+            # branch exists (2026-09-11 fix: the field used to be dropped
+            # entirely, and both cases rendered as the generic "lookup
+            # unavailable" line below).
+            lines.append(
+                f"- **gnomAD:** _lookup failed (external service issue: {g['error']}) -- not evidence "
+                "of an absent variant, see Annotation Detail below._"
+            )
+        elif g["queried"]:
             lines.append(
                 f"- **gnomAD:** {'found, AF=' + str(g['global_af']) if g['found'] else 'variant not found (absent from gnomAD)'}"
             )
-        elif g.get("skip_reason"):
-            lines.append(f"- **gnomAD:** {g['skip_reason']}")
         else:
             lines.append("- **gnomAD:** lookup unavailable for this variant.")
         d = pop["dbsnp"]
-        if d["queried"]:
-            lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
-        elif d.get("skip_reason"):
+        if d.get("skip_reason"):
             lines.append(f"- **dbSNP:** {d['skip_reason']}")
+        elif d.get("error") is not None:
+            # Same distinction and same fix as gnomAD above.
+            lines.append(
+                f"- **dbSNP:** _lookup failed (external service issue: {d['error']}) -- not evidence "
+                "of no dbSNP record, see Annotation Detail below._"
+            )
+        elif d["queried"]:
+            lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
         else:
             lines.append("- **dbSNP:** lookup unavailable for this variant.")
         lines.append("")
@@ -1088,7 +1104,17 @@ class ReportGenerator:
         lines.append("### 11. Indian Population Frequency")
         lines.append("")
         gnomad_sas_af = ipf.get("gnomad_af_sas")
-        if ipf.get("gnomad_sas_queried"):
+        if ipf.get("gnomad_sas_error") is not None:
+            # Same distinction and same fix as Section 10's gnomAD line
+            # above -- this reads the identical gnomAD stage result for
+            # its South Asian subpopulation figure and had the same
+            # collapse (2026-09-11 fix).
+            lines.append(
+                f"- **gnomAD (South Asian, SAS):** _lookup failed (external service issue: "
+                f"{ipf['gnomad_sas_error']}) -- not evidence of no South Asian subpopulation data, "
+                "see Annotation Detail below._"
+            )
+        elif ipf.get("gnomad_sas_queried"):
             lines.append(
                 f"- **gnomAD (South Asian, SAS):** {'AF=' + str(gnomad_sas_af) if gnomad_sas_af is not None else 'no South Asian subpopulation data for this variant'}"
             )
@@ -1668,22 +1694,40 @@ class ReportGenerator:
         labeled summary lines. `ensemble_result` is always the clean,
         already-sanitized dict `pipeline.models.ensemble.
         EnsembleManager.evaluate` returns (see that module) -- never a
-        raw exception or traceback, so nothing here needs its own
-        try/except: there is no technical error text this function
-        could accidentally leak into a clinical report.
+        raw exception or traceback reaching this function directly.
 
         The section is hidden entirely (returns an empty list, adding
-        no heading at all) whenever no ensemble evidence exists for
-        this variant -- either because `ensemble_result` itself is
-        empty/missing, or because it exists but no model actually ran
-        (`models_used` is empty, e.g. both Enformer and Borzoi were
-        disabled/unavailable). This mirrors exactly what
-        `report/json_builder.py::build_variant_result` does: the
+        no heading at all) only when no ensemble evidence exists AND no
+        model genuinely crashed -- `ensemble_result` itself empty/
+        missing, or `models_used` empty because both Enformer and
+        Borzoi were cleanly disabled/unavailable. This mirrors exactly
+        what `report/json_builder.py::build_variant_result` does: the
         `ai_splicing_ensemble` key is only present in the JSON output
         under that same condition, so JSON and Markdown agree on when
         this evidence "exists."
+
+        WHEN `models_used` IS EMPTY BECAUSE A MODEL GENUINELY CRASHED
+        (2026-09-11 fix, sweep finding 3): `ensemble_result["error"]` is
+        set by `EnsembleManager.evaluate()` in that case specifically
+        (never set for a clean disable), and this function renders a
+        "_Failed: ..._" line instead of silently disappearing -- before
+        this fix, a genuine double crash produced a report with NO
+        SECTION AT ALL, not even a "Failed" line, which is a stronger
+        fabricated absence than a wrong statement would have been: a
+        reader has nothing here to be suspicious of. Matches the exact
+        wording `_render_mmsplice`/`_render_rna`/`_render_protein`/
+        `_render_alphamissense` already use for the identical situation
+        (a model that ran and crashed, not one that never ran).
         """
         if not ensemble_result or not ensemble_result.get("models_used"):
+            if ensemble_result and ensemble_result.get("error") is not None:
+                return [
+                    "### AI Splicing Analysis (Enformer + Borzoi Ensemble)",
+                    "",
+                    f"_Failed: {ensemble_result['error']} -- not evidence Enformer/Borzoi found no "
+                    "splicing effect, see the AI Model Status table above._",
+                    "",
+                ]
             return []
 
         lines = ["### AI Splicing Analysis (Enformer + Borzoi Ensemble)", ""]

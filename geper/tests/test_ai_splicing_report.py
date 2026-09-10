@@ -160,6 +160,91 @@ class TestMarkdownReportRendering(unittest.TestCase):
         self.assertIn("not applicable", text)
 
 
+class TestDoubleCrashRendersAFailureNotAnAbsentSection(unittest.TestCase):
+    """
+    Sweep finding 3 (2026-09-11): before this fix, a genuine double
+    crash (both Enformer and Borzoi raised `ModelInferenceError`,
+    caught inside `ModelManager.predict()` and never re-raised) reached
+    this renderer with `models_used=[]` and no way to distinguish it
+    from a clean double-disable -- `_render_ai_splicing_ensemble`
+    returned `[]`, THE ENTIRE SECTION VANISHED, not even a "Failed"
+    line. `EnsembleManager.evaluate()` now surfaces the crash via a new
+    `error` field (only ever set for a genuine crash, never for a clean
+    disable -- see `pipeline/models/ensemble.py`), and this renderer
+    must turn that into a real section.
+    """
+
+    @staticmethod
+    def _double_crash_result():
+        """The exact shape `EnsembleManager.evaluate()` now returns for
+        n==0 with both models genuinely crashed -- pinned to that
+        function's real n==0/failed branch, not invented here, via
+        `test_ensemble_manager.py::TestZeroModelsBecauseBothCrashed`."""
+        return {
+            "models_used": [],
+            "individual_scores": {},
+            "consensus_score": None,
+            "confidence": None,
+            "agreement_percentage": None,
+            "classification": None,
+            "basis": "no_models",
+            "error": "enformer: CUDA out of memory; borzoi: weights checksum mismatch",
+            "reasoning": (
+                "AI splicing ensemble inference failed (enformer: CUDA out of memory; "
+                "borzoi: weights checksum mismatch) -- this is a failed run, not evidence "
+                "that Enformer/Borzoi found no splicing effect."
+            ),
+        }
+
+    def test_double_crash_renders_a_real_section_not_an_empty_list(self):
+        lines = ReportGenerator._render_ai_splicing_ensemble(self._double_crash_result())
+        self.assertNotEqual(lines, [], "a genuine crash must produce a section, not silence")
+        text = "\n".join(lines)
+        self.assertIn("AI Splicing Analysis", text)
+        self.assertIn("_Failed:", text)
+        self.assertIn("CUDA out of memory", text)
+        self.assertIn("weights checksum mismatch", text)
+        self.assertIn(
+            "see the AI Model Status table above",
+            text,
+            "must cross-reference the AI Models table, matching _render_mmsplice/_render_rna/"
+            "_render_protein/_render_alphamissense's identical wording for the same situation",
+        )
+
+    def test_clean_double_disable_still_hides_the_section_entirely(self):
+        """CONTROL: this is the case `test_hidden_entirely_when_zero_models_used`
+        above already pins, restated here for locality with the crash
+        test it is the counterpart to -- a genuinely disabled/absent
+        model pair (`error=None`) must still render nothing at all."""
+        lines = ReportGenerator._render_ai_splicing_ensemble(_ensemble([]))
+        self.assertEqual(lines, [])
+
+    def test_end_to_end_through_the_real_ensemble_manager(self):
+        """Not just a hand-built fixture: drives the REAL
+        `EnsembleManager.evaluate()` down its double-crash branch and
+        renders the REAL result, so this proves the producer and the
+        renderer agree with each other, not each with its own
+        assumption about the other's shape."""
+        from unittest import mock
+
+        from pipeline.models.ensemble import EnsembleManager
+
+        manager = mock.Mock()
+        manager.predict.return_value = None
+        manager.last_inference_errors.return_value = {
+            "enformer": "CUDA out of memory",
+            "borzoi": "weights checksum mismatch",
+        }
+        ensemble_result = EnsembleManager(manager=manager).evaluate("A" * 10, "T" * 10)
+
+        lines = ReportGenerator._render_ai_splicing_ensemble(ensemble_result)
+        text = "\n".join(lines)
+        self.assertNotEqual(lines, [])
+        self.assertIn("_Failed:", text)
+        self.assertIn("CUDA out of memory", text)
+        self.assertIn("weights checksum mismatch", text)
+
+
 class TestJSONAndMarkdownAgreeOnWhenSectionExists(unittest.TestCase):
     """The two report formats must agree on the "does ensemble evidence
     exist" condition -- this is the exact property that motivated

@@ -39,7 +39,6 @@ import gzip
 import hashlib
 import json
 import logging
-import math
 import statistics
 import time
 from collections import Counter, defaultdict
@@ -53,13 +52,13 @@ logger = logging.getLogger("geper.pipeline.qc.stage")
 # ─── Known adapter sequences (first 12 bp are used for detection) ─────────────
 
 _ADAPTERS: Dict[str, str] = {
-    "TruSeq_R1":   "AGATCGGAAGAGC",   # Illumina TruSeq Read 1
-    "TruSeq_R2":   "AGATCGGAAGAGC",   # Illumina TruSeq Read 2
-    "Nextera":     "CTGTCTCTTATAC",   # Nextera transposase
-    "SmallRNA":    "TGGAATTCTCGG",    # Small RNA kit
-    "BGI_R1":      "AAGTCGGAGGCC",   # BGI Read 1
-    "BGI_R2":      "AAGTCGGATCGC",   # BGI Read 2
-    "PolyA":       "AAAAAAAAAAAA",   # Poly-A tail
+    "TruSeq_R1": "AGATCGGAAGAGC",  # Illumina TruSeq Read 1
+    "TruSeq_R2": "AGATCGGAAGAGC",  # Illumina TruSeq Read 2
+    "Nextera": "CTGTCTCTTATAC",  # Nextera transposase
+    "SmallRNA": "TGGAATTCTCGG",  # Small RNA kit
+    "BGI_R1": "AAGTCGGAGGCC",  # BGI Read 1
+    "BGI_R2": "AAGTCGGATCGC",  # BGI Read 2
+    "PolyA": "AAAAAAAAAAAA",  # Poly-A tail
 }
 
 _ADAPTER_SEED_LEN = 12  # compare only the first N bp for speed
@@ -67,18 +66,19 @@ _ADAPTER_SEED_LEN = 12  # compare only the first N bp for speed
 # ─── Default QC thresholds ────────────────────────────────────────────────────
 
 DEFAULT_THRESHOLDS: Dict[str, float] = {
-    "min_mean_quality":       20.0,   # mean Phred across all bases
-    "max_n_fraction":          0.1,   # fraction of bases that are N
-    "min_gc_fraction":         0.2,   # overall GC fraction lower bound
-    "max_gc_fraction":         0.8,   # overall GC fraction upper bound
-    "max_adapter_fraction":    0.5,   # fraction of reads with adapter hits
-    "max_duplicate_fraction":  0.8,   # estimated duplicate rate upper bound
-    "min_total_reads":         100,   # minimum reads to consider a file usable
-    "min_read_length":          25,   # minimum mean read length
+    "min_mean_quality": 20.0,  # mean Phred across all bases
+    "max_n_fraction": 0.1,  # fraction of bases that are N
+    "min_gc_fraction": 0.2,  # overall GC fraction lower bound
+    "max_gc_fraction": 0.8,  # overall GC fraction upper bound
+    "max_adapter_fraction": 0.5,  # fraction of reads with adapter hits
+    "max_duplicate_fraction": 0.8,  # estimated duplicate rate upper bound
+    "min_total_reads": 100,  # minimum reads to consider a file usable
+    "min_read_length": 25,  # minimum mean read length
 }
 
 
 # ─── Error types ──────────────────────────────────────────────────────────────
+
 
 class QCError(Exception):
     """General QC stage failure (file I/O, parse error, etc.)."""
@@ -98,17 +98,17 @@ class QCThresholdError(QCError):
                 f"  {metric}: observed={observed:.4g} "
                 f"{'<' if direction == 'min' else '>'} threshold={threshold:.4g}"
             )
-        super().__init__(
-            f"QC threshold violations ({len(violations)}):\n" + "\n".join(lines)
-        )
+        super().__init__(f"QC threshold violations ({len(violations)}):\n" + "\n".join(lines))
         self.violations = violations
 
 
 # ─── Result data model ────────────────────────────────────────────────────────
 
+
 @dataclass
 class PerBasePhredStats:
     """Per-position quality score statistics (1-indexed positions)."""
+
     mean_by_position: List[float] = field(default_factory=list)
     median_by_position: List[float] = field(default_factory=list)
     q1_by_position: List[float] = field(default_factory=list)
@@ -128,33 +128,33 @@ class QCMetrics:
     max_read_length: int = 0
     mean_read_length: float = 0.0
     median_read_length: float = 0.0
-    n50_read_length: int = 0        # length L such that 50% of bases in reads ≥ L
+    n50_read_length: int = 0  # length L such that 50% of bases in reads ≥ L
 
     # ── Phred quality ────────────────────────────────────────────────────
-    mean_quality: float = 0.0       # mean Phred across ALL bases
-    q20_fraction: float = 0.0       # fraction of bases ≥ Q20
-    q30_fraction: float = 0.0       # fraction of bases ≥ Q30
+    mean_quality: float = 0.0  # mean Phred across ALL bases
+    q20_fraction: float = 0.0  # fraction of bases ≥ Q20
+    q30_fraction: float = 0.0  # fraction of bases ≥ Q30
     per_base_phred: PerBasePhredStats = field(default_factory=PerBasePhredStats)
 
     # ── GC content ───────────────────────────────────────────────────────
-    gc_fraction: float = 0.0        # overall GC / (GC + AT)
+    gc_fraction: float = 0.0  # overall GC / (GC + AT)
     gc_distribution: List[float] = field(default_factory=list)  # per-read GC %
 
     # ── N content ────────────────────────────────────────────────────────
-    n_fraction: float = 0.0         # fraction of all bases that are N
+    n_fraction: float = 0.0  # fraction of all bases that are N
     reads_with_n_fraction: float = 0.0  # fraction of reads containing ≥1 N
 
     # ── Adapters ─────────────────────────────────────────────────────────
-    adapter_hits: Dict[str, int] = field(default_factory=dict)    # name → count
+    adapter_hits: Dict[str, int] = field(default_factory=dict)  # name → count
     adapter_contamination_fraction: float = 0.0  # fraction of reads with any hit
 
     # ── Duplicates (estimated) ───────────────────────────────────────────
-    duplicate_fraction_estimate: float = 0.0   # based on first-N-read hashing
+    duplicate_fraction_estimate: float = 0.0  # based on first-N-read hashing
 
     # ── Filtered read counts ─────────────────────────────────────────────
-    low_quality_reads: int = 0      # reads with mean Q < threshold
-    too_short_reads: int = 0        # reads shorter than min_read_length
-    high_n_reads: int = 0           # reads with N fraction > max_n_fraction
+    low_quality_reads: int = 0  # reads with mean Q < threshold
+    too_short_reads: int = 0  # reads shorter than min_read_length
+    high_n_reads: int = 0  # reads with N fraction > max_n_fraction
 
     # ── Tile quality (Illumina, best-effort) ─────────────────────────────
     tile_quality_warnings: List[str] = field(default_factory=list)
@@ -181,7 +181,7 @@ class QCResult:
     report_json_path: str = ""
     report_html_path: str = ""
     elapsed_seconds: float = 0.0
-    qc_passed: bool = True          # False if any file fails thresholds
+    qc_passed: bool = True  # False if any file fails thresholds
 
     def to_dict(self) -> Dict:
         d = asdict(self)
@@ -189,6 +189,7 @@ class QCResult:
 
 
 # ─── Streaming FASTQ parser ───────────────────────────────────────────────────
+
 
 def _open_fastq(path: str):
     """Return a file handle for plain or gzip-compressed FASTQ."""
@@ -211,7 +212,7 @@ def _iter_records(path: str) -> Iterator[Tuple[str, str, str]]:
             if not header:
                 break  # EOF
             seq = fh.readline().rstrip("\n")
-            plus = fh.readline()
+            fh.readline()  # '+' separator line; consumed to advance the file position, value unused
             qual = fh.readline().rstrip("\n")
             if not qual:
                 raise QCError(f"Truncated FASTQ record in {path!r}")
@@ -221,6 +222,7 @@ def _iter_records(path: str) -> Iterator[Tuple[str, str, str]]:
 
 
 # ─── Per-base quality accumulator ────────────────────────────────────────────
+
 
 class _PositionAccumulator:
     """Accumulate quality scores by position across all reads."""
@@ -261,6 +263,7 @@ class _PositionAccumulator:
 
 # ─── N50 helper ──────────────────────────────────────────────────────────────
 
+
 def _compute_n50(lengths: List[int]) -> int:
     if not lengths:
         return 0
@@ -276,6 +279,7 @@ def _compute_n50(lengths: List[int]) -> int:
 
 # ─── Tile extraction helper ───────────────────────────────────────────────────
 
+
 def _extract_tile(header: str) -> Optional[str]:
     """Extract Illumina tile identifier from CASAVA-format header.
 
@@ -290,6 +294,7 @@ def _extract_tile(header: str) -> Optional[str]:
 
 
 # ─── Core per-file QC function ───────────────────────────────────────────────
+
 
 def _compute_qc(
     path: str,
@@ -471,6 +476,7 @@ def _compute_qc(
 
 # ─── QC report writers ────────────────────────────────────────────────────────
 
+
 def _write_json_report(result: QCResult, out_path: Path) -> None:
     """Write the QC result as a JSON file."""
     out_path.write_text(json.dumps(result.to_dict(), indent=2))
@@ -544,23 +550,69 @@ def _metrics_to_rows(m: QCMetrics, thresholds: Dict) -> str:
         return f"<tr><td class='metric-name'>{name}</td><td>{value}</td><td>{badge}</td></tr>"
 
     lq = thresholds.get("min_mean_quality", DEFAULT_THRESHOLDS["min_mean_quality"])
-    rows.append(row("Total Reads", f"{m.total_reads:,}", m.total_reads >= thresholds.get("min_total_reads", 100)))
+    rows.append(
+        row(
+            "Total Reads",
+            f"{m.total_reads:,}",
+            m.total_reads >= thresholds.get("min_total_reads", 100),
+        )
+    )
     rows.append(row("Total Bases", f"{m.total_bases:,}", True))
     rows.append(row("Mean Quality (Phred)", f"{m.mean_quality:.2f}", m.mean_quality >= lq))
-    rows.append(row("Q20 Fraction", f"{m.q20_fraction:.3f}", m.q20_fraction >= 0.7, warn=m.q20_fraction < 0.8))
-    rows.append(row("Q30 Fraction", f"{m.q30_fraction:.3f}", m.q30_fraction >= 0.5, warn=m.q30_fraction < 0.6))
-    rows.append(row("Mean Read Length", f"{m.mean_read_length:.1f} bp", m.mean_read_length >= thresholds.get("min_read_length", 25)))
+    rows.append(
+        row(
+            "Q20 Fraction",
+            f"{m.q20_fraction:.3f}",
+            m.q20_fraction >= 0.7,
+            warn=m.q20_fraction < 0.8,
+        )
+    )
+    rows.append(
+        row(
+            "Q30 Fraction",
+            f"{m.q30_fraction:.3f}",
+            m.q30_fraction >= 0.5,
+            warn=m.q30_fraction < 0.6,
+        )
+    )
+    rows.append(
+        row(
+            "Mean Read Length",
+            f"{m.mean_read_length:.1f} bp",
+            m.mean_read_length >= thresholds.get("min_read_length", 25),
+        )
+    )
     rows.append(row("Read Length (min/max)", f"{m.min_read_length} / {m.max_read_length} bp", True))
     rows.append(row("N50 Read Length", f"{m.n50_read_length} bp", True))
-    gc_ok = thresholds.get("min_gc_fraction", 0.2) <= m.gc_fraction <= thresholds.get("max_gc_fraction", 0.8)
+    gc_ok = (
+        thresholds.get("min_gc_fraction", 0.2)
+        <= m.gc_fraction
+        <= thresholds.get("max_gc_fraction", 0.8)
+    )
     rows.append(row("GC Content", f"{m.gc_fraction * 100:.1f}%", gc_ok))
     n_ok = m.n_fraction <= thresholds.get("max_n_fraction", 0.1)
     rows.append(row("N Base Fraction", f"{m.n_fraction:.4f}", n_ok))
-    rows.append(row("Reads with N", f"{m.reads_with_n_fraction:.4f}", m.reads_with_n_fraction < 0.1))
+    rows.append(
+        row("Reads with N", f"{m.reads_with_n_fraction:.4f}", m.reads_with_n_fraction < 0.1)
+    )
     ada_ok = m.adapter_contamination_fraction <= thresholds.get("max_adapter_fraction", 0.5)
-    rows.append(row("Adapter Contamination", f"{m.adapter_contamination_fraction:.3f}", ada_ok, warn=m.adapter_contamination_fraction > 0.1))
+    rows.append(
+        row(
+            "Adapter Contamination",
+            f"{m.adapter_contamination_fraction:.3f}",
+            ada_ok,
+            warn=m.adapter_contamination_fraction > 0.1,
+        )
+    )
     dup_ok = m.duplicate_fraction_estimate <= thresholds.get("max_duplicate_fraction", 0.8)
-    rows.append(row("Est. Duplicate Rate", f"{m.duplicate_fraction_estimate:.3f}", dup_ok, warn=m.duplicate_fraction_estimate > 0.5))
+    rows.append(
+        row(
+            "Est. Duplicate Rate",
+            f"{m.duplicate_fraction_estimate:.3f}",
+            dup_ok,
+            warn=m.duplicate_fraction_estimate > 0.5,
+        )
+    )
     rows.append(row("Low-Quality Reads Filtered", f"{m.low_quality_reads:,}", True))
     rows.append(row("Too-Short Reads", f"{m.too_short_reads:,}", True))
     rows.append(row("High-N Reads", f"{m.high_n_reads:,}", True))
@@ -569,7 +621,9 @@ def _metrics_to_rows(m: QCMetrics, thresholds: Dict) -> str:
     if m.adapter_hits:
         for aname, cnt in sorted(m.adapter_hits.items(), key=lambda x: -x[1]):
             frac = cnt / m.total_reads if m.total_reads else 0
-            rows.append(row(f"  Adapter: {aname}", f"{cnt:,} ({frac:.2%})", frac < 0.1, warn=frac >= 0.1))
+            rows.append(
+                row(f"  Adapter: {aname}", f"{cnt:,} ({frac:.2%})", frac < 0.1, warn=frac >= 0.1)
+            )
 
     return "\n    ".join(rows)
 
@@ -584,13 +638,18 @@ def _build_html(result: QCResult, thresholds: Dict) -> str:
         failures_block = ""
         if m.qc_failures:
             items = "".join(f"<li>{f}</li>" for f in m.qc_failures)
-            failures_block = f"<p style='color:#721c24'><strong>Failures:</strong><ul>{items}</ul></p>"
+            failures_block = (
+                f"<p style='color:#721c24'><strong>Failures:</strong><ul>{items}</ul></p>"
+            )
         if m.tile_quality_warnings:
             tw_items = "".join(f"<li>{w}</li>" for w in m.tile_quality_warnings)
             warnings_block += f"<p><strong>Tile Quality Issues:</strong><ul>{tw_items}</ul></p>"
         return _METRICS_SECTION.format(
-            title=title, filepath=filepath,
-            rows=rows, warnings_block=warnings_block, failures_block=failures_block,
+            title=title,
+            filepath=filepath,
+            rows=rows,
+            warnings_block=warnings_block,
+            failures_block=failures_block,
         )
 
     r1_sec = section("R1 Quality Metrics", result.fastq_r1, result.metrics_r1)
@@ -610,6 +669,7 @@ def _build_html(result: QCResult, thresholds: Dict) -> str:
 
 
 # ─── QC Stage ─────────────────────────────────────────────────────────────────
+
 
 class QCStage:
     """Production FASTQ Quality Control stage.
@@ -694,7 +754,9 @@ class QCStage:
 
         logger.info(
             "[%s] QC Stage done in %.1fs — overall: %s",
-            sample_id, result.elapsed_seconds, "PASS" if overall_pass else "FAIL",
+            sample_id,
+            result.elapsed_seconds,
+            "PASS" if overall_pass else "FAIL",
         )
 
         if not overall_pass and self._stop_on_failure:
@@ -725,7 +787,12 @@ class QCStage:
             ("N fraction", m.n_fraction, t["max_n_fraction"], "max"),
             ("GC fraction (low)", m.gc_fraction, t["min_gc_fraction"], "min"),
             ("GC fraction (high)", m.gc_fraction, t["max_gc_fraction"], "max"),
-            ("Adapter contamination", m.adapter_contamination_fraction, t["max_adapter_fraction"], "max"),
+            (
+                "Adapter contamination",
+                m.adapter_contamination_fraction,
+                t["max_adapter_fraction"],
+                "max",
+            ),
             ("Duplicate rate", m.duplicate_fraction_estimate, t["max_duplicate_fraction"], "max"),
             ("Total reads", float(m.total_reads), t["min_total_reads"], "min"),
             ("Mean read length", m.mean_read_length, t["min_read_length"], "min"),
@@ -734,14 +801,10 @@ class QCStage:
         all_pass = True
         for label, observed, threshold, direction in checks:
             if direction == "min" and observed < threshold:
-                m.qc_failures.append(
-                    f"{label}: {observed:.4g} < {threshold:.4g} (threshold)"
-                )
+                m.qc_failures.append(f"{label}: {observed:.4g} < {threshold:.4g} (threshold)")
                 all_pass = False
             elif direction == "max" and observed > threshold:
-                m.qc_failures.append(
-                    f"{label}: {observed:.4g} > {threshold:.4g} (threshold)"
-                )
+                m.qc_failures.append(f"{label}: {observed:.4g} > {threshold:.4g} (threshold)")
                 all_pass = False
 
         # Soft warnings
@@ -756,9 +819,7 @@ class QCStage:
                 f"Estimated duplicate rate {m.duplicate_fraction_estimate:.2%} > 50%"
             )
         if m.tile_quality_warnings:
-            m.qc_warnings.append(
-                f"{len(m.tile_quality_warnings)} tile(s) with degraded quality"
-            )
+            m.qc_warnings.append(f"{len(m.tile_quality_warnings)} tile(s) with degraded quality")
 
         m.qc_pass = all_pass
 
@@ -777,14 +838,25 @@ class QCStage:
                 ("n_fraction", m.n_fraction, t["max_n_fraction"], "max"),
                 ("gc_fraction_low", m.gc_fraction, t["min_gc_fraction"], "min"),
                 ("gc_fraction_high", m.gc_fraction, t["max_gc_fraction"], "max"),
-                ("adapter_fraction", m.adapter_contamination_fraction, t["max_adapter_fraction"], "max"),
-                ("duplicate_fraction", m.duplicate_fraction_estimate, t["max_duplicate_fraction"], "max"),
+                (
+                    "adapter_fraction",
+                    m.adapter_contamination_fraction,
+                    t["max_adapter_fraction"],
+                    "max",
+                ),
+                (
+                    "duplicate_fraction",
+                    m.duplicate_fraction_estimate,
+                    t["max_duplicate_fraction"],
+                    "max",
+                ),
                 ("total_reads", float(m.total_reads), t["min_total_reads"], "min"),
                 ("mean_read_length", m.mean_read_length, t["min_read_length"], "min"),
             ]
             for key, observed, threshold, direction in pairs:
-                fail = (direction == "min" and observed < threshold) or \
-                       (direction == "max" and observed > threshold)
+                fail = (direction == "min" and observed < threshold) or (
+                    direction == "max" and observed > threshold
+                )
                 if fail:
                     violations[f"{prefix}.{key}"] = (observed, threshold, direction)
 

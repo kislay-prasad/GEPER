@@ -14,6 +14,7 @@ call` on a real BAM (both already required elsewhere in GEPER), giving
 real coverage of the PASS-filtering logic even in environments without
 FreeBayes installed.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -53,11 +54,17 @@ def aligned_bam(fixture_set, tmp_path_factory):
     out_dir = tmp_path_factory.mktemp("align_for_vc")
     stage = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})
     result = stage.run(
-        fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(out_dir),
-        fastq_r2=fixture_set["fastq_r2"], sample_id="VCFIXTURE",
+        fixture_set["fastq_r1"],
+        fixture_set["reference_fasta"],
+        str(out_dir),
+        fastq_r2=fixture_set["fastq_r2"],
+        sample_id="VCFIXTURE",
     )
-    return {"bam_path": result.sorted_bam_path, "reference_fasta": fixture_set["reference_fasta"],
-            "injected_variants": fixture_set["variants"]}
+    return {
+        "bam_path": result.sorted_bam_path,
+        "reference_fasta": fixture_set["reference_fasta"],
+        "injected_variants": fixture_set["variants"],
+    }
 
 
 @pytest.fixture(scope="module")
@@ -72,11 +79,16 @@ def real_raw_vcf(aligned_bam, tmp_path_factory):
     vcf_path = str(out_dir / "raw.vcf")
     mpileup = subprocess.run(
         ["bcftools", "mpileup", "-f", aligned_bam["reference_fasta"], aligned_bam["bam_path"]],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
-    call = subprocess.run(
+    subprocess.run(
         ["bcftools", "call", "-mv", "-Ov", "-o", vcf_path],
-        input=mpileup.stdout, capture_output=True, text=True, check=True,
+        input=mpileup.stdout,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert Path(vcf_path).exists()
     return vcf_path
@@ -93,9 +105,11 @@ class TestFiltering:
         assert summary.total_pass == 4
         assert summary.snvs_pass == 4
         assert Path(out_vcf).exists()
-        passed_lines = [l for l in Path(out_vcf).read_text().splitlines() if not l.startswith("#")]
+        passed_lines = [
+            line for line in Path(out_vcf).read_text().splitlines() if not line.startswith("#")
+        ]
         assert len(passed_lines) == 4
-        assert all("\tPASS\t" in l for l in passed_lines)
+        assert all("\tPASS\t" in line for line in passed_lines)
 
     def test_stricter_thresholds_filter_more(self, real_raw_vcf, tmp_path):
         out_vcf = str(tmp_path / "strict.vcf")
@@ -116,10 +130,14 @@ class TestFreebayesRunnerLive:
     def test_run_freebayes_produces_vcf_with_injected_variants(self, aligned_bam, tmp_path):
         out_vcf = str(tmp_path / "variants.vcf")
         freebayes_runner.run_freebayes(
-            aligned_bam["bam_path"], aligned_bam["reference_fasta"], out_vcf,
+            aligned_bam["bam_path"],
+            aligned_bam["reference_fasta"],
+            out_vcf,
         )
         assert Path(out_vcf).exists()
-        lines = [l for l in Path(out_vcf).read_text().splitlines() if not l.startswith("#")]
+        lines = [
+            line for line in Path(out_vcf).read_text().splitlines() if not line.startswith("#")
+        ]
         assert len(lines) > 0
 
     def test_full_stage_writes_both_outputs(self, aligned_bam, tmp_path):
@@ -136,6 +154,7 @@ def test_stage_raises_clearly_when_freebayes_absent(aligned_bam, tmp_path, monke
     """Deterministic test of the no-fallback behavior, independent of
     whether this host happens to have FreeBayes installed."""
     import pipeline.variant_calling.stage as vc_stage
+
     monkeypatch.setattr(vc_stage.freebayes_runner, "is_available", lambda: False)
     stage = VariantCallingStage()
     with pytest.raises(FastqPipelineError) as exc_info:

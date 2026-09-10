@@ -37,22 +37,22 @@ RAW_REF_PATH = HERE / "rcrs_raw.fasta"
 OUT_DIR = HERE / "dataset"
 OUT_DIR.mkdir(exist_ok=True)
 
-VARIANT_POS_1BASED = 3243     # m.3243A>G (MT-TL1, MELAS/MIDD) — real ClinVar pathogenic variant
+VARIANT_POS_1BASED = 3243  # m.3243A>G (MT-TL1, MELAS/MIDD) — real ClinVar pathogenic variant
 VARIANT_REF = "A"
 VARIANT_ALT = "G"
 
 READ_LENGTH = 150
-STEP = 9                       # -> ~16.7x average coverage
-BASE_ERROR_RATE = 0.001        # 0.1% per-base sequencing error, realistic for Illumina
-QUAL_HIGH = "I"                # Phred 40 (Illumina 1.8+ encoding)
-QUAL_LOW = "5"                 # Phred 20, used only at simulated error positions
+STEP = 9  # -> ~16.7x average coverage
+BASE_ERROR_RATE = 0.001  # 0.1% per-base sequencing error, realistic for Illumina
+QUAL_HIGH = "I"  # Phred 40 (Illumina 1.8+ encoding)
+QUAL_LOW = "5"  # Phred 20, used only at simulated error positions
 
 BASES = "ACGT"
 
 
 def load_reference() -> str:
     lines = RAW_REF_PATH.read_text().splitlines()
-    seq = "".join(l.strip() for l in lines if not l.startswith(">"))
+    seq = "".join(line.strip() for line in lines if not line.startswith(">"))
     return seq.upper()
 
 
@@ -60,8 +60,7 @@ def apply_variant(seq: str) -> str:
     seq_list = list(seq)
     idx = VARIANT_POS_1BASED - 1
     assert seq_list[idx] == VARIANT_REF, (
-        f"Reference base mismatch at {VARIANT_POS_1BASED}: "
-        f"expected {VARIANT_REF}, found {seq_list[idx]}"
+        f"Reference base mismatch at {VARIANT_POS_1BASED}: expected {VARIANT_REF}, found {seq_list[idx]}"
     )
     seq_list[idx] = VARIANT_ALT
     return "".join(seq_list)
@@ -80,7 +79,7 @@ def resolve_reference_n(seq: str) -> str:
     if idx == -1:
         return seq
     fixed = random.choice(BASES)
-    return seq[:idx] + fixed + seq[idx + 1:]
+    return seq[:idx] + fixed + seq[idx + 1 :]
 
 
 def simulate_read(seq: str, start: int, length: int) -> tuple[str, str]:
@@ -88,7 +87,7 @@ def simulate_read(seq: str, start: int, length: int) -> tuple[str, str]:
     0-based `start`, injecting rare sequencing errors. `seq` must already
     have any reference 'N' resolved to a fixed real base (see
     `resolve_reference_n`) so read generation is fully deterministic."""
-    window = seq[start:start + length]
+    window = seq[start : start + length]
     read_bases = []
     quals = []
     for b in window:
@@ -131,7 +130,7 @@ def main() -> None:
             "compatibility — see README_TEST_DATASET.md\n"
         )
         for i in range(0, len(reference_seq_for_output), 70):
-            f.write(reference_seq_for_output[i:i + 70] + "\n")
+            f.write(reference_seq_for_output[i : i + 70] + "\n")
 
     # ── Generate reads from the mutant sequence, tiled across the genome ──
     n = len(read_source_seq)
@@ -142,7 +141,7 @@ def main() -> None:
     depth_at_variant = 0
     with open(reads_out, "w") as f:
         for i, start in enumerate(starts):
-            forward = (i % 2 == 0)  # alternate strand for realism
+            forward = i % 2 == 0  # alternate strand for realism
             read_seq, qual = simulate_read(read_source_seq, start, READ_LENGTH)
             if not forward:
                 read_seq = revcomp(read_seq)
@@ -153,7 +152,9 @@ def main() -> None:
             if start <= (VARIANT_POS_1BASED - 1) < start + READ_LENGTH:
                 depth_at_variant += 1
 
-    print(f"reference.fasta : {ref_out}  ({len(reference_seq_for_output)} bp, GC={100*sum(c in 'GC' for c in reference_seq_for_output)/len(reference_seq_for_output):.1f}%)")
+    print(
+        f"reference.fasta : {ref_out}  ({len(reference_seq_for_output)} bp, GC={100 * sum(c in 'GC' for c in reference_seq_for_output) / len(reference_seq_for_output):.1f}%)"
+    )
     print(f"reads_1.fastq   : {reads_out}  ({read_count} reads, {READ_LENGTH} bp each)")
     print(f"Approx. coverage at variant locus (pos {VARIANT_POS_1BASED}): {depth_at_variant}x")
     print(f"Variant introduced: MT:{VARIANT_POS_1BASED} {VARIANT_REF}>{VARIANT_ALT} (m.3243A>G, MT-TL1, MELAS/MIDD)")

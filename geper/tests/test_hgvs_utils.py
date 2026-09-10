@@ -28,7 +28,6 @@ just trusted -- see each test's inline math.
 import unittest
 
 from pipeline.hgvs_utils import (
-    HGVSValidationResult,
     refseq_chrom_accession,
     to_hgvs_c,
     to_hgvs_g,
@@ -55,6 +54,7 @@ def _two_exon_transcript(strand: int, cds_sequence=None) -> TranscriptContext:
 # ---------------------------------------------------------------------------
 # g. (genomic) notation -- real, verified BRCA1 coordinate
 # ---------------------------------------------------------------------------
+
 
 class TestHgvsGRealBrca1(unittest.TestCase):
     def test_real_brca1_c181t_g_substitution_in_genomic_orientation(self):
@@ -97,6 +97,7 @@ class TestHgvsGDelInsForms(unittest.TestCase):
 # c. (coding) notation -- hand-verifiable synthetic transcript
 # ---------------------------------------------------------------------------
 
+
 class TestHgvsCPlusStrand(unittest.TestCase):
     def test_substitution_in_first_exon(self):
         tc = _two_exon_transcript(strand=1)
@@ -106,7 +107,7 @@ class TestHgvsCPlusStrand(unittest.TestCase):
 
     def test_substitution_at_exon_boundary_crossing_into_second_exon_cds_numbering(self):
         # genomic 2000 is the first base of exon 2 -> cds position 101 (100 bases of exon 1 + 1).
-        result = to_hgvs_c(tc := _two_exon_transcript(strand=1), 2000, "C", "T")
+        result = to_hgvs_c(_two_exon_transcript(strand=1), 2000, "C", "T")
         self.assertEqual(result, "NM_999999.1:c.101C>T")
 
     def test_intronic_position_returns_none(self):
@@ -127,6 +128,7 @@ class TestHgvsCMinusStrand(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # p. (protein) notation
 # ---------------------------------------------------------------------------
+
 
 class TestHgvsP(unittest.TestCase):
     # 5 codons: ATG(Met/start) AAA(Lys) CCC(Pro) TTT(Phe) TAA(Stop).
@@ -162,6 +164,7 @@ class TestHgvsP(unittest.TestCase):
 # Validation
 # ---------------------------------------------------------------------------
 
+
 class TestValidateHgvsSyntax(unittest.TestCase):
     def test_well_formed_substitution_passes_without_fetcher(self):
         result = validate_hgvs("NC_000017.11:g.43106487T>G")
@@ -190,7 +193,12 @@ class TestValidateHgvsSyntax(unittest.TestCase):
         self.assertFalse(result.is_valid)
 
     def test_deletion_insertion_delins_syntax_recognized(self):
-        for hgvs in ["NC_000017.11:g.101del", "NC_000017.11:g.101_103del", "NC_000017.11:g.100_101insTG", "NC_000017.11:g.100_101delinsGC"]:
+        for hgvs in [
+            "NC_000017.11:g.101del",
+            "NC_000017.11:g.101_103del",
+            "NC_000017.11:g.100_101insTG",
+            "NC_000017.11:g.100_101delinsGC",
+        ]:
             with self.subTest(hgvs=hgvs):
                 result = validate_hgvs(hgvs)
                 self.assertTrue(result.is_valid, msg=result.errors)
@@ -219,7 +227,10 @@ class TestValidateHgvsReferenceCrossCheck(unittest.TestCase):
         # strand-confusion mistake this cross-check exists to catch.
         result = validate_hgvs("NC_000017.11:g.43106487T>G", fetch_reference_base=self._fetch_base)
         self.assertFalse(result.is_valid)
-        self.assertTrue(any("states reference base 'T'" in e and "real reference genome has 'A'" in e for e in result.errors), msg=result.errors)
+        self.assertTrue(
+            any("states reference base 'T'" in e and "real reference genome has 'A'" in e for e in result.errors),
+            msg=result.errors,
+        )
 
     def test_no_fetcher_warns_rather_than_fails(self):
         result = validate_hgvs("NC_000017.11:g.43106487A>C", fetch_reference_base=None)

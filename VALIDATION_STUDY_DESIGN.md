@@ -365,6 +365,45 @@ recurs on a timescale of weeks even when a prior instance is documented in the s
 next drift happens to — see §0.2a's proposal for what would make a badge catch its own
 staleness instead of relying on someone re-running this exact audit again.
 
+### 0.4b The pattern recurred a THIRD time, inside this same pinning pass, before a single sha was written down
+
+**god's implementation dispatch (conv-validation-badges, 2026-09-10) named the merge sha of
+§0.4a's audit, `36234d38`, as the sha to pin every badge to (or, its own text, "current
+master if you re-verify at the newer one — say which you chose").** The dispatch's own stated
+base was `c2258df10ccee86a92639ac47e7ca2f26a262b75` — a later commit. Checked before pinning
+anything, per this dispatch's own "re-verify every premise" instruction:
+
+```
+git diff --stat 36234d38 c2258df1 -- geper/pipeline/acmg_rules.py geper/pipeline/ps1_pm5/ \
+    geper/database/clinvar_client.py geper/config.py geper/pipeline/prioritization_engine.py
+#  geper/pipeline/acmg_rules.py | 21 +++++++++++++++++++++
+#  1 file changed, 21 insertions(+)
+```
+
+**`acmg_rules.py` had drifted AGAIN, +21 lines, in the single interval between the audit
+merging and this implementation dispatch landing — unrelated calibration-disclosure work, not
+a mistake by anyone.** Every citation at or after line 2141 in this document (BP6's point-tally
+skip and its comment, `_BP6_DEPRECATION_CAVEAT`, `_clinvar_crossref`'s definition and its own
+comment) had moved a further ~21 lines and was re-verified and re-fixed against `c2258df1`
+directly rather than assumed from arithmetic on the diff. Citations before line 2141 (PP5,
+PS1, PM5, the confidence field, the star-rating gate, `CombineResult.classification`) were
+unaffected and re-confirmed exact at `c2258df1` regardless.
+
+**Chose to pin every badge in this document to `c2258df1` (this dispatch's base), not
+`36234d38` (the audit's own merge sha) — stated explicitly, since the dispatch allowed
+either.** `c2258df1` is the newer, and now the correct, verified-against sha; pinning to the
+older sha would have shipped a badge that was already one drift behind its own pin on the day
+it was written.
+
+**This is the third distinct instance of the exact failure this whole card exists to fix,
+inside the time it took to fix it once:** §0.4 (2026-08-22, first drift), §0.4a (2026-09-10,
+§0.4's own correction gone stale a second time), and this section (2026-09-10, the same day,
+inside the implementation of the fix for the first two). No claim in this document about "the
+current state of `acmg_rules.py`" survives more than a few hours without being re-checked. A
+sha pin does not stop this from happening — nothing can, short-of freezing the file — it only
+keeps the cost of noticing at a five-second `git diff --stat` instead of a manual re-derivation,
+which is the entire argument for §0.2a's recommendation and is now three-for-three in the wild.
+
 ---
 
 #### Cross-tree claims — which state of `kim_pipeline/` they were read from
@@ -404,7 +443,7 @@ than this footnote.**
 
 **One structural fact about that tree, recorded because §3 targets it — relayed from the floor
 notice, then VERIFIED rather than repeated.** SpliceAI is **permanently `None`** in
-`kim_pipeline` real runs. [VERIFIED-IN-REPO] `kim_pipeline/pipeline/vep/stage.py:13-24`: the
+`kim_pipeline` real runs. [VERIFIED-IN-REPO @ c2258df1] `kim_pipeline/pipeline/vep/stage.py:13-24`: the
 plugin was removed 2026-08-22 because its pretrained models are CC BY-NC 4.0 and its code
 GPL-3.0. **Two details the notice did not carry, and both matter here:**
 
@@ -452,12 +491,12 @@ different picture, and that difference decides the study design:
 
 | Channel | Consumes ClinVar? | Whose record? | Reaches the **classification**? | Evidence |
 |---|---|---|---|---|
-| **PP5** | **No — never fires** | — | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10 after a stale-badge audit — see §0.4a]** `pipeline/acmg_rules.py:957-962` — `PP5` is set to `_not_evaluated` **unconditionally**, reason `"recommended against by ClinGen's SVI Working Group (Biesecker & Harrison 2018) as circular with respect to an independent ACMG/AMP evaluation; not applied."` **PP5 is NOT "deprecated" — that word, and the quote and line range this row previously carried, do not exist in the file and never described anything that could be true: PP5 was *introduced by* the 2015 ACMG/AMP guideline, so it cannot have been deprecated *in* that same document.** The real reason is a **deliberate policy exclusion**, on ClinGen SVI's later (2018) recommendation — a decision GEPER made and must defend, not a fact about the 2015 guideline itself. (Separately, and left untouched per instruction: PP5's `_not_evaluated` category is `NOT_INTEGRATED`, the same bucket used for genuine data-integration gaps elsewhere in this table — arguably a mis-categorisation, since this is a policy choice with the data available, not a missing integration. Noted here, not opened, per god's explicit instruction not to open this card in this pass — tracked separately on the floor.) |
-| **BP6** | Yes | The variant's **own** record | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:3713-3725` — `_combine` skips `BP6` in the point tally with a comment naming this exact circularity; `_BP6_DEPRECATION_CAVEAT` (`:3092-3101`) states it is "reported at capped Low confidence and is excluded from this engine's own point-based combining rules... so it cannot silently move the final classification". It **does** reach the human-readable evidence text. |
-| `_clinvar_crossref` | Yes | Own record | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:3623` (definition; called from `:983`), and the comment at `:3714-3715` — descriptive cross-reference, "kept out of these combining rules entirely". |
-| **PS1** (Strong, path.) | **Yes** | **Other** variants at the same codon, identical resulting AA change | **YES** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:1209-1234`; anchors filtered by `CONFIG.ps1_pm5.MIN_STAR_RATING` (**default 2**, `config.py:1768`
-as of this branch's base `abaa7c96` — the line has moved AGAIN since §0.4's own 2026-08-22 correction pinned it at `1710`; the value is still unchanged, only its position, see §0.4a); the variant's own record is excluded (`pipeline/ps1_pm5/decision.py:137`, *"excluding this variant's own record"*). |
-| **PM5** (Moderate, path.) | **Yes** | **Other** variants at the same codon, *different* AA change | **YES** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:1237-1263`; same threshold, same self-exclusion. |
+| **PP5** | **No — never fires** | — | **No** | **[VERIFIED-IN-REPO @ c2258df1]** `pipeline/acmg_rules.py:957-962` — `PP5` is set to `_not_evaluated` **unconditionally**, reason `"recommended against by ClinGen's SVI Working Group (Biesecker & Harrison 2018) as circular with respect to an independent ACMG/AMP evaluation; not applied."` A CI grep test (`tests/test_validation_study_design_badge_pins.py`) keeps this exact reason string honest going forward. **PP5 is NOT "deprecated" — that word, and the quote and line range this row previously carried, do not exist in the file and never described anything that could be true: PP5 was *introduced by* the 2015 ACMG/AMP guideline, so it cannot have been deprecated *in* that same document.** The real reason is a **deliberate policy exclusion**, on ClinGen SVI's later (2018) recommendation — a decision GEPER made and must defend, not a fact about the 2015 guideline itself. (Separately, and left untouched per instruction: PP5's `_not_evaluated` category is `NOT_INTEGRATED`, the same bucket used for genuine data-integration gaps elsewhere in this table — arguably a mis-categorisation, since this is a policy choice with the data available, not a missing integration. Noted here, not opened, per god's explicit instruction not to open this card in this pass — tracked separately on the floor.) |
+| **BP6** | Yes | The variant's **own** record | **No** | **[VERIFIED-IN-REPO @ c2258df1]** `acmg_rules.py:3734-3746` (moved again from `:3713-3725`, unrelated work between the two same-day re-verifications — see §0.4b) — `_combine` skips `BP6` in the point tally with a comment naming this exact circularity; `_BP6_DEPRECATION_CAVEAT` (`:3113-3122`, was `:3092-3101`) states it is "reported at capped Low confidence and is excluded from this engine's own point-based combining rules... so it cannot silently move the final classification" — a CI grep test keeps this exact string honest going forward. It **does** reach the human-readable evidence text. |
+| `_clinvar_crossref` | Yes | Own record | **No** | **[VERIFIED-IN-REPO @ c2258df1]** `acmg_rules.py:3644` (definition, was `:3623`; called from `:983`, unchanged), and the comment at `:3735-3736` (was `:3714-3715`) — descriptive cross-reference, "kept out of these combining rules entirely". |
+| **PS1** (Strong, path.) | **Yes** | **Other** variants at the same codon, identical resulting AA change | **YES** | **[VERIFIED-IN-REPO @ c2258df1]** `acmg_rules.py:1209-1234`; anchors filtered by `CONFIG.ps1_pm5.MIN_STAR_RATING` (**default 2**, `config.py:1768`
+as of `c2258df1` — the line has moved AGAIN since §0.4's own 2026-08-22 correction pinned it at `1710`; the value is still unchanged, only its position, see §0.4a); the variant's own record is excluded (`pipeline/ps1_pm5/decision.py:137`, *"excluding this variant's own record"*). |
+| **PM5** (Moderate, path.) | **Yes** | **Other** variants at the same codon, *different* AA change | **YES** | **[VERIFIED-IN-REPO @ c2258df1]** `acmg_rules.py:1237-1263`; same threshold, same self-exclusion. |
 
 **Three consequences, each of which changes the design:**
 
@@ -488,7 +527,7 @@ load-bearing part, so read it sceptically]**
 The proposed truth set is ClinVar's 3★ expert-panel + 4★ practice-guideline subset. Two
 verified facts collide inside it:
 
-- **[VERIFIED-IN-REPO, re-verified 2026-09-10]** PS1/PM5 admit anchors at ≥2★ (`config.py:1768`, see §0.4a — moved again since §0.4's 2026-08-22 pin), so 3★ and 4★
+- **[VERIFIED-IN-REPO @ c2258df1]** PS1/PM5 admit anchors at ≥2★ (`config.py:1768`, see §0.4a — moved again since §0.4's 2026-08-22 pin), so 3★ and 4★
   records are themselves *admissible anchors* — the truth tier and the anchor tier overlap.
 - **[GUIDANCE, corroborated in-repo]** ClinVar's expert panels curate **whole genes or gene
   sets**, not scattered variants: ENIGMA for *BRCA1/2*, InSiGHT for Lynch-syndrome genes
@@ -501,7 +540,7 @@ panel's judgement, and the comparison scores GEPER against a body of opinion tha
 it. This is not record-level echo, and stratifying on "did ClinVar evidence fire" does not
 isolate it — you need the **anchor's submitting organisation**.
 
-**GEPER already captures exactly that.** **[VERIFIED-IN-REPO]** `clinvar_client.py:355-372`
+**GEPER already captures exactly that.** **[VERIFIED-IN-REPO @ c2258df1]** `clinvar_client.py:355-372`
 (`_fetch_submitters`, batched VCV XML, re-verified 2026-09-10 — range still exact) and `pipeline/ps1_pm5/utils.py:155` (was `:161`, minor drift, re-verified 2026-09-10) capture the
 submitting organisation per record. The provenance needed to measure curator circularity is
 already flowing through the pipeline; §2.5 uses it. **No new integration is required** —
@@ -539,7 +578,7 @@ extended, not replaced.
 
 **Why not hold-out (route 5).** Hold-out controls for a model *trained* on the data. GEPER's
 ACMG engine is a rule engine that **queries ClinVar live at classification time**
-(`clinvar_client.py`, `ps1_pm5/lookup.py`) — **[VERIFIED-IN-REPO]**. Withholding variants
+(`clinvar_client.py`, `ps1_pm5/lookup.py`) — **[VERIFIED-IN-REPO @ c2258df1]**. Withholding variants
 from a training set that does not exist changes nothing: the engine would query the live API
 for a held-out variant's codon neighbours exactly as before. Rejected as a category error
 about this system's architecture, and named as such because it is precisely the kind of
@@ -607,7 +646,7 @@ identical.
 `ncbi.nlm.nih.gov/clinvar/docs/statistics/` (page-dated 2026-08-16). **[GUIDANCE,
 corroborated in-repo]**
 
-**Availability: not gated.** **[VERIFIED-IN-REPO]** This is a `review_status` filter on data
+**Availability: not gated.** **[VERIFIED-IN-REPO @ c2258df1]** This is a `review_status` filter on data
 already flowing through `geper/database/clinvar_client.py`; no new credential, endpoint or
 integration. Public domain per NCBI site policy, re-confirmed by Meredith for this specific
 use (validation ground truth rather than runtime evidence). **This is the only dataset in
@@ -622,7 +661,7 @@ another, some fraction of any observed discordance is reclassification drift bet
 dates rather than GEPER error — a discordance that cannot be attributed and would be reported
 as if it could. The release date must be recorded alongside the code tag in every output.
 
-**Dependency this creates, and whose it is.** **[VERIFIED-IN-REPO]** GEPER queries the NCBI
+**Dependency this creates, and whose it is.** **[VERIFIED-IN-REPO @ c2258df1]** GEPER queries the NCBI
 E-utilities API live (`clinvar_client.py`, `ps1_pm5/lookup.py`; a cache exists at
 `pipeline/ps1_pm5/cache.py`). Whether a frozen, dated snapshot can be substituted for the
 live API without changing the code path under test is an **infrastructure question, and this
@@ -640,8 +679,8 @@ output**, not from any property of the variant chosen in advance.
 | **B — ClinVar-assisted** | PS1 **or** PM5 triggered | Reported separately. **Never pooled with A.** |
 | **C — ablation of B** | The same variants as Arm B, re-run with PS1/PM5 forced not to trigger | Yields the **magnitude** of ClinVar's contribution (B − C) |
 
-**Sub-flag on Arm A: `bp6_fired`.** **[VERIFIED-IN-REPO + INVENTED]** BP6 cannot move the
-score (`acmg_rules.py:3713-3725`, was `:3509-3522`, re-verified 2026-09-10) but does reach the rendered evidence text. Arm A must
+**Sub-flag on Arm A: `bp6_fired`.** **[VERIFIED-IN-REPO + INVENTED @ c2258df1]** BP6 cannot move the
+score (`acmg_rules.py:3734-3746`, was `:3509-3522` then `:3713-3725`, re-verified 2026-09-10 against `c2258df1` after a further +21-line shift from unrelated work between the two re-verifications the same day) but does reach the rendered evidence text. Arm A must
 therefore be reported **twice** — with and without `bp6_fired` variants. The reason is not
 statistical: a clinician reading GEPER's evidence narrative is a consumer of that text, and
 an assessor will ask whether ClinVar's own verdict was visible to a human reader even where
@@ -661,11 +700,11 @@ on the A:B ratio in whatever variant set happened to be selected.
 **[ANALOGY — derived from verified code reading; the *behaviour* is NOT demonstrated and
 must be verified before use]**
 
-**[VERIFIED-IN-REPO]** `CONFIG.ps1_pm5.MIN_STAR_RATING` is read from the environment
+**[VERIFIED-IN-REPO @ c2258df1]** `CONFIG.ps1_pm5.MIN_STAR_RATING` is read from the environment
 (`config.py:1768`, `GEPER_PS1_PM5_MIN_STAR_RATING`, default `2` — moved again since §0.4's
 2026-08-22 pin, see §0.4a) and is the sole star-rating
 gate applied to PS1/PM5 anchors (`acmg_rules.py:1230`, `:1259`, was `:1137`/`:1166`, re-verified 2026-09-10). ClinVar's maximum star
-rating is 4 (`pipeline/ps1_pm5/models.py`, `STAR_PRACTICE_GUIDELINE = 4`).
+rating is 4 (`pipeline/ps1_pm5/models.py`, `STAR_PRACTICE_GUIDELINE = 4` — a CI grep test in `tests/test_validation_study_design_badge_pins.py` keeps this value honest going forward).
 
 **Inferred:** setting `GEPER_PS1_PM5_MIN_STAR_RATING=5` should admit no anchor, so PS1 and
 PM5 never trigger — **an ablation lever that already exists and needs no code change.**
@@ -707,7 +746,7 @@ without any signal"*. **Read literally that is false, and the true version is st
 premise was checked rather than carried, because a ruling resting on an over-broad premise can
 be dismissed by refuting the premise while the conclusion is still right.
 
-**[VERIFIED-IN-REPO]**, `geper/pipeline/ps1_pm5/decision.py`:
+**[VERIFIED-IN-REPO @ c2258df1]**, `geper/pipeline/ps1_pm5/decision.py`:
 
 - **The effective value IS emitted — at exactly one place.** `:326`, inside the
   **not-applies** rationale: *"no ClinVar record at codon N sharing ‹relation› met the
@@ -785,7 +824,7 @@ not by assumption from where it was found.
 
 ### 2.5 Curator-provenance sub-strata within Arm B
 
-**[INVENTED — the stratum; VERIFIED-IN-REPO — the provenance data it uses]**
+**[INVENTED — the stratum; VERIFIED-IN-REPO @ c2258df1 — the provenance data it uses]**
 
 Arm B splits on whether the PS1/PM5 anchor's submitting organisation overlaps the submitter
 set of the truth variant's own record:
@@ -2150,12 +2189,12 @@ Rubric 1a's falsifier (`VALIDATION_READINESS_RUBRIC.md` @ `89bf125`, verbatim):
 > Benign boundary is an automatic fail, no tolerance."*
 
 **It quantifies over CLASSIFICATIONS.** The quantity it inspects is
-`combine_result.classification` (`geper/pipeline/acmg_rules.py:684`, the `CombineResult.classification` field definition — was `:957`, now-wrong-location: that line now falls inside the PP5 `_not_evaluated` block after intervening insertions; re-verified 2026-09-10). It never reads a score,
+`combine_result.classification` (`geper/pipeline/acmg_rules.py:684` @ `c2258df1`, the `CombineResult.classification` field definition — was `:957`, now-wrong-location: that line now falls inside the PP5 `_not_evaluated` block after intervening insertions). It never reads a score,
 a category, or a rank. **Subsumption would therefore require that rank be a function of
 classification** — if it were, a buried pathogenic variant would have to have been
 mis-classified first, and F1 would catch it on the way past.
 
-**It is not.** [VERIFIED-IN-REPO], `geper/pipeline/prioritization_engine.py`:
+**It is not.** [VERIFIED-IN-REPO @ c2258df1], `geper/pipeline/prioritization_engine.py`:
 
 - **`:2-11`** — the engine's own docstring says it *"answers a different question"* than ACMG
   classification, that it *"computes its own score with its own weights"*, and that it
@@ -2450,7 +2489,7 @@ Agreement text was not reachable.
 
 | Study | Dataset | Gated? | Status |
 |---|---|---|---|
-| S1 | ClinVar 3★/4★ subset | **No** | Public domain; already flowing through the existing client; no new integration **[VERIFIED-IN-REPO]** |
+| S1 | ClinVar 3★/4★ subset | **No** | Public domain; already flowing through the existing client; no new integration **[VERIFIED-IN-REPO @ c2258df1]** |
 | S2 | GIAB HG001-007 | **No, but licence citation is not closed** | Meredith's outstanding item 4: no GIAB-specific licence document was locatable. Inherited, not resolved |
 | S3 | An external QA scheme's materials | **Yes — unresolved** | Enrolment eligibility for a non-laboratory is unknown (§4.1). Blocks S3's design past its current state |
 | — | kim_pipeline PGx star-allele truth | **Yes — blocked** | PharmVar is CC-BY-NC-ND. **No usable ground truth exists for the PGx stage**, so no PGx validation is designed here. Named as an uncovered area rather than omitted |
@@ -2494,7 +2533,7 @@ which it cannot. **Angela's text, Angela's call.** Flagged, not amended.
 
 ### 7.2 Rubric 1b's "confidence scores within a stated numeric tolerance"
 
-**[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:624` (was `:601`; the old line now falls inside an unrelated `DATA_UNAVAILABLE`-default comment) — the per-criterion `confidence` field is
+**[VERIFIED-IN-REPO @ c2258df1]** `acmg_rules.py:624` (was `:601`; the old line now falls inside an unrelated `DATA_UNAVAILABLE`-default comment) — the per-criterion `confidence` field is
 categorical (`"High" | "Moderate" | "Low"`), not numeric. A separate `significance_score`
 exists. Whichever is meant, "numeric tolerance" does not apply to the categorical field.
 Touches 1b, which is Andy's and Angela's, not mine. Flagged only.

@@ -94,6 +94,15 @@ class JSONResultBuilder:
         # bare `.get("run_complete", True)`/truthiness-assumed default,
         # so a pre-round-17 file (no `run_complete` key at all) reads as
         # incomplete rather than silently claiming completeness.
+        #
+        # Adjacent fragility, named not fixed: the `or {}` above only
+        # preserves the shared reference `self.model_checkpoints.update(...)`
+        # (orchestrator.py:922) depends on when the passed-in dict is
+        # already non-empty. If `get_model_checkpoint_identifiers()` ever
+        # returned `{}`, `or {}` would bind this attribute to a NEW dict
+        # object instead of the caller's, and the later `.update()` would
+        # enrich a dict this builder no longer shares -- silently, at
+        # construction time, before the mutation even runs.
         self.run_complete = False
         # DPDP Act 2023 consent metadata (minimal, capture-only -- see
         # report/summary.py::_parse_consent's docstring for exactly
@@ -575,6 +584,23 @@ def build_variant_result(
         # used automatically if the caller didn't pass this kwarg
         # explicitly, so orchestrator call sites don't have to thread it
         # through twice.
+        # DEFECT-a-field-present-by-in-place-mutation-rather-than-
+        # assignment-is-invisible-to-the-grep-everyone-runs, instance 2:
+        # `resolved_interpretation_result["priority_rank"]` LOOKS finished
+        # here -- `InterpretationResult.to_dict()` already emits
+        # `"priority_rank": None` -- but `pipeline/orchestrator.py::
+        # run()::_apply_priority_ranks` mutates it in place, AFTER
+        # `JSONResultBuilder.build()` has already returned the assembled
+        # document. A reader tracing only this function sees a real,
+        # already-assigned key and has no reason to suspect it changes
+        # again; an absent key would have invited a search, a present-
+        # but-stale one closes it. Load-bearing, do not convert to an
+        # assignment: the mutation is what keeps this same dict object
+        # in sync with `interpretation["interpretation_result"]` below
+        # (see `_apply_priority_ranks`'s own docstring) without a second
+        # write that could drift from the first. This comment covers only
+        # this key and `case_prioritization` (below); the mutation-vs-
+        # assignment class as a whole has no census.
         "interpretation_result": resolved_interpretation_result,
         # Built entirely from `resolved_interpretation_result` above (the
         # same canonical InterpretationResult dict Phase 2-4 already
@@ -618,6 +644,22 @@ def build_variant_result(
         # `pipeline.models.status.DISPLAY_ORDER`.
         "ai_model_status": ai_model_status if ai_model_status is not None else {},
         "errors": errors,
+        # DEFECT-a-field-present-by-in-place-mutation-rather-than-
+        # assignment-is-invisible-to-the-grep-everyone-runs, instance 3:
+        # this dict does NOT have a `case_prioritization` key -- and never
+        # will from this function. `pipeline/orchestrator.py::run()::
+        # _apply_case_phenotype_ranking` adds it directly to each variant
+        # dict AFTER `JSONResultBuilder.build()` has already returned the
+        # assembled document (only when the run actually supplied
+        # observed HPO terms). Documented at the mutation site
+        # (`_apply_case_phenotype_ranking`'s own docstring: deliberately
+        # a new top-level key, never nested inside `interpretation_result`,
+        # by spec); this note is the missing receiving-side half -- a
+        # reader who only traces this function has no reason to expect a
+        # key it never assigns. Same instance-2 pointer above covers why
+        # this class of post-build mutation is load-bearing and why the
+        # class as a whole has no census -- this is the second of exactly
+        # two known instances, not a complete list.
     }
 
     # AI Splicing/Regulatory Ensemble (Enformer + Borzoi via

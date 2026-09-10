@@ -169,11 +169,49 @@ class TestStageEvidenceEmptyStringErrorIsNotDroppedAsAbsent(unittest.TestCase):
     producer's own except-block happens to still do bare `str(exc)` today
     -- it is a property of the boundary itself, and will bite again for any
     producer that regresses to (or was never fixed away from) an
-    unqualified `str(exc)`. Checked directly, not assumed: dbSNP's and
-    ClinVar's own stage handlers (`orchestrator.py:2384`, `:2395`) still do
-    exactly this -- `return {..., "error": str(exc)}`, no fallback -- so
-    the same empty-string producer-side risk gnomAD had before `d1128ee`
-    is, as of this writing, still live for at least these two.
+    unqualified `str(exc)`.
+
+    **CORRECTED 2026-09-10.** This paragraph previously ended with a
+    producer-side claim that is no longer true. Quoted verbatim before
+    replacing it, so a reader can see what changed and why:
+
+        "Checked directly, not assumed: dbSNP's and ClinVar's own stage
+         handlers (`orchestrator.py:2384`, `:2395`) still do exactly
+         this -- `return {..., "error": str(exc)}`, no fallback -- so
+         the same empty-string producer-side risk gnomAD had before
+         `d1128ee` is, as of this writing, still live for at least
+         these two."
+
+    THAT WAS TRUE WHEN WRITTEN AND IS FALSE NOW. It was added in
+    `2bc81b6` (2026-08-22); `8df8b9f` (2026-08-31) fixed both stages,
+    and `orchestrator.py::_run_dbsnp_stage` and `::_run_clinvar_stage`
+    now build their failure result as
+    `detail = str(exc) or type(exc).__name__` -- verified by reading
+    both handlers at HEAD, not by trusting `8df8b9f`'s commit message.
+    *** THE ARGUMENT THE SENTENCE SUPPORTED STILL STANDS AND IS THE
+    REASON THIS CLASS EXISTS: the defect is a property of the shared
+    conversion boundary, not of whichever producer happens to be
+    unfixed on any given day. That is precisely why the claim rotted --
+    an example chosen to illustrate a permanent property was itself
+    impermanent. ***
+
+    NO LINE NUMBERS IN THE CORRECTION, DELIBERATELY. The claim above
+    cited two, `:2384` and `:2395`, and BOTH had moved by the time it
+    was re-checked -- the statement failed twice over, once on the fact
+    and once on the coordinates. Function names cannot rot that way.
+    Where this docstring does still cite line numbers for
+    `stage_schemas.py`, they are pinned to an explicit revision
+    (`8612e45^`, stated at the top) -- *** A LINE NUMBER IS SAFE WHEN
+    IT CARRIES THE REVISION IT WAS TRUE AT, AND UNSAFE WHEN IT DOES
+    NOT. The orchestrator citation carried none. ***
+
+    HOW IT SURVIVED, WHICH IS THE PART WORTH KEEPING: `8311ee8`
+    (2026-08-31 18:15) CORRECTED THIS VERY DOCSTRING -- eight hours
+    after `8df8b9f` had made the sentence false -- and fixed a
+    different claim in it while leaving this one untouched. *** A
+    REVISIT IS NOT AN AUDIT: correcting one claim in a document does
+    not re-check its neighbours, and the neighbour a reader trusts most
+    is the one labelled "checked directly, not assumed". ***
 
     Both tests below are RED at `8612e45^` and GREEN from `8612e45`
     onward. Reconstructed 2026-08-31 by loading `8612e45^`'s

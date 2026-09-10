@@ -99,6 +99,6 @@ class TestSubmissionStoreClosesConnections:
             consent_ref="consent-1",
         )
         before = len(_live_connections())
-        store.get_submission(submission.submission_id)
+        store.get_submission(submission.id)
         store.get_queued_submissions()
         _assert_no_new_connections(before, "get_submission/get_queued_submissions")

@@ -16,6 +16,10 @@ extend-exclude = [
     # license file) -- same reasoning as hyena-dna above.
     "geper/pipeline/models/spliceformer/vendor",
     "geper/pipeline/models/spip/vendor",
+    # DELIBERATELY BROKEN, and excluded so it breaks nothing else. It holds
+    # a type error on purpose; `geper/tests/test_mypy_canary.py` fails if
+    # mypy ever stops reporting it. See the file's own docstring.
+    "geper/pipeline/_mypy_canary.py",
 ]
 
 [lint]

@@ -5,7 +5,9 @@ pipeline/interpretation_outcome.py
 THE INTERPRETATION-OUTCOME STATE: a PER-VARIANT judgement about the
 interpretation, carried in geper_results.json and in the report
 ALONGSIDE the ACMG classification, NOT replacing it (human ruling,
-2026-09-09/10). Four values:
+2026-09-09/10). THREE public values as of ROUND 3 (RULED (b),
+2026-09-10 -- see below for why a fourth, `conflicting_evidence`, is not
+among them):
 
   interpreted             -- the ordinary case: criteria were evaluated
                               and whatever the classification turned out
@@ -16,44 +18,56 @@ ALONGSIDE the ACMG classification, NOT replacing it (human ruling,
                               variant attempted actually completed. See
                               `determine_interpretation_outcome`'s own
                               docstring for why this gate exists.
-  conflicting_evidence    -- criteria fired in BOTH directions at
-                              comparable weight: a genuine interpretive
-                              disagreement (disagreeing ClinVar
-                              submissions, functional data against
-                              population frequency), never a data-format
-                              mismatch between two sources' shapes. AS OF
-                              ROUND 2 (below), this evidence pattern no
-                              longer surfaces as this string -- see
-                              `review_required`.
   review_required         -- RULED (2026-09-09/10), approved exactly as
                               proposed. Fires on EITHER of two triggers:
-                              (1) the evidence pattern that would
-                              otherwise be `conflicting_evidence`
-                              (comparable-weight pathogenic/benign
-                              points); (2) `acmg_classification` in
-                              {"Pathogenic", "Likely Pathogenic"}. The
-                              human's own constraint from round 1 ("an
-                              engine-level flag that fires on all of
-                              them is inert") is why `insufficient_evidence`
-                              and "any query failed" were both
-                              considered and REJECTED as triggers -- see
+                              (1) the evidence pattern that would, before
+                              round 2, have surfaced directly as
+                              `conflicting_evidence` (comparable-weight
+                              pathogenic/benign points); (2)
+                              `acmg_classification` in {"Pathogenic",
+                              "Likely Pathogenic"}. The human's own
+                              constraint from round 1 ("an engine-level
+                              flag that fires on all of them is inert")
+                              is why `insufficient_evidence` and "any
+                              query failed" were both considered and
+                              REJECTED as triggers -- see
                               `determine_interpretation_outcome`'s own
                               docstring for the full argument.
 
-THE COLLISION (round 2, mine, stated explicitly): a variant CAN satisfy
-both triggers at once (pathogenic_points=12, benign_points=6 is
-comparable-weight AND nets to Likely Pathogenic). Only one string can be
-`interpretation_outcome`, so on EITHER trigger the returned value is
-`review_required` -- meaning `conflicting_evidence`, as a RETURNED
-value, is now UNREACHABLE via `determine_interpretation_outcome`: every
-input that would have produced it now escalates instead. WHAT IS LOST:
+ROUND 3 (RULED (b), 2026-09-10): `InterpretationOutcome.CONFLICTING_EVIDENCE`
+is REMOVED FROM THE PUBLIC ENUM -- not merely unreachable as a return
+value (round 2's state, below), but no longer an importable member at
+all. Ruling (c) -- change the escalation trigger so a genuine
+conflicting_evidence value becomes reachable again -- was EXPLICITLY
+REJECTED (human ruling, verbatim, as relayed): "the escalation exists so
+conflicting evidence reaches a human reviewer; weakening it to tidy an
+enum would trade a safety behaviour for a naming problem." So NOTHING
+about which inputs produce `review_required` changed here -- see
+`determine_interpretation_outcome`'s own docstring, unchanged since
+round 2. The INTERNAL three-way distinction the ruling said to keep
+(comparable-weight conflict vs. insufficient vs. interpreted) still
+exists, as `_base_outcome`'s own private `_BaseOutcome` return type
+(never exported, never serialized, never compared against by any caller
+outside this module) -- only its membership in the PUBLIC, emitted
+`InterpretationOutcome` contract is gone. A future reader who finds a
+missing fourth value here and is tempted to restore it: don't -- read
+this paragraph first.
+
+THE COLLISION (round 2, mine, stated explicitly, still current): a
+variant CAN satisfy both `review_required` triggers at once
+(pathogenic_points=12, benign_points=6 is comparable-weight AND nets to
+Likely Pathogenic). Only one string can be `interpretation_outcome`, so
+on EITHER trigger the returned value is `review_required`. WHAT IS LOST:
 a reader who sees only `review_required` cannot tell, from that field
 alone, whether it fired for a genuine evidence disagreement, a P/LP
 call, or both. THE ANSWER: `determine_review_required_reasons` below
 computes the same two conditions independently and returns the list of
 which fired -- ALWAYS present (empty when review_required did not
 fire), same "checked-and-clean vs never-checked" discipline as
-`pipeline/provenance.py::get_stale_fallbacks`.
+`pipeline/provenance.py::get_stale_fallbacks`. Its `"conflicting_evidence"`
+REASON STRING is a separate, still-valid, still-reachable value -- a
+reason code, not an outcome state -- and round 3's removal does not
+touch it.
 
 THIS IS A DIFFERENT AXIS from the per-source retrieval states already in
 the engine -- `pipeline/stage_schemas.py::StageStatus`
@@ -73,21 +87,44 @@ from typing import List, NoReturn, Optional
 
 
 class InterpretationOutcome(str, enum.Enum):
+    """The PUBLIC, emitted contract -- three values as of ROUND 3
+    (RULED (b), 2026-09-10). `CONFLICTING_EVIDENCE` is deliberately NOT
+    a member here -- see this module's own docstring for the ruling and
+    why (c), restoring it by weakening the escalation trigger instead,
+    was rejected. The internal three-way distinction is kept as
+    `_BaseOutcome` below, private and never exported."""
+
     INTERPRETED = "interpreted"
     INSUFFICIENT_EVIDENCE = "insufficient_evidence"
-    CONFLICTING_EVIDENCE = "conflicting_evidence"
     REVIEW_REQUIRED = "review_required"
 
     def __bool__(self) -> NoReturn:
         # Same idiom as StageStatus/VersionStatus/RetrievalMode: every
         # member of a `str` enum is truthy, so `if x:` would silently
-        # collapse all four members into one answer -- exactly the
+        # collapse all three members into one answer -- exactly the
         # distinction this type exists to keep. Compare explicitly,
         # e.g. `x is InterpretationOutcome.INSUFFICIENT_EVIDENCE`.
         raise TypeError(
             "InterpretationOutcome has no truth value -- compare explicitly, e.g. "
             "`x is InterpretationOutcome.INSUFFICIENT_EVIDENCE`."
         )
+
+
+class _BaseOutcome(enum.Enum):
+    """PRIVATE: `_base_outcome`'s own three-way return type -- the
+    internal distinction the ruling (2026-09-10) said to keep even
+    though it removed `CONFLICTING_EVIDENCE` from the PUBLIC
+    `InterpretationOutcome` enum above. Never exported from this module,
+    never serialized, never compared against by any caller of
+    `determine_interpretation_outcome` -- it exists purely so this
+    module's own escalation logic (`determine_interpretation_outcome`)
+    can name the comparable-weight-conflict pattern by something other
+    than a bare boolean, the same way the removed public member used to,
+    without that name being part of the public contract."""
+
+    INTERPRETED = "interpreted"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    CONFLICTING = "conflicting"
 
 
 # "Comparable weight" for the conflicting-evidence pattern: MY OWN
@@ -108,12 +145,15 @@ _REVIEW_REQUIRED_CLASSIFICATIONS = frozenset({"Pathogenic", "Likely Pathogenic"}
 
 
 def _is_comparable_weight_conflict(pathogenic_points: Optional[float], benign_points: Optional[float]) -> bool:
-    """The evidence pattern that used to surface as
-    `InterpretationOutcome.CONFLICTING_EVIDENCE` directly (round 1) and
-    is now review_required trigger 1 (round 2). Factored out so
-    `determine_interpretation_outcome` and `determine_review_required_reasons`
-    can never disagree about WHICH inputs satisfy it -- only about how
-    many strings the result collapses to."""
+    """The evidence pattern that used to surface as a public
+    `InterpretationOutcome.CONFLICTING_EVIDENCE` value directly (round
+    1), became review_required trigger 1 (round 2), and lost that public
+    enum member entirely (round 3, RULED (b), 2026-09-10) while this
+    trigger's own behavior stayed unchanged (ruling (c), touching the
+    trigger, was rejected). Factored out so `determine_interpretation_outcome`
+    and `determine_review_required_reasons` can never disagree about
+    WHICH inputs satisfy it -- only about how many strings the result
+    collapses to."""
     resolved_pathogenic_points = pathogenic_points or 0.0
     resolved_benign_points = benign_points or 0.0
     if resolved_pathogenic_points <= 0 or resolved_benign_points <= 0:
@@ -129,7 +169,7 @@ def _base_outcome(
     evidence_queries_completed: bool,
     pathogenic_points: Optional[float],
     benign_points: Optional[float],
-) -> InterpretationOutcome:
+) -> _BaseOutcome:
     """
     The three-way determination from before round 2 (conflicting /
     insufficient / interpreted), UNCHANGED in its own logic -- see
@@ -137,20 +177,22 @@ def _base_outcome(
     behind each branch. Private: round 2's escalation layer
     (`determine_interpretation_outcome`) is the only public entry point
     that returns an outcome derived from evidence; this helper's
-    CONFLICTING_EVIDENCE return value is an intermediate the escalation
-    layer consumes, not something a caller outside this module should
-    read as a final answer.
+    CONFLICTING return value (round 3: `_BaseOutcome.CONFLICTING`, a
+    private type -- see that class's own docstring for why it is no
+    longer `InterpretationOutcome.CONFLICTING_EVIDENCE`) is an
+    intermediate the escalation layer consumes, not something a caller
+    outside this module should read as a final answer.
     """
     resolved_pathogenic_points = pathogenic_points or 0.0
     resolved_benign_points = benign_points or 0.0
 
     if _is_comparable_weight_conflict(pathogenic_points, benign_points):
-        return InterpretationOutcome.CONFLICTING_EVIDENCE
+        return _BaseOutcome.CONFLICTING
 
     if gene_resolved and evidence_queries_completed and resolved_pathogenic_points == 0 and resolved_benign_points == 0:
-        return InterpretationOutcome.INSUFFICIENT_EVIDENCE
+        return _BaseOutcome.INSUFFICIENT_EVIDENCE
 
-    return InterpretationOutcome.INTERPRETED
+    return _BaseOutcome.INTERPRETED
 
 
 def determine_interpretation_outcome(
@@ -200,9 +242,12 @@ def determine_interpretation_outcome(
     by escalating a variant no clinician can actually help with.
 
     STEP 2 -- the review_required escalation (round 2, RULED, approved
-    exactly as proposed): if the base outcome is CONFLICTING_EVIDENCE,
-    OR `classification` is Pathogenic/Likely Pathogenic, the returned
-    value is REVIEW_REQUIRED instead of the base outcome. `insufficient_evidence`
+    exactly as proposed; round 3, RULED (b), 2026-09-10, EXPLICITLY LEFT
+    UNCHANGED -- ruling (c), weakening this trigger, was rejected): if
+    the base outcome is the comparable-weight-conflict pattern (private
+    `_BaseOutcome.CONFLICTING`, see that class's own docstring), OR
+    `classification` is Pathogenic/Likely Pathogenic, the returned value
+    is REVIEW_REQUIRED instead of the base outcome. `insufficient_evidence`
     was considered and REJECTED as a third trigger (human ruling,
     verbatim): "on a sparse panel it approaches blanket firing, and a
     flag that fires on most variants tells a reviewer nothing about
@@ -217,11 +262,16 @@ def determine_interpretation_outcome(
     to know which trigger(s) actually fired; that information is never
     silently erased, only moved to a different, always-present field.
 
-    A CONSEQUENCE WORTH STATING PLAINLY: `InterpretationOutcome.CONFLICTING_EVIDENCE`
-    is now UNREACHABLE as this function's return value -- every input
-    that would produce it is, by construction, also an input that
-    triggers the escalation above. The enum member still exists (for
-    `_base_outcome`'s and `determine_review_required_reasons`'s own use).
+    A CONSEQUENCE WORTH STATING PLAINLY (round 2, still true, sharpened
+    by round 3): the comparable-weight-conflict pattern was already
+    UNREACHABLE as this function's return value before round 3 -- every
+    input that would produce it is, by construction, also an input that
+    triggers the escalation above. ROUND 3 removed the public
+    `InterpretationOutcome.CONFLICTING_EVIDENCE` member entirely (RULED
+    (b), 2026-09-10); the private `_BaseOutcome.CONFLICTING` this
+    function reads from `_base_outcome` still exists for exactly this
+    escalation check and for `determine_review_required_reasons`'s own
+    (independent) computation of the same condition.
     """
     base = _base_outcome(
         gene_resolved=gene_resolved,
@@ -230,9 +280,11 @@ def determine_interpretation_outcome(
         benign_points=benign_points,
     )
     is_pathogenic_or_likely_pathogenic = classification in _REVIEW_REQUIRED_CLASSIFICATIONS
-    if base is InterpretationOutcome.CONFLICTING_EVIDENCE or is_pathogenic_or_likely_pathogenic:
+    if base is _BaseOutcome.CONFLICTING or is_pathogenic_or_likely_pathogenic:
         return InterpretationOutcome.REVIEW_REQUIRED
-    return base
+    if base is _BaseOutcome.INSUFFICIENT_EVIDENCE:
+        return InterpretationOutcome.INSUFFICIENT_EVIDENCE
+    return InterpretationOutcome.INTERPRETED
 
 
 def determine_review_required_reasons(

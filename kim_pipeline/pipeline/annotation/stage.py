@@ -669,7 +669,7 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                 qual = None
 
             # FIX 1: extract VEP-embedded scores from CSQ tag once per record
-            csq_cadd, csq_revel, csq_spliceai, csq_am = (
+            csq_cadd, csq_revel, _csq_spliceai_closed, csq_am = (
                 _extract_csq_scores(info, csq_fields) if csq_fields else (None, None, None, None)
             )
             # FIX 13: extract VEP HGVSc and HGVSp from CSQ tag
@@ -730,17 +730,21 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                 var.revel_score = (
                     csq_revel if csq_revel is not None else _parse_info_float(info, "REVEL")
                 )
-                var.spliceai_score = csq_spliceai
-                if var.spliceai_score is None:
-                    val = _parse_info_float(info, "SpliceAI")
-                    if val is None:
-                        ds_ag = _parse_info_float(info, "DS_AG")
-                        ds_al = _parse_info_float(info, "DS_AL")
-                        ds_dg = _parse_info_float(info, "DS_DG")
-                        ds_dl = _parse_info_float(info, "DS_DL")
-                        sc = [x for x in [ds_ag, ds_al, ds_dg, ds_dl] if x is not None]
-                        val = max(sc) if sc else None
-                    var.spliceai_score = val
+                # SpliceAI INPUT CLOSED (licence). Illumina's pretrained
+                # SpliceAI models are CC BY-NC 4.0, which a commercial
+                # deployment cannot rely on, so no SpliceAI-derived score
+                # may reach an ACMG classification.
+                #
+                # This closes the INPUT, not a route. The 2026-08-22 remedy
+                # removed SpliceAI from VEP's plugin request, which makes
+                # `csq_spliceai` always None -- and the fallback that used
+                # to sit here read `SpliceAI=`/`DS_AG`/`DS_AL`/`DS_DG`/
+                # `DS_DL` straight out of the caller's own INFO column
+                # precisely BECAUSE that value was None. Removing the VEP
+                # route did not narrow the input; it guaranteed the
+                # fallback ran. `spliceai_score` is left at its dataclass
+                # default of None so PP3/BP4 record "not evaluated" rather
+                # than a confirmed benign result.
                 var.alphamissense_score = (
                     csq_am if csq_am is not None else _parse_info_float(info, "AM_PATHOGENICITY")
                 )
@@ -1144,16 +1148,11 @@ class AnnotationStage:
                     var.cadd_phred = _parse_info_float(var.info, "CADD_PHRED")
                 if var.revel_score is None:
                     var.revel_score = _parse_info_float(var.info, "REVEL")
-                if var.spliceai_score is None:
-                    val = _parse_info_float(var.info, "SpliceAI")
-                    if val is None:
-                        val = _parse_info_float(var.info, "DS_AG")
-                        ds_al = _parse_info_float(var.info, "DS_AL")
-                        ds_dg = _parse_info_float(var.info, "DS_DG")
-                        ds_dl = _parse_info_float(var.info, "DS_DL")
-                        scores = [x for x in [val, ds_al, ds_dg, ds_dl] if x is not None]
-                        val = max(scores) if scores else None
-                    var.spliceai_score = val
+                # SpliceAI INPUT CLOSED (licence) -- second of the two
+                # sites. See the note at the first site: this is the
+                # INPUT, not a route, and it is left unread so
+                # `spliceai_score` stays None and PP3/BP4 record
+                # "not evaluated" rather than a confirmed benign result.
                 if var.alphamissense_score is None:
                     var.alphamissense_score = _parse_info_float(var.info, "AM_PATHOGENICITY")
                 # RepeatMasker flag in INFO (e.g. from VEP REPEAT_REGION=1)

@@ -110,6 +110,7 @@ import enum
 import hashlib
 import json
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from typing import Any, Dict, List, NoReturn, Optional
@@ -167,6 +168,214 @@ _STATUS_PRIORITY = {
     VersionStatus.HASH_ONLY: 3,
     VersionStatus.VERSION_KNOWN: 4,
 }
+
+
+class HashVerification(str, enum.Enum):
+    """
+    WHETHER THE BYTES WERE ACTUALLY READ -- a SEPARATE AXIS from
+    `VersionStatus`, in the same way `RetrievalMode` below is, and for the
+    same reason: collapsing it into the version axis would let a claim be
+    read as a measurement.
+
+    A HuggingFace blob is named by the sha256 of its content, so a content
+    hash is available for free by reading the filename. *** THAT IS THE
+    CACHE'S OWN ASSERTION ABOUT ITS CONTENT, NOT AN OBSERVATION OF IT. ***
+    It was computed at download time, on another machine, and nothing
+    rechecks it afterwards. A corrupted, truncated or substituted blob KEEPS
+    ITS FILENAME -- the label is the one thing that cannot change. So a
+    declared hash is strictly better evidence than a config pin, and is still
+    a claim: a cache is proven by a load, never by a listing, and reading a
+    filename is a listing.
+
+    THIS IS ALSO WHY A DECLARED HASH IS NOT `VersionStatus.HASH_ONLY`. That
+    member's own definition is "a content hash of the ACTUAL BYTES USED is
+    known". Awarding it to a filename would re-introduce, on the hash axis,
+    exactly the intention-vs-observation conflation this whole record exists
+    to remove. HASH_ONLY is reached only via `VERIFIED`.
+    """
+
+    UNVERIFIABLE = "unverifiable"  # no declared hash exists to compare bytes against
+    NOT_VERIFIED = "not_verified"  # a hash is DECLARED by the cache; the bytes were not read this run
+    VERIFIED = "verified"  # the bytes were streamed and matched the declared hash
+    MISMATCH = "mismatch"  # the bytes were streamed and DID NOT match -- corrupt or substituted cache
+
+    def __bool__(self) -> NoReturn:
+        raise TypeError(
+            "HashVerification has no truth value -- every member of a `str` enum is truthy, "
+            "so `if x:` would silently treat MISMATCH (a corrupted or substituted model cache, "
+            "the most informative event this subsystem can produce) as success. "
+            "Compare explicitly, e.g. `x is HashVerification.VERIFIED`."
+        )
+
+
+# A HuggingFace cache blob whose name is 64 hex characters is content-addressed:
+# the name IS the sha256 of the bytes. The small config/tokenizer blobs are named
+# with a 40-hex git blob SHA-1 instead, which is NOT a hash of the file's content
+# and must never be recorded as one. Measured on this project's own ESM-2 cache
+# (2026-09-10): of five entries, exactly one -- model.safetensors, the only
+# LFS-tracked file -- is 64 hex; the other four are 40 hex.
+_CONTENT_ADDRESSED_BLOB_NAME = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _derive_cache_identity(requested_path: str, resolved_path: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    `(served_revision, cache_declared_sha256)` from a HuggingFace cache layout.
+
+    TWO PATHS, BECAUSE THEY CARRY DIFFERENT FACTS. The path the loader asked
+    for names the snapshot -- `.../snapshots/<revision>/<file>` -- which is the
+    revision the cache ACTUALLY SERVED, not the one config requested. The path
+    it resolves to names the blob -- `.../blobs/<sha256>` -- which is the
+    content the cache CLAIMS to hold.
+
+    Pure, and deliberately so: it takes two strings and touches no filesystem,
+    so it is testable without creating symlinks. This project's own development
+    host cannot create them without elevation (WinError 1314), and a test that
+    skipped there would read as coverage while proving nothing.
+    """
+    served_revision: Optional[str] = None
+    declared_sha256: Optional[str] = None
+
+    requested_parts = requested_path.replace("\\", "/").split("/")
+    if "snapshots" in requested_parts:
+        index = requested_parts.index("snapshots")
+        if index + 1 < len(requested_parts):
+            served_revision = requested_parts[index + 1]
+
+    resolved_parts = resolved_path.replace("\\", "/").split("/")
+    if "blobs" in resolved_parts:
+        index = resolved_parts.index("blobs")
+        if index + 1 < len(resolved_parts):
+            candidate = resolved_parts[index + 1]
+            # Only a 64-hex name is a content hash. A 40-hex git blob SHA-1
+            # is dropped rather than recorded, because recording it would put
+            # a non-content hash in a field readers will treat as one.
+            if _CONTENT_ADDRESSED_BLOB_NAME.match(candidate):
+                declared_sha256 = candidate
+
+    return served_revision, declared_sha256
+
+
+class ResolvedModelArtifact(BaseModel):
+    """
+    What a run actually opened for one model, recorded ALONGSIDE the config
+    pin rather than replacing it -- so that a DISAGREEMENT between what was
+    intended and what was served stays visible instead of being reconciled
+    away. A disagreement here is the most informative event this subsystem
+    can produce and must never be defaulted, normalised, or logged at debug.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    requested_path: str
+    resolved_path: Optional[str] = None
+    served_revision: Optional[str] = None
+    # NAMED FOR ITS PROVENANCE, NOT ITS FORMAT. It is deliberately NOT called
+    # `observed_sha256`: a reader seeing "observed" would believe the bytes
+    # were read, and until `hash_verification is VERIFIED` they were not.
+    cache_declared_sha256: Optional[str] = None
+    hash_verification: HashVerification = HashVerification.UNVERIFIABLE
+    version_status: VersionStatus = VersionStatus.UNKNOWN
+    note: str = ""
+
+
+def resolve_model_artifact(requested_path: str) -> ResolvedModelArtifact:
+    """
+    Record what the cache SERVED and what it CLAIMS to hold. Free: no bytes
+    are read. Never raises -- provenance capture must not be the thing that
+    stops a run -- and a path it cannot interpret produces an explicit
+    `UNVERIFIABLE` state, never a silent absence.
+    """
+    try:
+        resolved_path = os.path.realpath(requested_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not resolve '{requested_path}': {exc}")
+        return ResolvedModelArtifact(
+            requested_path=requested_path,
+            note=f"path could not be resolved: {exc}",
+        )
+
+    served_revision, declared_sha256 = _derive_cache_identity(requested_path, resolved_path)
+
+    if declared_sha256 is None:
+        verification = HashVerification.UNVERIFIABLE
+        note = "no content-addressed blob name; nothing to verify the bytes against"
+    else:
+        verification = HashVerification.NOT_VERIFIED
+        note = "sha256 declared by the cache filename; the bytes have NOT been read"
+
+    return ResolvedModelArtifact(
+        requested_path=requested_path,
+        resolved_path=resolved_path,
+        served_revision=served_revision,
+        cache_declared_sha256=declared_sha256,
+        hash_verification=verification,
+        # NOT HASH_ONLY: no bytes have been read. A served revision is a real
+        # identifier the cache resolved, so it earns VERSION_KNOWN; without one
+        # this run knows nothing beyond a filename it has not checked.
+        version_status=(VersionStatus.VERSION_KNOWN if served_revision else VersionStatus.UNKNOWN),
+        note=note,
+    )
+
+
+def verify_model_artifact(artifact: ResolvedModelArtifact) -> ResolvedModelArtifact:
+    """
+    ON DEMAND, NOT PER RUN: stream the blob and compare it against the hash the
+    cache declared. Measured on this project's own ESM-2 weights (2026-09-10):
+    2,609,506,392 bytes in ~3.9s at ~650 MiB/s, per model per run -- a real tax,
+    which is why the free declared hash is what every run records and this is
+    reachable rather than automatic.
+
+    THIS IS ALSO THE FIRST PRODUCTION CALLER OF `WeightCache.verify_checksum`,
+    which had none: it existed, carried five test assertions, and was invoked by
+    nothing -- and returns True when `expected_sha256` is None, so it would have
+    passed by default even once wired. Routing through it here gives it both a
+    caller and a non-None expected hash.
+    """
+    if artifact.cache_declared_sha256 is None or artifact.resolved_path is None:
+        return artifact.model_copy(
+            update={
+                "hash_verification": HashVerification.UNVERIFIABLE,
+                "note": "no declared hash to verify the bytes against",
+            }
+        )
+
+    from pathlib import Path
+
+    from pipeline.models.cache import WeightCache
+
+    matches = WeightCache().verify_checksum(Path(artifact.resolved_path), artifact.cache_declared_sha256)
+
+    if matches:
+        return artifact.model_copy(
+            update={
+                "hash_verification": HashVerification.VERIFIED,
+                # Only now is this HASH_ONLY's own definition -- "a content hash
+                # of the actual bytes used is known" -- actually satisfied.
+                "version_status": VersionStatus.HASH_ONLY,
+                "note": "bytes streamed and matched the hash declared by the cache",
+            }
+        )
+
+    # NOT A WARNING. The bytes on disk are not the bytes the cache says it
+    # holds, which means a corrupted or substituted model cache produced this
+    # run's results. `WeightCache.verify_checksum` has already logged the two
+    # hashes at error level; this makes it unmissable in the record itself.
+    logger.error(
+        f"MODEL CACHE INTEGRITY FAILURE for '{artifact.resolved_path}': the bytes do not match the "
+        f"sha256 the cache filename declares ({artifact.cache_declared_sha256}). Any result produced "
+        f"from this artifact was produced by unknown weights."
+    )
+    return artifact.model_copy(
+        update={
+            "hash_verification": HashVerification.MISMATCH,
+            # Deliberately NOT HASH_ONLY. A mismatched artifact has no known
+            # content hash -- it has a REFUTED one, which is a different thing.
+            "version_status": VersionStatus.UNKNOWN,
+            "note": (
+                "MISMATCH: bytes do not match the cache's declared sha256 -- corrupted or substituted model cache"
+            ),
+        }
+    )
 
 
 class RetrievalMode(str, enum.Enum):

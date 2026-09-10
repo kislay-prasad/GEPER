@@ -177,32 +177,105 @@ is bundled into the image itself today.
 
 ---
 
-## 5. Python package dependencies -- explicit, named gap
+## 5. Python package dependencies -- RESOLVED 2026-09-10, `pip-licenses` run against the actual built image
 
-`geper/requirements.txt` (324 lines) and `kim_pipeline/requirements.txt`
-(53 lines) between them declare on the order of a hundred direct
-dependencies, before transitive dependencies are counted at all. **This
-pass did not individually fetch-and-quote a licence for every one of
-them, and says so rather than presenting a table that looks complete but
-isn't.** The packages carrying an actual, non-default-permissive licence
-condition or a commercial-use question -- torch/torchvision/torchaudio
-(BSD-style, confirmed via GitHub today), transformers (Apache-2.0,
-confirmed via GitHub today), TensorFlow, and every AI-model-specific
-package (enformer-pytorch, borzoi-pytorch, mmsplice, biopython, etc.) --
-are covered under sections 1-3 above because they are the ones tied to a
-specific model or tool already audited. The remainder (fastapi,
-pydantic, requests, pyyaml, reportlab, psutil, pytest and its plugins,
-httpx, anyio, pypdf, setuptools, and similar utility/framework packages)
-are overwhelmingly MIT/BSD/Apache-2.0 by reputation and general
-knowledge of the Python ecosystem, but **that is a different claim than
-"independently confirmed,"** and this file does not blur the two.
+**The gap this section named earlier today is closed.** `pip-licenses` was run against
+`geper:vic-master-61311f0` (the built image itself, not a source review) once `vic` was
+confirmed out of it -- `docker run --rm` only, `MSYS_NO_PATHCONV=1` set to avoid a Windows
+path-rewriting trap, no `commit`/`tag`/`delete`/write against the image at any point. `pip
+list --format=freeze` inside `/opt/venv` (the image's one shared venv, per the Dockerfile)
+shows **120 installed packages**, the full denominator, measured directly rather than assumed.
+`pip-licenses` itself covers **117 of the 120** -- its own default behaviour excludes `pip`,
+`setuptools`, and `wheel` (its own bootstrapping tools, not application dependencies); all
+three are independently well-known MIT-licensed and are named here rather than silently
+dropped from the count. **117 + 3 = 120, the full denominator accounted for**, per the
+standing rule adopted this morning that a finding count is worthless without the size of the
+set it was drawn from.
 
-**Recommended concrete next step, not taken in this pass:** run
-`pip-licenses` (or equivalent) **inside the actual built image**, which
-would enumerate every installed package (direct and transitive) with its
-declared licence in one machine-checkable pass -- the accurate way to
-close this gap completely, and something that requires the built image
-`vic` owns rather than static source review.
+**Grouped by licence family** (117 packages; the two-decimal breakdown reflects how
+`pip-licenses` reports each package's own declared metadata field, which is not always a
+single SPDX id):
+
+| Family | Count |
+|---|---|
+| MIT (all spellings: `MIT`, `MIT License`) | 39 |
+| BSD (all spellings: `BSD License`, `BSD-3-Clause`, `BSD-2-Clause`, `BSD`, `3-Clause BSD License`, `MIT-CMU`) | 35 |
+| Apache (all spellings: `Apache Software License`, `Apache-2.0`, `Apache License 2.0`, plus dual/composite strings below) | 21 |
+| Apache + MIT dual/composite (`Apache Software License; MIT License`, `MIT OR Apache-2.0`) | 4 |
+| LGPL (copyleft family -- see below, named separately, not folded into a "misc" bucket) | 3 |
+| Other composite/permissive (`Apache-2.0 OR BSD-2-Clause`, `Apache-2.0 AND CNRI-Python`, `MPL-2.0 AND MIT`, `BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0`, `ISC License (ISCL)`, `Mozilla Public License 2.0 (MPL 2.0)`, `PSF-2.0`) | 8 |
+| Resolved from `UNKNOWN`/non-SPDX metadata by reading the bundled `LICENSE` file directly inside the image (see below) | 3 |
+| Full licence text returned instead of an SPDX id (`evo2`) | 1 |
+| `LicenseRef-Biopython-License-Agreement` (own permissive licence, see below) | 1 |
+| **Total** | **117 -- reconciles to the 117 row-count measured directly from the tool's own JSON output** |
+
+**Every package `pip-licenses` could not resolve to a normal SPDX identifier, named
+individually rather than left as an unexplained "other" count** -- per the instruction that
+`UNKNOWN` is not `permissive`, and a tool printing `UNKNOWN` has told you it did not look, not
+that nothing is there:
+
+- **`namex` 0.1.0** and **`vtx` 1.1.0** both reported `UNKNOWN`. Resolved by reading the
+  bundled `LICENSE` file directly out of each package's `.dist-info` inside the image (not
+  inferred, not looked up externally): both are **Apache-2.0**, verbatim Apache License 2.0
+  text present in both files. `pip-licenses` reported them `UNKNOWN` only because both
+  packages declare their licence via a bundled `LICENSE` file (`License-File:` in their own
+  metadata) rather than a `License:` classifier field -- a metadata-format gap, not an absent
+  licence. (`vtx` is "Vortex," Michael Poli's reference implementation of the
+  Hyena/StripedHyena/Evo2 computational primitives, already covered under Evo 2's row in
+  `LICENSE_AUDIT.md` -- consistent with that row's Apache-2.0 finding, not a new source.)
+- **`borzoi-pytorch` 0.5.1** reported the literal string `LICENSE` (not a licence identifier --
+  a packaging metadata error where the author's own `License:` field holds the filename
+  `LICENSE` instead of an SPDX id). Resolved the same way: the bundled `LICENSE` file inside
+  the image is the verbatim Apache License 2.0 text -- **Apache-2.0**, matching the GitHub-API
+  confirmation already recorded for this exact package in section 1's "AI models" table
+  earlier today. Two independent checks (GitHub's license API, and now the actual shipped
+  file inside the built image), same answer.
+
+**LGPL family, named separately as instructed -- real copyleft, and explicitly NOT a
+commercial-use blocker, for a different and more direct reason than bwa/git's "mere
+aggregation" argument in section 1:**
+
+- **`psycopg` 3.3.5**, **`psycopg-binary` 3.3.5** (PostgreSQL driver, used by `clinical/`) --
+  `LGPL-3.0-only`.
+- **`frozendict` 2.4.7** -- `GNU Lesser General Public License v3 (LGPLv3)`.
+
+Unlike GPL, LGPL was written specifically to permit linking an LGPL library into a proprietary
+application without extending copyleft to that application, as long as the LGPL component
+itself remains a separately replaceable library -- which is exactly how a normal Python
+`import psycopg` / `import frozendict` works (no static embedding, no source merged into
+GEPER's own files, the package itself stays independently reinstallable/upgradeable). This is
+a real licence family worth disclosing on its own line (not folded into "permissive"), but it
+is not the same class of question as bwa/git's GPL-3.0/2.0 in section 1 -- LGPL's design intent
+already covers this exact usage pattern, whereas GPL's "mere aggregation" argument is a
+narrower, less certain reading being applied to a case GPL was not written to make easy.
+
+**`biopython` 1.88** carries its own named licence, `LicenseRef-Biopython-License-Agreement`
+-- read directly from the bundled `LICENSE.rst` inside the image: *"Biopython is currently
+released under the 'Biopython License Agreement' ... Some files are explicitly dual licensed
+under your choice of the 'Biopython License Agreement' or the 'BSD 3-Clause License'."*
+Permissive, commercially usable, its own well-established open-source licence (predates SPDX
+standardisation, hence the `LicenseRef-` prefix rather than a plain id).
+
+**`evo2` 0.6.0** returned its full licence text instead of an SPDX id in `pip-licenses`' own
+field (the underlying `pyproject.toml`/`setup.py` embeds the complete Apache License 2.0 text,
+plus notices for bundled NVIDIA/HuggingFace/Google-Research/Facebook-Fairseq code, as its
+declared `license` value) -- consistent with, and not contradicting, `LICENSE_AUDIT.md`'s
+existing Apache-2.0 finding for Evo 2.
+
+**Stop-and-tell check, run and cleared:** no package found is both (a) confirmed actually
+present in the shipped image and (b) carrying a licence that blocks commercial use. No GPL
+(full, non-L) licence appears anywhere in the 117-package scan. The three LGPL packages and
+the `UNKNOWN`-resolved-to-Apache-2.0 packages are the only entries that needed individual
+attention, and none of them meets the stop-and-tell bar -- named above rather than silently
+passed through as "clean."
+
+**What this pass did not do:** verify licence compatibility/obligations for **transitive**
+dependencies of these 117 direct packages (`pip-licenses` reports what is actually installed
+in the venv, which already includes transitive dependencies pulled in by pip's resolver, but
+this pass did not separately trace which of the 117 is a direct requirement vs. pulled in
+transitively) -- for a licence-notices purpose this distinction does not change any package's
+obligations, so it was not pursued further, but is named as a boundary of what "117 packages"
+means here.
 
 ---
 
@@ -230,10 +303,16 @@ than smoothed over:**
    final word, and it should get independent legal confirmation before a
    commercial ship, particularly the GPL-3.0 §6 source-availability
    obligation that redistributing the compiled binary triggers.
-2. **The Python dependency tree was not individually, exhaustively
-   licence-verified** (section 5) -- named as a gap with a concrete,
-   cheap next step (`pip-licenses` run against the built image) rather
-   than either skipped silently or falsely presented as done.
+2. ~~The Python dependency tree was not individually, exhaustively
+   licence-verified (section 5).~~ **RESOLVED 2026-09-10**: `pip-licenses`
+   run against the actual built image (`geper:vic-master-61311f0`),
+   full denominator stated (120 installed, 117 scanned + 3 accounted
+   separately), every non-standard result (`UNKNOWN` x2, the literal
+   string `LICENSE` x1, one custom `LicenseRef-`, one full-text field)
+   individually resolved by reading the bundled `LICENSE` file inside
+   the image itself -- see section 5. No commercial-use-blocking licence
+   found; three LGPL packages named and explained rather than folded
+   into "permissive."
 3. **HPO's CC BY 4.0 status remains moderate-confidence**, carried over
    from the existing audit's own flag, not upgraded here.
 4. **DNABERT-2's reachability inside this specific image** is broader

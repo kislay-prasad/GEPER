@@ -189,7 +189,7 @@ inference.
 - **[INVENTED]** — reasoned out here, nothing backs it. Flagged so a reviewer knows exactly
   where to push back hardest.
 
-### 0.2a What would make a `[VERIFIED-IN-REPO]` badge self-invalidating — proposed, not built (god's question, conv-validation-badges, 2026-09-10)
+### 0.2a What would make a `[VERIFIED-IN-REPO]` badge self-invalidating — proposed 2026-09-10, options 1 and 2 BUILT the same day (god's question, conv-validation-badges; header corrected 2026-09-10 after the "not built" framing below itself went stale -- see the note after the recommendation)
 
 **The structural defect, stated plainly:** a `[VERIFIED-IN-REPO]` badge as used throughout
 this document is a claim about a moment — this session, this commit — written in a form
@@ -214,29 +214,42 @@ rows with the identical badge on every row.
    what the citation was even supposed to prove. This is the weakest fix that is still a real
    fix, and is the one §0.4 already does informally (naming `9112411`) without extending the
    convention to the other 18 badges — which is exactly why only §0.4 caught its own second
-   drift and the PP5 row did not catch its first.
+   drift and the PP5 row did not catch its first. **BUILT, same day, after this section was
+   written**: every badge in this document now carries a pinned sha (confirmed by grep,
+   2026-09-10).
 2. **A quoted string a test greps for.** For badges that cite an exact string (PP5's reason
    text, `_BP6_DEPRECATION_CAVEAT`'s content, `STAR_PRACTICE_GUIDELINE = 4`), a small CI check
-   — not built here, a proposal only — could grep the cited file for the quoted substring and
-   fail the build if it's gone, the same shape as
-   `tests/test_round16_not_evaluated_categories.py`'s existing drift-protection test for
-   `_NEVER_INTEGRATED_ACMG_CODES`. This catches the PP5 defect's first half (the quote no
+   could grep the cited file for the quoted substring and fail the build if it's gone, the same
+   shape as `tests/test_round16_not_evaluated_categories.py`'s existing drift-protection test
+   for `_NEVER_INTEGRATED_ACMG_CODES`. This catches the PP5 defect's first half (the quote no
    longer existing) automatically and continuously, not just at audit time — but it cannot
    catch a moved-but-still-correct line number (most of this audit's findings), and it cannot
    catch a characterisation that is wrong while the quote is still accurate word-for-word,
    which is PP5's more serious half. A passing grep is weaker evidence than it looks: it would
-   have stayed green through everything except the exact string going missing.
+   have stayed green through everything except the exact string going missing. **BUILT, same
+   day**: `geper/tests/test_validation_study_design_badge_pins.py` (three tests: PP5's reason
+   string, `_BP6_DEPRECATION_CAVEAT`'s fragment, `STAR_PRACTICE_GUIDELINE == 4`; each imports
+   or calls the real production object rather than re-implementing the value under test) --
+   catches exactly what this paragraph says it can, and nothing more. The paragraph's own
+   limits above are unchanged by the test existing; they are the reason a green run of it must
+   not be over-trusted, and the test's own docstring says so.
 3. **Drop the badge, cite the git blame instead, or don't cite a line at all.** The dispatch's
    own framing — an unverifiable verification claim is worse than no claim — taken to its
    conclusion: state the fact and let a reader run `git log -S"<distinctive phrase>"` or
    `grep -rn` themselves rather than asserting a location that will go stale. Loses the
    "reviewer can re-check it in seconds" property this document's own legend (§0.2) claims for
-   the badge, which is a real cost, not a free option.
+   the badge, which is a real cost, not a free option. Not taken.
 
-**Recommendation, not a decision:** option 1 (pin the sha on every badge) for all of them, plus
-option 2 for the handful whose entire evidentiary weight rests on one exact string (PP5, BP6's
-caveat, the star-rating default) rather than a broader "this function does X" claim that a line
-number alone can't fully capture anyway. Not built in this pass, per boundary.
+**Recommendation, not a decision when this was written:** option 1 (pin the sha on every badge)
+for all of them, plus option 2 for the handful whose entire evidentiary weight rests on one
+exact string (PP5, BP6's caveat, the star-rating default) rather than a broader "this function
+does X" claim that a line number alone can't fully capture anyway. **Both were built the same
+day this section was written, and this paragraph originally said "not built in this pass" --
+which was accurate for a few hours and then became the exact kind of stale, unrechecked claim
+this whole section exists to describe. Corrected 2026-09-10 (`conv-andy-pp5-clo`) after god
+caught a document whose own "we have not built this" had quietly gone false and drawn no
+scrutiny for it, precisely because a pessimistic claim about your own state reads as honest
+modesty rather than something to verify.**
 
 ### 0.3 Citation verification status — every external citation was attempted, 2026-08-22
 

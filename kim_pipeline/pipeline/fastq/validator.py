@@ -44,7 +44,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Iterator, List, Optional, Tuple
+from typing import IO, Iterator, List, Tuple
 
 logger = logging.getLogger("geper.pipeline.fastq.validator")
 
@@ -57,6 +57,7 @@ _FULL_CHECK_LIMIT = 500_000
 
 
 # ─── Error type ───────────────────────────────────────────────────────────────
+
 
 class FastqValidationError(Exception):
     """Raised when a FASTQ file fails structural validation.
@@ -77,6 +78,7 @@ class FastqValidationError(Exception):
 
 # ─── Result type ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class FastqStats:
     """Summary statistics produced by successful validation.
@@ -84,6 +86,7 @@ class FastqStats:
     All counts refer to the number of *read records* (4-line blocks),
     not lines.
     """
+
     path: str = ""
     total_records: int = 0
     min_read_length: int = 0
@@ -105,6 +108,7 @@ class FastqStats:
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def _open_fastq(path: str) -> IO:
     """Open a FASTQ file in text mode, transparently decompressing .gz."""
@@ -147,6 +151,7 @@ def _strip_read_suffix(name: str) -> str:
 
 # ─── Validator class ──────────────────────────────────────────────────────────
 
+
 class FastqValidator:
     """Structural FASTQ validator.
 
@@ -182,15 +187,12 @@ class FastqValidator:
 
         is_gz = path.endswith(".gz")
         stats = FastqStats(path=path, is_gzipped=is_gz)
-        lengths: List[int] = []
         total_length = 0
 
         logger.info("Validating FASTQ: %s", path)
 
         with _open_fastq(path) as fh:
-            for record_idx, (header, seq, plus, qual) in enumerate(
-                _iter_records(fh), start=1
-            ):
+            for record_idx, (header, seq, plus, qual) in enumerate(_iter_records(fh), start=1):
                 # ── structural checks ────────────────────────────────────
                 if not header:
                     # readline returned empty → file ended mid-block
@@ -207,9 +209,7 @@ class FastqValidator:
                         record=record_idx,
                     )
                 if not seq:
-                    raise FastqValidationError(
-                        path, "Empty sequence line.", record=record_idx
-                    )
+                    raise FastqValidationError(path, "Empty sequence line.", record=record_idx)
                 if not plus.startswith("+"):
                     raise FastqValidationError(
                         path,
@@ -230,8 +230,7 @@ class FastqValidator:
                         bad = [c for c in seq_upper if not re.match(r"[ACGTRYMKSWHBVDN]", c)]
                         raise FastqValidationError(
                             path,
-                            f"Invalid IUPAC nucleotide character(s) in sequence: "
-                            f"{bad[:5]!r}",
+                            f"Invalid IUPAC nucleotide character(s) in sequence: {bad[:5]!r}",
                             record=record_idx,
                         )
                     for qi, qc in enumerate(qual):
@@ -269,7 +268,10 @@ class FastqValidator:
 
         logger.info(
             "FASTQ OK: %s — %d records, read length %d–%d bp",
-            path, stats.total_records, stats.min_read_length, stats.max_read_length,
+            path,
+            stats.total_records,
+            stats.min_read_length,
+            stats.max_read_length,
         )
         return stats
 
@@ -317,9 +319,7 @@ class FastqValidator:
                 n1 = _strip_read_suffix(h1)
                 n2 = _strip_read_suffix(h2)
                 if n1 != n2:
-                    name_mismatches.append(
-                        f"record {idx}: R1={h1[:60]!r} vs R2={h2[:60]!r}"
-                    )
+                    name_mismatches.append(f"record {idx}: R1={h1[:60]!r} vs R2={h2[:60]!r}")
                 if len(name_mismatches) >= 5:
                     break
 
@@ -327,12 +327,13 @@ class FastqValidator:
             raise FastqValidationError(
                 r1_path,
                 "Paired-end read name mismatch (R1/R2 are not in the same order "
-                "or are from different samples). First mismatches:\n"
-                + "\n".join(name_mismatches),
+                "or are from different samples). First mismatches:\n" + "\n".join(name_mismatches),
             )
 
         logger.info(
             "Paired-end FASTQ OK: %d records in each of R1=%s and R2=%s",
-            r1_stats.total_records, r1_path, r2_path,
+            r1_stats.total_records,
+            r1_path,
+            r2_path,
         )
         return r1_stats, r2_stats

@@ -3,13 +3,14 @@ tests/test_clinvar.py
 ─────────────────────
 Unit tests for pipeline.clinvar.lookup.ClinVarLookup.
 """
+
 import gzip
-import io
 from pathlib import Path
 
 import pytest
 
 from pipeline.clinvar.lookup import ClinVarLookup, ClinVarHit, _review_stars
+from pipeline.evidence.aggregator import EvidenceAggregator
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -25,13 +26,11 @@ TSV_ROW_PATHOGENIC = (
 )
 
 TSV_ROW_BENIGN = (
-    "99999\tsnv\tTP53\tBenign\t"
-    "criteria provided, single submitter\t1\t17\t7577121\tC\tG\n"
+    "99999\tsnv\tTP53\tBenign\tcriteria provided, single submitter\t1\t17\t7577121\tC\tG\n"
 )
 
 TSV_ROW_CHR_PREFIX = (
-    "11111\tsnv\tSCN5A\tPathogenic\t"
-    "reviewed by expert panel\t5\tchr3\t38674422\tG\tA\n"
+    "11111\tsnv\tSCN5A\tPathogenic\treviewed by expert panel\t5\tchr3\t38674422\tG\tA\n"
 )
 
 TSV_ROW_CONFLICTING = (
@@ -50,6 +49,7 @@ def _write_tsv_gz(tmp_path: Path, rows: list[str]) -> Path:
 
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+
 
 def test_local_tsv_hit(tmp_path):
     """Lookup a known variant returns a ClinVarHit with correct significance."""
@@ -143,8 +143,6 @@ def test_local_multiple_variants_both_found(tmp_path):
 # not the non-existent ClinVarLookup.sig_to_score
 # ─────────────────────────────────────────────────────────────────────────────
 
-from pipeline.evidence.aggregator import EvidenceAggregator
-
 
 class TestFix2ClinVarScoreMethod:
     """Regression tests for: ClinVar score method called on wrong class."""
@@ -153,9 +151,7 @@ class TestFix2ClinVarScoreMethod:
         """clinvar_sig_to_score('Pathogenic', stars=2) must return a float, not None."""
         cv_score = EvidenceAggregator.clinvar_sig_to_score("Pathogenic", 2)
         assert cv_score is not None, "cv_score must not be None for Pathogenic"
-        assert isinstance(cv_score, float), (
-            f"cv_score must be float, got {type(cv_score).__name__}"
-        )
+        assert isinstance(cv_score, float), f"cv_score must be float, got {type(cv_score).__name__}"
 
     def test_runner_calls_evidence_aggregator_not_clinvar_lookup(self):
         """The ClinVar scoring call must reference EvidenceAggregator.clinvar_sig_to_score,
@@ -166,6 +162,7 @@ class TestFix2ClinVarScoreMethod:
         import inspect
         from pipeline.orchestration import runner as runner_mod
         from pipeline.orchestration import shared as shared_mod
+
         combined_src = inspect.getsource(runner_mod) + inspect.getsource(shared_mod)
         assert "EvidenceAggregator.clinvar_sig_to_score" in combined_src, (
             "ACMG/evidence orchestration must call EvidenceAggregator.clinvar_sig_to_score"
@@ -186,9 +183,7 @@ class TestFix2ClinVarScoreMethod:
         )
         # Must not raise AttributeError
         try:
-            cv_score = EvidenceAggregator.clinvar_sig_to_score(
-                hit.significance, hit.review_stars
-            )
+            cv_score = EvidenceAggregator.clinvar_sig_to_score(hit.significance, hit.review_stars)
         except AttributeError as exc:
             pytest.fail(f"AttributeError raised: {exc}")
         assert cv_score is not None

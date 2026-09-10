@@ -74,6 +74,8 @@ last-resort fallback for backward compatibility, so:
 """
 
 import argparse
+import os
+import pickle
 import shutil
 import socket
 import time
@@ -255,6 +257,64 @@ def _is_permanent_download_error(exc: Exception) -> bool:
     return isinstance(exc, urllib.error.HTTPError)
 
 
+def _is_weights_only_rejection(exc: Exception) -> bool:
+    """
+    True when `exc` is torch's own `weights_only=True` rejection of a
+    pickled class it does not recognise -- e.g. an already-cached
+    fairseq checkpoint whose format has drifted one field ahead of
+    `_allow_argparse_namespace_in_checkpoints`'s current allowlist --
+    as opposed to a genuinely corrupted or unreadable file.
+
+    torch.load raises exactly `pickle.UnpicklingError` for this specific
+    case (see torch/serialization.py:
+    `raise pickle.UnpicklingError(_get_wo_message(str(e))) from None`),
+    and the message names the rejected global. Both are checked --
+    UnpicklingError is torch's error class for this, but the message
+    check keeps an unrelated pickle-stream corruption that happens to
+    raise the same exception TYPE from being misclassified as an
+    allowlist gap.
+
+    Measured, not assumed: a truncated/corrupted real checkpoint raises
+    `RuntimeError: PytorchStreamReader failed reading zip archive:
+    failed finding central directory` instead -- a torch checkpoint is
+    a zip archive whose central directory sits near the end of the
+    file, so ordinary corruption breaks archive-opening itself, before
+    unpickling-mode differences ever matter. That is the case this
+    function must say NO to.
+    """
+    return isinstance(exc, pickle.UnpicklingError) and (
+        "Unsupported global" in str(exc) or "Weights only load failed" in str(exc)
+    )
+
+
+def _quarantine_unreadable_checkpoint(path: Path, logger) -> None:
+    """
+    Renames a checkpoint that failed to load aside (never deletes) so a
+    subsequent retry cannot find it still present at the exact path the
+    cache-check (or torch.hub's own cache lookup) expects, and silently
+    re-read the SAME bad bytes through a different, less strict
+    unpickling path -- the risk this function exists to remove is
+    narrowed, not fully closed, by the caller's own exception
+    classification alone: "corrupted, fall through to a fresh download"
+    only actually gets FRESH bytes if the corrupted file is no longer
+    sitting at the path the next attempt will look for.
+
+    Best-effort: a rename failure (e.g. read-only filesystem) is logged
+    and swallowed -- this is a defence-in-depth improvement to an
+    already-graceful fallback path, not a new way for loading to fail
+    harder than it did before this existed.
+    """
+    quarantined = path.with_name(f"{path.name}.corrupted-{int(time.time())}-{os.getpid()}")
+    try:
+        path.rename(quarantined)
+        logger.warning(f"Moved unreadable RNA-FM checkpoint aside to '{quarantined}' before retrying.")
+    except OSError as exc:
+        logger.warning(
+            f"Could not move unreadable RNA-FM checkpoint '{path}' aside "
+            f"({exc.__class__.__name__}: {exc}) -- a retry may find the same bad file again."
+        )
+
+
 def _allow_argparse_namespace_in_checkpoints() -> None:
     """
     Registers `argparse.Namespace` on PyTorch's strict-unpickling
@@ -410,20 +470,43 @@ class RNAFMModel(BaseGenomicModel):
             try:
                 return _load_local_checkpoint(loader, str(cached_path))
             except Exception as exc:  # noqa: BLE001
-                # A cached file that fails to load (corrupted partial
-                # download, wrong format) shouldn't be trusted silently
-                # -- fall through to a fresh network attempt instead,
-                # which is more likely to succeed than reusing bad
-                # local bytes. (PyTorch 2.6's weights_only default is
-                # already accounted for by the allowlist in
-                # _load_local_checkpoint above, so reaching this branch
-                # means the file itself is the problem.)
+                if _is_weights_only_rejection(exc):
+                    # HIGH-priority security card: a cached file that
+                    # fails ONLY because it carries a pickled class
+                    # outside today's allowlist is NOT corruption -- it
+                    # is ordinary upstream checkpoint-format drift on a
+                    # file we already hold. The old code below ("shrug,
+                    # try a wider unpickling path") silently re-read the
+                    # SAME bytes through torch.hub's own
+                    # weights_only=False default, reintroducing exactly
+                    # the risk the allowlist exists to remove, on a file
+                    # that was never corrupted at all. This is the
+                    # ACCIDENT case (drift on a file we already hold),
+                    # and stopping here -- never reaching step 2's wide
+                    # path for THIS file -- closes it.
+                    raise ModelLoadError(
+                        f"Cached RNA-FM checkpoint at '{cached_path}' contains a "
+                        "pickled class outside today's allowlist "
+                        "(_allow_argparse_namespace_in_checkpoints) -- this is not "
+                        "corruption, and must not be recovered by falling back to "
+                        "an unrestricted (weights_only=False) load. Update the "
+                        f"allowlist for this checkpoint format. Original error: {exc}"
+                    ) from exc
+                # A genuinely corrupted cached file (partial download,
+                # filesystem error) shouldn't be trusted silently --
+                # move it aside so the retry below cannot silently
+                # re-read the SAME bad bytes through a wider unpickling
+                # path (torch.hub's own cache lookup would otherwise
+                # find it still sitting at this exact path and treat it
+                # as already-downloaded), then fall through to a fresh
+                # network attempt.
                 self.logger.warning(
                     f"Cached RNA-FM checkpoint at '{cached_path}' failed "
                     f"to load ({exc.__class__.__name__}); ignoring cache "
                     "and attempting a fresh download.",
                     exc_info=True,
                 )
+                _quarantine_unreadable_checkpoint(cached_path, self.logger)
 
         # 1b. Not cached -- try the official HF mirror before ever
         # touching the upstream package's own unreliable endpoint.
@@ -442,15 +525,48 @@ class RNAFMModel(BaseGenomicModel):
                     )
                     return _load_local_checkpoint(loader, str(mirror_path))
                 except Exception as exc:  # noqa: BLE001
+                    if _is_weights_only_rejection(exc):
+                        # Same treatment as the cache-hit branch above --
+                        # see that comment for the full reasoning.
+                        raise ModelLoadError(
+                            f"HF-mirrored RNA-FM checkpoint at '{mirror_path}' "
+                            "contains a pickled class outside today's "
+                            "allowlist (_allow_argparse_namespace_in_checkpoints) "
+                            "-- this is not corruption, and must not be recovered "
+                            "by falling back to an unrestricted (weights_only=False) "
+                            f"load. Update the allowlist. Original error: {exc}"
+                        ) from exc
                     self.logger.warning(
                         f"HF-mirrored RNA-FM checkpoint at '{mirror_path}' "
                         f"failed to load ({exc.__class__.__name__}); "
                         "falling back to the upstream endpoint.",
                         exc_info=True,
                     )
+                    _quarantine_unreadable_checkpoint(mirror_path, self.logger)
 
         # 2. Network download, with a bounded retry for genuinely
         # transient errors only (see _is_permanent_download_error).
+        #
+        # *** RESIDUAL, NOT CLOSED HERE, NAMED AT THE SITE (HIGH-priority
+        # security card): `loader()` below is `fm.pretrained.rna_fm_t12`
+        # with no `model_location`, which is Meta's own
+        # `load_hub_workaround` -> REAL `torch.hub.load_state_dict_from_url`
+        # -- and THAT function's own signature hardcodes
+        # `weights_only=False`, independent of the allowlist call on the
+        # next line. `_is_weights_only_rejection` above closes the
+        # ACCIDENT case (an already-held file whose format has drifted
+        # past today's allowlist); it cannot close THIS case, because
+        # this is the path a GENUINE FRESH download always takes --
+        # there is no "local, strict" attempt to compare against here.
+        # A newly-fetched checkpoint carrying a class outside today's
+        # allowlist WILL still be unpickled with weights_only=False and
+        # WILL still succeed. This is the ATTACK case (a file we fetch,
+        # not one we already hold), it is the more serious of the two,
+        # and it is deliberately still open tonight: closing it requires
+        # routing every load -- including a fresh download -- through
+        # the same strict+allowlisted path, which couples this file to
+        # torch.hub's internal cache-filename convention and needs a
+        # rested decision, not one made under this card's boundary. ***
         #
         # `loader()` -> `torch.hub.load_state_dict_from_url` issues a
         # bare `urllib` request with NO timeout by default (Python's
@@ -467,7 +583,10 @@ class RNAFMModel(BaseGenomicModel):
         # The downloaded file is the same fairseq-style checkpoint as
         # the cached one, so it needs the same allowlist before
         # `loader()` unpickles it (see
-        # `_allow_argparse_namespace_in_checkpoints`).
+        # `_allow_argparse_namespace_in_checkpoints`) -- harmless here
+        # (weights_only=False accepts anything regardless), but load-
+        # bearing again the day this step is ever routed through the
+        # strict path instead.
         _allow_argparse_namespace_in_checkpoints()
         last_exc: Optional[Exception] = None
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):

@@ -37,7 +37,7 @@ from __future__ import annotations
 import threading
 
 from pipeline.annotation.codon_provider import CdsRecord, FastaCodonContextProvider, _FastaReader
-from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED
+from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED, _map_consequence
 from pipeline.clinvar.lookup import ClinVarHit, ClinVarLookup
 
 
@@ -499,3 +499,80 @@ class TestSite3ClosesTheDoorBeforeSite1OrSite2AreReached:
             "moderate pathogenic evidence manufactured from an undetermined amino "
             f"acid; criteria_met={sorted(result.criteria_met)!r}"
         )
+
+
+class _FakeProviderReturns:
+    """A minimal stand-in CodonContextProvider whose `get_codon_change`
+    returns a fixed value, so the test below exercises `_map_consequence`'s
+    OWN fallthrough logic in isolation -- not the real
+    `FastaCodonContextProvider`'s classification cascade (already covered
+    above), and not this test file's local `_so_term` duplicate (which
+    could itself drift out of step with the real function)."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def get_codon_change(self, chrom, pos, ref, alt, transcript_id):
+        return self._value
+
+
+class TestNotEvaluatedDependsOnBeingUnrecognised:
+    """*** PINS A DEPENDENCY THAT HAS NO TEST OF ITS OWN TODAY. ***
+
+    `codon_provider.py`'s new `"not_evaluated"` value is correct only
+    because `_map_consequence` (annotation/stage.py:150-173) falls through
+    to `CONSEQUENCE_NOT_DETERMINED` for ANY codon_change value it does not
+    recognise -- `"not_evaluated"` is not itself special-cased anywhere in
+    `_map_consequence`. That means the sentinel's correctness rides on an
+    ABSENCE (nothing recognises the string), not a stated contract. If
+    someone later adds `"not_evaluated"` to the recognised
+    `codon_change ==` chain with a different meaning, or tightens the
+    fallthrough to raise on an unrecognised value instead of defaulting,
+    the honest sentinel silently becomes -- or stops reaching -- a
+    confident consequence again, and nothing else in this file would
+    notice: every other test here goes through the real provider, which
+    only ever manufactures `"not_evaluated"` the one way this fix
+    intends.
+
+    This test calls the real `_map_consequence` directly with a provider
+    that returns the literal string `"not_evaluated"` and nothing else --
+    isolating exactly the dependency described above. A red here names the
+    reason: either the fallthrough changed, or `"not_evaluated"` became a
+    recognised value.
+    """
+
+    def test_provider_not_evaluated_value_reaches_consequence_not_determined(self):
+        result = _map_consequence(
+            region="exonic",
+            ref="A",
+            alt="T",
+            codon_provider=_FakeProviderReturns("not_evaluated"),
+            chrom="chr1",
+            pos=201,
+            transcript_id="TXE",
+        )
+        assert result == CONSEQUENCE_NOT_DETERMINED, (
+            "the codon provider's 'not_evaluated' value no longer reaches the "
+            f"annotation layer's honest-gap sentinel; got {result!r}. Either "
+            "_map_consequence's fallthrough (annotation/stage.py:169-173) no "
+            "longer defaults unrecognised values to CONSEQUENCE_NOT_DETERMINED, "
+            "or 'not_evaluated' has been added as a recognised codon_change "
+            "value with some other meaning -- in the latter case, IT MUST STILL "
+            "MAP TO CONSEQUENCE_NOT_DETERMINED, not to a confident SO term."
+        )
+
+    def test_a_recognised_value_is_unaffected_control(self):
+        """Control: the fallthrough this test pins does not fire for a value
+        _map_consequence DOES recognise -- proves the fake provider and the
+        real function are actually wired together, not just both returning
+        the sentinel by coincidence."""
+        result = _map_consequence(
+            region="exonic",
+            ref="A",
+            alt="T",
+            codon_provider=_FakeProviderReturns("synonymous"),
+            chrom="chr1",
+            pos=201,
+            transcript_id="TXE",
+        )
+        assert result == "synonymous_variant"

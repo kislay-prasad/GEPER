@@ -2821,7 +2821,7 @@ class ACMGRuleEngine:
         alphamissense_result: Optional[Dict[str, Any]],
         pm1_result: Optional[CriterionResult],
         bs3_result: Optional[CriterionResult] = None,
-    ) -> Optional[str]:
+    ) -> Optional[Tuple[str, bool]]:
         """
         Gate for BP1's blanket "gene where LOF is established => this
         missense is benign evidence" inference, mirroring `_pp3_bp4`'s
@@ -2865,10 +2865,17 @@ class ACMGRuleEngine:
         for the same variant -- and continues to block BP1 as before
         when nothing contradicts it.
 
-        Returns the opposing-evidence text, or `None` when BP1's
-        default gene-level inference is not contradicted by anything
-        GEPER has for this specific variant (including the case where
-        PM1's opposition is outweighed by benign evidence).
+        Returns `(opposing-evidence text, whether InterPro was the
+        source that produced it)`, or `None` when BP1's default
+        gene-level inference is not contradicted by anything GEPER has
+        for this specific variant (including the case where PM1's
+        opposition is outweighed by benign evidence). The boolean lets
+        the caller build an `evidence_sources` list that names only the
+        source(s) THIS specific branch actually used -- the
+        AlphaMissense-pathogenic branch never consults `pm1_result` at
+        all (it returns before that check), so it must not claim
+        InterPro was read; the PM1-triggered branch's own text embeds
+        PM1's rationale verbatim, which does name InterPro/Pfam.
         """
         am_pathogenic_reason = None
         am_benign_present = False
@@ -2892,7 +2899,7 @@ class ACMGRuleEngine:
         # -- it is variant-specific evidence, not a generic heuristic,
         # so it is never weighed against countervailing evidence here.
         if am_pathogenic_reason is not None:
-            return am_pathogenic_reason
+            return am_pathogenic_reason, False
 
         if pm1_result is None or pm1_result.status != "triggered":
             return None
@@ -2902,7 +2909,7 @@ class ACMGRuleEngine:
             # PM1 alone (bare domain overlap) does not outvote direct
             # variant-specific benign evidence on the same variant.
             return None
-        return f"PM1 (conserved functional domain) independently triggered: {pm1_result.rationale}"
+        return f"PM1 (conserved functional domain) independently triggered: {pm1_result.rationale}", True
 
     @staticmethod
     def _bp1(
@@ -2976,6 +2983,19 @@ class ACMGRuleEngine:
         if mechanism in (LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE):
             opposing = ACMGRuleEngine._bp1_opposing_missense_evidence(alphamissense_result, pm1_result, bs3_result)
             if opposing is not None:
+                opposing_text, opposing_used_interpro = opposing
+                # CORRECTED 2026-09-10 (rationale-string scan, conv-rationale):
+                # this evidence_sources list used to be a fixed
+                # ["ClinGen", "transcript_cds", "AlphaMissense", "InterPro"]
+                # regardless of which branch of
+                # `_bp1_opposing_missense_evidence` produced `opposing_text`.
+                # The AlphaMissense-pathogenic branch returns before
+                # `pm1_result` is even consulted, so it never actually reads
+                # InterPro -- only the PM1-triggered branch does (its own
+                # text embeds PM1's rationale, which names InterPro/Pfam).
+                bp1_evidence_sources = ["ClinGen", "transcript_cds", "AlphaMissense"]
+                if opposing_used_interpro:
+                    bp1_evidence_sources.append("InterPro")
                 return CriterionResult(
                     "BP1",
                     direction,
@@ -2985,10 +3005,10 @@ class ACMGRuleEngine:
                     "truncating variants are an established disease mechanism, but BP1 does not apply "
                     "here: a strong, variant-specific signal argues against treating this particular "
                     "missense substitution as benign, despite the gene's overall LOF curation.",
-                    conflicting_evidence=[opposing],
-                    evidence_sources=["ClinGen", "transcript_cds", "AlphaMissense", "InterPro"],
+                    conflicting_evidence=[opposing_text],
+                    evidence_sources=bp1_evidence_sources,
                     confidence="Low",
-                    details={"lof_mechanism": mechanism, "opposing_missense_evidence": opposing},
+                    details={"lof_mechanism": mechanism, "opposing_missense_evidence": opposing_text},
                 )
             return CriterionResult(
                 "BP1",

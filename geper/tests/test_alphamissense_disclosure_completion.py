@@ -75,7 +75,8 @@ def _am(am_class, score=0.997, protein_variant="p.Trp88Cys"):
 
 class TestBP1EvidenceCaveated(unittest.TestCase):
     def test_bp1_opposing_evidence_is_caveated(self):
-        text = ACMGRuleEngine._bp1_opposing_missense_evidence(_am("likely_pathogenic"), None, None)
+        text, used_interpro = ACMGRuleEngine._bp1_opposing_missense_evidence(_am("likely_pathogenic"), None, None)
+        self.assertFalse(used_interpro, "AlphaMissense-only branch never consults pm1_result")
         _assert_all_caveated(self, [("BP1 opposing evidence", text)])
 
 

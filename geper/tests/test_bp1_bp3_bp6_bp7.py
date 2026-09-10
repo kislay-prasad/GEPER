@@ -91,7 +91,7 @@ import json
 import os
 import unittest
 
-from pipeline.acmg_rules import ACMGRuleEngine
+from pipeline.acmg_rules import ACMGRuleEngine, CriterionResult
 
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
@@ -144,9 +144,16 @@ _CLINGEN_DOSAGE = {
 def clingen_result(gene, validity="Definitive"):
     score, label = _CLINGEN_DOSAGE[gene]
     return {
-        "skipped": False, "found": True, "source": "fixture", "gene_symbol": gene,
+        "skipped": False,
+        "found": True,
+        "source": "fixture",
+        "gene_symbol": gene,
         "clinical_validity_summary": validity,
-        "dosage_sensitivity": {"gene_symbol": gene, "haploinsufficiency_score": score, "haploinsufficiency_label": label},
+        "dosage_sensitivity": {
+            "gene_symbol": gene,
+            "haploinsufficiency_score": score,
+            "haploinsufficiency_label": label,
+        },
     }
 
 
@@ -194,6 +201,7 @@ _TP53_SYNONYMOUS = {"chrom": "17", "pos": 7675087, "ref": "G", "alt": "A"}
 # ---------------------------------------------------------------------------
 # BP1 -- real BRCA1/CFTR/MYH7 ClinGen dosage ground truth
 # ---------------------------------------------------------------------------
+
 
 class TestBP1(unittest.TestCase):
     def test_brca1_real_missense_triggers_bp1(self):
@@ -259,12 +267,70 @@ class TestBP1(unittest.TestCase):
             transcript_result=gene_transcript_result("BRCA1"),
             clingen_result=clingen_result("BRCA1"),
         )
-        self.assertTrue(any("BP1 triggered (supporting, benign) contributes 1 point" in t for t in result["combining_rule_trace"]))
+        self.assertTrue(
+            any("BP1 triggered (supporting, benign) contributes 1 point" in t for t in result["combining_rule_trace"])
+        )
+
+
+class TestBP1EvidenceSourcesMatchTheBranchTaken(unittest.TestCase):
+    """CORRECTED 2026-09-10 (rationale-string scan, conv-rationale):
+    `_bp1`'s evidence_sources used to be one fixed list regardless of
+    which reason `_bp1_opposing_missense_evidence` returned -- claiming
+    InterPro was read even in the branch that returns before
+    `pm1_result` is even consulted. This does not change BP1's
+    triggered/not_triggered status in either case -- only the precision
+    of what evidence_sources claims was actually read."""
+
+    def test_alphamissense_only_branch_does_not_claim_interpro(self):
+        result = ACMGRuleEngine._bp1(
+            is_missense=True,
+            clingen_result=clingen_result("BRCA1"),
+            alphamissense_result={
+                "skipped": False,
+                "found": True,
+                "am_class": "likely_pathogenic",
+                "am_pathogenicity": 0.99,
+            },
+            pm1_result=None,
+        )
+        self.assertEqual(result.status, "not_triggered")
+        self.assertIn("AlphaMissense", result.evidence_sources)
+        self.assertNotIn(
+            "InterPro",
+            result.evidence_sources,
+            "AlphaMissense-only branch never consults pm1_result -- must not claim InterPro was read",
+        )
+
+    def test_pm1_triggered_branch_does_claim_interpro(self):
+        pm1_result = CriterionResult(
+            "PM1",
+            "pathogenic",
+            "moderate",
+            "triggered",
+            "Residue 100 (transcript-verified against this gene's Ensembl-canonical/MANE-tagged "
+            "transcript) falls within an annotated functional domain/family region (Kinase domain), "
+            "a location InterPro/Pfam curation flags as structurally/functionally significant.",
+            evidence_sources=["InterPro"],
+        )
+        result = ACMGRuleEngine._bp1(
+            is_missense=True,
+            clingen_result=clingen_result("BRCA1"),
+            alphamissense_result=None,
+            pm1_result=pm1_result,
+        )
+        self.assertEqual(result.status, "not_triggered")
+        self.assertIn(
+            "InterPro",
+            result.evidence_sources,
+            "PM1-triggered branch embeds PM1's own InterPro-naming rationale text",
+        )
+        self.assertIn("AlphaMissense", result.evidence_sources)
 
 
 # ---------------------------------------------------------------------------
 # BP3 -- reuses PM4's real TP53/TTN ground truth pairing
 # ---------------------------------------------------------------------------
+
 
 class TestBP3(unittest.TestCase):
     def test_in_frame_deletion_inside_real_uniprot_repeat_triggers_bp3(self):
@@ -272,7 +338,12 @@ class TestBP3(unittest.TestCase):
         self.assertEqual(pevk_1["description"], "PEVK 1")
         features = [dict(pevk_1, begin=260, end=270)]  # remapped onto TP53's codon range, see module docstring
         result = ACMGRuleEngine().evaluate(
-            variant_dict={"chrom": "17", "pos": 7673826, "ref": "AGTAG", "alt": "AG"},  # real: TP53 c.792_794del, codon 265
+            variant_dict={
+                "chrom": "17",
+                "pos": 7673826,
+                "ref": "AGTAG",
+                "alt": "AG",
+            },  # real: TP53 c.792_794del, codon 265
             transcript_result=tp53_transcript_result(),
             uniprot_result=uniprot_result(features),
         )
@@ -327,6 +398,7 @@ class TestBP3(unittest.TestCase):
 # BP6 -- three real, live-fetched ClinVar records
 # ---------------------------------------------------------------------------
 
+
 class TestBP6(unittest.TestCase):
     def test_real_benign_expert_panel_record_triggers_bp6(self):
         """Real: BRCA1 p.Ser1613Gly, VCV000041827, Benign, reviewed by expert panel."""
@@ -344,7 +416,9 @@ class TestBP6(unittest.TestCase):
 
     def test_real_weakly_reviewed_benign_record_does_not_trigger_bp6(self):
         """Real: BRCA1 c.5467+200G>A, VCV004856951, Likely benign but only 'no assertion criteria provided' -- too weak a source to be 'reputable'."""
-        result = ACMGRuleEngine().evaluate(clinvar_result=_BP6_RECORDS["brca1_intronic_likely_benign_no_assertion_criteria"])
+        result = ACMGRuleEngine().evaluate(
+            clinvar_result=_BP6_RECORDS["brca1_intronic_likely_benign_no_assertion_criteria"]
+        )
         bp6 = result["all_criteria"]["BP6"]
         self.assertEqual(bp6["status"], "not_triggered")
         self.assertIn("too weak", bp6["rationale"])
@@ -367,16 +441,25 @@ class TestBP6(unittest.TestCase):
         """BP6 is reported as triggered but must not silently move the final classification -- same circularity rationale that already excludes the plain ClinVar cross-reference from these combining rules."""
         result = ACMGRuleEngine().evaluate(clinvar_result=_BP6_RECORDS["brca1_s1613g_benign_expert_panel"])
         self.assertEqual(result["all_criteria"]["BP6"]["status"], "triggered")
-        self.assertTrue(any("BP6 triggered, but excluded from point totals" in t for t in result["combining_rule_trace"]))
-        self.assertFalse(any(t.startswith("BP6 triggered (") and "contributes" in t for t in result["combining_rule_trace"]))
+        self.assertTrue(
+            any("BP6 triggered, but excluded from point totals" in t for t in result["combining_rule_trace"])
+        )
+        self.assertFalse(
+            any(t.startswith("BP6 triggered (") and "contributes" in t for t in result["combining_rule_trace"])
+        )
 
 
 # ---------------------------------------------------------------------------
 # BP7 -- MMSplice + SpliceFormer + SpliceBERT, real output schema
 # ---------------------------------------------------------------------------
 
+
 def no_effect_mmsplice():
-    return {"predicted": True, "interpretation_category": "no_significant_effect", "interpretation": "no significant splice effect"}
+    return {
+        "predicted": True,
+        "interpretation_category": "no_significant_effect",
+        "interpretation": "no significant splice effect",
+    }
 
 
 def damaging_mmsplice():
@@ -468,11 +551,19 @@ class TestBP7(unittest.TestCase):
     def test_ensemble_result_alone_is_not_read_by_bp7(self):
         """ensemble_result is Enformer/Borzoi (PP3/BP4's field) -- BP7 must not treat it as a splice-predictor source."""
         result = ACMGRuleEngine().evaluate(
-            ensemble_result={"models_used": ["enformer", "borzoi"], "classification": "large_effect", "consensus_score": 0.9, "basis": "two_model_consensus", "agreement_percentage": 90.0},
+            ensemble_result={
+                "models_used": ["enformer", "borzoi"],
+                "classification": "large_effect",
+                "consensus_score": 0.9,
+                "basis": "two_model_consensus",
+                "agreement_percentage": 90.0,
+            },
             **_synonymous_kwargs(),
         )
         bp7 = result["all_criteria"]["BP7"]
-        self.assertEqual(bp7["status"], "triggered")  # no MMSplice/SpliceFormer/SpliceBERT evidence at all -> low-confidence trigger, unaffected by ensemble_result
+        self.assertEqual(
+            bp7["status"], "triggered"
+        )  # no MMSplice/SpliceFormer/SpliceBERT evidence at all -> low-confidence trigger, unaffected by ensemble_result
         self.assertNotIn("ensemble", " ".join(bp7["evidence_sources"]).lower())
 
 

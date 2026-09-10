@@ -35,12 +35,14 @@ logger = logging.getLogger("geper.pipeline.alignment.bam_utils")
 
 # ─── Result type ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class AlignmentMetrics:
     """Real metrics computed from the sorted BAM via samtools — never
     estimated or fabricated. Any field that couldn't be computed (e.g.
     insert size for single-end data) stays at its default and is not
     backfilled with a guess."""
+
     total_reads: int = 0
     mapped_reads: int = 0
     pct_mapped: float = 0.0
@@ -61,6 +63,7 @@ class AlignmentMetrics:
 
 # ─── SAM → sorted, indexed BAM ──────────────────────────────────────────────────
 
+
 def sam_to_sorted_bam(sam_path: str, output_bam_path: str, threads: int = 4) -> str:
     """Sort a SAM (or unsorted BAM) by coordinate into `output_bam_path`
     using `samtools sort`. Returns the output path."""
@@ -74,8 +77,56 @@ def sam_to_sorted_bam(sam_path: str, output_bam_path: str, threads: int = 4) -> 
     return output_bam_path
 
 
+def name_sort_and_fixmate(sam_path: str, output_bam_path: str, threads: int = 4) -> str:
+    """Name-sort `sam_path` and run ``samtools fixmate -m`` into
+    `output_bam_path`. Returns the output path.
+
+    THIS STEP IS NOT OPTIONAL, AND ITS ABSENCE IS INVISIBLE ON INPUT THAT
+    HAPPENS TO CONTAIN NO DUPLICATES. ``samtools markdup`` needs two tags
+    that only ``samtools fixmate -m`` writes -- MC (mate CIGAR) and ms
+    (mate score) -- and without them it exits non-zero having written an
+    EMPTY BAM. The two aligners fail at different checks, which is why
+    this looked aligner-specific for a while:
+
+        minimap2 output -> "[markdup] error: no MC tag ..."
+                           fails immediately; minimap2 emits no MC at all.
+                           (Its `ms` tag is minimap2's own alignment score,
+                           NOT samtools' mate score. The name collision is
+                           a coincidence.)
+        bwa output      -> "[markdup] error: no ms score tag ..."
+                           bwa emits MC on every record but never ms, so it
+                           clears the first check and dies at the second --
+                           but ONLY once a duplicate set actually needs
+                           scoring. On duplicate-free input it never gets
+                           there and markdup appears to succeed.
+
+    ``fixmate`` requires name-grouped input, which is why the coordinate
+    sort must happen after this rather than before it.
+    """
+    samtools = _require("samtools", "alignment.fixmate")
+    Path(output_bam_path).parent.mkdir(parents=True, exist_ok=True)
+    name_sorted = str(Path(output_bam_path).with_suffix(".namesorted.bam"))
+    _run(
+        [samtools, "sort", "-n", "-@", str(max(1, threads)), "-o", name_sorted, sam_path],
+        stage="alignment.namesort",
+    )
+    try:
+        _run(
+            [samtools, "fixmate", "-m", "-@", str(max(1, threads)), name_sorted, output_bam_path],
+            stage="alignment.fixmate",
+        )
+    finally:
+        Path(name_sorted).unlink(missing_ok=True)
+    logger.info("Fixmate-annotated BAM written: %s", output_bam_path)
+    return output_bam_path
+
+
 def mark_duplicates(sorted_bam_path: str, output_bam_path: str, threads: int = 4) -> str:
     """Mark duplicate reads in a sorted BAM using ``samtools markdup``.
+
+    PRECONDITION: `sorted_bam_path` must descend from
+    :func:`name_sort_and_fixmate`. See that function for what happens when
+    it does not, and for why the failure does not show up on every input.
 
     Parses the DUPLICATE TOTAL line from samtools markdup stderr and logs
     the number of duplicate reads flagged. Returns the output path.
@@ -121,6 +172,7 @@ def index_bam(bam_path: str, threads: int = 4) -> str:
 
 # ─── Metrics ────────────────────────────────────────────────────────────────────
 
+
 def compute_flagstat_metrics(bam_path: str) -> AlignmentMetrics:
     """Parse `samtools flagstat -O tsv` into structured `AlignmentMetrics`.
     TSV mode is used (rather than scraping the human-readable text) so
@@ -164,7 +216,7 @@ def compute_mean_depth(bam_path: str) -> Optional[float]:
     samtools = _require("samtools", "alignment.coverage")
     result = _run([samtools, "coverage", bam_path], stage="alignment.coverage")
 
-    lines = [l for l in result.stdout.splitlines() if l and not l.startswith("#")]
+    lines = [ln for ln in result.stdout.splitlines() if ln and not ln.startswith("#")]
     if not lines:
         return None
 
@@ -195,7 +247,7 @@ def attach_baseq_mapq(bam_path: str, metrics: AlignmentMetrics) -> AlignmentMetr
     per-contig columns, length-weighted, mirroring `compute_mean_depth`."""
     samtools = _require("samtools", "alignment.coverage")
     result = _run([samtools, "coverage", bam_path], stage="alignment.coverage")
-    lines = [l for l in result.stdout.splitlines() if l and not l.startswith("#")]
+    lines = [ln for ln in result.stdout.splitlines() if ln and not ln.startswith("#")]
 
     total_len = 0
     weighted_baseq = 0.0

@@ -1369,6 +1369,10 @@ class ReportGenerator:
             )
             lines.append("")
             return lines
+        if dbsnp and dbsnp.get("error") is not None:
+            lines.append(f"- **Status:** query failed ({dbsnp['error']})")
+            lines.append("")
+            return lines
         if not dbsnp or not dbsnp.get("found"):
             lines.append("_No dbSNP record found._")
             lines.append("")

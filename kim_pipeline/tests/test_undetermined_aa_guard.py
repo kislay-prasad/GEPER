@@ -37,6 +37,7 @@ from __future__ import annotations
 import threading
 
 from pipeline.annotation.codon_provider import CdsRecord, FastaCodonContextProvider, _FastaReader
+from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED
 from pipeline.clinvar.lookup import ClinVarHit, ClinVarLookup
 
 
@@ -96,36 +97,35 @@ class TestSite2SynonymousGuard:
             f"an undetermined-vs-undetermined amino-acid pair was classified {consequence!r} "
             "and must never be 'synonymous' -- two unknowns are not evidence of no protein change"
         )
-        # *** PINNED, NOT ENDORSED. RULED 2026-08-28. ***
-        # The guard does not choose "missense"; it lets the undetermined
-        # amino acid fall THROUGH the elimination cascade, whose `else` is
-        # `missense`. The effect is the same: a codon nobody could read is
-        # now reported as a determined protein change. That consequence was
-        # invented against an explicit instruction not to invent one, and
-        # this line is what makes it costly to change, so it is recorded as
-        # a pin rather than as agreement.
-        #
-        # It is also load-bearing, not cosmetic: "missense_variant" is
-        # exactly what routes this variant into the PS1/PM5 lookup at
-        # orchestration/shared.py:352, which pre-guard it never reached.
-        # See TestTheTwoGuardsAreOneFix below.
-        #
-        # WHEN MEREDITH'S not-evaluated STATE FOR THE ANNOTATION LAYER
-        # LANDS, THIS PIN IS THE FIRST THING TO REASSESS -- it is expected
-        # to change, and changing it is not a regression.
-        assert consequence == "missense"
+        # *** REASSESSED: THE not-evaluated STATE FOR THE ANNOTATION LAYER
+        # HAS LANDED (666f299, CONSEQUENCE_NOT_DETERMINED). This pin is the
+        # thing that comment said to reassess. It is no longer true that the
+        # undetermined amino acid falls through the elimination cascade to
+        # `missense` -- it is now caught before the cascade runs at all and
+        # reported as `"not_evaluated"` (this file's provider-level name for
+        # the same honest-gap idiom `_map_consequence` maps to
+        # CONSEQUENCE_NOT_DETERMINED for any codon_change it does not
+        # recognise -- see annotation/stage.py:150-173).
+        assert consequence == "not_evaluated", (
+            f"an undetermined amino acid must not fall through to a confident "
+            f"consequence type by elimination; got {consequence!r}"
+        )
 
-    def test_n_at_the_variants_own_position_is_unaffected_by_this_guard(self):
-        """Control: Pam's original case. The ALT substitution overwrites
-        the 'N' at the variant's own position, so alt_aa resolves to a real
-        amino acid and ref_aa == alt_aa never held true here in the first
-        place ('?' != 'L') -- this guard changes nothing about it."""
+    def test_n_at_the_variants_own_position_is_also_reported_not_evaluated(self):
+        """Formerly a control proving this guard changed nothing here (the
+        ALT substitution overwrites the 'N' at the variant's own position,
+        so alt_aa resolves to a real amino acid and ref_aa == alt_aa never
+        held true -- '?' != 'L'). That was only ever a control for the
+        equality guard. This case is squarely inside the WIDER guard added
+        alongside it: ref_aa is STILL undetermined ('?'), and a codon that
+        could not be read must not be reported as a determined missense
+        change just because the mutant side happened to resolve."""
         fasta = {"chr1": "N" * 200 + "NTG" + "N" * 20}
         cds_map = {"TX1": [_cds("chr1", 201, 203, "+", 0, "TX1")]}
         provider = _make_provider(fasta, cds_map)
 
         result = provider.get_codon_and_aa("chr1", 201, "A", "T", "TX1")
-        assert result == ("missense", "NTG", "TTG", "?", "L")
+        assert result == ("not_evaluated", "NTG", "TTG", "?", "L")
 
     def test_a_real_synonymous_call_still_fires(self):
         """Control: two REAL, resolved, genuinely-identical amino acids
@@ -266,7 +266,14 @@ _SO_TERM = {
 
 
 def _so_term(provider_consequence):
-    return _SO_TERM.get(provider_consequence, "coding_sequence_variant")
+    """annotation/stage.py:150-173 -- the fallthrough for any codon_change
+    value not in _SO_TERM is CONSEQUENCE_NOT_DETERMINED for an SNV (this
+    file only ever exercises SNVs), NOT "coding_sequence_variant" (that
+    default is stage.py's own for the *non-SNV* MNV/complex path, situation
+    3, and does not apply here). Imported from stage.py rather than
+    retyped, so this duplicate cannot silently drift from the real sentinel
+    it stands in for."""
+    return _SO_TERM.get(provider_consequence, CONSEQUENCE_NOT_DETERMINED)
 
 
 def _is_missense(so_term):
@@ -397,6 +404,14 @@ class TestEndToEndDerivedThroughTheRealComponents:
         )
 
         so = _so_term(consequence)
+        assert so == CONSEQUENCE_NOT_DETERMINED, (
+            "the producer-level not_evaluated fix (this card) means this case "
+            f"no longer reaches missense_variant at all; got so_term={so!r}"
+        )
+        assert not _is_missense(so), (
+            "an undetermined codon must not be reported as missense either -- "
+            f"is_missense derived from so_term={so!r}"
+        )
         synonymous_or_intronic = _synonymous_or_intronic(so, spliceai_score=0.1)
         ev = VariantEvidence(
             chrom="chr1",
@@ -417,33 +432,33 @@ class TestEndToEndDerivedThroughTheRealComponents:
         assert next(c for c in result.all_criteria if c.code == "BP7").met is False
 
 
-class TestTheTwoGuardsAreOneFix:
-    """*** SITE 1 ALONE IS STRICTLY WORSE THAN NEITHER GUARD. ***
+class TestSite3ClosesTheDoorBeforeSite1OrSite2AreReached:
+    """*** HISTORY, THEN WHAT CHANGED. ***
 
-    The two guards look independent and are not. Measured across all four
-    combinations, on this fixture, through these same real components:
+    This class replaces `TestTheTwoGuardsAreOneFix`, which measured (as of
+    808835a) that site 1 (the equality guard in `_classify_snv_full`) and
+    site 2 (the ClinVar-lookup "?" guard) had to ship together: site 1 alone
+    flipped this fixture from synonymous_variant to missense_variant, which
+    is exactly what routes a variant into the PS1/PM5 lookup at
+    shared.py:352 -- so without site 2 standing behind that door, PM5 came
+    back *** MET *** from an amino acid nobody determined.
 
-        neither       synonymous_variant  lookup NOT reached  PM5 not_evaluated
-        SITE 1 ONLY   missense_variant    lookup reached      PM5 *** MET ***
-        site 2 only   synonymous_variant  lookup NOT reached  PM5 not_evaluated
-        both          missense_variant    lookup reached      PM5 not_evaluated
+    THIS CARD ADDS SITE 3: `_classify_snv_full` no longer reaches its
+    elimination cascade (whose `else` was `missense`) for ANY codon
+    involving an undetermined amino acid -- not just the equal-"?" pair
+    site 1 covered. So for this fixture the door site 1 used to open is now
+    never reached at all: the consequence is `not_evaluated`
+    (CONSEQUENCE_NOT_DETERMINED once mapped), `is_missense` is False, and
+    the PS1/PM5 lookup at shared.py:352 is gated on `is_missense` -- it is
+    never called.
 
-    Site 1 on its own MANUFACTURES a met PM5 -- moderate, pathogenic
-    direction -- from an amino acid nobody determined. It is met in no other
-    state. The mechanism is structural, not an artefact of this fixture:
-    shared.py:352 gates the PS1/PM5 lookup on `is_missense`, and site 1 is
-    precisely what flips this case from synonymous_variant to
-    missense_variant. Pre-guard it NEVER REACHED THE LOOKUP AT ALL. Site 1
-    opens a door; site 2 is the only thing standing behind it.
-
-    Both shipped in 808835a, so the tree is in the bottom row and is safe.
-    This class exists because nothing in that commit records that the two
-    cannot be separated -- a revert, cherry-pick or bisect that takes one
-    lands on the second row. Same shape as the conservation pair
-    (conservation/provider.py:248 with orchestrator.py:1810), different files.
+    Per the pin comment this class's predecessor carried: reassessing that
+    pin, and the coupling it proved, is not a regression. Site 1 and site 2
+    remain in place as defence in depth for any other path that might still
+    hand a "?" to the lookup; they are simply no longer this fixture's story.
     """
 
-    def test_site_1_opens_the_lookup_door_that_only_site_2_closes(self):
+    def test_producer_fix_means_the_lookup_is_never_reached_for_this_fixture(self):
         from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence
 
         provider = _make_provider(_BOTH_UNKNOWN_FASTA, _BOTH_UNKNOWN_CDS)
@@ -452,33 +467,24 @@ class TestTheTwoGuardsAreOneFix:
         )
         so = _so_term(consequence)
 
-        # -- site 1's half, and the reason the rest of this test can run.
-        assert _is_missense(so), (
-            f"this variant is no longer routed to the PS1/PM5 lookup (so_term={so!r}); "
-            "shared.py:352 gates that lookup on is_missense. Either site 1 was "
-            "reverted, or the consequence pin changed -- in both cases the coupling "
-            "this test exists to prove is no longer being exercised, so treat a red "
-            "here as the test going blind, not as the defect returning."
+        assert so == CONSEQUENCE_NOT_DETERMINED, (
+            f"expected the producer-level not_evaluated fix to close this before "
+            f"missense classification; got so_term={so!r}"
         )
+        assert not _is_missense(so), "an undetermined codon must not read as missense"
+
+        # stage.py:1166's own gate (`var.consequence == "missense_variant"`)
+        # means wildtype_aa/mutant_aa are never even populated now -- proven
+        # via the same duplicate helper the retired test used.
         wildtype_aa, mutant_aa = _aa_pair_as_stage_py_would_store_it(so, ref_aa, alt_aa)
-        assert wildtype_aa == "?", (
-            "the undetermined amino acid is no longer reaching the lookup "
-            f"(wildtype_aa={wildtype_aa!r}); same warning as above -- this test can "
-            "only detect the defect while the unknown actually gets this far"
+        assert (wildtype_aa, mutant_aa) == (None, None), (
+            "the undetermined amino acid must never reach the PS1/PM5 lookup at "
+            f"all now; got wildtype_aa={wildtype_aa!r} mutant_aa={mutant_aa!r}"
         )
 
-        # -- site 2's half: the only thing that stops it here.
-        lkp = _make_clinvar_lookup(_plp_at_the_fixture_codon())
-        same_aa, novel_aa = lkp.check_same_codon_pathogenic(
-            chrom="1", pos=201, ref="A", alt="T", wildtype_aa=wildtype_aa, mutant_aa=mutant_aa
-        )
-        assert novel_aa is None, (
-            f"PM5 was decided ({novel_aa!r}) from an undetermined amino acid that "
-            "site 1 had just routed into the lookup. This is the second row of the "
-            "table above: site 1 without site 2. The two guards are one fix and "
-            "must not be separated."
-        )
-
+        # Site 1/site 2 still hold if something else ever hands them a "?"
+        # (defence in depth) -- but for this fixture they are simply never
+        # invoked, so classify with is_missense=False as shared.py would.
         result = AcmgClassifier().classify(
             VariantEvidence(
                 chrom="chr1",
@@ -487,8 +493,6 @@ class TestTheTwoGuardsAreOneFix:
                 alt="T",
                 gene="TESTGENE",
                 is_missense=_is_missense(so),
-                same_aa_pathogenic=same_aa,
-                novel_aa_at_known_pathogenic_codon=novel_aa,
             )
         )
         assert "PM5" not in result.criteria_met, (

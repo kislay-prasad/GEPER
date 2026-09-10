@@ -8,6 +8,8 @@ GEPER's own cache-detection, retry, and error-sanitization logic, not
 the upstream package or a real network call.
 """
 
+import argparse
+import pickle
 import sys
 import tempfile
 import types
@@ -16,8 +18,11 @@ import urllib.error
 from pathlib import Path
 from unittest import mock
 
+import torch
+
 from models.rna_fm import (
     RNAFMModel,
+    _allow_argparse_namespace_in_checkpoints,
     _cached_weights_path,
     _fetch_from_official_hf_mirror,
     _HF_MIRROR_REPO_ID,
@@ -364,6 +369,93 @@ class TestRNAFMLoadImplIntegration(unittest.TestCase):
         self.assertEqual(message, "RNA-FM model unavailable")
         for forbidden_substring in ("403", "Forbidden", "cuhk", "HTTP Error"):
             self.assertNotIn(forbidden_substring, message)
+
+
+def _write_synthetic_namespace_checkpoint(path):
+    """A minimal, offline stand-in for the real ~1.2GB fairseq-style RNA-FM
+    checkpoint: a plain dict holding an `argparse.Namespace` (the exact
+    class the real checkpoint trips PyTorch 2.6+'s stricter unpickler
+    with, at `.args` and `.cfg.model` -- see
+    `_allow_argparse_namespace_in_checkpoints`'s own docstring). Real
+    `torch.save`/`torch.load`, real `argparse.Namespace` -- only the
+    checkpoint's SIZE and the real `rna-fm` package's model-construction
+    logic are stood in for."""
+    torch.save({"args": argparse.Namespace(arch="test_arch", foo=1), "model": {}}, path)
+
+
+class TestAllowArgparseNamespaceIsLoadBearing(unittest.TestCase):
+    """Negative control for RNA-FM's `argparse.Namespace` allowlist
+    (c636943): proves `_allow_argparse_namespace_in_checkpoints` is
+    load-bearing rather than decorative -- the exact question this card
+    asked, and the exact method (Kelly's, for HyenaDNA/6234ffa) god
+    required: neutralise the call (never make it) and confirm the load
+    fails with the SPECIFIC error the allowlist exists to prevent, then
+    confirm calling it makes the identical file load.
+
+    Offline, no `fm` package or real weights needed -- see this card's
+    report for the additional live confirmation against the real,
+    ~1.2GB cached checkpoint in geper:bridge-ready
+    (sha256:a8a5fe67749e...) under `--network none`, which this test
+    cannot substitute for (a synthetic Namespace proves the MECHANISM;
+    only the real file proves the real checkpoint still needs it).
+
+    `torch.serialization` safe-globals state is process-global and
+    order-dependent across the whole test session -- saved and restored
+    around every test here so this file cannot leak a permissive state
+    into (or inherit a stale one from) any other test.
+    """
+
+    def setUp(self):
+        self._saved_safe_globals = torch.serialization.get_safe_globals()
+        torch.serialization.clear_safe_globals()
+
+    def tearDown(self):
+        torch.serialization.clear_safe_globals()
+        if self._saved_safe_globals:
+            torch.serialization.add_safe_globals(self._saved_safe_globals)
+
+    def test_without_the_allowlist_call_loading_fails_with_the_right_error(self):
+        """THE NEGATIVE CONTROL. `argparse.Namespace` is deliberately left
+        un-allowlisted (setUp already cleared it, and this test never
+        calls `_allow_argparse_namespace_in_checkpoints`)."""
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_path = Path(d) / "synthetic_checkpoint.pt"
+            _write_synthetic_namespace_checkpoint(ckpt_path)
+
+            with self.assertRaises(pickle.UnpicklingError) as ctx:
+                torch.load(str(ckpt_path))  # weights_only left at torch's own default
+
+        message = str(ctx.exception)
+        self.assertTrue(
+            "argparse.Namespace" in message or "Unsupported global" in message,
+            f"the negative control failed for the WRONG reason -- got: {message!r}. "
+            "It must fail specifically because argparse.Namespace is not "
+            "allowlisted (a corrupt/missing file, or any other failure, would "
+            "not prove the allowlist is what matters here).",
+        )
+
+    def test_calling_the_real_function_makes_the_identical_file_load(self):
+        """THE CONTROL. Same synthetic file, same process -- only
+        difference is calling the real, unmodified production function
+        first."""
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_path = Path(d) / "synthetic_checkpoint.pt"
+            _write_synthetic_namespace_checkpoint(ckpt_path)
+
+            _allow_argparse_namespace_in_checkpoints()
+            loaded = torch.load(str(ckpt_path))
+
+        self.assertIsInstance(loaded["args"], argparse.Namespace)
+        self.assertEqual(loaded["args"].arch, "test_arch")
+
+    def test_torch_load_is_not_monkeypatched_by_the_allowlist_call(self):
+        """`add_safe_globals` must register a permitted class, never
+        replace `torch.load` itself -- a monkeypatch here would silently
+        reintroduce the exact blanket-`weights_only=False` risk c636943
+        replaced, just one level further from view."""
+        original_torch_load = torch.load
+        _allow_argparse_namespace_in_checkpoints()
+        self.assertIs(torch.load, original_torch_load)
 
 
 if __name__ == "__main__":

@@ -108,6 +108,111 @@ class TestJSONReportSchema(unittest.TestCase):
             self.assertEqual(without_ensemble[key], with_ensemble[key])
 
 
+class TestJSONKeyPresentOnGenuineCrash(unittest.TestCase):
+    """
+    Third surface of the same defect the Markdown renderer and
+    `EnsembleManager.evaluate()` were already fixed for (2026-09-11):
+    `build_variant_result`'s `ai_splicing_ensemble` key was gated on
+    `models_used` alone, so a genuine double-model-crash (`error` set,
+    `models_used=[]`) was indistinguishable, in the JSON output, from a
+    stage nobody ever attempted -- no key at all, exactly the shape a
+    legacy caller who never passed the kwarg gets. This is a STRONGER
+    fabricated absence than the Markdown one it mirrors: a missing JSON
+    key is not a claim a downstream SYSTEM consumer can be suspicious
+    of the way a human reader can be suspicious of a missing section.
+
+    THE CONTROL THAT MATTERS MOST: a genuinely disabled/unavailable
+    pair must still omit the key EXACTLY as it does today -- see
+    `test_key_absent_when_zero_models_were_used` above, unchanged and
+    re-asserted here for locality with its crash counterpart. A JSON
+    consumer must never newly see a key it has never seen for the
+    clean-disable case; only the crash case is new.
+    """
+
+    @staticmethod
+    def _ensemble_crashed():
+        """The exact shape `EnsembleManager.evaluate()` returns for
+        n==0 with a genuine crash -- pinned to that function's real
+        branch via test_ensemble_manager.py::TestZeroModelsBecauseBothCrashed,
+        not invented here."""
+        return {
+            "models_used": [],
+            "individual_scores": {},
+            "consensus_score": None,
+            "confidence": None,
+            "agreement_percentage": None,
+            "classification": None,
+            "basis": "no_models",
+            "error": "enformer: CUDA out of memory; borzoi: weights checksum mismatch",
+            "reasoning": (
+                "AI splicing ensemble inference failed (enformer: CUDA out of memory; "
+                "borzoi: weights checksum mismatch) -- this is a failed run, not evidence "
+                "that Enformer/Borzoi found no splicing effect."
+            ),
+        }
+
+    def test_key_present_on_genuine_crash(self):
+        result = build_variant_result(**_minimal_variant_kwargs(ai_splicing_ensemble_result=self._ensemble_crashed()))
+        self.assertIn("ai_splicing_ensemble", result)
+        self.assertEqual(result["ai_splicing_ensemble"]["models_used"], [])
+        self.assertIn("CUDA out of memory", result["ai_splicing_ensemble"]["error"])
+        self.assertIn("weights checksum mismatch", result["ai_splicing_ensemble"]["error"])
+
+    def test_key_still_absent_when_zero_models_and_no_error_the_control(self):
+        """CONTROL, restated for locality: a clean disable (no error,
+        models_used=[]) must still omit the key exactly as before this
+        fix -- a JSON consumer must never newly see a key it has never
+        seen for this case."""
+        result = build_variant_result(**_minimal_variant_kwargs(ai_splicing_ensemble_result=_ensemble([])))
+        self.assertNotIn("ai_splicing_ensemble", result)
+
+    def test_key_still_absent_when_kwarg_never_passed_the_control(self):
+        """CONTROL, restated: every existing/legacy caller that never
+        passes this kwarg at all must keep getting a result dict with
+        exactly the same key set as before this fix ever existed."""
+        result = build_variant_result(**_minimal_variant_kwargs())
+        self.assertNotIn("ai_splicing_ensemble", result)
+
+    def test_end_to_end_through_the_real_ensemble_manager_and_json_builder(self):
+        """Not just a hand-built fixture: drives the REAL
+        `EnsembleManager.evaluate()` down its double-crash branch and
+        feeds the REAL result into the REAL `build_variant_result`, so
+        this proves the producer and the JSON assembler agree with each
+        other, not each with its own assumption about the other's
+        shape -- same standard as the Markdown end-to-end test in
+        `TestDoubleCrashRendersAFailureNotAnAbsentSection` below."""
+        from unittest import mock
+
+        from pipeline.models.ensemble import EnsembleManager
+
+        manager = mock.Mock()
+        manager.predict.return_value = None
+        manager.last_inference_errors.return_value = {
+            "enformer": "CUDA out of memory",
+            "borzoi": "weights checksum mismatch",
+        }
+        ensemble_result = EnsembleManager(manager=manager).evaluate("A" * 10, "T" * 10)
+
+        result = build_variant_result(**_minimal_variant_kwargs(ai_splicing_ensemble_result=ensemble_result))
+
+        self.assertIn("ai_splicing_ensemble", result)
+        self.assertIn("CUDA out of memory", result["ai_splicing_ensemble"]["error"])
+
+    def test_all_pre_existing_keys_still_unaffected_on_crash(self):
+        """Backward compatibility, extended to the crash case: adding
+        the crash's error information must not change any OTHER key in
+        the result dict."""
+        without_ensemble = build_variant_result(**_minimal_variant_kwargs())
+        with_crash = build_variant_result(
+            **_minimal_variant_kwargs(ai_splicing_ensemble_result=self._ensemble_crashed())
+        )
+        keys_without = set(without_ensemble)
+        keys_with = set(with_crash) - {"ai_splicing_ensemble"}
+        self.assertEqual(keys_without, keys_with)
+        for key in keys_without:
+            self.assertEqual(without_ensemble[key], with_crash[key])
+
+
 class TestMarkdownReportRendering(unittest.TestCase):
     def test_hidden_entirely_when_ensemble_result_is_empty_dict(self):
         lines = ReportGenerator._render_ai_splicing_ensemble({})

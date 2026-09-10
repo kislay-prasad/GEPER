@@ -88,8 +88,8 @@ seq3\tgi|99999|\t85.00\t30\t4\t1\t1\t30\t5000\t5029\t1e-10\t55.2
 
 # ─── Parser tests ─────────────────────────────────────────────────────────────
 
-class TestBLASTXMLParser:
 
+class TestBLASTXMLParser:
     def test_parses_hit_count(self):
         hits = _parse_blast_xml(_SAMPLE_XML)
         assert len(hits) == 1  # seq2 has no hits
@@ -132,7 +132,6 @@ class TestBLASTXMLParser:
 
 
 class TestBLASTTabularParser:
-
     def test_parses_hit_count(self):
         hits = _parse_blast_tabular(_SAMPLE_TABULAR)
         assert len(hits) == 2
@@ -170,8 +169,8 @@ class TestBLASTTabularParser:
 
 # ─── FASTA writer tests ───────────────────────────────────────────────────────
 
-class TestWriteFasta:
 
+class TestWriteFasta:
     def test_writes_fasta_format(self, tmp_path):
         p = tmp_path / "out.fasta"
         _write_fasta({"seq1": "ACGTACGT", "seq2": "TTTTGGGG"}, p)
@@ -196,6 +195,7 @@ class TestWriteFasta:
 
 # ─── BLASTStage unit tests ────────────────────────────────────────────────────
 
+
 class TestBLASTStageNoInstall:
     """Tests that don't require BLAST+ to be installed."""
 
@@ -204,7 +204,24 @@ class TestBLASTStageNoInstall:
         result = stage.is_available()
         assert isinstance(result, bool)
 
-    def test_missing_binary_raises_not_installed(self):
+    def test_missing_binary_raises_not_installed(self, monkeypatch):
+        """A bogus blast_bin_dir is NOT enough to make blastn unavailable.
+
+        The stage falls back to PATH, so on a machine that actually has
+        blastn this test reached the database check and failed with
+        BLASTDatabaseError instead. It passed in CI only because CI has no
+        blastn installed -- the environment was supplying the condition the
+        test is supposed to create, so the test could not fail for the
+        reason it exists. Stub `which`, the way
+        test_run_raises_not_installed_not_on_path already does.
+        """
+        import shutil as _shutil
+
+        original_which = _shutil.which
+        monkeypatch.setattr(
+            "pipeline.blast.stage.shutil.which",
+            lambda name: None if name == "blastn" else original_which(name),
+        )
         stage = BLASTStage(cfg={"blast": {"blast_bin_dir": "/nonexistent/bin"}})
         with pytest.raises(BLASTNotInstalledError):
             stage.run({"seq1": "ACGT"}, db_path="/fake/db")
@@ -228,6 +245,7 @@ class TestBLASTStageNoInstall:
         )
         d = r.to_dict()
         import json
+
         json.dumps(d)  # must be JSON-serialisable
         assert d["hit_count"] == 1
         assert d["hits"][0]["query_id"] == "seq1"
@@ -268,6 +286,7 @@ class TestBLASTStageNoInstall:
     def test_run_raises_not_installed_not_on_path(self, tmp_path, monkeypatch):
         """Monkeypatch shutil.which to simulate missing binary."""
         import shutil as _shutil
+
         original_which = _shutil.which
 
         def _mock_which(name):
@@ -283,6 +302,7 @@ class TestBLASTStageNoInstall:
 
 
 # ─── Integration test (skipped if BLAST not installed) ───────────────────────
+
 
 @pytest.mark.skipif(
     not BLASTStage().is_available(),

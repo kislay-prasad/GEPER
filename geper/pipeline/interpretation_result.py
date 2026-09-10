@@ -63,10 +63,18 @@ class InterpretationResult:
     # carried ALONGSIDE acmg_classification above, never replacing it,
     # never derived from it or from the per-source retrieval states.
     # One of "interpreted" / "insufficient_evidence" /
-    # "conflicting_evidence" / "review_required" (the last currently
-    # never produced -- its trigger set is held for human ruling). See
-    # `pipeline/interpretation_outcome.py`.
+    # "conflicting_evidence" (unreachable as of round 2 -- see below) /
+    # "review_required". See `pipeline/interpretation_outcome.py`.
     interpretation_outcome: Optional[str] = None
+    # Round 2 (RULED, 2026-09-09/10): which review_required trigger(s)
+    # actually fired -- always a list (empty when interpretation_outcome
+    # is not "review_required"), never omitted. The answer to "if both
+    # [triggers] need to be visible, say so": interpretation_outcome
+    # alone cannot distinguish a genuine evidence conflict from a
+    # Pathogenic/Likely Pathogenic call from both at once, since only
+    # one string is ever reported there. See
+    # `pipeline/interpretation_outcome.py::determine_review_required_reasons`.
+    review_required_reasons: List[str] = field(default_factory=list)
 
     # Aggregated evidence (deduplicated, sourced from the ACMG criteria
     # plus the legacy free-text evidence list -- nothing new is derived
@@ -187,6 +195,7 @@ class InterpretationResult:
             "acmg_pathogenic_points": self.acmg_pathogenic_points,
             "acmg_benign_points": self.acmg_benign_points,
             "interpretation_outcome": self.interpretation_outcome,
+            "review_required_reasons": self.review_required_reasons,
             "supporting_evidence": self.supporting_evidence,
             "conflicting_evidence": self.conflicting_evidence,
             "ai_consensus": self.ai_consensus,
@@ -589,6 +598,7 @@ def build_interpretation_result(
         acmg_pathogenic_points=acmg.get("pathogenic_points"),
         acmg_benign_points=acmg.get("benign_points"),
         interpretation_outcome=acmg.get("interpretation_outcome"),
+        review_required_reasons=acmg.get("review_required_reasons") or [],
         supporting_evidence=_dedupe(supporting_evidence),
         conflicting_evidence=_dedupe(conflicting_evidence),
         ai_consensus=ai_consensus,

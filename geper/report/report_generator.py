@@ -1284,6 +1284,14 @@ class ReportGenerator:
         if ir.get("interpretation_outcome"):
             lines.append(f"**Interpretation Outcome:** {ir['interpretation_outcome']}")
             lines.append("")
+        # Round 2 (RULED, 2026-09-09/10): review_required can fire for a
+        # genuine evidence disagreement, a Pathogenic/Likely Pathogenic
+        # call, or both -- named here so neither is silently lost behind
+        # the single "review_required" string above.
+        review_required_reasons = ir.get("review_required_reasons") or []
+        if review_required_reasons:
+            lines.append(f"**Review Required Because:** {', '.join(review_required_reasons)}")
+            lines.append("")
         if not ir.get("confidence_pending", True):
             lines.append(f"**Evidence Completeness:** {ir.get('confidence_score')}% ({ir.get('confidence_label')})")
             breakdown = (ir.get("confidence_breakdown") or {}).get("category_breakdown", [])

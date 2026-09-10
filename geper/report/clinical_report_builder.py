@@ -443,6 +443,9 @@ def build_clinical_report(
         # acmg_classification above, never replacing it. See
         # `pipeline/interpretation_outcome.py`.
         "interpretation_outcome": ir.get("interpretation_outcome"),
+        # Round 2 (RULED, 2026-09-09/10): always a list, even when empty
+        # -- see `pipeline/interpretation_outcome.py::determine_review_required_reasons`.
+        "review_required_reasons": ir.get("review_required_reasons") or [],
         "confidence": _confidence_section(ir),
         "priority": _priority_section(ir),
         "supporting_evidence": ir.get("supporting_evidence", []),

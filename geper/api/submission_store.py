@@ -15,6 +15,7 @@ import json
 import logging
 import sqlite3
 import uuid
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -86,7 +87,7 @@ class SubmissionStore:
 
     def _init_schema(self) -> None:
         """Create the submissions table if it doesn't exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS submissions (
@@ -122,7 +123,7 @@ class SubmissionStore:
         knows what it reached or whether output is valid. Mark as interrupted
         with reason naming the restart, not as failed.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             now = datetime.utcnow().isoformat()
             conn.execute(
                 """
@@ -165,7 +166,7 @@ class SubmissionStore:
         submission_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             # Check if submission_key already exists
             cursor = conn.execute(
                 """
@@ -239,7 +240,7 @@ class SubmissionStore:
 
     def get_submission(self, submission_id: str) -> Optional[Submission]:
         """Get a submission by ID."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 """
                 SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
@@ -276,7 +277,7 @@ class SubmissionStore:
 
     def get_queued_submissions(self, limit: int = 10) -> list[Submission]:
         """Get submissions with status='queued' for worker to process."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 """
                 SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
@@ -325,7 +326,7 @@ class SubmissionStore:
     ) -> None:
         """Update submission status and related fields."""
         now = datetime.utcnow().isoformat()
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 UPDATE submissions

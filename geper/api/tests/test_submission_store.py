@@ -6,6 +6,7 @@ Unit and integration tests for SubmissionStore.
 
 import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,7 @@ class TestSubmissionStore:
         assert db_path.exists()
 
         # Verify table exists
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn:
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='submissions'")
             assert cursor.fetchone() is not None
 
@@ -225,7 +226,7 @@ class TestSubmissionStore:
         )
 
         # Manually update to running (bypass normal flow)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn:
             conn.execute(
                 "UPDATE submissions SET status = 'running' WHERE id = ?",
                 (sub.id,),

@@ -11,6 +11,22 @@ production code (confirmed by repo-wide grep before this suite was
 written), and the seven names below are TEST FIXTURES ONLY: they must
 never be read by, or written into, any production constant.
 
+*** SCOPE, STATED EXPLICITLY SO IT IS NOT ASSUMED COVERED (god's own
+correction, 2026-09-10, conv-sevengene): every test below calls a
+provider DIRECTLY with an explicit gene argument
+(`LiveAPIClinGenProvider().query(fixture["gene"])` and so on). That
+proves gene identity reaches retrieval WHEN A PROVIDER IS CALLED WITH
+IT -- it does NOT prove the orchestrator actually threads the real
+gene symbol from a parsed variant through to that call. The thing that
+could actually break in production -- the orchestrator silently
+dropping or defaulting gene identity before it ever reaches a
+provider -- is entirely upstream of everything this suite touches, and
+no such regression could turn any assertion below red. That
+orchestrator-level coverage is a separate, not-yet-built card; this
+file is a strong test of the PROVIDERS' own gene threading and a
+near-vacuous test of THE PIPELINE'S end-to-end gene threading, and
+must not be read as the latter. ***
+
 BASELINE (measured, not asserted from a number handed down by anyone
 else -- see the dispatch's own "measure your own" instruction): this
 worktree's `geper/tests/` collected 2504 tests before this file existed

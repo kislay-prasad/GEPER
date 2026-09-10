@@ -144,6 +144,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, cast
 
+from pipeline.provenance import VersionStatus
 from report.clinical_report_builder import candidate_interpretation_of
 from report.models import compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
@@ -806,7 +807,19 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
     name); `show_all=True` returns every run found, either status.
 
     Each entry: `{output_dir, report_date, num_variants,
-    has_conflicting_evidence, status}`. `has_conflicting_evidence` is
+    has_conflicting_evidence, status, model_checkpoints,
+    model_provenance_status}`.
+
+    `model_provenance_status` is `VersionStatus.VERSION_KNOWN` when the run
+    recorded which model checkpoints it used and `VersionStatus.NOT_CONSULTED`
+    when it did not (an absent key, or an explicit null from a
+    carried-forward document). *** THE SECOND CASE IS NOT "NO MODELS" AND MUST
+    NEVER BE READ AS ONE. *** A caller filtering these entries to answer
+    "which runs used model X" is deciding who gets recalled; a run that never
+    recorded its identifiers can only answer "we cannot tell", and that has to
+    be visible rather than showing up as an absence of hits.
+
+    `has_conflicting_evidence` is
     True when ANY variant in the run has a Minor/Moderate/Major
     conflict severity already computed by the Conflict Resolution
     Engine (Phase 6) -- read from the existing data, never
@@ -830,6 +843,28 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
             continue
 
         variants = document.get("variants", [])
+        checkpoints = document.get("model_checkpoints")
+        # "NEVER RECORDED" AND "RECORDED NOTHING" ARE DIFFERENT ANSWERS, AND
+        # THIS IS THE LAST PLACE THEY CAN STILL BE TOLD APART.
+        #
+        # This projection is what an impact query reads to decide WHO GETS
+        # RECALLED. A run whose document predates model-checkpoint capture has
+        # no identifiers to match, so it would silently produce no hits -- and
+        # the reader would see "no affected reports" where the truth is "we
+        # cannot tell for this run". A PARTIAL ANSWER READS AS A COMPLETE ONE,
+        # and it fails in the direction of not recalling someone.
+        #
+        # `report/json_builder.py` already makes exactly this distinction when
+        # carrying a prior document forward ("model_checkpoints" in
+        # prior_document and checkpoints is not None); an explicit null there
+        # means the same gap as an absent key, so both collapse to
+        # NOT_CONSULTED here and neither is treated as an empty result set.
+        #
+        # VersionStatus is provenance.py's own vocabulary rather than a
+        # parallel one invented here: NOT_CONSULTED already means "never
+        # queried this run", and is deliberately a different member from
+        # UNKNOWN ("queried, nothing obtainable").
+        model_provenance_status = VersionStatus.VERSION_KNOWN if checkpoints else VersionStatus.NOT_CONSULTED
         results.append(
             {
                 "output_dir": dirpath,
@@ -837,6 +872,10 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
                 "num_variants": document.get("variant_count", len(variants)),
                 "has_conflicting_evidence": any(has_conflicting_evidence(vr) for vr in variants),
                 "status": status,
+                # Carried verbatim, never normalised into {} -- an empty dict
+                # would read as "recorded, and there were none".
+                "model_checkpoints": checkpoints if checkpoints else None,
+                "model_provenance_status": model_provenance_status,
             }
         )
     return results

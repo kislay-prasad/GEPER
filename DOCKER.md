@@ -19,6 +19,67 @@ bigger machine.
 
 ---
 
+## Before you build: three pre-fetched wheels the repository does not contain
+
+**A fresh clone cannot build this image.** The `Dockerfile` `COPY`s three
+CPU-only torch wheels from the repository root, and those files are not in
+git -- they are 180 MB of binary, and they are ignored (see `.gitignore`).
+You must put them there yourself before the first build.
+
+| file | bytes | sha256 |
+|---|---|---|
+| `torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl` | 175,833,687 | `8f8b3cfc53010a4b4a3c7ecb88c212e9decc4f5eeb6af75c3c803937d2d60947` |
+| `torchvision-0.22.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl` | 2,016,876 | `b5fa7044bd82c6358e8229351c98070cf3a7bf4a6e89ea46352ae6c65745ef94` |
+| `torchaudio-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl` | 1,796,388 | `65bf843345ae05629b7f71609bab0808004dabfce6cf48ea508a5d4f5419ca74` |
+
+**What it looks like if you skip this.** The build fails at the `COPY`, and
+the error names no prerequisite:
+
+```
+ERROR: failed to build: failed to solve: failed to compute cache key:
+failed to calculate checksum of ref <id>::<id>:
+"/torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl": not found
+```
+
+That reads as a broken Dockerfile rather than a missing input, and the
+filename appears nowhere in git history to search for -- which is why this
+section exists rather than only the comment at the `COPY` lines.
+
+**How to get them.** They come from PyTorch's CPU index, not PyPI:
+
+```bash
+pip download --no-deps --only-binary=:all: \
+    --python-version 3.12 --platform manylinux_2_28_x86_64 \
+    --index-url https://download.pytorch.org/whl/cpu \
+    torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1
+```
+
+or fetch them directly (resumable, which is why the original was done this
+way -- these are large and the transfer has failed here before):
+
+```bash
+curl -L -C- -O https://download.pytorch.org/whl/cpu/torch-2.7.1%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl
+```
+
+Then verify -- `sha256sum` against the table above. The three files currently
+in the tree were checked against the upstream index on 2026-09-10 and match
+byte for byte, so they are reproducible: **it does not matter who originally
+downloaded them.**
+
+**Why pre-fetched rather than `pip install` during the build.** The CPU
+wheels are 175.8 MB against roughly 821 MB for the default CUDA bundle, and
+`requirements.txt` pins `torch==2.7.1` without an index, so an in-build
+`pip install` would pull the CUDA build from PyPI and inflate the image.
+Installing the wheels first makes the pinned requirement already satisfied.
+(CI enforces the same property from the other direction -- see the "Assert
+the CUDA stack was not pulled in" step in `.github/workflows/pytest.yml`.)
+
+**Do not add these to `.dockerignore`.** They are ignored by *git* and
+required by the *build context*; those are opposite requirements on the same
+files, and excluding them would break every build.
+
+---
+
 ## Quick start
 
 ```bash

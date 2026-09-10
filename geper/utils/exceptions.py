@@ -49,12 +49,24 @@ class RoutingError(GeperError):
 
 class AssemblyMismatchError(GeperError):
     """
-    Raised when the input VCF's declared genome assembly/build (parsed
-    from its header) definitely conflicts with the assembly requested
-    via --assembly. Fatal by design: reference-sequence lookups made
+    Raised when the genome build GEPER would use is not trustworthy.
+    Two cases, both fatal by design:
+
+      - The VCF's declared build (parsed from its header) definitely
+        conflicts with the assembly requested via --assembly.
+      - Neither the header nor --assembly establishes a build at all,
+        so the build would fall through to whatever Ensembl defaults
+        to (added 2026-09-10).
+
+    Fatal because reference-sequence and transcript lookups made
     against the wrong build silently corrupt every downstream DNA/RNA/
-    protein model input, so this must stop the run rather than degrade
-    gracefully like the other per-stage failures.
+    protein model input and every HGVS c. coordinate, so this must stop
+    the run rather than degrade gracefully like the other per-stage
+    failures. THE NAME IS NARROWER THAN THE SECOND CASE -- nothing
+    "mismatches" when nothing was stated -- but the two share a cause
+    (the build is wrong or unknown) and a consequence (silently wrong
+    coordinates), and one exception the callers already handle was
+    judged better than a second one they do not.
     """
 
 

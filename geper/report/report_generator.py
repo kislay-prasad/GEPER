@@ -258,6 +258,14 @@ class ReportGenerator:
         # converts it. See utils/timezone_utils.py.
         lines.append(f"**Generated:** {format_ist_from_iso(json_document.get('generated_at'))}")
         lines.append(f"**Input VCF:** `{json_document.get('input_vcf')}`")
+        # The build every coordinate in this report was resolved
+        # against. The full PDF has always printed it (summary.py's
+        # "Genome Reference Build" row and "Reference build:" line) and
+        # this surface did not, so the same report disclosed its build
+        # in one format and withheld it in another. Same wording and
+        # same "Not specified" fallback as the PDF, so the two cannot
+        # drift into saying different things.
+        lines.append(f"**Genome reference build:** {json_document.get('assembly') or 'Not specified'}")
         lines.append(f"**Variants analyzed:** {json_document.get('variant_count')}")
         consent_line = _render_consent_line(json_document)
         if consent_line:

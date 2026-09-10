@@ -247,6 +247,188 @@ class TestRNAFMLoadFallback(unittest.TestCase):
 
         self.assertEqual(result, good_result)
 
+
+class _UnlistedCheckpointField:
+    """Module-level so pickle can resolve it by qualified name. Stands
+    in for ANY class an ordinary future/different RNA-FM checkpoint
+    revision might carry that today's allowlist does not yet cover --
+    the point is only that it is not argparse.Namespace and not on any
+    default-safe list, not what it specifically represents. See
+    TestAllowArgparseNamespaceIsLoadBearing's docstring for the same
+    "synthetic stands in for the real checkpoint" reasoning."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+def _real_fm_style_loader(hub_dir):
+    """Reproduces `fm.pretrained.rna_fm_t12`'s own two real code paths
+    (fm/pretrained.py::load_model_and_alphabet_local /
+    load_hub_workaround) with REAL torch calls -- `torch.load` with no
+    `weights_only` kwarg for the local path (torch's own, stricter
+    2.6+ default), and REAL `torch.hub.load_state_dict_from_url` for
+    the no-`model_location` path, whose own signature hardcodes
+    `weights_only=False`. Never mocked, and needs no `fm` package
+    install -- the file is placed at the exact path
+    `torch.hub.get_dir()`-based resolution expects, so
+    `load_state_dict_from_url` finds it already cached and never
+    touches a network, real or fake."""
+
+    def loader(model_location=None):
+        if model_location is not None:
+            return torch.load(str(model_location), map_location="cpu")
+        return torch.hub.load_state_dict_from_url(
+            "https://example.invalid/RNA-FM_pretrained.pth",
+            model_dir=str(Path(hub_dir) / "checkpoints"),
+            file_name="RNA-FM_pretrained.pth",
+            map_location="cpu",
+        )
+
+    return loader
+
+
+class TestFallbackDoesNotMaskAnAllowlistGap(unittest.TestCase):
+    """HIGH-priority card: `_load_pretrained_with_fallback`'s cache-hit
+    and HF-mirror branches must not classify a `weights_only` rejection
+    (an allowlist gap on a file we ALREADY hold -- ordinary upstream
+    checkpoint-format drift, not an attack and not corruption) as
+    "corrupted, try the wider path" -- doing so silently re-reads the
+    SAME bytes through `torch.hub.load_state_dict_from_url`'s own
+    `weights_only=False` default.
+
+    Uses `_real_fm_style_loader` throughout -- REAL `torch.load` and
+    REAL `torch.hub.load_state_dict_from_url`, never mocked. A mocked
+    assertion here would reproduce the exact blindness of
+    `TestRNAFMLoadFallback` above (whose `loader` stand-ins are plain
+    `mock.Mock`/closures returning canned results), which is how this
+    survived undetected.
+
+    RESIDUAL, NOT CLOSED BY THIS FILE: a GENUINE FRESH network download
+    carrying the same kind of unlisted class still succeeds through the
+    wide path -- step 2 of `_load_pretrained_with_fallback` still calls
+    `loader()` -> `torch.hub.load_state_dict_from_url`'s own
+    `weights_only=False` default, unchanged. This class closes the
+    ACCIDENT case (drift on a file we already hold); it does not close
+    the ATTACK case (a file we fetch fresh). See
+    `_load_pretrained_with_fallback`'s own comment at step 2 for where
+    that residual is named in the code.
+    """
+
+    def setUp(self):
+        self.instance = RNAFMModel.__new__(RNAFMModel)
+        self.instance.logger = mock.Mock()
+        self.instance.device = "cpu"
+
+    def test_cache_hit_allowlist_gap_raises_loudly_and_never_reaches_the_wide_path(self):
+        with tempfile.TemporaryDirectory() as hub_dir:
+            checkpoints = Path(hub_dir) / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            weight_file = checkpoints / "RNA-FM_pretrained.pth"
+            torch.save(
+                {"args": argparse.Namespace(arch="test_arch"), "extra_field": _UnlistedCheckpointField(1)},
+                weight_file,
+            )
+
+            wide_path_called = []
+            real_loader = _real_fm_style_loader(hub_dir)
+
+            def spying_loader(model_location=None):
+                if model_location is None:
+                    wide_path_called.append(True)
+                return real_loader(model_location=model_location)
+
+            with mock.patch("torch.hub.get_dir", return_value=hub_dir):
+                with self.assertRaises(ModelLoadError) as ctx:
+                    self.instance._load_pretrained_with_fallback(spying_loader, "rna_fm_t12")
+
+        message = str(ctx.exception)
+        self.assertIn("allowlist", message.lower())
+        self.assertIn("not corruption", message.lower())  # must say so explicitly, not just omit the word
+        self.assertEqual(
+            wide_path_called,
+            [],
+            "the wide (weights_only=False) path must never be attempted once the local load "
+            "is recognised as an allowlist gap rather than corruption",
+        )
+
+    def test_hf_mirror_allowlist_gap_gets_the_same_treatment(self):
+        with tempfile.TemporaryDirectory() as hub_dir:
+            checkpoints = Path(hub_dir) / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            # Real `_fetch_from_official_hf_mirror` writes to exactly
+            # this canonical path (`_torch_hub_checkpoint_path`) and
+            # returns it -- reproduced here as a side_effect (not a
+            # pre-placed file + return_value) so `_cached_weights_path`
+            # genuinely sees nothing at the start of the call (forcing
+            # the HF-mirror branch) and the file only appears at the
+            # moment the real function would have "downloaded" it.
+            weight_file = checkpoints / "RNA-FM_pretrained.pth"
+
+            def fake_mirror_fetch(model_variant, logger):
+                torch.save(
+                    {"args": argparse.Namespace(arch="test_arch"), "extra_field": _UnlistedCheckpointField(1)},
+                    weight_file,
+                )
+                return weight_file
+
+            wide_path_called = []
+            real_loader = _real_fm_style_loader(hub_dir)
+
+            def spying_loader(model_location=None):
+                if model_location is None:
+                    wide_path_called.append(True)
+                return real_loader(model_location=model_location)
+
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", side_effect=fake_mirror_fetch),
+            ):
+                with self.assertRaises(ModelLoadError) as ctx:
+                    self.instance._load_pretrained_with_fallback(spying_loader, "rna_fm_t12")
+
+        message = str(ctx.exception)
+        self.assertIn("allowlist", message.lower())
+        self.assertEqual(wide_path_called, [])
+
+    def test_genuinely_corrupted_cached_file_is_quarantined_before_the_retry(self):
+        """Honest corruption, not a fake exception: a real torch
+        checkpoint truncated mid-archive -- measured (this file's own
+        setup below) to raise a real, non-UnpicklingError exception in
+        the pinned torch version, i.e. NOT the allowlist-gap shape --
+        so this must still fall through to the retry, but must not
+        leave the bad file sitting where the retry (or the cache-check
+        on the NEXT load) would find and silently re-read it."""
+        with tempfile.TemporaryDirectory() as hub_dir:
+            checkpoints = Path(hub_dir) / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            weight_file = checkpoints / "RNA-FM_pretrained.pth"
+            good = checkpoints / "good.pt"
+            torch.save({"a": torch.zeros(10)}, good)
+            data = good.read_bytes()
+            weight_file.write_bytes(data[: len(data) // 2])  # genuinely truncated, not a mock
+            good.unlink()
+
+            def loader(model_location=None):
+                if model_location is not None:
+                    return torch.load(str(model_location), map_location="cpu")  # real load, real corruption
+                raise urllib.error.HTTPError(
+                    url="https://proj.cse.cuhk.edu.hk/x", code=404, msg="Not Found", hdrs=None, fp=None
+                )
+
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+            ):
+                with self.assertRaises(ModelLoadError):
+                    self.instance._load_pretrained_with_fallback(loader, "rna_fm_t12")
+
+            self.assertFalse(
+                weight_file.exists(),
+                "the corrupted file must be moved aside, not left for a later retry/load to re-read",
+            )
+            quarantined = list(checkpoints.glob("RNA-FM_pretrained.pth.corrupted-*"))
+            self.assertEqual(len(quarantined), 1, f"expected exactly one quarantined file, found {quarantined}")
+
     def test_http_403_is_sanitized_and_not_retried(self):
         http_403 = urllib.error.HTTPError(
             url="https://proj.cse.cuhk.edu.hk/rnafm/api/download?filename=RNA-FM_pretrained.pth",

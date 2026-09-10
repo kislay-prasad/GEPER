@@ -34,6 +34,13 @@ __pycache__/
 # --- AI model weights / reference data (auto-downloaded on first use;
 #     baked into the image only where explicitly justified in the
 #     Dockerfile -- e.g. geper/hyena-dna/'s SOURCE, not its weights) ---------
+# MEASURED 2026-09-10 in geper:kelly-master-d249a20: the line below USED TO
+# READ `geper/plugin_model_cache/` and the cache it was written for lives at
+# the REPOSITORY ROOT, so 2.6 GB of borzoi/enformer/spliceformer weights were
+# reaching /app/plugin_model_cache in every build. A .dockerignore rule that
+# matches nothing fails SILENTLY -- the build succeeds and the payload is
+# simply there. Both paths are listed because both have existed.
+plugin_model_cache/
 geper/plugin_model_cache/
 geper/hyena-dna/
 geper/checkpoints/
@@ -44,7 +51,12 @@ geper/model_cache/
 # --- Run output / logs --------------------------------------------------------
 geper/geper_output/
 geper/logs/
+# `*.log` ALONE MATCHES ONLY THE CONTEXT ROOT. MEASURED 2026-09-10: with only
+# that rule, /app/logs/geper.log shipped inside the image -- 2.3 MB and 18,414
+# lines of a real session. A runtime log is a DISCLOSURE question before it is
+# a size one: it carries paths, sample ids and whatever was being run.
 *.log
+**/*.log
 
 # --- Docker-related files themselves (no reason for the image to contain
 #     its own Dockerfile/compose file) ----------------------------------------

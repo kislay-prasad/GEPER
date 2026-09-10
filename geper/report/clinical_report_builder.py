@@ -790,8 +790,17 @@ def _population_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             "skip_reason": gnomad.get("reason") if gnomad.get("skipped") else None,
         },
         "dbsnp": {
+            "queried": not (dbsnp.get("skipped") or dbsnp.get("error") is not None),
             "found": bool(dbsnp.get("found")),
             "rsid": dbsnp.get("rsid") if dbsnp.get("found") else None,
+            # Same shape as gnomAD's `skip_reason` three lines above --
+            # dbSNP's own stages never set `skipped`/`reason` today (no
+            # deliberate-skip path exists for it the way the mtDNA
+            # compartment gate skips gnomAD), so this is currently
+            # always `None`; carried for symmetry and so a future
+            # deliberate-skip path has somewhere to put its reason
+            # without a second silent-drop defect.
+            "skip_reason": dbsnp.get("reason") if dbsnp.get("skipped") else None,
         },
     }
 

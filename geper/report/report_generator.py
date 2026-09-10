@@ -1060,7 +1060,12 @@ class ReportGenerator:
         else:
             lines.append("- **gnomAD:** lookup unavailable for this variant.")
         d = pop["dbsnp"]
-        lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
+        if d["queried"]:
+            lines.append(f"- **dbSNP:** {'catalogued as ' + d['rsid'] if d['found'] else 'not found'}")
+        elif d.get("skip_reason"):
+            lines.append(f"- **dbSNP:** {d['skip_reason']}")
+        else:
+            lines.append("- **dbSNP:** lookup unavailable for this variant.")
         lines.append("")
 
         ipf = clinical_report.get("indian_population_frequency") or {}

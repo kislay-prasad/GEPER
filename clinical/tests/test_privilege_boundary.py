@@ -343,9 +343,10 @@ class TestTheConnectionsAreRealAndWorking:
 class TestClinicalAppCannotRewriteAppendOnlyTables:
     """
     The append-only guarantee, asked of the database rather than of the code.
-    ISO 15189 7.4.1.8 requires that the original is never modified and never
-    withdrawn from the record; a table the application may rewrite cannot meet
-    that however carefully the application is written.
+    GEPER's own rule (spec 15.2, implementing ISO 15189 7.4.1.8 b)/d)) is that
+    the original is never modified and never withdrawn from the record; a
+    table the application may rewrite cannot meet that however carefully the
+    application is written.
     """
 
     @pytest.mark.parametrize("table", APPEND_ONLY)

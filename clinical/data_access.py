@@ -4494,7 +4494,7 @@ class DataAccess:
         resource_type="report",
         requires_session=True,
         auditable=True,
-        reason="Amendment creation (ISO 15189 7.4.1.8): original never modified, traceability recorded",
+        reason="Amendment creation (GEPER rule implementing ISO 15189 7.4.1.8 b)/d)): original never modified, traceability recorded",
     )
     @transactional
     def create_amendment(
@@ -4505,7 +4505,9 @@ class DataAccess:
         report, with the reason recorded and traceability to what it
         replaces maintained by a forward pointer, not a mutated column.
 
-        Spec 15.2 (ISO 15189 7.4.1.8) requires:
+        Spec 15.2 requires (GEPER's own rule -- see GEPER_CLINICAL_PLATFORM_SPEC.md
+        #15.2; implements ISO 15189 7.4.1.8 b)/d), the wording below is ours, not
+        the standard's):
           - The original report is never modified, never withdrawn from the record
           - Traceability to the original is maintained
           - Ordering clinician is notified

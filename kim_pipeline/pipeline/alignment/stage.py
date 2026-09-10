@@ -221,6 +221,30 @@ class AlignmentStage:
             reference_fasta=reference_fasta,
             fastq_r1=fastq_r1,
             fastq_r2=fastq_r2,
+            # sorted_bam_path IS A DELIBERATE ALIAS of the markdup BAM, not a
+            # mistake. Both fields intentionally hold the same path.
+            #
+            # DO NOT 'CORRECT' THIS TO POINT AT aligned.sorted.bam. Two
+            # reasons, and the second one is a patient-safety issue:
+            #
+            #  1. that file does not survive the run -- it is unlinked above
+            #     unless keep_intermediate_sam is set, and it has no .bai.
+            #
+            #  2. THE ONLY PRODUCTION CONSUMER FEEDS THIS PATH TO THE VARIANT
+            #     CALLER (orchestration/runner.py reads the 'sorted_bam_path'
+            #     key and passes it as bam_path). freebayes is invoked with no
+            #     --use-duplicate-reads, so its default applies and reads
+            #     flagged 1024 are EXCLUDED from calling. Handing it the
+            #     pre-markdup BAM would silently re-admit PCR duplicates as
+            #     independent evidence and inflate alternate-allele fractions,
+            #     which feed --min-alternate-fraction and --min-alternate-count
+            #     directly. Nothing would error; the numbers would just change.
+            #
+            # The name is historical and it is the only thing here that is
+            # wrong. Renaming the field is NOT a free refactor either: runner.py
+            # reads it as a dict key out of a JSON checkpoint, so a rename is a
+            # checkpoint-format change that breaks resume on in-flight runs, and
+            # docs/INSTALL.md publishes the attribute as public usage.
             sorted_bam_path=markdup_bam_path,
             markdup_bam_path=markdup_bam_path,
             bai_path=bai_path,

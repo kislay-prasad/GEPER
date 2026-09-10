@@ -323,10 +323,17 @@ class PVS1DecisionTree:
             )
             return transcript.biologically_relevant
         if transcript is not None and (transcript.is_mane_select or transcript.is_canonical):
+            # Report review round 4, I8 (acmg_rules.py::_pm1) established
+            # that "MANE Select transcript" reads as "the NCBI MANE Select
+            # dataset was consulted" when transcript.is_mane_select is in
+            # fact sourced only from Ensembl's own GTF tag -- Provenance's
+            # separately-tracked "MANE Select (NCBI)" entry is the only
+            # consumer of that dataset, and this is not it. Reusing PM1's
+            # already-corrected phrase verbatim rather than inventing new
+            # wording, so a future grep finds both.
             checked.append(
-                f"Biologically-relevant transcript: {transcript.transcript_id} is the "
-                f"{'MANE Select' if transcript.is_mane_select else 'Ensembl canonical'} transcript, "
-                "taken as biologically relevant."
+                f"Biologically-relevant transcript: {transcript.transcript_id} is this gene's "
+                "Ensembl-canonical/MANE-tagged transcript, taken as biologically relevant."
             )
             unchecked.append(
                 "Alternative-isoform rescue: no isoform-level expression source is integrated, so it "

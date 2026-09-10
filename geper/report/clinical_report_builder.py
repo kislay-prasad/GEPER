@@ -160,7 +160,7 @@ RESEARCH_USE_DISCLAIMER = (
 )
 
 ISO_RESEARCH_ELEMENT = (
-    "Bij AI is undertaken as part of a research and development programme for which no specific "
+    "Bij AI is undertaken as part of a research or development programme for which no specific "
     "claims on measurement performance are available."
 )
 # This paragraph uses ISO 15189:2022 7.4.1.6 i)'s exact wording

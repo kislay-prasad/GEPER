@@ -417,7 +417,7 @@ class TestShortPdfDisclaimerParagraphBreak(unittest.TestCase):
             if isinstance(flowable, Paragraph):
                 if _DISCLAIMER_LABEL in flowable.text and "research pipeline" in flowable.text.lower():
                     first_para = flowable
-                elif "research and development programme" in flowable.text.lower():
+                elif "research or development programme" in flowable.text.lower():
                     iso_para = flowable
 
         self.assertIsNotNone(
@@ -500,7 +500,7 @@ class TestMarkdownDisclaimerBlockquoteSurvives(unittest.TestCase):
         # Also verify the ISO paragraph is actually in the blockquote
         blockquote_text = "\n".join(disclaimer_lines)
         self.assertIn(
-            "research and development programme",
+            "research or development programme",
             blockquote_text.lower(),
             "ISO paragraph not in blockquote - it may have fallen out due to blank line break",
         )
@@ -534,7 +534,7 @@ class TestFullPdfLimitationsWithParagraphBreak(unittest.TestCase):
         self.assertGreaterEqual(limitations_start, 0, "PDF must contain 'Limitations:' section")
 
         # The ISO paragraph must appear in the limitations section
-        iso_text = "Bij AI is undertaken as part of a research and development programme"
+        iso_text = "Bij AI is undertaken as part of a research or development programme"
         limitations_section = text[limitations_start : limitations_start + 1000]
         self.assertIn(iso_text, limitations_section, "ISO paragraph must appear in Limitations section of PDF")
 
@@ -567,7 +567,7 @@ class TestMarkdownLimitationsListItemSurvivesIsoNewlines(unittest.TestCase):
 
         # ISO_RESEARCH_ELEMENT should render as a separate list item
         self.assertIn(
-            "research and development programme",
+            "research or development programme",
             ISO_RESEARCH_ELEMENT,
             "ISO_RESEARCH_ELEMENT should contain the ISO statement",
         )
@@ -603,7 +603,7 @@ class TestDiscriminatingMarkdownConsumers(unittest.TestCase):
         self.assertIsNotNone(disclaimer_start, "Expected Markdown blockquote starting with '> **Disclaimer:**'")
 
         # Find the ISO paragraph in the blockquote
-        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        iso_sentence = "Bij AI is undertaken as part of a research or development programme"
         iso_line = next(
             (i for i, line in enumerate(lines[disclaimer_start:], start=disclaimer_start) if iso_sentence in line), None
         )
@@ -626,7 +626,7 @@ class TestDiscriminatingMarkdownConsumers(unittest.TestCase):
         # Find blockquote section
         in_blockquote = False
         iso_found = False
-        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        iso_sentence = "Bij AI is undertaken as part of a research or development programme"
 
         for i, token in enumerate(tokens):
             if token.type == "blockquote_open":
@@ -648,7 +648,7 @@ class TestDiscriminatingMarkdownConsumers(unittest.TestCase):
         self.assertIsNotNone(lim_start, "Expected Markdown '### 15. Limitations' section")
 
         # Find the ISO paragraph in the limitations list
-        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        iso_sentence = "Bij AI is undertaken as part of a research or development programme"
         section_lines = "\n".join(lines[lim_start : lim_start + 20])
         self.assertIn(iso_sentence, section_lines, "ISO paragraph must appear in Limitations section")
 
@@ -685,7 +685,7 @@ class TestDiscriminatingMarkdownConsumers(unittest.TestCase):
         # Find list section and verify ISO text is inside list items
         in_list_item = False
         iso_found = False
-        iso_sentence = "Bij AI is undertaken as part of a research and development programme"
+        iso_sentence = "Bij AI is undertaken as part of a research or development programme"
 
         for token in tokens:
             if token.type == "bullet_list_open":

@@ -386,6 +386,69 @@ def _load_local_checkpoint(loader, path: str):
     return loader(model_location=path)
 
 
+def _load_hub_download_with_forced_weights_only(loader):
+    """
+    Calls `loader()` -- `fm.pretrained.rna_fm_t12` with no
+    `model_location`, i.e. Meta's own `load_hub_workaround` -> REAL
+    `torch.hub.load_state_dict_from_url` -- with PyTorch's strict
+    `weights_only` unpickling FORCED to `True` for the duration of this
+    one call, closing the ATTACK half of the residual named at
+    `_load_pretrained_with_fallback`'s step 2 (human-ruled,
+    2026-09-10): a GENUINE FRESH download carrying a pickled class
+    outside `_allow_argparse_namespace_in_checkpoints`'s allowlist must
+    be refused, not silently accepted through
+    `load_state_dict_from_url`'s own hardcoded `weights_only=False`
+    default.
+
+    HOW, WITHOUT PRE-FETCHING OR PRE-PLACING ANYTHING. `load_hub_workaround`
+    (fm/pretrained.py, confirmed by reading its installed source) calls
+    `torch.hub.load_state_dict_from_url(...)` by attribute lookup at
+    call time, not a name bound once at import time -- so replacing the
+    module attribute for the duration of this call reaches it.
+    `load_state_dict_from_url` itself forwards `weights_only` straight
+    through to its own internal `torch.load(..., weights_only=weights_only)`
+    (confirmed by reading torch's installed source) -- there is no
+    separate strict/local attempt to build here, no cache-filename
+    convention to duplicate, and torch.hub still resolves its own URL,
+    cache path, and network request exactly as before. This is the
+    reason the ruling did not ask for pre-placement: pre-placement was
+    argued against (it couples this file to torch.hub's cache-filename
+    convention, which is load-bearing for offline loading) and this
+    sidesteps that coupling entirely by never touching the file's
+    location or provenance -- only the flag PyTorch itself unpickles
+    with.
+
+    Because `_allow_argparse_namespace_in_checkpoints` is always called
+    before this runs (see the retry loop below), an ordinary legitimate
+    checkpoint -- whose only non-default-safe class is the allowlisted
+    `argparse.Namespace` -- still succeeds under this strict call. Only
+    a class OUTSIDE that allowlist is refused, loudly, by name, so the
+    reader knows what to update.
+    """
+    real_load_state_dict_from_url = torch.hub.load_state_dict_from_url
+
+    def strict_load_state_dict_from_url(*args, **kwargs):
+        kwargs["weights_only"] = True
+        return real_load_state_dict_from_url(*args, **kwargs)
+
+    torch.hub.load_state_dict_from_url = strict_load_state_dict_from_url
+    try:
+        return loader()
+    except Exception as exc:  # noqa: BLE001
+        if _is_weights_only_rejection(exc):
+            raise ModelLoadError(
+                "Freshly-downloaded RNA-FM checkpoint contains a pickled "
+                "class outside today's allowlist "
+                "(_allow_argparse_namespace_in_checkpoints) -- refusing "
+                "to load it with an unrestricted (weights_only=False) "
+                f"fallback. Update the allowlist for this checkpoint "
+                f"format. Original error: {exc}"
+            ) from exc
+        raise
+    finally:
+        torch.hub.load_state_dict_from_url = real_load_state_dict_from_url
+
+
 class RNAFMModel(BaseGenomicModel):
     """Embeds RNA sequences using the official RNA-FM (ml4bio/RNA-FM)."""
 
@@ -547,26 +610,30 @@ class RNAFMModel(BaseGenomicModel):
         # 2. Network download, with a bounded retry for genuinely
         # transient errors only (see _is_permanent_download_error).
         #
-        # *** RESIDUAL, NOT CLOSED HERE, NAMED AT THE SITE (HIGH-priority
-        # security card): `loader()` below is `fm.pretrained.rna_fm_t12`
-        # with no `model_location`, which is Meta's own
-        # `load_hub_workaround` -> REAL `torch.hub.load_state_dict_from_url`
-        # -- and THAT function's own signature hardcodes
-        # `weights_only=False`, independent of the allowlist call on the
-        # next line. `_is_weights_only_rejection` above closes the
-        # ACCIDENT case (an already-held file whose format has drifted
-        # past today's allowlist); it cannot close THIS case, because
-        # this is the path a GENUINE FRESH download always takes --
-        # there is no "local, strict" attempt to compare against here.
-        # A newly-fetched checkpoint carrying a class outside today's
-        # allowlist WILL still be unpickled with weights_only=False and
-        # WILL still succeed. This is the ATTACK case (a file we fetch,
-        # not one we already hold), it is the more serious of the two,
-        # and it is deliberately still open tonight: closing it requires
-        # routing every load -- including a fresh download -- through
-        # the same strict+allowlisted path, which couples this file to
-        # torch.hub's internal cache-filename convention and needs a
-        # rested decision, not one made under this card's boundary. ***
+        # *** ATTACK-HALF RESIDUAL, CLOSED (HIGH-priority security card;
+        # human-ruled 2026-09-10): `loader()` below is
+        # `fm.pretrained.rna_fm_t12` with no `model_location`, which is
+        # Meta's own `load_hub_workaround` -> REAL
+        # `torch.hub.load_state_dict_from_url` -- and THAT function's
+        # own signature hardcodes `weights_only=False`. `_is_weights_only_rejection`
+        # above closes the ACCIDENT case (an already-held file whose
+        # format has drifted past today's allowlist); this closes the
+        # ATTACK case (a file we fetch fresh) by routing `loader()`
+        # through `_load_hub_download_with_forced_weights_only`, which
+        # forces `weights_only=True` on the underlying
+        # `torch.hub.load_state_dict_from_url` call for the duration of
+        # this one call -- WITHOUT pre-fetching or pre-placing the file
+        # ourselves. torch.hub still resolves its own cache path and
+        # issues its own request exactly as before, so this does not
+        # couple this file to torch.hub's internal cache-filename
+        # convention (the reason a pre-placement fix was rejected: it
+        # would risk silently breaking offline weight loading, which
+        # runs on every ordinary run, to close an attack case that
+        # needs a compromised upstream). A class outside today's
+        # allowlist is refused loudly, immediately, and by name; an
+        # ordinary legitimate checkpoint still loads (see
+        # `_load_hub_download_with_forced_weights_only`'s own
+        # docstring). ***
         #
         # `loader()` -> `torch.hub.load_state_dict_from_url` issues a
         # bare `urllib` request with NO timeout by default (Python's
@@ -583,19 +650,28 @@ class RNAFMModel(BaseGenomicModel):
         # The downloaded file is the same fairseq-style checkpoint as
         # the cached one, so it needs the same allowlist before
         # `loader()` unpickles it (see
-        # `_allow_argparse_namespace_in_checkpoints`) -- harmless here
-        # (weights_only=False accepts anything regardless), but load-
-        # bearing again the day this step is ever routed through the
-        # strict path instead.
+        # `_allow_argparse_namespace_in_checkpoints`) -- now load-
+        # bearing on this path too, since this step is strict now, not
+        # merely harmless-if-present.
         _allow_argparse_namespace_in_checkpoints()
         last_exc: Optional[Exception] = None
         for attempt in range(1, _MAX_DOWNLOAD_ATTEMPTS + 1):
             previous_timeout = socket.getdefaulttimeout()
             socket.setdefaulttimeout(_DOWNLOAD_TIMEOUT_SECONDS)
             try:
-                return loader()
+                return _load_hub_download_with_forced_weights_only(loader)
             except Exception as exc:  # noqa: BLE001 - translate + sanitize below
                 last_exc = exc
+                if isinstance(exc, ModelLoadError):
+                    # Fail closed: an allowlist rejection on the fresh-
+                    # download path is not a network error. It must
+                    # never be retried (retrying calls the exact same
+                    # refusal again) and must never be sanitized down
+                    # to the generic "RNA-FM model unavailable" below --
+                    # the caller needs the allowlist name, from
+                    # _load_hub_download_with_forced_weights_only's own
+                    # message, to know what to update.
+                    raise
                 permanent = _is_permanent_download_error(exc)
                 self.logger.debug(
                     f"RNA-FM weight download attempt {attempt}/"

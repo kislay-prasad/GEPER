@@ -217,11 +217,12 @@ class MMSpliceModel(BaseGenomicModel):
             return False
         if not ensure_pip_package_available("tensorflow"):
             return False
-        if CONFIG.mmsplice.MODEL_DIR:
-            # Set means never touch the network for this, complete or
-            # not (human-ruled 2026-09-10) -- see
-            # _mmsplice_model_dir_missing_files's own docstring.
-            return not _mmsplice_model_dir_missing_files(CONFIG.mmsplice.MODEL_DIR)
+        if CONFIG.mmsplice.MODEL_DIR and not _mmsplice_model_dir_missing_files(CONFIG.mmsplice.MODEL_DIR):
+            # REACHABILITY FIX ONLY (human-ruled 2026-09-10) -- see
+            # _load_impl's identical branch for the full comment and
+            # what remains on hold (a set-but-incomplete MODEL_DIR
+            # falls through below, unchanged from before this card).
+            return True
         return _ensure_mmsplice_package_files_available() is PackageCheckStatus.PRESENT
 
     @classmethod
@@ -236,16 +237,11 @@ class MMSpliceModel(BaseGenomicModel):
             return "tensorflow availability not checked (auto-install disabled under pytest)"
         if tensorflow is PackageCheckStatus.ABSENT:
             return "tensorflow could not be installed automatically"
-        if CONFIG.mmsplice.MODEL_DIR:
-            # Same accuracy principle as the raised ModelLoadError in
-            # _load_impl (human-ruled 2026-09-10): a reader here must
-            # never be told a pip install was attempted or failed when
-            # MODEL_DIR being set means one never was -- pip is not
-            # even consulted in this branch, so falling through to the
-            # memo-cache read below would report a stale or absent
-            # attempt as if it were today's reason.
-            missing = _mmsplice_model_dir_missing_files(CONFIG.mmsplice.MODEL_DIR)
-            return f"GEPER_MMSPLICE_MODEL_DIR is set but missing: {', '.join(missing)}"
+        # A COMPLETE MODEL_DIR makes is_available() True, so this
+        # method is never reached for that case; a set-but-incomplete
+        # MODEL_DIR is deliberately UNCHANGED from before this card --
+        # HOLD (human-ruled 2026-09-10), see _load_impl's identical
+        # branch for the full context of what is and isn't decided yet.
         # Read the memo cache DIRECTLY rather than calling the seam. A
         # function named `unavailability_reason` must not be able to
         # trigger an install, and the seam's pytest guard is a property
@@ -290,31 +286,31 @@ class MMSpliceModel(BaseGenomicModel):
         if tensorflow_status is PackageCheckStatus.ABSENT:
             raise ModelLoadError("MMSplice requires 'tensorflow', which could not be installed automatically.")
 
-        if CONFIG.mmsplice.MODEL_DIR:
-            # Human-ruled 2026-09-10, following the RNA-FM
-            # `_cached_weights_path` precedent (check local first,
-            # rather than failing into a local check only after a
-            # network attempt already failed): once MODEL_DIR is set,
-            # `_ensure_mmsplice_package_files_available` (which shells
-            # out to `pip install`) is never called at all, complete or
-            # not. Setting MODEL_DIR is a declaration of intent by an
-            # operator who knows their host is air-gapped -- a pip
-            # fallback there cannot succeed, so attempting it can only
-            # turn an accurate "MODEL_DIR is missing X" into a
-            # misleading "could not be installed automatically". See
-            # `_mmsplice_model_dir_missing_files`'s own docstring.
-            missing = _mmsplice_model_dir_missing_files(CONFIG.mmsplice.MODEL_DIR)
-            if missing:
-                self.logger.warning(
-                    f"GEPER_MMSPLICE_MODEL_DIR='{CONFIG.mmsplice.MODEL_DIR}' is missing: {', '.join(missing)}."
-                )
-                raise ModelLoadError(
-                    f"GEPER_MMSPLICE_MODEL_DIR is set but missing: {', '.join(missing)}. Network "
-                    "installation of the 'mmsplice' package is never attempted once MODEL_DIR is "
-                    "set -- fix the directory contents, or unset GEPER_MMSPLICE_MODEL_DIR to fall "
-                    "back to automatic pip installation."
-                )
-        else:
+        # REACHABILITY FIX ONLY (human-ruled 2026-09-10), following the
+        # RNA-FM `_cached_weights_path` precedent (check local first,
+        # rather than failing into a local check only after a network
+        # attempt already failed): a COMPLETE MODEL_DIR is used
+        # directly below, with `_ensure_mmsplice_package_files_available`
+        # (which shells out to `pip install`) never called at all --
+        # closing the defect where the function that actually reads
+        # MODEL_DIR (`_resolve_mmsplice_package_dir`) was unreachable
+        # on this path. See `_mmsplice_model_dir_missing_files`'s own
+        # docstring.
+        #
+        # HOLD, DELIBERATELY NOT BUILT: whether a set-but-INCOMPLETE
+        # MODEL_DIR should instead fail immediately, naming MODEL_DIR
+        # and the missing file(s), is a separate clinical failure-path
+        # decision (silent degradation vs. hard failure vs.
+        # disclose-on-report) this card does not own -- an earlier
+        # version of this fix built that behaviour and it was withdrawn
+        # pending the human's own ruling. Until it lands, a
+        # set-but-incomplete MODEL_DIR falls through to the SAME
+        # branch as an unset one, unchanged: this is a one-branch edit
+        # away from wherever that ruling lands, not a rewrite.
+        model_dir_complete = bool(CONFIG.mmsplice.MODEL_DIR) and not _mmsplice_model_dir_missing_files(
+            CONFIG.mmsplice.MODEL_DIR
+        )
+        if not model_dir_complete:
             package_files_status = _ensure_mmsplice_package_files_available()
             if package_files_status is PackageCheckStatus.NOT_CHECKED:
                 raise ModelLoadError(

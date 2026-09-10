@@ -7,6 +7,7 @@ Each tool-dependent test is skipped (not faked) if that tool isn't on
 PATH, mirroring the rest of GEPER's "never fabricate a result for a
 missing dependency" approach.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.fixtures.generate_synthetic_reads import build_fixture_set
+from tests.fixtures.generate_synthetic_reads import (
+    build_duplicate_fixture_set,
+    build_fixture_set,
+)
 from pipeline.alignment.stage import AlignmentStage
 from pipeline.alignment import bam_utils, bwa_runner, minimap2_runner
 from geper.pipeline.fastq.pipeline import FastqPipelineError
@@ -34,13 +38,72 @@ def fixture_set(tmp_path_factory):
     return build_fixture_set(str(out))
 
 
+@pytest.fixture(scope="module")
+def duplicate_fixture_set(tmp_path_factory):
+    """Fixture data that CONTAINS duplicates. See build_duplicate_fixture_set."""
+    out = tmp_path_factory.mktemp("duplicate_fixtures")
+    fx = build_duplicate_fixture_set(str(out))
+    # PRECONDITION, asserted rather than assumed: if the injection quietly
+    # did nothing, the tests below would pass against the broken code and
+    # we would be back exactly where we started.
+    assert fx["n_read_pairs"] == fx["n_unique_read_pairs"] * fx["copies"]
+    assert fx["n_unique_read_pairs"] > 0
+    return fx
+
+
+@pytest.mark.skipif(not (HAVE_BWA and HAVE_SAMTOOLS), reason="bwa/samtools not installed")
+def test_duplicates_are_marked_bwa(duplicate_fixture_set, tmp_path):
+    """Duplicate marking must actually mark duplicates.
+
+    Regression test for a step that never worked: without ``samtools
+    fixmate -m`` the pipeline's markdup call exits 1 and writes an empty
+    BAM. bwa is the DEFAULT aligner (`aligner: auto` resolves to bwa
+    whenever bwa is installed), so this is the production path.
+    """
+    stage = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})
+    result = stage.run(
+        duplicate_fixture_set["fastq_r1"],
+        duplicate_fixture_set["reference_fasta"],
+        str(tmp_path),
+        fastq_r2=duplicate_fixture_set["fastq_r2"],
+        sample_id="TESTDUPBWA",
+    )
+    assert result.metrics.total_reads > 0, "markdup produced an empty BAM"
+    assert result.metrics.duplicate_reads > 0, (
+        "no reads flagged as duplicates on input built entirely from "
+        "duplicate pairs -- the fixmate/markdup chain is not working"
+    )
+
+
+@pytest.mark.skipif(not (HAVE_MINIMAP2 and HAVE_SAMTOOLS), reason="minimap2/samtools not installed")
+def test_duplicates_are_marked_minimap2(duplicate_fixture_set, tmp_path):
+    """Same, on the minimap2 path, which fails at a DIFFERENT markdup check
+    (no MC tag at all, rather than no ms score tag)."""
+    stage = AlignmentStage({"alignment": {"aligner": "minimap2", "threads": 2}})
+    result = stage.run(
+        duplicate_fixture_set["fastq_r1"],
+        duplicate_fixture_set["reference_fasta"],
+        str(tmp_path),
+        fastq_r2=duplicate_fixture_set["fastq_r2"],
+        sample_id="TESTDUPMM2",
+    )
+    assert result.metrics.total_reads > 0, "markdup produced an empty BAM"
+    assert result.metrics.duplicate_reads > 0, (
+        "no reads flagged as duplicates on input built entirely from "
+        "duplicate pairs -- the fixmate/markdup chain is not working"
+    )
+
+
 @pytest.mark.skipif(not (HAVE_BWA and HAVE_SAMTOOLS), reason="bwa/samtools not installed")
 class TestBwaAlignment:
     def test_produces_sorted_bam_and_index(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="TESTBWA",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="TESTBWA",
         )
         assert Path(result.sorted_bam_path).name == "aligned.sorted.bam"
         assert Path(result.sorted_bam_path).exists()
@@ -50,8 +113,11 @@ class TestBwaAlignment:
     def test_metrics_are_real_not_fabricated(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "bwa", "threads": 2}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="TESTBWA2",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="TESTBWA2",
         )
         # Synthetic reads were sliced directly from the (mutated) reference,
         # so a correctly-working aligner should map essentially all of them.
@@ -62,8 +128,11 @@ class TestBwaAlignment:
     def test_metrics_report_written(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "bwa"}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="TESTBWA3",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="TESTBWA3",
         )
         report = json.loads(Path(result.metrics_report_path).read_text())
         assert report["aligner"] == "bwa"
@@ -78,8 +147,12 @@ class TestBwaAlignment:
             assert not Path(ref + suffix).exists() or True  # built lazily; just exercise the path
         sam_path = str(tmp_path / "out.sam")
         result_path = bwa_runner.run_bwa_mem(
-            fixture_set["fastq_r1"], fixture_set["fastq_r2"], ref, sam_path,
-            sample_id="IDX", threads=1,
+            fixture_set["fastq_r1"],
+            fixture_set["fastq_r2"],
+            ref,
+            sam_path,
+            sample_id="IDX",
+            threads=1,
         )
         assert Path(result_path).exists()
         assert Path(ref + ".bwt").exists()
@@ -90,8 +163,11 @@ class TestMinimap2Alignment:
     def test_produces_sorted_bam_and_index(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "minimap2", "threads": 2}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="TESTMM2",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="TESTMM2",
         )
         assert Path(result.sorted_bam_path).exists()
         assert Path(result.bai_path).exists()
@@ -100,8 +176,11 @@ class TestMinimap2Alignment:
     def test_aligner_recorded_correctly(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "minimap2"}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="TESTMM2B",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="TESTMM2B",
         )
         assert result.aligner_used == "minimap2"
 
@@ -110,8 +189,11 @@ class TestMinimap2Alignment:
 def test_auto_aligner_prefers_bwa_when_both_present(fixture_set, tmp_path):
     stage = AlignmentStage({"alignment": {"aligner": "auto"}})
     result = stage.run(
-        fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-        fastq_r2=fixture_set["fastq_r2"], sample_id="AUTOTEST",
+        fixture_set["fastq_r1"],
+        fixture_set["reference_fasta"],
+        str(tmp_path),
+        fastq_r2=fixture_set["fastq_r2"],
+        sample_id="AUTOTEST",
     )
     assert result.aligner_used == "bwa"
 
@@ -141,8 +223,11 @@ class TestBamUtils:
     def test_flagstat_metrics_shape(self, fixture_set, tmp_path):
         stage = AlignmentStage({"alignment": {"aligner": "bwa"}})
         result = stage.run(
-            fixture_set["fastq_r1"], fixture_set["reference_fasta"], str(tmp_path),
-            fastq_r2=fixture_set["fastq_r2"], sample_id="BAMUTILS",
+            fixture_set["fastq_r1"],
+            fixture_set["reference_fasta"],
+            str(tmp_path),
+            fastq_r2=fixture_set["fastq_r2"],
+            sample_id="BAMUTILS",
         )
         m = bam_utils.compute_flagstat_metrics(result.sorted_bam_path)
         assert m.total_reads == result.metrics.total_reads

@@ -13,6 +13,7 @@ but high-quality Phred+33 scores. This is synthetic *input data* for
 testing — not a mock of the pipeline itself; the actual aligners and
 caller run against it for real.
 """
+
 from __future__ import annotations
 import random
 from pathlib import Path
@@ -45,8 +46,8 @@ def inject_variants(reference: str, seed: int = 7):
 
     # 1 small deletion (remove 2 bases at pos 1800)
     del_pos = 1800
-    ref_bases = "".join(seq[del_pos:del_pos + 3])  # incl. anchor base
-    seq[del_pos + 1:del_pos + 3] = []
+    ref_bases = "".join(seq[del_pos : del_pos + 3])  # incl. anchor base
+    seq[del_pos + 1 : del_pos + 3] = []
     variants.append((del_pos, ref_bases, ref_bases[0], "DEL"))
 
     return "".join(seq), variants
@@ -56,7 +57,7 @@ def write_fasta(path: str, name: str, sequence: str):
     with open(path, "w") as f:
         f.write(f">{name}\n")
         for i in range(0, len(sequence), 70):
-            f.write(sequence[i:i + 70] + "\n")
+            f.write(sequence[i : i + 70] + "\n")
 
 
 def simulate_paired_reads(
@@ -68,14 +69,14 @@ def simulate_paired_reads(
 ):
     """Slide a window across `sequence`, emitting (r1_seq, r2_seq) pairs
     at `step`-base intervals, each `read_length` long, `insert_size` apart."""
-    rng = random.Random(seed)
+    _rng = random.Random(seed)  # seeded for determinism; not currently drawn from
     pairs = []
     n = len(sequence)
     pos = 0
     while pos + insert_size <= n:
-        r1 = sequence[pos: pos + read_length]
+        r1 = sequence[pos : pos + read_length]
         frag_end = pos + insert_size
-        r2_fwd = sequence[frag_end - read_length: frag_end]
+        r2_fwd = sequence[frag_end - read_length : frag_end]
         r2 = revcomp(r2_fwd)
         pairs.append((r1, r2))
         pos += step
@@ -114,6 +115,69 @@ def build_fixture_set(out_dir: str):
         "variants": variants,
         "n_read_pairs": len(pairs),
     }
+
+
+def _duplicate_fastq(src_path: str, dst_path: str, copies: int = 2):
+    """Write every read in `src_path` `copies` times to `dst_path`, renaming
+    each extra copy so read names stay unique.
+
+    Identical sequence at an identical position is what makes a duplicate,
+    so this produces genuine PCR-style duplicates rather than a simulation
+    of them. Returns (reads_in, reads_out) SO THE CALLER CAN ASSERT THE
+    INJECTION ACTUALLY HAPPENED -- a fixture that silently fails to inject
+    duplicates is the same defect this fixture exists to catch, wearing the
+    fix's clothes.
+    """
+    lines = Path(src_path).read_text().rstrip("\n").split("\n")
+    if len(lines) % 4 != 0:
+        raise ValueError("not a 4-line-per-record FASTQ: %d lines" % len(lines))
+    out_lines = []
+    for i in range(0, len(lines), 4):
+        header, seq, plus, qual = lines[i : i + 4]
+        out_lines += [header, seq, plus, qual]
+        for c in range(1, copies):
+            parts = header.split(None, 1)
+            renamed = parts[0] + "dup%d" % c + ((" " + parts[1]) if len(parts) > 1 else "")
+            out_lines += [renamed, seq, plus, qual]
+    Path(dst_path).write_text("\n".join(out_lines) + "\n")
+    return len(lines) // 4, len(out_lines) // 4
+
+
+def build_duplicate_fixture_set(out_dir: str, copies: int = 2):
+    """build_fixture_set(), then every read pair repeated `copies` times.
+
+    WHY THIS EXISTS. The alignment stage's duplicate-marking step was
+    broken from the day it was written -- it omitted ``samtools fixmate
+    -m``, so ``samtools markdup`` had no MC/ms tags -- and NO TEST COULD
+    SEE IT, because build_fixture_set() produces data containing no
+    duplicates at all. markdup therefore never reached the code that needs
+    those tags, exited zero, and the step looked fine. A duplicate-marking
+    feature was being verified on input that could not exercise it.
+
+    Any test of duplicate marking must use data that actually contains
+    duplicates. That is this.
+    """
+    base = build_fixture_set(out_dir)
+    out = Path(out_dir)
+    r1, r2 = str(out / "dup_R1.fastq"), str(out / "dup_R2.fastq")
+    in1, out1 = _duplicate_fastq(base["fastq_r1"], r1, copies)
+    in2, out2 = _duplicate_fastq(base["fastq_r2"], r2, copies)
+    if out1 != in1 * copies or out2 != in2 * copies:
+        raise AssertionError(
+            "duplicate injection did not multiply the reads: "
+            "R1 %d->%d, R2 %d->%d, copies=%d" % (in1, out1, in2, out2, copies)
+        )
+    info = dict(base)
+    info.update(
+        {
+            "fastq_r1": r1,
+            "fastq_r2": r2,
+            "n_read_pairs": out1,
+            "n_unique_read_pairs": in1,
+            "copies": copies,
+        }
+    )
+    return info
 
 
 if __name__ == "__main__":

@@ -91,3 +91,36 @@ phase5d_test_output.txt
 # are in DOCKER.md, under "The offline model-cache seed".
 model_cache_seed/
 model_cache_seed.tar.gz
+
+# --- Pre-fetched CPU-only torch wheels -------------------------------------
+# THESE ARE A BUILD DEPENDENCY, NOT CLUTTER. `Dockerfile` COPYs all three by
+# exact filename and pip-installs them; without them `docker build` fails at
+# the COPY step with "failed to calculate checksum of ref ...: not found",
+# which names no prerequisite and appears to be a broken Dockerfile.
+#
+# WHY THEY ARE IGNORED RATHER THAN COMMITTED: 180 MB of binary, and they are
+# DERIVED rather than authored -- byte-identical to the published upstream
+# artefacts (sha256 of all three verified against download.pytorch.org on
+# 2026-09-10). Same reasoning as the seed above.
+#
+# WHY IGNORED AT ALL, GIVEN THEY WERE ALREADY UNTRACKED: `git clean -fd`
+# deletes untracked files but SKIPS ignored ones, and these were protected by
+# nothing. An untracked file shows as `??`, which reads as disposable junk --
+# exactly what someone running `git clean` intends to remove.
+#
+# *** THE LIMIT, STATED SO NOBODY RELIES ON MORE THAN THIS BUYS: `git clean
+# -fdx` STILL DELETES THEM. Ignoring narrows the hazard; it does not close
+# it. The standing order not to run `git clean` in the shared tree is the
+# actual protection. ***
+#
+# .dockerignore MUST NOT exclude these -- the build context needs them.
+# Ignoring here and excluding there are opposite requirements on one set of
+# files, and the second one would break every build.
+#
+# Listed by exact filename rather than `*.whl` ON PURPOSE: a blanket pattern
+# would also hide the NEXT undeclared wheel, which is this same defect. If the
+# pinned versions change, these three lines and the Dockerfile's COPY lines
+# must change together -- see DOCKER.md, "Before you build".
+torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
+torchvision-0.22.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
+torchaudio-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl

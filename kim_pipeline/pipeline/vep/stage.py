@@ -10,19 +10,36 @@ Shells out to the ``vep`` CLI with comprehensive flags to obtain:
     plugin data file to be configured below -- see "Plugin data" note)
   - Gene symbol and transcript ID
 
-SpliceAI REMOVED (2026-08-22, licence): Illumina's SpliceAI plugin was
-requested unconditionally here and its score fed live ACMG evidence
-(PP3/BP4, and `pipeline/orchestration/shared.py`'s `synonymous_or_intronic`
--> BP7), but its pretrained models are CC BY-NC 4.0 (non-commercial) and
-its code GPL-3.0 -- the same class of licence blocker as OMIM, and never
-covered by `LICENSE_AUDIT.md`'s own "never integrated into GEPER"
-verdict for SpliceAI, which was scoped to `geper/` only. `spliceai_score`
-fields remain on `VEPVariantAnnotation`/downstream dataclasses (always
-`None` now) rather than being deleted outright, so nothing that reads
-them via `.get(...)`/attribute access needs a separate null-check added --
-see `orchestration/shared.py::synonymous_or_intronic`'s fix for the one
-place absence needed to be handled explicitly rather than relying on the
+SpliceAI's VEP PLUGIN REMOVED (2026-08-22, licence): Illumina's SpliceAI
+plugin was requested unconditionally here and its score fed live ACMG
+evidence (PP3/BP4, and `pipeline/orchestration/shared.py`'s
+`synonymous_or_intronic` -> BP7), but its pretrained models are CC BY-NC
+4.0 (non-commercial) and its code GPL-3.0 -- the same class of licence
+blocker as OMIM, and never covered by `LICENSE_AUDIT.md`'s own "never
+integrated into GEPER" verdict for SpliceAI, which was scoped to
+`geper/` only. `spliceai_score` fields remain on
+`VEPVariantAnnotation`/downstream dataclasses rather than being deleted
+outright, so nothing that reads them via `.get(...)`/attribute access
+needs a separate null-check added -- see
+`orchestration/shared.py::synonymous_or_intronic`'s fix for the one place
+absence needed to be handled explicitly rather than relying on the
 default.
+
+**CORRECTED 2026-09-10**: this docstring previously said
+`spliceai_score` is "always `None` now" -- it is not. This removal only
+covers what THIS module (the VEP-CSQ path) supplies. A separate,
+un-fixed fallback in `pipeline/annotation/stage.py:733-743` and
+`:1145-1157` reads SpliceAI's own `SpliceAI=`/`DS_AG`/`DS_AL`/`DS_DG`/
+`DS_DL` delta-score fields straight out of the input VCF's INFO and
+feeds a live score to PP3/BP4 whenever the caller has pre-annotated with
+SpliceAI upstream -- a standard splicing-analysis step, independent of
+VEP. Evidence this is real and exercised, not just a reading of the
+code: `kim_pipeline/tests/test_undetermined_aa_guard.py:388-389` (added
+2026-08-28). This same "always `None`" mistake was independently made
+twice more, citing this docstring as its evidence in one case
+(`docs/BIJ_AI_CAPABILITY_AUDIT.md`, `geper/LICENSE_AUDIT.md`, both
+corrected 2026-09-10) -- fixed here too so no document or comment in
+either repo still makes the claim.
 
 Config section::
 

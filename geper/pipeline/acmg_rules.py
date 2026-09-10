@@ -2141,6 +2141,25 @@ class ACMGRuleEngine:
             label = f"AI-ensemble({'+'.join(models_used)})"
             sources.append(label)
             score_str = f"{consensus_score:.3f}" if consensus_score is not None else "n/a"
+            # Calibration disclosure -- same read-and-disclose pattern _bp7
+            # already applies to SpliceFormer/SpliceBERT (see :2570-2579
+            # below): read each fired model's own
+            # individual_scores[key]["details"]["calibration_status"]
+            # (the same field status.py::_ensemble_model_status already
+            # reads for the same models), disclose it per model rather
+            # than once for the whole ensemble label (Enformer and Borzoi
+            # are not guaranteed to share a calibration status), fall back
+            # to an honest "not reported" rather than inventing one, and
+            # attach the same plain-language caveat _bp7 attaches -- a
+            # reader must see this next to the score, not several sections
+            # further down.
+            individual_scores = ensemble_result.get("individual_scores") or {}
+            calibration_note = "; ".join(
+                f"{model_key} "
+                f"({(individual_scores.get(model_key) or {}).get('details', {}).get('calibration_status') or 'calibration status not reported by this model'})"
+                for model_key in models_used
+            )
+            calibration_caveat = f" [{calibration_note}] This is a raw model score, not a validated clinical measure."
             if classification in ("large_effect", "moderate_effect"):
                 damaging.append(
                     (
@@ -2148,6 +2167,7 @@ class ACMGRuleEngine:
                         (
                             f"Splicing/regulatory AI ensemble ({basis_label}) predicts a "
                             f"'{classification}' effect (score={score_str}). {ensemble_result.get('reasoning', '')}"
+                            f"{calibration_caveat}"
                         ),
                     )
                 )
@@ -2158,6 +2178,7 @@ class ACMGRuleEngine:
                         (
                             f"Splicing/regulatory AI ensemble ({basis_label}) predicts "
                             f"'no_significant_effect' (score={score_str}). {ensemble_result.get('reasoning', '')}"
+                            f"{calibration_caveat}"
                         ),
                     )
                 )

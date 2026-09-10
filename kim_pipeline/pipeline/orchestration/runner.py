@@ -282,7 +282,7 @@ class PipelineRunner:
                               ``"vcf_only"`` to stop immediately after
                               Variant Calling and return the filtered VCF
                               without running Kim's own annotation/ACMG/
-                              PGx/ancestry/reporting stages — this is the
+                              ancestry/reporting stages — this is the
                               mode used when Kim is acting purely as the
                               FASTQ-to-VCF engine in front of another
                               interpretation pipeline (e.g. GEPER).
@@ -616,7 +616,7 @@ class PipelineRunner:
             # ── Early stop (mode="vcf_only" / stop_after="variant_calling") ──
             # Kim acting purely as the FASTQ-to-VCF engine: QC, Alignment, and
             # Variant Calling have already completed above. Do NOT continue
-            # into Kim's own VEP/annotation/ACMG/PGx/ancestry/reporting
+            # into Kim's own VEP/annotation/ACMG/ancestry/reporting
             # stages — those modules are left fully intact and still run
             # normally for standalone ("full") Kim runs, they are simply
             # skipped here so that filtered_variants.vcf can be handed off
@@ -944,46 +944,6 @@ class PipelineRunner:
                 result.acmg_results = result.acmg_results or []
                 acmg_results = result.acmg_results
 
-            # ── Stage 4c: Pharmacogenomics (PGx) ─────────────────────────
-            pgx_result = None
-            pgx_out = str(work_dir / "pgx")
-            if "pgx" not in completed_stages:
-                _stage_t0_pgx = time.monotonic()
-                logger.info("[%s] Stage 4c: Pharmacogenomics (PGx)", sample_id)
-                try:
-                    from pipeline.pgx.stage import PGxStage
-
-                    vcf_for_pgx = (
-                        result.variant_calling.get("filtered_vcf_path", "")
-                        if result.variant_calling
-                        else ""
-                    )
-                    pgx_stage = PGxStage(cfg=self._cfg)
-                    pgx_result = pgx_stage.run(
-                        vcf_path=vcf_for_pgx,
-                        output_dir=pgx_out,
-                        sample_id=sample_id,
-                    )
-                    completed_stages.add("pgx")
-                    checkpoint["completed_stages"] = list(completed_stages)
-                    checkpoint["pgx_json_path"] = pgx_result.report_json_path
-                    _save_checkpoint(work_dir, checkpoint)
-                    result.stages_completed.append("pgx")
-                    logger.info(
-                        "[TIMING] stage=%s elapsed=%.2fs", "pgx", time.monotonic() - _stage_t0_pgx
-                    )
-                    logger.info(
-                        "[%s] Stage 4c complete: PGx annotated %d genes",
-                        sample_id,
-                        len(pgx_result.annotations),
-                    )
-                except Exception as exc:
-                    logger.warning("[%s] Stage 4c PGx failed (non-fatal): %s", sample_id, exc)
-                    result.stages_skipped.append("pgx")
-            else:
-                logger.info("[%s] Stage 4c: PGx — SKIPPED (checkpoint)", sample_id)
-                result.stages_skipped.append("pgx")
-
             # ── Stage 4d: Ancestry Inference ─────────────────────────────
             ancestry_result = None
             ancestry_out = str(work_dir / "ancestry")
@@ -1041,7 +1001,6 @@ class PipelineRunner:
                     variant_stats=result.variant_calling,
                     annotation_result=result.annotation,
                     acmg_results=acmg_results,
-                    pgx_result=pgx_result,
                     ancestry_result=ancestry_result,
                     reference_versions=result.reference_versions,  # FIX 14
                 )
@@ -1126,7 +1085,7 @@ def _build_cli_parser():
             "'full' (default) runs FASTQ through Report generation. "
             "'vcf_only' stops after Variant Calling and returns "
             "filtered_variants.vcf, skipping Kim's own annotation/ACMG/"
-            "PGx/ancestry/reporting stages — used when Kim is feeding "
+            "ancestry/reporting stages — used when Kim is feeding "
             "another interpretation pipeline (e.g. Bij AI)."
         ),
     )

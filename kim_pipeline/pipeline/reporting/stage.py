@@ -592,7 +592,6 @@ class ReportingStage:
         variant_stats: Any = None,
         annotation_result: Any = None,
         acmg_results: Optional[Dict] = None,
-        pgx_result: Any = None,
         ancestry_result: Any = None,
         reference_versions: Optional[Dict] = None,  # FIX 14
         patient_metadata: Optional[Dict] = None,  # Issue 3: optional patient metadata JSON

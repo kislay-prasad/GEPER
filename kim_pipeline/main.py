@@ -251,7 +251,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 def cmd_vcf(args: argparse.Namespace) -> int:
     """Run the complete VCF→Report workflow on an existing VCF:
     VEP -> Annotation -> ClinVar -> gnomAD -> ACMG -> Evidence Aggregation
-    -> PGx -> AI (if enabled) -> Final Report.
+    -> AI (if enabled) -> Final Report.
 
     This reuses the exact same stage implementations and the same
     ClinVar/gnomAD/ACMG/AI evidence logic (pipeline/orchestration/shared.py)
@@ -275,15 +275,15 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Genome build detection (item 2) ─────────────────────────────────────
-    # GEPER's bundled PGx/gnomAD resources are GRCh38-only; warn loudly
-    # rather than silently mis-mapping coordinates for GRCh37/hg19 input.
+    # GEPER's bundled gnomAD resources are GRCh38-only; warn loudly rather
+    # than silently mis-mapping coordinates for GRCh37/hg19 input.
     from pipeline.utils.genome_build import warn_if_unsupported_build, SUPPORTED_BUILD
 
     build_detection = warn_if_unsupported_build(str(vcf_path), sample_id=sample_id)
     if build_detection.build and build_detection.build != SUPPORTED_BUILD:
         print(
             f"  [WARN] Detected genome build {build_detection.build}, but Bij AI only "
-            f"supports {SUPPORTED_BUILD}. ClinVar/gnomAD/PGx results will be "
+            f"supports {SUPPORTED_BUILD}. ClinVar/gnomAD results will be "
             f"coordinate-mismatched. Liftover to {SUPPORTED_BUILD} first.",
             file=sys.stderr,
         )
@@ -368,23 +368,6 @@ def cmd_vcf(args: argparse.Namespace) -> int:
         stages_skipped.extend(["clinvar", "gnomad", "acmg_evidence"])
         print(f"  [FAIL] ClinVar/gnomAD/ACMG stage failed: {exc}", file=sys.stderr)
 
-    # ── Stage 4: Pharmacogenomics (PGx) ─────────────────────────────────────
-    pgx_result = None
-    try:
-        from pipeline.pgx.stage import PGxStage
-
-        pgx_stage = PGxStage(cfg=cfg)
-        pgx_result = pgx_stage.run(
-            vcf_path=current_vcf,
-            output_dir=str(out_dir / "pgx"),
-            sample_id=sample_id,
-        )
-        stages_completed.append("pgx")
-        print(f"  [OK] PGx: {len(pgx_result.annotations)} gene(s) annotated")
-    except Exception as exc:
-        logger.warning("PGx stage failed (non-fatal): %s", exc)
-        stages_skipped.append("pgx")
-
     # AI engine status is folded into the ACMG/Evidence stage above
     # (pipeline/orchestration/shared.py instantiates pipeline.ai.engine.AiEngine
     # when torch/transformers are installed and scores per-variant; it is a
@@ -407,7 +390,6 @@ def cmd_vcf(args: argparse.Namespace) -> int:
             variant_stats={"filtered_vcf_path": current_vcf},
             annotation_result=ann_result,
             acmg_results=acmg_results,
-            pgx_result=pgx_result,
         )
         stages_completed.append("reporting")
         print(
@@ -698,7 +680,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="MODE",
         help=(
             "'full' (default): FASTQ -> Report using Kim's own annotation/"
-            "ACMG/PGx/ancestry/reporting stages. 'vcf_only': stop after "
+            "ACMG/ancestry/reporting stages. 'vcf_only': stop after "
             "Variant Calling and emit filtered_variants.vcf only — use this "
             "when Kim is the FASTQ-to-VCF engine in front of another "
             "interpretation pipeline (e.g. Bij AI)."

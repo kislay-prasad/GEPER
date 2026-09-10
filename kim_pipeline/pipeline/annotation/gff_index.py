@@ -25,8 +25,7 @@ from __future__ import annotations
 import bisect
 import gzip
 import logging
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -38,19 +37,31 @@ logger = logging.getLogger("geper.pipeline.annotation.gff_index")
 # accessions fall back to the bare accession string so lookup still works
 # as long as the VCF uses the same naming as the GFF3.
 _REFSEQ_TO_CHR: Dict[str, str] = {
-    "NC_000001.11": "chr1",  "NC_000002.12": "chr2",
-    "NC_000003.12": "chr3",  "NC_000004.12": "chr4",
-    "NC_000005.10": "chr5",  "NC_000006.12": "chr6",
-    "NC_000007.14": "chr7",  "NC_000008.11": "chr8",
-    "NC_000009.12": "chr9",  "NC_000010.11": "chr10",
-    "NC_000011.10": "chr11", "NC_000012.12": "chr12",
-    "NC_000013.11": "chr13", "NC_000014.9":  "chr14",
-    "NC_000015.10": "chr15", "NC_000016.10": "chr16",
-    "NC_000017.11": "chr17", "NC_000018.10": "chr18",
-    "NC_000019.10": "chr19", "NC_000020.11": "chr20",
-    "NC_000021.9":  "chr21", "NC_000022.11": "chr22",
-    "NC_000023.11": "chrX",  "NC_000024.10": "chrY",
-    "NC_012920.1":  "chrMT",
+    "NC_000001.11": "chr1",
+    "NC_000002.12": "chr2",
+    "NC_000003.12": "chr3",
+    "NC_000004.12": "chr4",
+    "NC_000005.10": "chr5",
+    "NC_000006.12": "chr6",
+    "NC_000007.14": "chr7",
+    "NC_000008.11": "chr8",
+    "NC_000009.12": "chr9",
+    "NC_000010.11": "chr10",
+    "NC_000011.10": "chr11",
+    "NC_000012.12": "chr12",
+    "NC_000013.11": "chr13",
+    "NC_000014.9": "chr14",
+    "NC_000015.10": "chr15",
+    "NC_000016.10": "chr16",
+    "NC_000017.11": "chr17",
+    "NC_000018.10": "chr18",
+    "NC_000019.10": "chr19",
+    "NC_000020.11": "chr20",
+    "NC_000021.9": "chr21",
+    "NC_000022.11": "chr22",
+    "NC_000023.11": "chrX",
+    "NC_000024.10": "chrY",
+    "NC_012920.1": "chrMT",
 }
 
 # Reverse map: chr1 → NC_000001.11, etc.
@@ -72,21 +83,23 @@ def _normalise_chrom(name: str) -> str:
 
 # ─── Data types ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class GeneRecord:
     """A single gene or transcript annotation interval."""
+
     chrom: str
-    start: int       # 1-based, inclusive
-    end: int         # 1-based, inclusive
-    gene_name: str   # e.g. BRCA1
-    gene_id: str     # e.g. Gene:HGNC:1100 or Ensembl gene id
-    transcript_id: str = ""    # e.g. NM_007294.4
-    feature_type: str = "gene" # gene | mRNA | CDS | exon | …
+    start: int  # 1-based, inclusive
+    end: int  # 1-based, inclusive
+    gene_name: str  # e.g. BRCA1
+    gene_id: str  # e.g. Gene:HGNC:1100 or Ensembl gene id
+    transcript_id: str = ""  # e.g. NM_007294.4
+    feature_type: str = "gene"  # gene | mRNA | CDS | exon | …
     # FIX 6: canonical transcript selection metadata
     is_mane_select: bool = False
     is_mane_plus_clinical: bool = False
     is_canonical: bool = False
-    cds_length: int = 0   # for longest-CDS tiebreaking
+    cds_length: int = 0  # for longest-CDS tiebreaking
 
     @property
     def length(self) -> int:
@@ -94,6 +107,7 @@ class GeneRecord:
 
 
 # ─── Index ────────────────────────────────────────────────────────────────────
+
 
 class GffIndex:
     """In-memory index of gene/transcript annotations from a GFF3 file.
@@ -177,7 +191,8 @@ class GffIndex:
         idx.total_features = n_parsed
         logger.info(
             "GFF3 index built: %d features across %d chromosomes",
-            n_parsed, len(idx._chrom_starts),
+            n_parsed,
+            len(idx._chrom_starts),
         )
         return idx
 
@@ -218,31 +233,25 @@ class GffIndex:
                 attr_dict[k.strip()] = v.strip()
 
         gene_name = (
-            attr_dict.get("gene")
-            or attr_dict.get("Name")
-            or attr_dict.get("gene_name")
-            or ""
+            attr_dict.get("gene") or attr_dict.get("Name") or attr_dict.get("gene_name") or ""
         )
         gene_id = (
             attr_dict.get("Dbxref", "").split(",")[0]
             or attr_dict.get("gene_id")
             or attr_dict.get("ID", "")
         )
-        transcript_id = (
-            attr_dict.get("transcript_id")
-            or (
-                attr_dict.get("ID", "")
-                if feature in {"mRNA", "transcript", "tRNA", "rRNA", "CDS"}
-                else ""
-            )
+        transcript_id = attr_dict.get("transcript_id") or (
+            attr_dict.get("ID", "")
+            if feature in {"mRNA", "transcript", "tRNA", "rRNA", "CDS"}
+            else ""
         )
 
         # FIX 6: detect MANE Select / MANE Plus Clinical / canonical tags
         tag_str = attr_dict.get("tag", "") or attr_dict.get("Tag", "")
         tags = {t.strip() for t in tag_str.split(",") if t.strip()}
         is_mane_select = "MANE_Select" in tags or "MANE Select" in tags
-        is_mane_plus   = "MANE_Plus_Clinical" in tags or "MANE Plus Clinical" in tags
-        is_canonical   = "Ensembl_canonical" in tags or "canonical" in tags
+        is_mane_plus = "MANE_Plus_Clinical" in tags or "MANE Plus Clinical" in tags
+        is_canonical = "Ensembl_canonical" in tags or "canonical" in tags
 
         return GeneRecord(
             chrom=seqname,
@@ -309,6 +318,7 @@ class GffIndex:
 
         # FIX 6: deterministic selection
         if tx_candidates:
+
             def _tx_priority(r: GeneRecord) -> int:
                 if r.is_mane_select:
                     return 0

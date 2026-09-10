@@ -77,12 +77,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("geper.pipeline.evidence.aggregator")
 
 
 # ─── Input ────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class EvidenceInput:
@@ -91,6 +92,7 @@ class EvidenceInput:
     Set a field to None if that stream produced no data — its weight
     will be redistributed among the other streams automatically.
     """
+
     # From pipeline/acmg/classifier.py → AcmgResult.score
     acmg_score: Optional[float] = None
 
@@ -117,9 +119,11 @@ class EvidenceInput:
 
 # ─── Result ───────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class EvidenceResult:
     """Full aggregation result for one variant."""
+
     chrom: str = ""
     pos: int = 0
     ref: str = ""
@@ -170,6 +174,7 @@ class EvidenceResult:
 
 # ─── Aggregator ───────────────────────────────────────────────────────────────
 
+
 class EvidenceAggregator:
     """Combine multiple evidence streams into one composite pathogenicity score.
 
@@ -180,34 +185,40 @@ class EvidenceAggregator:
 
     # Default weights (must sum to 1.0)
     _DEFAULT_WEIGHTS = {
-        "acmg":          0.45,
-        "clinvar":       0.25,
+        "acmg": 0.45,
+        "clinvar": 0.25,
         "computational": 0.20,
-        "ai":            0.10,
+        "ai": 0.10,
     }
 
     # Score → tier thresholds (tunable via config)
     _DEFAULT_THRESHOLDS = {
-        "pathogenic":           0.85,
-        "likely_pathogenic":    0.65,
-        "likely_benign":        0.35,
-        "benign":               0.15,
+        "pathogenic": 0.85,
+        "likely_pathogenic": 0.65,
+        "likely_benign": 0.35,
+        "benign": 0.15,
     }
 
     def __init__(self, cfg: Optional[Dict] = None) -> None:
         ee = (cfg or {}).get("evidence_engine", {}) or {}
         self._weights = {
-            "acmg":          float(ee.get("weight_acmg",          self._DEFAULT_WEIGHTS["acmg"])),
-            "clinvar":       float(ee.get("weight_clinvar",        self._DEFAULT_WEIGHTS["clinvar"])),
-            "computational": float(ee.get("weight_computational",  self._DEFAULT_WEIGHTS["computational"])),
-            "ai":            float(ee.get("weight_ai",             self._DEFAULT_WEIGHTS["ai"])),
+            "acmg": float(ee.get("weight_acmg", self._DEFAULT_WEIGHTS["acmg"])),
+            "clinvar": float(ee.get("weight_clinvar", self._DEFAULT_WEIGHTS["clinvar"])),
+            "computational": float(
+                ee.get("weight_computational", self._DEFAULT_WEIGHTS["computational"])
+            ),
+            "ai": float(ee.get("weight_ai", self._DEFAULT_WEIGHTS["ai"])),
         }
         thr = (cfg or {}).get("evidence_thresholds", {}) or {}
         self._thresholds = {
-            "pathogenic":        float(thr.get("pathogenic",        self._DEFAULT_THRESHOLDS["pathogenic"])),
-            "likely_pathogenic": float(thr.get("likely_pathogenic", self._DEFAULT_THRESHOLDS["likely_pathogenic"])),
-            "likely_benign":     float(thr.get("likely_benign",     self._DEFAULT_THRESHOLDS["likely_benign"])),
-            "benign":            float(thr.get("benign",            self._DEFAULT_THRESHOLDS["benign"])),
+            "pathogenic": float(thr.get("pathogenic", self._DEFAULT_THRESHOLDS["pathogenic"])),
+            "likely_pathogenic": float(
+                thr.get("likely_pathogenic", self._DEFAULT_THRESHOLDS["likely_pathogenic"])
+            ),
+            "likely_benign": float(
+                thr.get("likely_benign", self._DEFAULT_THRESHOLDS["likely_benign"])
+            ),
+            "benign": float(thr.get("benign", self._DEFAULT_THRESHOLDS["benign"])),
         }
 
     # ── public API ────────────────────────────────────────────────────────────
@@ -222,10 +233,10 @@ class EvidenceAggregator:
             ``EvidenceResult`` with composite score, tier, and per-stream breakdown.
         """
         stream_map = {
-            "acmg":          inp.acmg_score,
-            "clinvar":       inp.clinvar_score,
+            "acmg": inp.acmg_score,
+            "clinvar": inp.clinvar_score,
             "computational": inp.computational_score,
-            "ai":            inp.ai_score,
+            "ai": inp.ai_score,
         }
 
         # Re-normalise weights for present streams only
@@ -236,9 +247,7 @@ class EvidenceAggregator:
             composite = 0.5
             explanation = "No evidence streams provided — defaulting to Uncertain_Significance."
         else:
-            composite = sum(
-                eff_weights[k] * present[k] for k in present
-            )
+            composite = sum(eff_weights[k] * present[k] for k in present)
             composite = round(min(1.0, max(0.0, composite)), 4)
             explanation = self._build_explanation(present, eff_weights, composite)
 
@@ -266,14 +275,20 @@ class EvidenceAggregator:
 
         logger.info(
             "[Evidence] %s:%d %s>%s gene=%s composite=%.4f tier=%s streams=%s",
-            inp.chrom, inp.pos, inp.ref, inp.alt,
-            inp.gene or "?", composite, tier, list(present.keys()),
+            inp.chrom,
+            inp.pos,
+            inp.ref,
+            inp.alt,
+            inp.gene or "?",
+            composite,
+            tier,
+            list(present.keys()),
         )
         return result
 
     def aggregate_from_acmg(
         self,
-        acmg_result,   # AcmgResult from pipeline.acmg.classifier
+        acmg_result,  # AcmgResult from pipeline.acmg.classifier
         clinvar_score: Optional[float] = None,
         computational_score: Optional[float] = None,
         ai_score: Optional[float] = None,
@@ -330,10 +345,7 @@ class EvidenceAggregator:
         eff_weights: Dict[str, float],
         composite: float,
     ) -> str:
-        parts = [
-            f"{k}={v:.4f}(w={eff_weights[k]:.3f})"
-            for k, v in present.items()
-        ]
+        parts = [f"{k}={v:.4f}(w={eff_weights[k]:.3f})" for k, v in present.items()]
         return f"Composite={composite:.4f} from: {', '.join(parts)}."
 
     # ── computational score helper ────────────────────────────────────────────
@@ -381,4 +393,5 @@ class EvidenceAggregator:
         if not significance:
             return None
         from pipeline.clinvar.lookup import ClinVarLookup
+
         return ClinVarLookup.sig_to_score(significance, stars)

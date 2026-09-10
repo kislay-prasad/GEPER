@@ -9,6 +9,7 @@ Runs maximum-likelihood estimation over 1000 Genomes superpopulations:
 
 Writes JSON and HTML ancestry reports to output_dir.
 """
+
 from __future__ import annotations
 
 import json
@@ -17,23 +18,24 @@ import math
 import os
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from pipeline.ancestry.markers import AIM_PANEL, POPULATIONS
 
 logger = logging.getLogger("geper.pipeline.ancestry")
 
-_MIN_MARKERS_HIGH = 30    # fraction of panel called → "High" confidence
-_MIN_MARKERS_MED  = 10    # fraction → "Medium"
-_EPSILON = 1e-10          # avoid log(0)
+_MIN_MARKERS_HIGH = 30  # fraction of panel called → "High" confidence
+_MIN_MARKERS_MED = 10  # fraction → "Medium"
+_EPSILON = 1e-10  # avoid log(0)
 
 
 # ─── Result dataclass ─────────────────────────────────────────────────────────
 
+
 @dataclass
 class AncestryResult:
     """Ancestry inference result for a sample."""
+
     sample_id: str = ""
     vcf_path: str = ""
     primary_population: str = "Unknown"
@@ -57,6 +59,7 @@ class AncestryResult:
 
 
 # ─── VCF genotype reader ──────────────────────────────────────────────────────
+
 
 def _parse_vcf_genotypes(
     vcf_path: str,
@@ -102,6 +105,7 @@ def _parse_vcf_genotypes(
 
 # ─── Genotype dosage ──────────────────────────────────────────────────────────
 
+
 def _alt_dosage(gt_present: bool) -> int:
     """Return alt-allele dosage: 2 if variant call present (hom-alt assumption),
     1 for heterozygous (treated as 1 alt copy), 0 for absent.
@@ -114,6 +118,7 @@ def _alt_dosage(gt_present: bool) -> int:
 
 
 # ─── Maximum-likelihood estimation ────────────────────────────────────────────
+
 
 def _mle_ancestry(
     called_markers: Dict[str, bool],  # rsid → True if alt allele observed
@@ -166,6 +171,7 @@ def _mle_ancestry(
 
 # ─── Confidence level ─────────────────────────────────────────────────────────
 
+
 def _confidence_level(markers_called: int) -> str:
     if markers_called >= _MIN_MARKERS_HIGH:
         return "High"
@@ -175,6 +181,7 @@ def _confidence_level(markers_called: int) -> str:
 
 
 # ─── Report generators ────────────────────────────────────────────────────────
+
 
 def _write_json_report(result: AncestryResult, output_dir: str) -> str:
     path = os.path.join(output_dir, "ancestry_report.json")
@@ -188,7 +195,7 @@ def _write_html_report(result: AncestryResult, output_dir: str) -> str:
     sorted_pops = sorted(result.population_probabilities.items(), key=lambda x: -x[1])
     pop_rows = "\n".join(
         f"<tr><td>{pop}</td><td>{prob:.4f}</td>"
-        f"<td><div style='background:#2980b9;height:14px;width:{int(prob*300)}px'></div></td></tr>"
+        f"<td><div style='background:#2980b9;height:14px;width:{int(prob * 300)}px'></div></td></tr>"
         for pop, prob in sorted_pops
     )
     html = f"""<!DOCTYPE html>
@@ -233,6 +240,7 @@ def _write_html_report(result: AncestryResult, output_dir: str) -> str:
 
 
 # ─── AncestryStage ────────────────────────────────────────────────────────────
+
 
 class AncestryStage:
     """Infer superpopulation ancestry from a VCF using AIM-based MLE.
@@ -290,7 +298,7 @@ class AncestryStage:
             marker = AIM_PANEL[rsid]
             # Check alleles match
             if ref.upper() == marker["ref"].upper() and alt.upper() == marker["alt"].upper():
-                called_markers[rsid] = True   # alt allele observed
+                called_markers[rsid] = True  # alt allele observed
 
         # Any AIM position not in VCF → ref-only (dosage 0)
         # Include all markers in likelihood (called + uncalled)
@@ -299,7 +307,9 @@ class AncestryStage:
             all_markers[rsid] = rsid in called_markers
 
         result.markers_called = len(called_markers)
-        logger.info("[Ancestry] %d/%d AIM markers called", result.markers_called, result.markers_evaluated)
+        logger.info(
+            "[Ancestry] %d/%d AIM markers called", result.markers_called, result.markers_evaluated
+        )
 
         # ── Maximum-likelihood estimation ─────────────────────────────────────
         if result.markers_called == 0:
@@ -316,7 +326,9 @@ class AncestryStage:
 
         logger.info(
             "[Ancestry] Primary: %s (%.3f), Confidence: %s",
-            primary, probs.get(primary, 0.0), result.confidence,
+            primary,
+            probs.get(primary, 0.0),
+            result.confidence,
         )
 
         # ── Write reports ─────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ import os
 import unittest
 
 from pipeline.acmg_rules import ACMGRuleEngine
-from pipeline.hpo.models import HPOGeneEvidence, HPOPhenotypeAssociation
+from pipeline.hpo.models import HPOGeneEvidence
 from pipeline.hpo.provider import CompositeHPOProvider, LocalDatasetHPOProvider
 from pipeline.hpo.utils import parse_genes_to_phenotype_row
 
@@ -55,10 +55,15 @@ def _load_raw_rows():
 # Row parsing -- pure, real fixture rows
 # ---------------------------------------------------------------------------
 
+
 class TestParseGenesToPhenotypeRow(unittest.TestCase):
     def test_real_fbn1_marfan_arachnodactyly_row_parses(self):
         rows = _load_raw_rows()
-        row = next(r for r in rows if r["gene_symbol"] == "FBN1" and r["hpo_id"] == "HP:0001166" and r["disease_id"] == "OMIM:154700")
+        row = next(
+            r
+            for r in rows
+            if r["gene_symbol"] == "FBN1" and r["hpo_id"] == "HP:0001166" and r["disease_id"] == "OMIM:154700"
+        )
         parsed = parse_genes_to_phenotype_row(row)
         self.assertIsNotNone(parsed)
         self.assertEqual(parsed.gene_symbol, "FBN1")
@@ -74,6 +79,7 @@ class TestParseGenesToPhenotypeRow(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # LocalDatasetHPOProvider -- real FBN1/CFTR ground truth
 # ---------------------------------------------------------------------------
+
 
 class TestLocalDatasetHPOProvider(unittest.TestCase):
     def test_fbn1_real_marfan_association_present(self):
@@ -111,6 +117,7 @@ class TestLocalDatasetHPOProvider(unittest.TestCase):
 # CompositeHPOProvider -- local-first / API-fallback routing
 # ---------------------------------------------------------------------------
 
+
 class _StubProvider:
     def __init__(self, name, result):
         self.name = name
@@ -124,14 +131,18 @@ class TestCompositeHPOProvider(unittest.TestCase):
     def test_local_hit_short_circuits_api(self):
         local_evidence = HPOGeneEvidence(gene_symbol="FBN1", source="local_dataset", found=True)
         api_provider = _StubProvider("api", HPOGeneEvidence.from_error("FBN1", "should not be called"))
-        composite = CompositeHPOProvider(local_provider=_StubProvider("local_dataset", local_evidence), api_provider=api_provider)
+        composite = CompositeHPOProvider(
+            local_provider=_StubProvider("local_dataset", local_evidence), api_provider=api_provider
+        )
         result = composite.query("FBN1")
         self.assertEqual(result.source, "local_dataset")
 
     def test_local_miss_falls_back_to_api(self):
         local_miss = HPOGeneEvidence.not_found("XYZ1", "local_dataset")
         api_hit = HPOGeneEvidence(gene_symbol="XYZ1", source="api", found=True)
-        composite = CompositeHPOProvider(local_provider=_StubProvider("local_dataset", local_miss), api_provider=_StubProvider("api", api_hit))
+        composite = CompositeHPOProvider(
+            local_provider=_StubProvider("local_dataset", local_miss), api_provider=_StubProvider("api", api_hit)
+        )
         result = composite.query("XYZ1")
         self.assertEqual(result.source, "api")
 
@@ -148,6 +159,7 @@ class TestCompositeHPOProvider(unittest.TestCase):
 # PP4 -- real FBN1 ground truth, through the full rule engine
 # ---------------------------------------------------------------------------
 
+
 def _fbn1_evidence_dict():
     return _local_provider().query("FBN1").to_dict()
 
@@ -158,7 +170,9 @@ def _fbn1_marfan_only_evidence_dict():
     marfan_rows = [r for r in rows if r["gene_symbol"] == "FBN1" and r["disease_id"] == "OMIM:154700"]
     associations = [parse_genes_to_phenotype_row(r) for r in marfan_rows]
     associations = [a for a in associations if a is not None]
-    evidence = HPOGeneEvidence(gene_symbol="FBN1", source="local_dataset", found=True, phenotype_associations=associations, ncbi_gene_id="2200")
+    evidence = HPOGeneEvidence(
+        gene_symbol="FBN1", source="local_dataset", found=True, phenotype_associations=associations, ncbi_gene_id="2200"
+    )
     return evidence.to_dict()
 
 

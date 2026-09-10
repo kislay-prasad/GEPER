@@ -22,7 +22,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
-from geper.pipeline.fastq.pipeline import FastqPipelineError, _require, _run
+from geper.pipeline.fastq.pipeline import FastqPipelineError, _run
 from pipeline.utils.reference_cache import ReferenceCacheError, ensure_bwa_index
 
 logger = logging.getLogger("geper.pipeline.alignment.bwa")

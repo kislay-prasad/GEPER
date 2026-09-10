@@ -24,7 +24,6 @@ from typing import Any, Dict, List, Optional
 from config import CONFIG
 from pipeline.clingen.utils import GeneResolution, GeneResolutionStatus, resolve_gene_symbol_detail
 from pipeline.uniprot.cache import UniProtCache
-from pipeline.uniprot.models import UniProtAnnotation
 from pipeline.uniprot.provider import CompositeUniProtProvider
 from pipeline.uniprot.utils import gene_cache_key, normalize_gene_symbol
 from pipeline.vcf_parser import Variant
@@ -32,7 +31,11 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SKIPPED_RESULT = {"skipped": True, "reason": "UniProt integration disabled via GEPER_ENABLE_UNIPROT=false", "found": False}
+_SKIPPED_RESULT = {
+    "skipped": True,
+    "reason": "UniProt integration disabled via GEPER_ENABLE_UNIPROT=false",
+    "found": False,
+}
 
 
 class UniProtLookup:
@@ -142,7 +145,10 @@ class UniProtLookup:
         return result
 
     def query_variants_batch(
-        self, variants: List[Variant], assembly: Optional[str] = None, gene_symbol_hints: Optional[List[Optional[str]]] = None
+        self,
+        variants: List[Variant],
+        assembly: Optional[str] = None,
+        gene_symbol_hints: Optional[List[Optional[str]]] = None,
     ) -> List[Dict[str, Any]]:
         """Batch lookup for an up-front prefetch pass over a whole VCF, mirroring `ClinGenLookup.query_variants_batch`."""
         if not CONFIG.uniprot.ENABLED:
@@ -213,7 +219,11 @@ class UniProtLookup:
                     }
                 )
                 continue
-            result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
+            result = (
+                cached_by_gene.get(gene_symbol)
+                or fetched_by_gene.get(gene_symbol)
+                or {"skipped": False, "found": False}
+            )
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
             if resolution is not None:

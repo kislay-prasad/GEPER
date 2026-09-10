@@ -19,14 +19,17 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from pipeline.orphanet.cache import OrphanetCache
-from pipeline.orphanet.models import OrphanetGeneEvidence
 from pipeline.orphanet.provider import CompositeOrphanetProvider
 from pipeline.orphanet.utils import gene_cache_key, normalize_gene_symbol
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SKIPPED_RESULT = {"skipped": True, "reason": "Orphanet integration disabled via GEPER_ENABLE_ORPHANET=false", "found": False}
+_SKIPPED_RESULT = {
+    "skipped": True,
+    "reason": "Orphanet integration disabled via GEPER_ENABLE_ORPHANET=false",
+    "found": False,
+}
 
 
 class OrphanetLookup:
@@ -129,9 +132,20 @@ class OrphanetLookup:
         for gene_symbol in gene_symbols:
             gene_symbol = normalize_gene_symbol(gene_symbol)
             if not gene_symbol:
-                results.append({"skipped": False, "found": False, "gene_symbol": None, "reason": "no overlapping gene annotation resolved"})
+                results.append(
+                    {
+                        "skipped": False,
+                        "found": False,
+                        "gene_symbol": None,
+                        "reason": "no overlapping gene annotation resolved",
+                    }
+                )
                 continue
-            result = cached_by_gene.get(gene_symbol) or fetched_by_gene.get(gene_symbol) or {"skipped": False, "found": False}
+            result = (
+                cached_by_gene.get(gene_symbol)
+                or fetched_by_gene.get(gene_symbol)
+                or {"skipped": False, "found": False}
+            )
             result = dict(result)
             result.setdefault("gene_symbol", gene_symbol)
             results.append(result)

@@ -22,7 +22,6 @@ import unittest
 import zlib
 
 from pipeline.raw_input_validator import (
-    ValidationResult,
     sniff_format,
     validate_bam,
     validate_cram,
@@ -110,6 +109,7 @@ class _TmpDirTestCase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # FASTQ
 # ---------------------------------------------------------------------------
+
 
 class TestValidateFastqValid(_TmpDirTestCase):
     def test_valid_plain_fastq_passes(self):
@@ -209,6 +209,7 @@ class TestValidateFastqWrongFileType(_TmpDirTestCase):
 # BAM
 # ---------------------------------------------------------------------------
 
+
 class TestValidateBamValid(_TmpDirTestCase):
     def test_valid_bam_without_index_passes_with_warning(self):
         path = _write(self.tmpdir, "valid.bam", _make_valid_bam_bytes())
@@ -245,14 +246,18 @@ class TestValidateBamTruncated(_TmpDirTestCase):
         path = _write(self.tmpdir, "truncated.bam", truncated)
         result = validate_bam(path)
         self.assertFalse(result.is_valid)
-        self.assertTrue(any("truncated" in e.lower() or "corrupt" in e.lower() for e in result.errors), msg=result.errors)
+        self.assertTrue(
+            any("truncated" in e.lower() or "corrupt" in e.lower() for e in result.errors), msg=result.errors
+        )
 
     def test_bam_truncated_inside_header_text_fails(self):
         # Corrupt the header more surgically: rebuild the BAM payload
         # but chop it off partway through the declared SAM header text,
         # so the BGZF/gzip layer is intact but the BAM header itself is incomplete.
         header_text = b"@HD\tVN:1.6\tSO:coordinate\n@SQ\tSN:chr1\tLN:248956422\n"
-        payload = b"BAM\x01" + struct.pack("<i", len(header_text)) + header_text[:10]  # declare full length, provide only 10 bytes
+        payload = (
+            b"BAM\x01" + struct.pack("<i", len(header_text)) + header_text[:10]
+        )  # declare full length, provide only 10 bytes
         path = _write(self.tmpdir, "truncated_header.bam", _bgzf_compress(payload))
         result = validate_bam(path)
         self.assertFalse(result.is_valid)
@@ -313,6 +318,7 @@ class TestValidateBaiIndex(_TmpDirTestCase):
 # CRAM
 # ---------------------------------------------------------------------------
 
+
 class TestValidateCramValid(_TmpDirTestCase):
     def test_valid_cram_file_definition_passes(self):
         path = _write(self.tmpdir, "valid.cram", _make_valid_cram_bytes())
@@ -352,6 +358,7 @@ class TestValidateCramWrongFileType(_TmpDirTestCase):
 # ---------------------------------------------------------------------------
 # sniff_format + dispatcher
 # ---------------------------------------------------------------------------
+
 
 class TestSniffFormat(_TmpDirTestCase):
     def test_sniffs_each_real_fixture_correctly(self):

@@ -29,7 +29,6 @@ math, its cache, its batching/fallback logic) runs unmodified.
 """
 
 import sys
-from typing import Dict
 from unittest import mock
 
 import os as _os
@@ -141,24 +140,20 @@ def main() -> int:
     _get_call_count["n"] = 0
     with mock.patch.object(requests.Session, "get", _fake_session_get):
         gen_unbatched = SequenceContextGenerator(species="human", assembly="GRCh38")
-        baseline = {
-            (v.chrom, v.pos): gen_unbatched.build_context(v, flank_size=10).ref_sequence
-            for v in variants
-        }
+        baseline = {(v.chrom, v.pos): gen_unbatched.build_context(v, flank_size=10).ref_sequence for v in variants}
     baseline_gets = _get_call_count["n"]
 
     # Optimized run: prefetch first (batched POST), then build_context
     # for every variant -- should hit the cache every time (0 GETs).
     _get_call_count["n"] = 0
     _post_call_count["n"] = 0
-    with mock.patch.object(requests.Session, "get", _fake_session_get), \
-         mock.patch.object(requests.Session, "post", _fake_session_post):
+    with (
+        mock.patch.object(requests.Session, "get", _fake_session_get),
+        mock.patch.object(requests.Session, "post", _fake_session_post),
+    ):
         gen_batched = SequenceContextGenerator(species="human", assembly="GRCh38")
         gen_batched.prefetch_regions(variants, lambda v: 10)
-        optimized = {
-            (v.chrom, v.pos): gen_batched.build_context(v, flank_size=10).ref_sequence
-            for v in variants
-        }
+        optimized = {(v.chrom, v.pos): gen_batched.build_context(v, flank_size=10).ref_sequence for v in variants}
 
     print(f"  Baseline (unbatched) GETs: {baseline_gets}")
     print(f"  Optimized POSTs: {_post_call_count['n']}, GETs after prefetch: {_get_call_count['n']}")
@@ -171,7 +166,9 @@ def main() -> int:
         print("  FAILURE: expected 0 individual GETs after a fully successful prefetch.")
         part2_ok = False
     if _post_call_count["n"] != 1:
-        print(f"  FAILURE: expected exactly 1 batch POST for 3 variants under batch_size=50, got {_post_call_count['n']}.")
+        print(
+            f"  FAILURE: expected exactly 1 batch POST for 3 variants under batch_size=50, got {_post_call_count['n']}."
+        )
         part2_ok = False
 
     print("PART 2:", "PASSED" if part2_ok else "FAILED")
@@ -187,8 +184,10 @@ def main() -> int:
         raise requests.exceptions.ConnectionError("simulated Ensembl outage")
 
     _get_call_count["n"] = 0
-    with mock.patch.object(requests.Session, "get", _fake_session_get), \
-         mock.patch.object(requests.Session, "post", _broken_post):
+    with (
+        mock.patch.object(requests.Session, "get", _fake_session_get),
+        mock.patch.object(requests.Session, "post", _broken_post),
+    ):
         gen_fallback = SequenceContextGenerator(species="human", assembly="GRCh38")
         try:
             gen_fallback.prefetch_regions(variants, lambda v: 10)
@@ -197,8 +196,7 @@ def main() -> int:
             part3_ok = False
 
         fallback_result = {
-            (v.chrom, v.pos): gen_fallback.build_context(v, flank_size=10).ref_sequence
-            for v in variants
+            (v.chrom, v.pos): gen_fallback.build_context(v, flank_size=10).ref_sequence for v in variants
         }
 
     print(f"  GETs after failed prefetch: {_get_call_count['n']} (expected {len(variants)}, one per variant)")
@@ -217,13 +215,14 @@ def main() -> int:
         return _FakeResponse([{"seq": "AC"}] * len(json["regions"]))  # wrong length
 
     _get_call_count["n"] = 0
-    with mock.patch.object(requests.Session, "get", _fake_session_get), \
-         mock.patch.object(requests.Session, "post", _malformed_post):
+    with (
+        mock.patch.object(requests.Session, "get", _fake_session_get),
+        mock.patch.object(requests.Session, "post", _malformed_post),
+    ):
         gen_malformed = SequenceContextGenerator(species="human", assembly="GRCh38")
         gen_malformed.prefetch_regions(variants, lambda v: 10)
         malformed_result = {
-            (v.chrom, v.pos): gen_malformed.build_context(v, flank_size=10).ref_sequence
-            for v in variants
+            (v.chrom, v.pos): gen_malformed.build_context(v, flank_size=10).ref_sequence for v in variants
         }
     print(f"  GETs after malformed-batch prefetch: {_get_call_count['n']} (expected {len(variants)})")
     if _get_call_count["n"] != len(variants):

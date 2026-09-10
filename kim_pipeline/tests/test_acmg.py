@@ -3,12 +3,12 @@ tests/test_acmg.py
 ──────────────────
 Unit tests for pipeline.acmg.classifier.AcmgClassifier and VariantEvidence.
 """
-import pytest
 
 from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence, AcmgResult
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _clf(cfg: dict | None = None) -> AcmgClassifier:
     return AcmgClassifier(cfg=cfg or {})
@@ -20,10 +20,14 @@ def _classify(evidence: VariantEvidence, cfg: dict | None = None) -> AcmgResult:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
+
 def test_pathogenic_pvs1_ps1():
     """PVS1 + PS1 → Pathogenic."""
     ev = VariantEvidence(
-        chrom="17", pos=43057051, ref="A", alt="T",
+        chrom="17",
+        pos=43057051,
+        ref="A",
+        alt="T",
         gene="BRCA1",
         is_lof=True,
         lof_gene_intolerant=True,
@@ -38,7 +42,10 @@ def test_pathogenic_pvs1_ps1():
 def test_likely_pathogenic_pm2_pp3_pp5():
     """Low AF + damaging in-silico + ClinVar Pathogenic + hotspot → LP or P."""
     ev = VariantEvidence(
-        chrom="17", pos=43057051, ref="A", alt="T",
+        chrom="17",
+        pos=43057051,
+        ref="A",
+        alt="T",
         gene="BRCA1",
         gnomad_af=0.000001,
         cadd_phred=35.0,
@@ -46,7 +53,7 @@ def test_likely_pathogenic_pm2_pp3_pp5():
         clinvar_significance="Pathogenic",
         clinvar_stars=2,
         clinvar_conflicting=False,
-        in_hotspot=True,       # triggers PM1 → now PM1+PM2+PP3+PP5 → P/LP
+        in_hotspot=True,  # triggers PM1 → now PM1+PM2+PP3+PP5 → P/LP
         is_missense=True,
     )
     result = _classify(ev)
@@ -59,7 +66,10 @@ def test_likely_pathogenic_pm2_pp3_pp5():
 def test_benign_ba1():
     """Very high population AF (≥ BA1 threshold) → Benign."""
     ev = VariantEvidence(
-        chrom="1", pos=100000, ref="A", alt="G",
+        chrom="1",
+        pos=100000,
+        ref="A",
+        alt="G",
         gnomad_af=0.10,
     )
     result = _classify(ev)
@@ -70,7 +80,10 @@ def test_benign_ba1():
 def test_likely_benign_bp4():
     """All in-silico predictors benign + BS1 (high AF) → BP4+BS1 → Likely_Benign or Benign."""
     ev = VariantEvidence(
-        chrom="2", pos=200000, ref="C", alt="T",
+        chrom="2",
+        pos=200000,
+        ref="C",
+        alt="T",
         # AF above PM2 threshold (0.0001) so PM2 not triggered; below BA1 (0.05)
         gnomad_af=0.01,
         gnomad_af_popmax=0.01,
@@ -86,7 +99,10 @@ def test_likely_benign_bp4():
 def test_vus_no_evidence():
     """No evidence fields set → Uncertain_Significance."""
     ev = VariantEvidence(
-        chrom="3", pos=300000, ref="G", alt="A",
+        chrom="3",
+        pos=300000,
+        ref="G",
+        alt="A",
     )
     result = _classify(ev)
     assert result.classification == "Uncertain_Significance"
@@ -98,7 +114,9 @@ def test_score_is_normalised():
         VariantEvidence(gnomad_af=0.10),  # Benign
         VariantEvidence(is_lof=True, lof_gene_intolerant=True, same_aa_pathogenic=True),  # Path
         VariantEvidence(),  # VUS
-        VariantEvidence(cadd_phred=50.0, revel_score=0.99, clinvar_significance="Pathogenic", clinvar_stars=3),
+        VariantEvidence(
+            cadd_phred=50.0, revel_score=0.99, clinvar_significance="Pathogenic", clinvar_stars=3
+        ),
     ]
     clf = _clf()
     for ev in test_cases:

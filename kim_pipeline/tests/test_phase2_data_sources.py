@@ -6,12 +6,11 @@ Tests for Phase 2 real data sources:
   - HotspotLookup           (ClinVar P/LP counts + UniProt domains → in_hotspot)
   - FastaCodonContextProvider (missense/synonymous/stop_gained/stop_lost/start_lost)
 """
+
 from __future__ import annotations
 
 import gzip
-import os
 import sys
-import textwrap
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,11 +32,12 @@ from pipeline.annotation.stage import NoCdsCodonContextProvider
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _write_constraint_tsv(path: Path, rows: list[dict]) -> None:
     """Write a minimal gnomAD constraint TSV."""
     header = "gene\ttranscript\tpLI\toe_lof_upper\n"
     lines = [
-        f"{r['gene']}\t{r.get('transcript','NM_000')}\t{r['pLI']}\t{r['oe_lof_upper']}\n"
+        f"{r['gene']}\t{r.get('transcript', 'NM_000')}\t{r['pLI']}\t{r['oe_lof_upper']}\n"
         for r in rows
     ]
     path.write_text(header + "".join(lines))
@@ -51,9 +51,9 @@ def _write_clinvar_tsv(path: Path, rows: list[dict]) -> None:
     )
     lines = [
         (
-            f"{r['chrom']}\t{r['pos']}\t{r.get('ref','A')}\t{r.get('alt','T')}\t"
-            f"{r['sig']}\t{r.get('type','single nucleotide variant')}\t"
-            f"{r.get('gene','GENE1')}\n"
+            f"{r['chrom']}\t{r['pos']}\t{r.get('ref', 'A')}\t{r.get('alt', 'T')}\t"
+            f"{r['sig']}\t{r.get('type', 'single nucleotide variant')}\t"
+            f"{r.get('gene', 'GENE1')}\n"
         )
         for r in rows
     ]
@@ -63,10 +63,7 @@ def _write_clinvar_tsv(path: Path, rows: list[dict]) -> None:
 
 def _write_domains_bed(path: Path, intervals: list[tuple]) -> None:
     """Write a minimal UniProt domains BED file (0-based coords)."""
-    lines = [
-        f"{chrom}\t{start}\t{end}\t{name}\n"
-        for chrom, start, end, name in intervals
-    ]
+    lines = [f"{chrom}\t{start}\t{end}\t{name}\n" for chrom, start, end, name in intervals]
     path.write_text("".join(lines))
 
 
@@ -76,7 +73,7 @@ def _write_fasta(path: Path, seqs: dict[str, str]) -> None:
     for name, seq in seqs.items():
         lines.append(f">{name}\n")
         for i in range(0, len(seq), 60):
-            lines.append(seq[i:i+60] + "\n")
+            lines.append(seq[i : i + 60] + "\n")
     path.write_text("".join(lines))
 
 
@@ -118,13 +115,16 @@ def _write_gff3_minus_strand(path: Path) -> None:
 # GnomadConstraintLookup
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TestGnomadConstraintLookup:
 
+class TestGnomadConstraintLookup:
     def test_loads_tsv_and_returns_record(self, tmp_path):
         tsv = tmp_path / "constraint.tsv"
-        _write_constraint_tsv(tsv, [
-            {"gene": "BRCA1", "pLI": "0.99", "oe_lof_upper": "0.25"},
-        ])
+        _write_constraint_tsv(
+            tsv,
+            [
+                {"gene": "BRCA1", "pLI": "0.99", "oe_lof_upper": "0.25"},
+            ],
+        )
         lkp = GnomadConstraintLookup({"gnomad_constraint": {"tsv_path": str(tsv)}})
         rec = lkp.lookup("BRCA1")
         assert rec is not None
@@ -207,13 +207,15 @@ class TestGnomadConstraintLookup:
         lkp = GnomadConstraintLookup({"gnomad_constraint": {"tsv_path": str(tsv)}})
         assert lkp.is_lof_intolerant("GENE4") is False
         # With relaxed thresholds: intolerant
-        lkp2 = GnomadConstraintLookup({
-            "gnomad_constraint": {
-                "tsv_path": str(tsv),
-                "pli_threshold": 0.8,
-                "loeuf_threshold": 0.45,
+        lkp2 = GnomadConstraintLookup(
+            {
+                "gnomad_constraint": {
+                    "tsv_path": str(tsv),
+                    "pli_threshold": 0.8,
+                    "loeuf_threshold": 0.45,
+                }
             }
-        })
+        )
         assert lkp2.is_lof_intolerant("GENE4") is True
 
     def test_constraint_record_is_lof_intolerant_method(self):
@@ -229,15 +231,18 @@ class TestGnomadConstraintLookup:
 # HotspotLookup
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class TestHotspotLookup:
 
+class TestHotspotLookup:
     def test_position_with_3_plp_is_hotspot(self, tmp_path):
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
-            {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
-            {"chrom": "17", "pos": "43057051", "sig": "Likely pathogenic"},
-        ])
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
+                {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
+                {"chrom": "17", "pos": "43057051", "sig": "Likely pathogenic"},
+            ],
+        )
         lkp = HotspotLookup({"hotspot": {"clinvar_tsv_gz_path": str(tsv_gz)}})
         rec = lkp.lookup("chr17", 43057051)
         assert rec.plp_count == 3
@@ -245,10 +250,13 @@ class TestHotspotLookup:
 
     def test_position_with_2_plp_not_hotspot(self, tmp_path):
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
-            {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
-        ])
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
+                {"chrom": "17", "pos": "43057051", "sig": "Pathogenic"},
+            ],
+        )
         lkp = HotspotLookup({"hotspot": {"clinvar_tsv_gz_path": str(tsv_gz)}})
         rec = lkp.lookup("chr17", 43057051)
         assert rec.plp_count == 2
@@ -256,11 +264,14 @@ class TestHotspotLookup:
 
     def test_benign_submissions_not_counted(self, tmp_path):
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "17", "pos": "100", "sig": "Benign"},
-            {"chrom": "17", "pos": "100", "sig": "Likely benign"},
-            {"chrom": "17", "pos": "100", "sig": "Pathogenic"},
-        ])
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "17", "pos": "100", "sig": "Benign"},
+                {"chrom": "17", "pos": "100", "sig": "Likely benign"},
+                {"chrom": "17", "pos": "100", "sig": "Pathogenic"},
+            ],
+        )
         lkp = HotspotLookup({"hotspot": {"clinvar_tsv_gz_path": str(tsv_gz)}})
         rec = lkp.lookup("17", 100)
         assert rec.plp_count == 1
@@ -268,11 +279,14 @@ class TestHotspotLookup:
 
     def test_chrom_normalisation_chr_prefix(self, tmp_path):
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
-            {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
-            {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
-        ])
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
+                {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
+                {"chrom": "1", "pos": "200", "sig": "Pathogenic"},
+            ],
+        )
         lkp = HotspotLookup({"hotspot": {"clinvar_tsv_gz_path": str(tsv_gz)}})
         # Query with chr prefix
         assert lkp.lookup("chr1", 200).is_hotspot is True
@@ -281,14 +295,21 @@ class TestHotspotLookup:
 
     def test_custom_min_plp_count(self, tmp_path):
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "1", "pos": "500", "sig": "Pathogenic"},
-            {"chrom": "1", "pos": "500", "sig": "Pathogenic"},
-        ])
-        lkp = HotspotLookup({"hotspot": {
-            "clinvar_tsv_gz_path": str(tsv_gz),
-            "min_plp_count": 2,
-        }})
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "1", "pos": "500", "sig": "Pathogenic"},
+                {"chrom": "1", "pos": "500", "sig": "Pathogenic"},
+            ],
+        )
+        lkp = HotspotLookup(
+            {
+                "hotspot": {
+                    "clinvar_tsv_gz_path": str(tsv_gz),
+                    "min_plp_count": 2,
+                }
+            }
+        )
         assert lkp.lookup("1", 500).is_hotspot is True
 
     def test_uniprot_domain_overlap(self, tmp_path):
@@ -321,11 +342,14 @@ class TestHotspotLookup:
     def test_reuses_clinvar_cfg_key(self, tmp_path):
         """hotspot.clinvar_tsv_gz_path should also accept clinvar.tsv_gz_path."""
         tsv_gz = tmp_path / "clinvar.tsv.gz"
-        _write_clinvar_tsv(tsv_gz, [
-            {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
-            {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
-            {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
-        ])
+        _write_clinvar_tsv(
+            tsv_gz,
+            [
+                {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
+                {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
+                {"chrom": "2", "pos": "9999", "sig": "Pathogenic"},
+            ],
+        )
         # Pass via clinvar config key
         lkp = HotspotLookup({"clinvar": {"tsv_gz_path": str(tsv_gz)}})
         assert lkp.lookup("2", 9999).is_hotspot is True
@@ -334,6 +358,7 @@ class TestHotspotLookup:
 # ═══════════════════════════════════════════════════════════════════════════════
 # FastaCodonContextProvider
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestCodonHelpers:
     def test_translate_met(self):
@@ -447,9 +472,7 @@ class TestFastaCodonContextProvider:
         assert p._available is False
 
     def test_unavailable_provider_raises(self, tmp_path):
-        p = FastaCodonContextProvider(
-            str(tmp_path / "no.gff"), str(tmp_path / "no.fa")
-        )
+        p = FastaCodonContextProvider(str(tmp_path / "no.gff"), str(tmp_path / "no.fa"))
         with pytest.raises(NotImplementedError):
             p.get_codon_change("chr1", 1, "A", "T", "NM_X")
 
@@ -459,6 +482,7 @@ class TestMakeCodonProviderFromCfg:
 
     def test_returns_no_cds_when_no_fasta(self, tmp_path):
         from pipeline.annotation.codon_provider import make_codon_provider_from_cfg
+
         gff = tmp_path / "test.gff3"
         _write_gff3_with_cds(gff)
         cfg = {"rna_analysis": {"refseq_gff": str(gff)}}
@@ -468,6 +492,7 @@ class TestMakeCodonProviderFromCfg:
 
     def test_returns_fasta_provider_when_both_configured(self, tmp_path):
         from pipeline.annotation.codon_provider import make_codon_provider_from_cfg
+
         gff = tmp_path / "test.gff3"
         _write_gff3_with_cds(gff)
 
@@ -488,14 +513,14 @@ class TestMakeCodonProviderFromCfg:
 # Integration: AnnotationStage consequence with real codon provider
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAnnotationStageWithCodonProvider:
     """End-to-end: AnnotationStage resolves missense/synonymous when FASTA is present."""
 
     def _write_vcf(self, path: Path, records: list) -> None:
         path.write_text(
             "##fileformat=VCFv4.2\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-            + "".join(records)
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n" + "".join(records)
         )
 
     @staticmethod

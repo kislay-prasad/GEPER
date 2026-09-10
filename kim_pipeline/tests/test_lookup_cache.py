@@ -9,12 +9,13 @@ Covers:
 - clear_cache() resets the cache and next lookup is a miss
 - All 4 lookup classes: ClinVar, gnomAD, Constraint, Hotspot
 """
+
 from __future__ import annotations
 
 import sys
 import os
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -26,8 +27,8 @@ from pipeline.hotspot.lookup import HotspotLookup
 
 # ─── ClinVar Cache Tests ──────────────────────────────────────────────────────
 
-class TestClinVarCache(unittest.TestCase):
 
+class TestClinVarCache(unittest.TestCase):
     def _make_lookup(self) -> ClinVarLookup:
         """Create ClinVarLookup with no real backend."""
         lkp = ClinVarLookup(cfg={})
@@ -50,9 +51,9 @@ class TestClinVarCache(unittest.TestCase):
         lkp = self._make_lookup()
         fake_hit = ClinVarHit("Benign", 1, 1, "CV001", False)
         with patch.object(lkp, "_api_lookup", return_value=fake_hit):
-            lkp.lookup("1", 100, "A", "G")   # miss
-            lkp.lookup("1", 100, "A", "G")   # hit
-            lkp.lookup("1", 200, "C", "T")   # miss
+            lkp.lookup("1", 100, "A", "G")  # miss
+            lkp.lookup("1", 100, "A", "G")  # hit
+            lkp.lookup("1", 200, "C", "T")  # miss
 
         stats = lkp.cache_stats()
         self.assertEqual(stats["hits"], 1)
@@ -64,9 +65,9 @@ class TestClinVarCache(unittest.TestCase):
         lkp = self._make_lookup()
         fake_hit = ClinVarHit("Pathogenic", 2, 1, "CV999", False)
         with patch.object(lkp, "_api_lookup", return_value=fake_hit) as mock_api:
-            lkp.lookup("2", 500, "G", "A")   # miss #1
+            lkp.lookup("2", 500, "G", "A")  # miss #1
             lkp.clear_cache()
-            lkp.lookup("2", 500, "G", "A")   # miss #2 after clear
+            lkp.lookup("2", 500, "G", "A")  # miss #2 after clear
             self.assertEqual(mock_api.call_count, 2)
 
         stats = lkp.cache_stats()
@@ -103,14 +104,14 @@ class TestClinVarCache(unittest.TestCase):
         fake = ClinVarHit("VUS", 0, 0, "CV0", False)
         with patch.object(lkp, "_api_lookup", return_value=fake) as mock_api:
             lkp.lookup("chr1", 100, "A", "G")
-            lkp.lookup("1", 100, "A", "G")   # same after normalisation
+            lkp.lookup("1", 100, "A", "G")  # same after normalisation
         self.assertEqual(mock_api.call_count, 1)
 
 
 # ─── gnomAD Cache Tests ───────────────────────────────────────────────────────
 
-class TestGnomadCache(unittest.TestCase):
 
+class TestGnomadCache(unittest.TestCase):
     def _make_lookup(self) -> GnomadLookup:
         lkp = GnomadLookup(cfg={})
         lkp._backend = "api"
@@ -170,8 +171,8 @@ class TestGnomadCache(unittest.TestCase):
 
 # ─── Constraint Cache Tests ───────────────────────────────────────────────────
 
-class TestConstraintCache(unittest.TestCase):
 
+class TestConstraintCache(unittest.TestCase):
     def _make_lookup(self) -> GnomadConstraintLookup:
         lkp = GnomadConstraintLookup(cfg={})
         lkp._backend = "api"
@@ -216,8 +217,8 @@ class TestConstraintCache(unittest.TestCase):
 
 # ─── Hotspot Cache Tests ──────────────────────────────────────────────────────
 
-class TestHotspotCache(unittest.TestCase):
 
+class TestHotspotCache(unittest.TestCase):
     def _make_lookup(self) -> HotspotLookup:
         lkp = HotspotLookup(cfg={})
         return lkp

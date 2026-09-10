@@ -11,7 +11,7 @@ import unittest
 
 import numpy as np
 
-from pipeline.models.mmsplice.models import EligibilityResult, ExonAnnotation, ModularScores
+from pipeline.models.mmsplice.models import ExonAnnotation, ModularScores
 from pipeline.models.mmsplice.utils import (
     SeqSplitter,
     classify_region,
@@ -28,9 +28,7 @@ from pipeline.models.mmsplice.utils import (
 class TestOneHotEncoding(unittest.TestCase):
     def test_encodes_acgt_correctly(self):
         encoded = one_hot_encode("ACGT")
-        expected = np.array(
-            [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float32
-        )
+        expected = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float32)
         np.testing.assert_array_equal(encoded, expected)
 
     def test_n_and_unknown_bases_are_all_zero(self):
@@ -129,9 +127,7 @@ class TestLogit(unittest.TestCase):
 
 
 def _exon(start=1000, end=1100, strand=1):
-    return ExonAnnotation(
-        chrom="1", start=start, end=end, strand=strand, exon_id="ENSE1", transcript_id="ENST1"
-    )
+    return ExonAnnotation(chrom="1", start=start, end=end, strand=strand, exon_id="ENSE1", transcript_id="ENST1")
 
 
 class TestDistancesAndEligibility(unittest.TestCase):
@@ -178,27 +174,39 @@ class TestDistancesAndEligibility(unittest.TestCase):
 
     def test_eligibility_rejects_unsupported_variant_type(self):
         result = evaluate_eligibility(
-            variant_type="MNV", supported_variant_types=("SNV", "insertion", "deletion"),
-            dist_to_acceptor=10, dist_to_donor=-90, exon_length=100,
-            intron_window=100, exon_near_splice_window=50,
+            variant_type="MNV",
+            supported_variant_types=("SNV", "insertion", "deletion"),
+            dist_to_acceptor=10,
+            dist_to_donor=-90,
+            exon_length=100,
+            intron_window=100,
+            exon_near_splice_window=50,
         )
         self.assertFalse(result.eligible)
         self.assertIn("MNV", result.reason)
 
     def test_eligibility_accepts_intronic_snv(self):
         result = evaluate_eligibility(
-            variant_type="SNV", supported_variant_types=("SNV", "insertion", "deletion"),
-            dist_to_acceptor=10, dist_to_donor=-90, exon_length=100,
-            intron_window=100, exon_near_splice_window=50,
+            variant_type="SNV",
+            supported_variant_types=("SNV", "insertion", "deletion"),
+            dist_to_acceptor=10,
+            dist_to_donor=-90,
+            exon_length=100,
+            intron_window=100,
+            exon_near_splice_window=50,
         )
         self.assertTrue(result.eligible)
         self.assertEqual(result.region, "intronic_near_acceptor")
 
     def test_eligibility_rejects_deep_intronic_snv(self):
         result = evaluate_eligibility(
-            variant_type="SNV", supported_variant_types=("SNV", "insertion", "deletion"),
-            dist_to_acceptor=500, dist_to_donor=-600, exon_length=100,
-            intron_window=100, exon_near_splice_window=50,
+            variant_type="SNV",
+            supported_variant_types=("SNV", "insertion", "deletion"),
+            dist_to_acceptor=500,
+            dist_to_donor=-600,
+            exon_length=100,
+            intron_window=100,
+            exon_near_splice_window=50,
         )
         self.assertFalse(result.eligible)
         self.assertIn("outside", result.reason)
@@ -207,54 +215,81 @@ class TestDistancesAndEligibility(unittest.TestCase):
 class TestInterpretationText(unittest.TestCase):
     def _thresholds(self):
         return dict(
-            moderate_threshold=2.0, strong_threshold=5.0, site_loss_threshold=2.5,
-            exon_skipping_threshold=2.0, intron_retention_threshold=2.0,
+            moderate_threshold=2.0,
+            strong_threshold=5.0,
+            site_loss_threshold=2.5,
+            exon_skipping_threshold=2.0,
+            intron_retention_threshold=2.0,
         )
 
     def test_no_disruption(self):
         text, category, confidence = generate_interpretation(
-            delta_logit_psi=0.1, donor_delta=0.0, acceptor_delta=0.0,
-            exon_skipping_score=0.0, intron_retention_score=0.0, **self._thresholds(),
+            delta_logit_psi=0.1,
+            donor_delta=0.0,
+            acceptor_delta=0.0,
+            exon_skipping_score=0.0,
+            intron_retention_score=0.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "No predicted splice disruption.")
         self.assertEqual(category, "none")
 
     def test_moderate_disruption(self):
         text, category, _ = generate_interpretation(
-            delta_logit_psi=3.0, donor_delta=-1.0, acceptor_delta=-1.0,
-            exon_skipping_score=0.0, intron_retention_score=0.0, **self._thresholds(),
+            delta_logit_psi=3.0,
+            donor_delta=-1.0,
+            acceptor_delta=-1.0,
+            exon_skipping_score=0.0,
+            intron_retention_score=0.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "Moderate splice disruption.")
         self.assertEqual(category, "moderate")
 
     def test_strong_donor_loss(self):
         text, category, _ = generate_interpretation(
-            delta_logit_psi=-6.0, donor_delta=-6.0, acceptor_delta=-0.1,
-            exon_skipping_score=0.0, intron_retention_score=0.0, **self._thresholds(),
+            delta_logit_psi=-6.0,
+            donor_delta=-6.0,
+            acceptor_delta=-0.1,
+            exon_skipping_score=0.0,
+            intron_retention_score=0.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "Strong donor site loss.")
         self.assertEqual(category, "strong_donor_loss")
 
     def test_strong_acceptor_loss(self):
         text, category, _ = generate_interpretation(
-            delta_logit_psi=-6.0, donor_delta=-0.1, acceptor_delta=-6.0,
-            exon_skipping_score=0.0, intron_retention_score=0.0, **self._thresholds(),
+            delta_logit_psi=-6.0,
+            donor_delta=-0.1,
+            acceptor_delta=-6.0,
+            exon_skipping_score=0.0,
+            intron_retention_score=0.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "Strong acceptor site loss.")
         self.assertEqual(category, "strong_acceptor_loss")
 
     def test_exon_skipping_takes_priority(self):
         text, category, _ = generate_interpretation(
-            delta_logit_psi=-6.0, donor_delta=-6.0, acceptor_delta=-6.0,
-            exon_skipping_score=3.0, intron_retention_score=0.0, **self._thresholds(),
+            delta_logit_psi=-6.0,
+            donor_delta=-6.0,
+            acceptor_delta=-6.0,
+            exon_skipping_score=3.0,
+            intron_retention_score=0.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "Likely exon skipping.")
         self.assertEqual(category, "exon_skipping")
 
     def test_intron_retention(self):
         text, category, _ = generate_interpretation(
-            delta_logit_psi=3.0, donor_delta=0.5, acceptor_delta=0.5,
-            exon_skipping_score=0.0, intron_retention_score=3.0, **self._thresholds(),
+            delta_logit_psi=3.0,
+            donor_delta=0.5,
+            acceptor_delta=0.5,
+            exon_skipping_score=0.0,
+            intron_retention_score=3.0,
+            **self._thresholds(),
         )
         self.assertEqual(text, "Predicted intron retention.")
         self.assertEqual(category, "intron_retention")

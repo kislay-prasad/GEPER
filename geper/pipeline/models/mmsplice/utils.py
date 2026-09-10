@@ -62,7 +62,6 @@ from pipeline.models.mmsplice.models import (
     EligibilityResult,
     ExonAnnotation,
     ModularScores,
-    SpliceWindow,
 )
 
 # Nucleotide channel order used by every mmsplice Keras model
@@ -107,7 +106,7 @@ def encode_batch(seqs: List[str]) -> np.ndarray:
         # is anchored at the end of the array) so a fixed-length model
         # (acceptor/donor) always sees its window right-aligned even
         # when batched alongside longer variable-length ones.
-        batch[i, max_len - len(seq):, :] = encoded
+        batch[i, max_len - len(seq) :, :] = encoded
     return batch
 
 
@@ -188,7 +187,7 @@ class SeqSplitter:
         donor_end = -intronr_len + self.donor_intron_len
         donor = seq[donor_start:donor_end] if donor_end != 0 else seq[donor_start:]
 
-        donor_intron = seq[-intronr_len + self.donor_intron_cut:]
+        donor_intron = seq[-intronr_len + self.donor_intron_cut :]
 
         return {
             "acceptor_intron": acceptor_intron,
@@ -209,8 +208,7 @@ class SeqSplitter:
 # exactly, not an ad-hoc approximation of it.
 # ---------------------------------------------------------------------------
 _LINEAR_MODEL_COEF = np.array(
-    [0.49685773, 0.72322957, 1.54760024, 0.75011527, 2.26187717,
-     -0.69419094, 2.40138709, 0.88148553]
+    [0.49685773, 0.72322957, 1.54760024, 0.75011527, 2.26187717, -0.69419094, 2.40138709, 0.88148553]
 )
 _LINEAR_MODEL_INTERCEPT = 0.0006480262366686865
 
@@ -246,17 +244,23 @@ def _transform(delta: np.ndarray) -> np.ndarray:
     acceptor_intron_overlap = (
         _not_close_zero(np.array([acceptor_intron_d])) & _not_close_zero(np.array([acceptor_d]))
     )[0]
-    donor_intron_overlap = (
-        _not_close_zero(np.array([donor_d])) & _not_close_zero(np.array([donor_intron_d]))
-    )[0]
+    donor_intron_overlap = (_not_close_zero(np.array([donor_d])) & _not_close_zero(np.array([donor_intron_d])))[0]
 
     exon_term = exon_d * exon_overlap
     donor_intron_term = donor_intron_d * donor_intron_overlap
     acceptor_intron_term = acceptor_intron_d * acceptor_intron_overlap
 
     return np.array(
-        [acceptor_intron_d, acceptor_d, exon_d, donor_d, donor_intron_d,
-         exon_term, donor_intron_term, acceptor_intron_term]
+        [
+            acceptor_intron_d,
+            acceptor_d,
+            exon_d,
+            donor_d,
+            donor_intron_d,
+            exon_term,
+            donor_intron_term,
+            acceptor_intron_term,
+        ]
     )
 
 
@@ -275,9 +279,7 @@ def predict_delta_logit_psi(ref_scores: ModularScores, alt_scores: ModularScores
 # Splice-window / eligibility arithmetic (requirement #4). All pure
 # coordinate math -- no network calls -- so it's cheaply unit-testable.
 # ---------------------------------------------------------------------------
-def distances_to_exon_boundaries(
-    variant_pos: int, exon: ExonAnnotation
-) -> Tuple[Optional[int], Optional[int]]:
+def distances_to_exon_boundaries(variant_pos: int, exon: ExonAnnotation) -> Tuple[Optional[int], Optional[int]]:
     """
     Signed distance (bp) from a 1-based variant position to this exon's
     acceptor (5') and donor (3') boundaries, in *transcript* direction
@@ -341,9 +343,7 @@ def evaluate_eligibility(
             f"integration (supported: {', '.join(supported_variant_types)})",
         )
 
-    region = classify_region(
-        dist_to_acceptor, dist_to_donor, exon_length, intron_window, exon_near_splice_window
-    )
+    region = classify_region(dist_to_acceptor, dist_to_donor, exon_length, intron_window, exon_near_splice_window)
     if region in ("deep_intronic", "deep_exonic", None):
         reason = (
             "variant falls outside the configured splice window "

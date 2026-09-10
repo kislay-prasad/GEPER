@@ -68,14 +68,18 @@ class TestPP3BP4MissenseGating:
         assert "CADD" in pp3.reason
         assert pp3.status == "met"
 
-    def test_spliceai_still_counted_regardless_of_missense_status(self):
-        """SpliceAI is relevant to any consequence type and must remain ungated."""
-        clf = AcmgClassifier(cfg={})
-        ev = _base_evidence(is_missense=False, spliceai_score=0.9)
-        result = clf.classify(ev)
-        pp3 = next(c for c in result.all_criteria if c.code == "PP3")
-        assert "SpliceAI" in pp3.reason
-        assert pp3.status == "met"
+    # THE SPLICEAI SIBLING OF THESE THREE MOVED, IT WAS NOT DROPPED.
+    # `test_spliceai_still_counted_regardless_of_missense_status` used to sit
+    # here and asserted that a spliceai_score of 0.9 on a non-missense variant
+    # still reached PP3. It passed by CONSTRUCTING AN INPUT PRODUCTION CANNOT
+    # PRODUCE: the SpliceAI input is closed, so no spliceai_score is ever
+    # populated by any path, and the branch it exercised could not run outside
+    # this test. It now lives in `test_spliceai_input_is_closed.py` as
+    # `test_spliceai_is_absent_from_pp3_regardless_of_missense_status`,
+    # asserting the opposite -- that SpliceAI does NOT appear -- which is a
+    # claim that can fail if the input is ever re-opened unnoticed.
+    # One missing sibling in a set of four reads as an oversight; this note is
+    # here so it reads as a decision.
 
     def test_bp4_revel_gated_the_same_way(self):
         clf = AcmgClassifier(cfg={})

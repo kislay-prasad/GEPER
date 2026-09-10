@@ -13,6 +13,7 @@ from transformers import AutoTokenizer, EsmModel
 
 from config import CONFIG
 from models.base_model import BaseGenomicModel
+from pipeline.provenance import capture_hf_cache_artifact
 
 # Pinned HuggingFace revision (commit SHA) for CONFIG.models.ESM2
 # ("facebook/esm2_t33_650M_UR50D"), verified live via
@@ -34,6 +35,10 @@ class ESM2Model(BaseGenomicModel):
         model_id = CONFIG.models.ESM2
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=CONFIG.CACHE_DIR, revision=_ESM2_REVISION)
         self.model = EsmModel.from_pretrained(model_id, cache_dir=CONFIG.CACHE_DIR, revision=_ESM2_REVISION)
+        # Record WHICH cache entry served that load, not just which one was
+        # asked for. The pin above says what this deployment intends; only
+        # this says what it got, and the two can disagree.
+        capture_hf_cache_artifact("esm2", model_id, _ESM2_REVISION, CONFIG.CACHE_DIR)
         self.model.to(self.device)
         self.model.eval()
 

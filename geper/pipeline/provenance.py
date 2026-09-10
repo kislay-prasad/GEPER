@@ -378,6 +378,114 @@ def verify_model_artifact(artifact: ResolvedModelArtifact) -> ResolvedModelArtif
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-run observation registry: written where weights are OPENED, read where
+# the provenance record is ASSEMBLED.
+# ---------------------------------------------------------------------------
+
+# What each model actually loaded THIS RUN, keyed by the same checkpoint name
+# `get_model_checkpoint_identifiers()` uses so the two can be joined without a
+# second naming scheme.
+#
+# WHY A MODULE-LEVEL REGISTRY AND NOT A CONSTRUCTOR ARGUMENT. The observation
+# has to be made at the only moment it is true -- inside the loader, with the
+# cache in the state that served the load -- and consumed after the last
+# variant, in `finalize_model_checkpoint_provenance`. The loaders
+# (`models/esm2.py`, the Enformer/Borzoi plugins) hold no reference to the
+# pipeline and are constructed by a registry that predates this record, so
+# threading a collector through every one of them would be a far larger change
+# to code this task was told not to disturb. The cost is process-global state,
+# and it is paid for by `reset_loaded_model_artifacts()` being called at run
+# start -- see `RunProvenanceCollector.__init__`, which draws exactly the same
+# line for `reset_stale_fallbacks()` and for the same reason.
+_LOADED_MODEL_ARTIFACTS: Dict[str, ResolvedModelArtifact] = {}
+
+# The weight filenames transformers/huggingface_hub resolve, in the order they
+# are preferred. Consulted only AFTER a load has already succeeded, to identify
+# WHICH cache entry served it.
+_HF_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
+
+
+def reset_loaded_model_artifacts() -> None:
+    """
+    Clear the previous run's observations. Without this, a second run in the
+    same process inherits the first run's artifacts -- a carried-forward claim
+    about bytes this run never opened, which is the resumed-run defect
+    (`report/json_builder.py`'s carry-forward note) one field over.
+    """
+    _LOADED_MODEL_ARTIFACTS.clear()
+
+
+def get_loaded_model_artifacts() -> Dict[str, ResolvedModelArtifact]:
+    """A copy, so a caller cannot mutate the run's record by holding it."""
+    return dict(_LOADED_MODEL_ARTIFACTS)
+
+
+def record_loaded_model_artifact(checkpoint_name: str, requested_path: str) -> ResolvedModelArtifact:
+    """
+    Record what `checkpoint_name` actually opened. Free (no bytes are read) and
+    never raises: provenance capture must not be the thing that stops a run.
+
+    A path this module cannot interpret still produces a record -- an explicit
+    UNVERIFIABLE -- rather than nothing, because an absent entry is
+    indistinguishable from a model that never loaded.
+    """
+    artifact = resolve_model_artifact(requested_path)
+    _LOADED_MODEL_ARTIFACTS[checkpoint_name] = artifact
+    return artifact
+
+
+def capture_hf_cache_artifact(
+    checkpoint_name: str, repo_id: str, revision: str, cache_dir: str
+) -> Optional[ResolvedModelArtifact]:
+    """
+    Identify the cache entry that served an ALREADY-SUCCESSFUL
+    `from_pretrained(repo_id, revision=..., cache_dir=...)` and record it.
+
+    *** WHAT THIS IS AND IS NOT, STATED RATHER THAN IMPLIED. *** It is the
+    HuggingFace cache's own resolution for the same (repo, revision, cache_dir)
+    the load just used, queried in the same process immediately afterwards. It
+    is STRICTLY STRONGER than the config pin -- it names the revision the cache
+    served and the blob it holds, either of which can disagree with the pin --
+    and STRICTLY WEAKER than intercepting the file handle transformers opened,
+    which is not reachable through its public API. It is therefore recorded as
+    an observation OF THE CACHE, not as proof of the read: `hash_verification`
+    stays NOT_VERIFIED until bytes are actually streamed.
+
+    Returns None (recording nothing) when the cache cannot resolve the load at
+    all, so a caller can tell "no observation" from "an observation of nothing".
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        for filename in _HF_WEIGHT_FILENAMES:
+            hit = try_to_load_from_cache(repo_id, filename, cache_dir=cache_dir, revision=revision)
+            if isinstance(hit, str) and os.path.exists(hit):
+                return record_loaded_model_artifact(checkpoint_name, hit)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Could not identify the cache entry serving '{repo_id}@{revision}': {exc}")
+        return None
+
+    logger.debug(f"No cached weight file found for '{repo_id}@{revision}' under '{cache_dir}'.")
+    return None
+
+
+def verify_loaded_model_artifacts() -> Dict[str, ResolvedModelArtifact]:
+    """
+    Stream every recorded artifact's bytes and check them against the hash the
+    cache declares, replacing each record with its verified/mismatched form.
+
+    OPT-IN, NOT AUTOMATIC, AND THE REASON IS MEASURED: ~3.9s per 2.6GB model
+    (see `verify_model_artifact`). Every run records the free declared hash;
+    only a run that asks pays for reading the bytes. The switch is
+    `CONFIG.VERIFY_MODEL_ARTIFACT_HASHES` (`GEPER_VERIFY_MODEL_HASHES`), read by
+    `pipeline/orchestrator.py`.
+    """
+    for name, artifact in list(_LOADED_MODEL_ARTIFACTS.items()):
+        _LOADED_MODEL_ARTIFACTS[name] = verify_model_artifact(artifact)
+    return get_loaded_model_artifacts()
+
+
 class RetrievalMode(str, enum.Enum):
     """
     WHERE this run's answer from a source actually came from -- a
@@ -1024,12 +1132,25 @@ def finalize_model_checkpoint_provenance(
     mention that model key -- e.g. a run with zero variants) keeps its
     plain identifier string unchanged rather than fabricating a status.
     """
+    observed = get_loaded_model_artifacts()
     enriched: Dict[str, Any] = {}
     for name, identifier in identifiers.items():
         model_key = _CHECKPOINT_NAME_TO_MODEL_KEY.get(name)
         status_entry = run_status.get(model_key) if model_key else None
+        artifact = observed.get(name)
         if status_entry is None:
-            enriched[name] = identifier
+            if artifact is None:
+                enriched[name] = identifier
+            else:
+                # A real observation outranks the shape of the entry. This run
+                # tracked no per-model status (a run with zero variants, say),
+                # so there is no status to report -- but it did open a file,
+                # and dropping that to keep a bare string would be the
+                # silent-drop defect this whole record exists to remove.
+                enriched[name] = {
+                    "identifier": identifier,
+                    "loaded_artifact": artifact.model_dump(mode="json"),
+                }
         else:
             status = status_entry.get("status", "unknown")
             entry: Dict[str, Any] = {
@@ -1042,6 +1163,19 @@ def finalize_model_checkpoint_provenance(
                 # one -- see this function's own note below on why a
                 # model that did not run reports no version.
                 "resolved_version": _resolved_version(name, status),
+                # WHAT THIS RUN ACTUALLY OPENED, alongside the pin above and
+                # never instead of it -- a disagreement between the two is the
+                # most informative event this subsystem can produce, and it is
+                # only visible while both are present.
+                #
+                # `None` IS A REAL ANSWER AND IT IS DELIBERATELY NOT ABSENCE:
+                # "this run recorded no observation for this model". A missing
+                # key would read as "nothing worth saying", which is the same
+                # false silence `review/signoff.py::list_pending` was fixed for
+                # one level up. Today it is None for every model whose loader
+                # is not instrumented -- see `capture_hf_cache_artifact`'s
+                # callers -- and that gap is meant to be legible here.
+                "loaded_artifact": artifact.model_dump(mode="json") if artifact else None,
             }
             # Only present for the five models `pipeline/models/
             # status.py::_CALIBRATION_MODEL_KEYS` tracks it for

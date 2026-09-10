@@ -2755,6 +2755,20 @@ class GeperConfig:
     OUTPUT_DIR: str = os.environ.get("GEPER_OUTPUT_DIR", "./geper_output")
     CACHE_DIR: str = os.environ.get("GEPER_CACHE_DIR", "./model_cache")
 
+    # Stream every loaded model's weight bytes and check them against the
+    # sha256 its cache filename declares (`pipeline/provenance.py::
+    # verify_loaded_model_artifacts`). OFF by default because the cost is
+    # measured, not guessed: ~3.9s per 2.6GB model per run. Every run records
+    # the free declared hash regardless; this only decides whether the bytes
+    # are actually read to confirm it. Turn it on when the question is "were
+    # these the right weights", not "which weights did we mean to use".
+    VERIFY_MODEL_ARTIFACT_HASHES: bool = os.environ.get("GEPER_VERIFY_MODEL_HASHES", "false").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
     # How often (in variants) the orchestrator flushes geper_results.json
     # to disk mid-run. Small enough to survive a Colab disconnect without
     # losing much work, large enough not to dominate runtime with I/O.

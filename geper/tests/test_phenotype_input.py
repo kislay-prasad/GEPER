@@ -170,12 +170,19 @@ def _fbn1_marfan_only_evidence_dict():
     single-etiology thresholds without depending on the larger real
     FBN1/CFTR fixture file `tests/test_hpo.py` uses."""
     associations = [
-        HPOPhenotypeAssociation(gene_symbol="FBN1", hpo_id="HP:0001166", hpo_name="Arachnodactyly", disease_id="OMIM:154700"),
-        HPOPhenotypeAssociation(gene_symbol="FBN1", hpo_id="HP:0000098", hpo_name="Tall stature", disease_id="OMIM:154700"),
+        HPOPhenotypeAssociation(
+            gene_symbol="FBN1", hpo_id="HP:0001166", hpo_name="Arachnodactyly", disease_id="OMIM:154700"
+        ),
+        HPOPhenotypeAssociation(
+            gene_symbol="FBN1", hpo_id="HP:0000098", hpo_name="Tall stature", disease_id="OMIM:154700"
+        ),
     ]
     return HPOGeneEvidence(
-        gene_symbol="FBN1", source="local_dataset", found=True,
-        phenotype_associations=associations, ncbi_gene_id="2200",
+        gene_symbol="FBN1",
+        source="local_dataset",
+        found=True,
+        phenotype_associations=associations,
+        ncbi_gene_id="2200",
     ).to_dict()
 
 

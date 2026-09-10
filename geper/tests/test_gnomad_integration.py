@@ -65,7 +65,16 @@ class TestJsonBuilderGnomadBackwardCompatibility(unittest.TestCase):
             interpretation={},
             errors=[],
         )
-        for expected_key in ("variant", "blast", "clinvar", "dbsnp", "alphamissense", "mmsplice", "interpretation", "errors"):
+        for expected_key in (
+            "variant",
+            "blast",
+            "clinvar",
+            "dbsnp",
+            "alphamissense",
+            "mmsplice",
+            "interpretation",
+            "errors",
+        ):
             self.assertIn(expected_key, result)
 
 

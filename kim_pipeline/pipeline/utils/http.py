@@ -5,6 +5,7 @@ Shared HTTP GET utility with exponential backoff retry logic.
 
 All API lookup modules use _api_get() instead of requests.get() directly.
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,7 +71,11 @@ def _api_get(
                 if attempt < max_retries:
                     log.warning(
                         "[http] HTTP %d on attempt %d/%d for %s — retrying in %.0fs",
-                        resp.status_code, attempt, max_retries, url, delay,
+                        resp.status_code,
+                        attempt,
+                        max_retries,
+                        url,
+                        delay,
                     )
                     time.sleep(delay)
                     delay *= 2
@@ -78,7 +83,10 @@ def _api_get(
                 else:
                     log.error(
                         "[http] HTTP %d on final attempt %d/%d for %s — giving up",
-                        resp.status_code, attempt, max_retries, url,
+                        resp.status_code,
+                        attempt,
+                        max_retries,
+                        url,
                     )
                     return None
 
@@ -89,19 +97,33 @@ def _api_get(
             if attempt < max_retries:
                 log.warning(
                     "[http] %s on attempt %d/%d for %s — retrying in %.0fs",
-                    type(exc).__name__, attempt, max_retries, url, delay,
+                    type(exc).__name__,
+                    attempt,
+                    max_retries,
+                    url,
+                    delay,
                 )
                 time.sleep(delay)
                 delay *= 2
             else:
                 log.error(
                     "[http] %s on final attempt %d/%d for %s — giving up: %s",
-                    type(exc).__name__, attempt, max_retries, url, exc,
+                    type(exc).__name__,
+                    attempt,
+                    max_retries,
+                    url,
+                    exc,
                 )
                 return None
 
         except Exception as exc:
-            log.error("[http] Unexpected error on attempt %d/%d for %s: %s", attempt, max_retries, url, exc)
+            log.error(
+                "[http] Unexpected error on attempt %d/%d for %s: %s",
+                attempt,
+                max_retries,
+                url,
+                exc,
+            )
             return None
 
     return None

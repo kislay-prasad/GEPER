@@ -76,9 +76,7 @@ class _FastFakeSpliceFormerModel:
         import torch
 
         n = features.shape[0]
-        out = torch.stack(
-            [torch.full((3, 8), 0.1 * (i % 3)) for i in range(n)], dim=0
-        )
+        out = torch.stack([torch.full((3, 8), 0.1 * (i % 3)) for i in range(n)], dim=0)
         return out, None, None, None, None
 
 
@@ -97,17 +95,15 @@ def main() -> None:
     registry.register("spliceformer", SpliceFormerPlugin)
     manager = ModelManager(registry=registry)
 
-    with mock.patch(
-        "pipeline.models.spliceformer_plugin.CONFIG"
-    ) as mock_config, mock.patch(
-        "pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True
-    ), mock.patch(
-        "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
-        return_value=_FastFakeSpliceFormerModel(),
-    ), mock.patch(
-        "pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint"
-    ), mock.patch(
-        "pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"
+    with (
+        mock.patch("pipeline.models.spliceformer_plugin.CONFIG") as mock_config,
+        mock.patch("pipeline.models.spliceformer_plugin.ensure_pip_package_available", return_value=True),
+        mock.patch(
+            "pipeline.models.spliceformer_plugin.spliceformer_loader.build_model",
+            return_value=_FastFakeSpliceFormerModel(),
+        ),
+        mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.download_checkpoint"),
+        mock.patch("pipeline.models.spliceformer_plugin.spliceformer_loader.load_checkpoint_into"),
     ):
         mock_config.splicing.ENABLE_SPLICEFORMER = True
         mock_config.splicing.SPLICEFORMER_SOURCE_REF = "v1.0.0"

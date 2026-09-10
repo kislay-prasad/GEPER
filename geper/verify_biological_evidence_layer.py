@@ -72,7 +72,9 @@ def part1_graceful_fallback_against_real_blocked_network():
             ok = False
 
     status = PASS if ok else FAIL
-    print(f"\nPART 1: {status} -- every live-API path degrades to found=False/error set, no exception raised, no pipeline crash.")
+    print(
+        f"\nPART 1: {status} -- every live-API path degrades to found=False/error set, no exception raised, no pipeline crash."
+    )
     return ok
 
 
@@ -84,23 +86,49 @@ _UNIPROT_ENTRY = {
     "organism": {"scientificName": "Homo sapiens"},
     "sequence": {"length": 393},
     "comments": [
-        {"commentType": "FUNCTION", "texts": [{"value": "Acts as a tumor suppressor in many tumor types; induces cell cycle arrest or apoptosis."}]},
-        {"commentType": "DISEASE", "disease": {"diseaseId": "Li-Fraumeni syndrome 1", "description": "An autosomal dominant cancer predisposition syndrome."}},
+        {
+            "commentType": "FUNCTION",
+            "texts": [
+                {"value": "Acts as a tumor suppressor in many tumor types; induces cell cycle arrest or apoptosis."}
+            ],
+        },
+        {
+            "commentType": "DISEASE",
+            "disease": {
+                "diseaseId": "Li-Fraumeni syndrome 1",
+                "description": "An autosomal dominant cancer predisposition syndrome.",
+            },
+        },
     ],
     "features": [
         {"type": "Domain", "description": "DNA-binding", "location": {"start": {"value": 94}, "end": {"value": 289}}},
-        {"type": "Region", "description": "Interaction with WWOX", "location": {"start": {"value": 66}, "end": {"value": 110}}},
+        {
+            "type": "Region",
+            "description": "Interaction with WWOX",
+            "location": {"start": {"value": 66}, "end": {"value": 110}},
+        },
     ],
 }
 
 _INTERPRO_PAYLOAD = {
     "results": [
         {
-            "metadata": {"accession": "IPR002117", "name": "p53 tumour suppressor family", "type": "family", "source_database": "interpro"},
+            "metadata": {
+                "accession": "IPR002117",
+                "name": "p53 tumour suppressor family",
+                "type": "family",
+                "source_database": "interpro",
+            },
             "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 94, "end": 289}]}]}],
         },
         {
-            "metadata": {"accession": "PF00870", "name": "P53", "type": "domain", "source_database": "pfam", "integrated": "IPR002117"},
+            "metadata": {
+                "accession": "PF00870",
+                "name": "P53",
+                "type": "domain",
+                "source_database": "pfam",
+                "integrated": "IPR002117",
+            },
             "proteins": [{"entry_protein_locations": [{"fragments": [{"start": 100, "end": 280}]}]}],
         },
     ]
@@ -133,7 +161,12 @@ def part2_full_pipeline_with_local_dataset_fixtures():
                 json.dumps(
                     {
                         "accession": "P04637",
-                        "summary": {"latestVersion": 4, "pdbUrl": "https://alphafold.ebi.ac.uk/files/AF-P04637-F1-model_v4.pdb", "uniprotStart": 1, "uniprotEnd": 393},
+                        "summary": {
+                            "latestVersion": 4,
+                            "pdbUrl": "https://alphafold.ebi.ac.uk/files/AF-P04637-F1-model_v4.pdb",
+                            "uniprotStart": 1,
+                            "uniprotEnd": 393,
+                        },
                         "residue_plddt": residue_plddt,
                     }
                 )
@@ -150,12 +183,22 @@ def part2_full_pipeline_with_local_dataset_fixtures():
         # already-constructed singleton `CONFIG` -- injecting the
         # provider directly is the correct way to point this harness at
         # the fixture files without editing any pipeline code.
-        uniprot = UniProtLookup(provider=CompositeUniProtProvider(local_provider=LocalDatasetUniProtProvider(dataset_path=uniprot_path)))
-        interpro = InterProLookup(provider=CompositeInterProProvider(local_provider=LocalDatasetInterProProvider(dataset_path=interpro_path)))
-        alphafold = AlphaFoldLookup(provider=CompositeAlphaFoldProvider(local_provider=LocalDatasetAlphaFoldProvider(dataset_path=alphafold_path)))
+        uniprot = UniProtLookup(
+            provider=CompositeUniProtProvider(local_provider=LocalDatasetUniProtProvider(dataset_path=uniprot_path))
+        )
+        interpro = InterProLookup(
+            provider=CompositeInterProProvider(local_provider=LocalDatasetInterProProvider(dataset_path=interpro_path))
+        )
+        alphafold = AlphaFoldLookup(
+            provider=CompositeAlphaFoldProvider(
+                local_provider=LocalDatasetAlphaFoldProvider(dataset_path=alphafold_path)
+            )
+        )
 
         uniprot_result = uniprot.query_gene("TP53")
-        protein_position = 150  # falls within both the InterPro domain (94-289) and the "high confidence" residue band above
+        protein_position = (
+            150  # falls within both the InterPro domain (94-289) and the "high confidence" residue band above
+        )
         interpro_result = interpro.query_variant(uniprot_result, protein_position=protein_position)
         alphafold_result = alphafold.query_variant(uniprot_result, protein_position=protein_position)
 
@@ -197,7 +240,9 @@ def part2_full_pipeline_with_local_dataset_fixtures():
     report_lines.extend(ReportGenerator._render_interpro(variant_result["interpro"]))
     report_lines.extend(ReportGenerator._render_alphafold(variant_result["alphafold"]))
     markdown = "\n".join(report_lines)
-    markdown_ok = "UniProt (Protein Annotation)" in markdown and "InterPro / Pfam" in markdown and "AlphaFold DB" in markdown
+    markdown_ok = (
+        "UniProt (Protein Annotation)" in markdown and "InterPro / Pfam" in markdown and "AlphaFold DB" in markdown
+    )
     print(f"  [{'OK' if markdown_ok else 'MISSING'}] Markdown report renders all three new sections")
     print()
     print(markdown)

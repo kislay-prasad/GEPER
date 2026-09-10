@@ -40,7 +40,6 @@ class RNAGenerator:
         invalid = set(sequence) - _VALID_DNA_BASES
         if invalid:
             raise SequenceGenerationError(
-                f"Cannot transcribe DNA sequence containing invalid base(s): "
-                f"{sorted(invalid)}."
+                f"Cannot transcribe DNA sequence containing invalid base(s): {sorted(invalid)}."
             )
         return sequence.replace("T", "U")

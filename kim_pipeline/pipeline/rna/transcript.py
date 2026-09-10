@@ -34,7 +34,7 @@ class TranscriptRecord:
     exons: List[Tuple[int, int]] = field(default_factory=list)
     # CDS boundaries for UTR detection (FIX 4)
     cds_start: Optional[int] = None  # lowest CDS coordinate (1-based, inclusive)
-    cds_end: Optional[int] = None    # highest CDS coordinate (1-based, inclusive)
+    cds_end: Optional[int] = None  # highest CDS coordinate (1-based, inclusive)
     # CDS records with phase for frame calculation (FIX 5)
     # Each entry: (cds_start, cds_end, phase)
     cds_records: List[Tuple[int, int, int]] = field(default_factory=list)
@@ -74,7 +74,7 @@ class RnaTranscriptAnalyser:
     def __init__(self, cfg: Optional[dict] = None) -> None:
         self._cfg = (cfg or {}).get("rna_analysis", {}) or {}
         self._transcripts: Dict[str, TranscriptRecord] = {}
-        self._gene_index: Dict[str, List[str]] = {}   # gene_id → [transcript_id]
+        self._gene_index: Dict[str, List[str]] = {}  # gene_id → [transcript_id]
         self._available = False
 
         gff_path = self._cfg.get("refseq_gff", "")
@@ -83,6 +83,7 @@ class RnaTranscriptAnalyser:
             return
 
         import os
+
         if not os.path.exists(gff_path):
             logger.warning("refseq_gff not found: %s — transcript analysis disabled.", gff_path)
             return
@@ -92,7 +93,8 @@ class RnaTranscriptAnalyser:
             self._available = True
             logger.info(
                 "RnaTranscriptAnalyser: loaded %d transcripts from %s",
-                len(self._transcripts), gff_path,
+                len(self._transcripts),
+                gff_path,
             )
         except Exception as exc:
             logger.error("Failed to load GFF %s: %s", gff_path, exc)
@@ -120,11 +122,7 @@ class RnaTranscriptAnalyser:
                     attrs = _parse_attributes(cols[8])
                     gene_id = attrs.get("gene_id") or attrs.get("Parent") or ""
                     # GFF3 often stores transcript_id in "ID"
-                    transcript_id = (
-                        attrs.get("transcript_id")
-                        or attrs.get("ID")
-                        or ""
-                    )
+                    transcript_id = attrs.get("transcript_id") or attrs.get("ID") or ""
                     if not transcript_id:
                         continue
                     rec = TranscriptRecord(
@@ -155,11 +153,7 @@ class RnaTranscriptAnalyser:
                     exon_start = int(cols[3])
                     exon_end = int(cols[4])
                     attrs = _parse_attributes(cols[8])
-                    parent = (
-                        attrs.get("Parent")
-                        or attrs.get("transcript_id")
-                        or ""
-                    )
+                    parent = attrs.get("Parent") or attrs.get("transcript_id") or ""
                     # GFF3 Parent may be comma-separated (multi-parent, rare)
                     for pid in parent.split(","):
                         pid = pid.strip()
@@ -184,11 +178,7 @@ class RnaTranscriptAnalyser:
                     phase_str = cols[7]
                     phase = int(phase_str) if phase_str not in (".", "-1") else 0
                     attrs = _parse_attributes(cols[8])
-                    parent = (
-                        attrs.get("Parent")
-                        or attrs.get("transcript_id")
-                        or ""
-                    )
+                    parent = attrs.get("Parent") or attrs.get("transcript_id") or ""
                     for pid in parent.split(","):
                         pid = pid.strip()
                         if pid in self._transcripts:
@@ -474,7 +464,7 @@ class RnaTranscriptAnalyser:
         cumulative_bases = 0
         for cds_s, cds_e, phase in cds_ordered:
             if not (cds_s <= pos <= cds_e):
-                cumulative_bases += (cds_e - cds_s + 1)
+                cumulative_bases += cds_e - cds_s + 1
                 continue
             # pos is within this CDS segment
             if strand == "+":

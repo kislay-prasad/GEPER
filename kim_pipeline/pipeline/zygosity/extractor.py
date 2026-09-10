@@ -15,12 +15,12 @@ from typing import List, Optional
 class ZygosityResult:
     """Parsed zygosity and FORMAT fields for a single sample genotype."""
 
-    zygosity: str          # one of the seven canonical values
-    gt: str                # raw GT string (phasing preserved)
+    zygosity: str  # one of the seven canonical values
+    gt: str  # raw GT string (phasing preserved)
     ad: Optional[List[int]]
     dp: Optional[int]
     gq: Optional[int]
-    ab: Optional[float]    # allele balance = AD[1] / sum(AD)
+    ab: Optional[float]  # allele balance = AD[1] / sum(AD)
     phase_set: Optional[str]
 
     def is_het(self) -> bool:

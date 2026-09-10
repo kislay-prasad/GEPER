@@ -87,8 +87,9 @@ class TestClinGenLookupQueryVariant(unittest.TestCase):
         provider = mock.Mock()
         provider.query.return_value = ClinGenGeneEvidence(gene_symbol="BRCA1", source="local_dataset", found=True)
         lookup = ClinGenLookup(provider=provider, cache=None)
-        with mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config, mock.patch(
-            "pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")
+        with (
+            mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")),
         ):
             fake_config.clingen.ENABLED = True
             result = lookup.query_variant(_variant(), assembly="GRCh38")
@@ -98,8 +99,9 @@ class TestClinGenLookupQueryVariant(unittest.TestCase):
     def test_no_gene_overlap_returns_not_found_without_error(self):
         provider = mock.Mock()
         lookup = ClinGenLookup(provider=provider, cache=None)
-        with mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config, mock.patch(
-            "pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_not_found()
+        with (
+            mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_not_found()),
         ):
             fake_config.clingen.ENABLED = True
             result = lookup.query_variant(_variant())
@@ -111,9 +113,12 @@ class TestClinGenLookupQueryVariant(unittest.TestCase):
         provider = mock.Mock()
         provider.query.return_value = ClinGenGeneEvidence(gene_symbol="BRCA1", source="local_dataset", found=True)
         lookup = ClinGenLookup(provider=provider, cache=None)
-        with mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config, mock.patch(
-            "pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")
-        ) as mocked_resolve:
+        with (
+            mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config,
+            mock.patch(
+                "pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")
+            ) as mocked_resolve,
+        ):
             fake_config.clingen.ENABLED = True
             lookup.query_variant(_variant(pos=100), assembly="GRCh38")
             lookup.query_variant(_variant(pos=100, ref="C", alt="T"), assembly="GRCh38")
@@ -131,8 +136,9 @@ class TestClinGenLookupBatch(unittest.TestCase):
         lookup = ClinGenLookup(provider=provider, cache=cache)
 
         variants = [_variant(pos=1), _variant(pos=2), _variant(pos=3)]
-        with mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config, mock.patch(
-            "pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")
+        with (
+            mock.patch("pipeline.clingen.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.clingen.lookup.resolve_gene_symbol_detail", return_value=_resolved("BRCA1")),
         ):
             fake_config.clingen.ENABLED = True
             results = lookup.query_variants_batch(variants, assembly="GRCh38")

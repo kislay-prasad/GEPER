@@ -26,6 +26,7 @@ def _with_format(gt, **kwargs):
 
 # ── Zygosity determination ─────────────────────────────────────────────────────
 
+
 def test_heterozygous():
     r = _extract("0/1")
     assert r.zygosity == "heterozygous"
@@ -64,6 +65,7 @@ def test_phased_het():
 
 # ── FORMAT field parsing ───────────────────────────────────────────────────────
 
+
 def test_ad_parsed():
     r = _with_format("0/1", AD="10,25")
     assert r.ad == [10, 25]
@@ -87,19 +89,23 @@ def test_gq_parsed():
 
 # ── Convenience methods ────────────────────────────────────────────────────────
 
+
 def test_is_het():
-    res = ZygosityResult(zygosity="heterozygous", gt="0/1",
-                         ad=None, dp=None, gq=None, ab=None, phase_set=None)
+    res = ZygosityResult(
+        zygosity="heterozygous", gt="0/1", ad=None, dp=None, gq=None, ab=None, phase_set=None
+    )
     assert res.is_het() is True
 
 
 def test_is_hom_alt():
-    res = ZygosityResult(zygosity="homozygous_alt", gt="1/1",
-                         ad=None, dp=None, gq=None, ab=None, phase_set=None)
+    res = ZygosityResult(
+        zygosity="homozygous_alt", gt="1/1", ad=None, dp=None, gq=None, ab=None, phase_set=None
+    )
     assert res.is_hom_alt() is True
 
 
 def test_is_no_call():
-    res = ZygosityResult(zygosity="no_call", gt="./.",
-                         ad=None, dp=None, gq=None, ab=None, phase_set=None)
+    res = ZygosityResult(
+        zygosity="no_call", gt="./.", ad=None, dp=None, gq=None, ab=None, phase_set=None
+    )
     assert res.is_no_call() is True

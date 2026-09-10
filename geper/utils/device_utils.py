@@ -32,7 +32,7 @@ def get_device() -> torch.device:
     if torch.cuda.is_available():
         device = torch.device("cuda")
         name = torch.cuda.get_device_name(0)
-        mem_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        mem_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         logger.info(f"GPU detected: {name} ({mem_gb:.1f} GB VRAM). Using CUDA.")
     elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -113,6 +113,6 @@ def gpu_memory_summary() -> str:
     """Return a short human-readable string of current GPU memory usage."""
     if not torch.cuda.is_available():
         return "No GPU available."
-    allocated = torch.cuda.memory_allocated() / (1024 ** 3)
-    reserved = torch.cuda.memory_reserved() / (1024 ** 3)
+    allocated = torch.cuda.memory_allocated() / (1024**3)
+    reserved = torch.cuda.memory_reserved() / (1024**3)
     return f"GPU memory -> allocated: {allocated:.2f} GB, reserved: {reserved:.2f} GB"

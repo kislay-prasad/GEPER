@@ -56,7 +56,7 @@ class ProteinTranslator:
 
         protein_residues = []
         for i in range(start_index, len(rna_sequence) - 2, 3):
-            codon = rna_sequence[i: i + 3]
+            codon = rna_sequence[i : i + 3]
             amino_acid = self.codon_table.get(codon)
             if amino_acid is None:
                 # Ambiguous base (N) or malformed codon at window edge.
@@ -77,7 +77,7 @@ class ProteinTranslator:
             logger.debug("RNA sequence length is not a multiple of 3; trailing bases ignored.")
         residues = []
         for i in range(0, len(rna_sequence) - 2, 3):
-            codon = rna_sequence[i: i + 3]
+            codon = rna_sequence[i : i + 3]
             amino_acid = self.codon_table.get(codon, "X")
             residues.append(amino_acid)
         if not residues:

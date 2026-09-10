@@ -8,6 +8,7 @@ Real bwa subprocess tests are skipped (not faked) if bwa isn't installed,
 matching the rest of this test suite's convention. The decompression-cache
 tests don't need bwa at all, so they always run.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -34,12 +35,13 @@ HAVE_BWA = bwa_runner.is_available()
 
 def _make_fasta(path: Path, n_bases: int = 20000, seed: int = 0) -> None:
     import random
+
     rng = random.Random(seed)
     seq = "".join(rng.choice("ACGT") for _ in range(n_bases))
     with open(path, "w") as f:
         f.write(">chrTest synthetic reference\n")
         for i in range(0, len(seq), 70):
-            f.write(seq[i:i + 70] + "\n")
+            f.write(seq[i : i + 70] + "\n")
 
 
 class TestResolveReferenceDecompression:

@@ -29,17 +29,23 @@ from report.clinical_report_builder import _clinical_evidence
 # records, only the last one an allele match (mirrors the real
 # 17:43094298 case -- see database/clinvar_client.py's module docstring).
 _WRONG_TOP = {
-    "accession": "VCV000054169", "clinical_significance": "Pathogenic",
-    "review_status": "reviewed by expert panel", "variant_match": False,
+    "accession": "VCV000054169",
+    "clinical_significance": "Pathogenic",
+    "review_status": "reviewed by expert panel",
+    "variant_match": False,
 }
 _CORRECT_MATCH = {
-    "accession": "VCV000041804", "clinical_significance": "Benign",
-    "review_status": "reviewed by expert panel", "last_evaluated": "2024/06/11 00:00",
+    "accession": "VCV000041804",
+    "clinical_significance": "Benign",
+    "review_status": "reviewed by expert panel",
+    "last_evaluated": "2024/06/11 00:00",
     "variant_match": True,
 }
 _ANOTHER_NON_MATCH = {
-    "accession": "VCV000619783", "clinical_significance": "Conflicting classifications of pathogenicity",
-    "review_status": "criteria provided, conflicting classifications", "variant_match": False,
+    "accession": "VCV000619783",
+    "clinical_significance": "Conflicting classifications of pathogenicity",
+    "review_status": "criteria provided, conflicting classifications",
+    "variant_match": False,
 }
 
 _MATCHED_RESULT = {
@@ -63,8 +69,13 @@ _POSITION_ONLY_RESULT = {
 }
 
 _NOT_FOUND_RESULT = {
-    "found": False, "match_status": "not_found", "record_count": 0,
-    "matched_record_count": 0, "records": [], "matched_records": [], "primary_record": None,
+    "found": False,
+    "match_status": "not_found",
+    "record_count": 0,
+    "matched_record_count": 0,
+    "records": [],
+    "matched_records": [],
+    "primary_record": None,
 }
 
 

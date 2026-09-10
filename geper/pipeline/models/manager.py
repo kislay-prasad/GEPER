@@ -120,9 +120,7 @@ class ModelManager:
             model_cls = self.registry.get(key)
             if not model_cls.is_available():
                 reason = model_cls.unavailability_reason()
-                raise PluginUnavailableError(
-                    f"Plugin '{key}' is not available: {reason}"
-                )
+                raise PluginUnavailableError(f"Plugin '{key}' is not available: {reason}")
 
             try:
                 instance = model_cls()

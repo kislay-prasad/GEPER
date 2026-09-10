@@ -123,7 +123,9 @@ class SimpleTTLCache:
             logger.warning(f"Could not read {self.label} disk cache '{self.disk_path}': {exc}")
             return
         if loaded:
-            logger.info(f"Loaded {loaded} cached {self.label} entr{'y' if loaded == 1 else 'ies'} from '{self.disk_path}'.")
+            logger.info(
+                f"Loaded {loaded} cached {self.label} entr{'y' if loaded == 1 else 'ies'} from '{self.disk_path}'."
+            )
             with self._lock:
                 while len(self._store) > self.max_size:
                     self._store.popitem(last=False)

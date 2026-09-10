@@ -40,9 +40,7 @@ def _initialize_root_logger() -> None:
     console_handler.setLevel(_LOG_LEVEL)
 
     try:
-        file_handler = RotatingFileHandler(
-            _LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
-        )
+        file_handler = RotatingFileHandler(_LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
         file_handler.setFormatter(formatter)
         file_handler.setLevel(_LOG_LEVEL)
         root.addHandler(file_handler)

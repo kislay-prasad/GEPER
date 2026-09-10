@@ -30,6 +30,7 @@ from pipeline.annotation.gff_index import GffIndex, _normalise_chrom
 
 # ─── Zygosity helpers (Task 5) ────────────────────────────────────────────────
 
+
 class TestZygosity:
     def test_heterozygous(self):
         assert _parse_zygosity("0/1") == "Heterozygous"
@@ -74,6 +75,7 @@ class TestExtractGenotype:
 
 # ─── HGVS notation ────────────────────────────────────────────────────────────
 
+
 class TestHgvs:
     def test_snv_no_transcript(self):
         h = _build_hgvs("chr17", 43057051, "A", "T", None)
@@ -93,8 +95,13 @@ class TestHgvs:
         # When a true CDS-relative coordinate is supplied, c. notation
         # is used with that coordinate — not the genomic position.
         h = _build_hgvs(
-            "chr17", 43057051, "A", "T", "NM_007294.4",
-            cds_pos=181, strand="+",
+            "chr17",
+            43057051,
+            "A",
+            "T",
+            "NM_007294.4",
+            cds_pos=181,
+            strand="+",
         )
         assert h == "NM_007294.4:c.181A>T"
 
@@ -102,15 +109,25 @@ class TestHgvs:
         # On a minus-strand transcript, c. notation is on the sense
         # (transcript) strand, so ref/alt must be complemented.
         h = _build_hgvs(
-            "chr17", 43057051, "A", "T", "NM_999999.1",
-            cds_pos=50, strand="-",
+            "chr17",
+            43057051,
+            "A",
+            "T",
+            "NM_999999.1",
+            cds_pos=50,
+            strand="-",
         )
         assert h == "NM_999999.1:c.50T>A"
 
     def test_noncoding_transcript_uses_n_notation(self):
         h = _build_hgvs(
-            "chr1", 1000, "G", "C", "NR_123456.1",
-            cds_pos=42, strand="+",
+            "chr1",
+            1000,
+            "G",
+            "C",
+            "NR_123456.1",
+            cds_pos=42,
+            strand="+",
         )
         assert h == "NR_123456.1:n.42G>C"
 
@@ -133,20 +150,33 @@ class TestHgvs:
         # Minus-strand indel coordinate conversion is intentionally not
         # attempted (ambiguous without sequence context) — safe fallback.
         h = _build_hgvs(
-            "chr1", 100, "ATG", "A", "NM_111111.1",
-            cds_pos=50, end_cds_pos=48, strand="-",
+            "chr1",
+            100,
+            "ATG",
+            "A",
+            "NM_111111.1",
+            cds_pos=50,
+            end_cds_pos=48,
+            strand="-",
         )
         assert h.startswith("chr1:g.")
 
     def test_indel_plus_strand_with_verified_range_uses_c_notation(self):
         h = _build_hgvs(
-            "chr1", 100, "ATG", "A", "NM_111111.1",
-            cds_pos=50, end_cds_pos=52, strand="+",
+            "chr1",
+            100,
+            "ATG",
+            "A",
+            "NM_111111.1",
+            cds_pos=50,
+            end_cds_pos=52,
+            strand="+",
         )
         assert h == "NM_111111.1:c.51_52del"
 
 
 # ─── GFF3 index ───────────────────────────────────────────────────────────────
+
 
 class TestGffIndex:
     def _write_mini_gff3(self, path: Path) -> None:
@@ -210,13 +240,13 @@ class TestGffIndex:
 
 # ─── VCF parser ───────────────────────────────────────────────────────────────
 
+
 class TestParseVcf:
     def _write_vcf(self, path: Path, body: str) -> None:
         path.write_text(
             "##fileformat=VCFv4.2\n"
-            "##FILTER=<ID=PASS,Description=\"All filters passed\">\n"
-            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
-            + body
+            '##FILTER=<ID=PASS,Description="All filters passed">\n'
+            "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n" + body
         )
 
     def test_parses_snv_with_genotype(self, tmp_path):
@@ -246,6 +276,7 @@ class TestParseVcf:
 
 # ─── Annotation stage (end-to-end without GFF3) ───────────────────────────────
 
+
 class TestAnnotationStageNoGff:
     def _write_vcf(self, path: Path) -> None:
         path.write_text(
@@ -261,7 +292,7 @@ class TestAnnotationStageNoGff:
         stage = AnnotationStage({"annotation": {"require_gff": False}})
         result = stage.run(str(vcf), str(tmp_path / "ann_out"), sample_id="TEST")
         assert result.total_variants == 2
-        assert result.annotated_count == 0   # no GFF3 → nothing annotated
+        assert result.annotated_count == 0  # no GFF3 → nothing annotated
         assert result.unannotated_count == 2
         # HGVS should still be generated even without a transcript
         for v in result.variants:

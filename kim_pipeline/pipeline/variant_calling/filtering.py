@@ -95,7 +95,9 @@ def apply_pass_filter(
     """
     thresholds = thresholds or FilterThresholds()
     if not Path(input_vcf).exists():
-        raise FastqPipelineError(f"Input VCF not found: {input_vcf!r}", stage="variant_calling.filter")
+        raise FastqPipelineError(
+            f"Input VCF not found: {input_vcf!r}", stage="variant_calling.filter"
+        )
 
     bcftools = _require("bcftools", "variant_calling.filter")
     Path(output_vcf).parent.mkdir(parents=True, exist_ok=True)
@@ -110,16 +112,23 @@ def apply_pass_filter(
     norm_counts = _parse_variant_counts(normalized_vcf)
     logger.info(
         "bcftools norm: %d input records → %d normalized records",
-        input_counts["records"], norm_counts["records"],
+        input_counts["records"],
+        norm_counts["records"],
     )
 
     soft_filtered = str(Path(output_vcf).with_name("soft_filtered.vcf"))
     _run(
         [
-            bcftools, "filter",
-            "-s", thresholds.filter_name,
-            "-e", thresholds.to_expression(),
-            "-O", "v", "-o", soft_filtered,
+            bcftools,
+            "filter",
+            "-s",
+            thresholds.filter_name,
+            "-e",
+            thresholds.to_expression(),
+            "-O",
+            "v",
+            "-o",
+            soft_filtered,
             normalized_vcf,
         ],
         stage="variant_calling.filter",
@@ -145,7 +154,10 @@ def apply_pass_filter(
     )
     logger.info(
         "PASS filter: %d/%d records passed (%d SNVs, %d indels) -> %s",
-        summary.total_pass, summary.total_input,
-        summary.snvs_pass, summary.indels_pass, output_vcf,
+        summary.total_pass,
+        summary.total_input,
+        summary.snvs_pass,
+        summary.indels_pass,
+        output_vcf,
     )
     return summary

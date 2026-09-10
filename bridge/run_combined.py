@@ -42,25 +42,33 @@ from bridge.combined_pipeline import (
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="Combined FASTQ -> Clinical Report workflow (Kim + GEPER bridge)"
-    )
+    p = argparse.ArgumentParser(description="Combined FASTQ -> Clinical Report workflow (Kim + GEPER bridge)")
     p.add_argument("--r1", required=True, metavar="FASTQ", help="R1 FASTQ path (plain or .gz)")
     p.add_argument("--r2", default=None, metavar="FASTQ", help="R2 FASTQ path (paired-end)")
     p.add_argument("--ref", required=True, metavar="FASTA", help="Reference genome FASTA path")
     p.add_argument("--sample-id", required=True, metavar="ID", help="Sample identifier")
-    p.add_argument("--kim-output-dir", required=True, metavar="DIR",
-                   help="Output directory for Kim's FASTQ->VCF stage")
-    p.add_argument("--geper-output-dir", required=True, metavar="DIR",
-                   help="Output directory for GEPER's VCF->Report stage")
-    p.add_argument("--kim-root", default=str(DEFAULT_KIM_ROOT), metavar="DIR",
-                   help="Path to the Kim pipeline project root")
-    p.add_argument("--geper-root", default=str(DEFAULT_GEPER_ROOT), metavar="DIR",
-                   help="Path to the current GEPER project root")
-    p.add_argument("--kim-python", default=None, metavar="PATH",
-                   help="Python interpreter to run Kim with (default: current interpreter)")
-    p.add_argument("--geper-python", default=None, metavar="PATH",
-                   help="Python interpreter to run GEPER with (default: current interpreter)")
+    p.add_argument("--kim-output-dir", required=True, metavar="DIR", help="Output directory for Kim's FASTQ->VCF stage")
+    p.add_argument(
+        "--geper-output-dir", required=True, metavar="DIR", help="Output directory for GEPER's VCF->Report stage"
+    )
+    p.add_argument(
+        "--kim-root", default=str(DEFAULT_KIM_ROOT), metavar="DIR", help="Path to the Kim pipeline project root"
+    )
+    p.add_argument(
+        "--geper-root", default=str(DEFAULT_GEPER_ROOT), metavar="DIR", help="Path to the current GEPER project root"
+    )
+    p.add_argument(
+        "--kim-python",
+        default=None,
+        metavar="PATH",
+        help="Python interpreter to run Kim with (default: current interpreter)",
+    )
+    p.add_argument(
+        "--geper-python",
+        default=None,
+        metavar="PATH",
+        help="Python interpreter to run GEPER with (default: current interpreter)",
+    )
     p.add_argument("--kim-config", default=None, metavar="YAML", help="Kim config YAML override")
     p.add_argument("--no-resume", action="store_true", help="Disable checkpoint/resume in both stages")
 

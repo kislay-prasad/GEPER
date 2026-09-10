@@ -113,13 +113,20 @@ def fetch_mt_gff3(
         "(this is a small, single-contig download, not the full GRCh38 GFF3).",
         accession,
     )
-    resp = _api_get(_EUTILS_BASE + "efetch.fcgi", params=params, timeout=timeout, max_retries=max_retries, logger=logger)
+    resp = _api_get(
+        _EUTILS_BASE + "efetch.fcgi",
+        params=params,
+        timeout=timeout,
+        max_retries=max_retries,
+        logger=logger,
+    )
 
     if resp is None or resp.status_code >= 400:
         logger.warning(
             "MT GFF3 bootstrap fetch for '%s' failed (%s) — falling back to degraded "
             "(no gene/transcript/HGVS) annotation mode.",
-            accession, getattr(resp, "status_code", "no response"),
+            accession,
+            getattr(resp, "status_code", "no response"),
         )
         return None
 
@@ -152,7 +159,8 @@ def fetch_mt_gff3(
     except OSError as exc:
         logger.warning(
             "Could not cache MT GFF3 bootstrap annotation to disk (%s) — continuing "
-            "with the in-memory result for this run only.", exc,
+            "with the in-memory result for this run only.",
+            exc,
         )
         # Even without a writable cache dir, we still fetched valid
         # content this run — write to a throwaway temp file so the

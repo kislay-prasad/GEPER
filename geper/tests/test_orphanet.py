@@ -49,6 +49,7 @@ def _local_provider():
 # XML parsing -- pure, real fixture data
 # ---------------------------------------------------------------------------
 
+
 class TestParseGeneDisorderXml(unittest.TestCase):
     def test_real_brca1_associations(self):
         by_gene, data_version = parse_gene_disorder_xml(_FIXTURE_PATH)
@@ -97,6 +98,7 @@ class TestParseGeneDisorderXml(unittest.TestCase):
 # LocalDatasetOrphanetProvider -- real BRCA1/FBN1/CFTR ground truth
 # ---------------------------------------------------------------------------
 
+
 class TestLocalDatasetOrphanetProvider(unittest.TestCase):
     def test_brca1_real_associations_present(self):
         evidence = _local_provider().query("BRCA1")
@@ -132,11 +134,18 @@ class TestLocalDatasetOrphanetProvider(unittest.TestCase):
 # Models
 # ---------------------------------------------------------------------------
 
+
 class TestOrphanetModels(unittest.TestCase):
     def test_to_dict_includes_required_citation(self):
         evidence = OrphanetGeneEvidence(
-            gene_symbol="FBN1", source="local_dataset", found=True,
-            disorder_associations=[OrphanetDisorderAssociation(gene_symbol="FBN1", orpha_code="284963", disorder_name="Marfan syndrome type 1")],
+            gene_symbol="FBN1",
+            source="local_dataset",
+            found=True,
+            disorder_associations=[
+                OrphanetDisorderAssociation(
+                    gene_symbol="FBN1", orpha_code="284963", disorder_name="Marfan syndrome type 1"
+                )
+            ],
             data_version="2026-06-23 07:57:31",
         )
         d = evidence.to_dict()
@@ -155,6 +164,7 @@ class TestOrphanetModels(unittest.TestCase):
 # Cache
 # ---------------------------------------------------------------------------
 
+
 class TestOrphanetCache(unittest.TestCase):
     def test_put_get_roundtrip(self):
         cache = OrphanetCache(max_size=10, ttl_seconds=None)
@@ -165,6 +175,7 @@ class TestOrphanetCache(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # OrphanetLookup -- disabled flag, no-gene-symbol path, real end-to-end query
 # ---------------------------------------------------------------------------
+
 
 class TestOrphanetLookupDisabled(unittest.TestCase):
     def test_disabled_flag_skips_entirely(self):
@@ -204,6 +215,7 @@ class TestOrphanetLookupQueryVariant(unittest.TestCase):
 # graded validity scale (see module docstring)
 # ---------------------------------------------------------------------------
 
+
 class TestOrphanetDoesNotSubstituteForClinGenValidity(unittest.TestCase):
     def test_every_real_fixture_association_status_is_binary_not_graded(self):
         """
@@ -217,7 +229,15 @@ class TestOrphanetDoesNotSubstituteForClinGenValidity(unittest.TestCase):
         by_gene, _ = parse_gene_disorder_xml(_FIXTURE_PATH)
         observed_statuses = {a.association_status for assocs in by_gene.values() for a in assocs}
         self.assertTrue(observed_statuses <= {"Assessed", "Not yet assessed"})
-        clingen_grades = {"Definitive", "Strong", "Moderate", "Limited", "Disputed", "Refuted", "No Known Disease Relationship"}
+        clingen_grades = {
+            "Definitive",
+            "Strong",
+            "Moderate",
+            "Limited",
+            "Disputed",
+            "Refuted",
+            "No Known Disease Relationship",
+        }
         self.assertEqual(observed_statuses & clingen_grades, set())
 
 

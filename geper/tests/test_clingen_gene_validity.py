@@ -33,14 +33,19 @@ _DOSAGE_FIXTURE = os.path.join(_FIXTURE_DIR, "clingen_dosage_sensitivity.tsv")
 
 def _provider():
     return LocalDatasetClinGenProvider(
-        gene_validity_path=_GENE_VALIDITY_FIXTURE, dosage_sensitivity_path=_DOSAGE_FIXTURE, auto_fetch=False,
+        gene_validity_path=_GENE_VALIDITY_FIXTURE,
+        dosage_sensitivity_path=_DOSAGE_FIXTURE,
+        auto_fetch=False,
     )
 
 
 def _clingen_result(gene_symbol, classification, expert_panel=None, found=True):
     return {
-        "skipped": False, "found": found, "error": None,
-        "gene_symbol": gene_symbol, "clinical_validity_summary": classification,
+        "skipped": False,
+        "found": found,
+        "error": None,
+        "gene_symbol": gene_symbol,
+        "clinical_validity_summary": classification,
         "expert_panel": expert_panel,
     }
 
@@ -48,6 +53,7 @@ def _clingen_result(gene_symbol, classification, expert_panel=None, found=True):
 # ---------------------------------------------------------------------------
 # Real-format parsing
 # ---------------------------------------------------------------------------
+
 
 class TestClinGenExportParsing(unittest.TestCase):
     """
@@ -88,6 +94,7 @@ class TestClinGenExportParsing(unittest.TestCase):
 
     def test_unrecognized_file_yields_no_rows_rather_than_garbage(self):
         import tempfile
+
         with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as fh:
             fh.write("not,a,clingen,export\n1,2,3,4\n")
             path = fh.name
@@ -100,6 +107,7 @@ class TestClinGenExportParsing(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Ground-truth classifications
 # ---------------------------------------------------------------------------
+
 
 class TestKnownGeneDiseaseValidity(unittest.TestCase):
     """
@@ -177,6 +185,7 @@ class TestKnownGeneDiseaseValidity(unittest.TestCase):
 # PP1
 # ---------------------------------------------------------------------------
 
+
 class TestPP1(unittest.TestCase):
     """
     PP1 can never be *triggered* by this pipeline (no pedigree/linkage
@@ -225,6 +234,7 @@ class TestPP1(unittest.TestCase):
 # BS4
 # ---------------------------------------------------------------------------
 
+
 class TestBS4(unittest.TestCase):
     """BS4's benign-direction mirror of the PP1 tests above."""
 
@@ -254,6 +264,7 @@ class TestBS4(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Wiring into the full engine
 # ---------------------------------------------------------------------------
+
 
 class TestEngineWiring(unittest.TestCase):
     def test_evaluate_reports_pp1_and_bs4_for_a_refuted_gene(self):

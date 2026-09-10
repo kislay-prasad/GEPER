@@ -144,9 +144,7 @@ class GnomadAnnotation:
             "hom": self.hom,
             "hemi": self.hemi,
             "highest_population": self.highest_population,
-            "population_breakdown": {
-                pop: freq.to_dict() for pop, freq in self.population_breakdown.items()
-            },
+            "population_breakdown": {pop: freq.to_dict() for pop, freq in self.population_breakdown.items()},
             "error": self.error,
         }
 

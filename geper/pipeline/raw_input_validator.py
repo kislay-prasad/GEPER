@@ -96,8 +96,7 @@ class ValidationResult:
         """Convenience for callers that want a gate (raise) rather than a result object to inspect."""
         if not self.is_valid:
             raise RawInputValidationError(
-                f"Input file '{self.path}' failed pre-flight validation:\n"
-                + "\n".join(f"  - {e}" for e in self.errors)
+                f"Input file '{self.path}' failed pre-flight validation:\n" + "\n".join(f"  - {e}" for e in self.errors)
             )
 
     def summary_line(self) -> str:
@@ -110,6 +109,7 @@ class ValidationResult:
 # wrong-file-type-entirely mistake (e.g. a FASTQ named "sample.bam") is
 # still caught.
 # ---------------------------------------------------------------------------
+
 
 def sniff_format(path: str) -> str:
     """Best-effort format detection from magic bytes / leading content, independent of the file's extension."""
@@ -152,6 +152,7 @@ def sniff_format(path: str) -> str:
 # ---------------------------------------------------------------------------
 # FASTQ
 # ---------------------------------------------------------------------------
+
 
 def validate_fastq(path: str, max_errors_to_report: int = 5) -> ValidationResult:
     """
@@ -203,7 +204,9 @@ def validate_fastq(path: str, max_errors_to_report: int = 5) -> ValidationResult
             _scan_fastq_lines(fh, result, max_errors_to_report)
     except gzip.BadGzipFile as exc:
         result.is_valid = False
-        result.errors.append(f"'{path}' has a gzip-looking header but is not a valid gzip stream (corrupt compression): {exc}")
+        result.errors.append(
+            f"'{path}' has a gzip-looking header but is not a valid gzip stream (corrupt compression): {exc}"
+        )
         return result
     except EOFError:
         result.is_valid = False
@@ -326,6 +329,7 @@ def _find_invalid_quality(qual: str) -> Optional[Tuple[str, int]]:
 # BAM
 # ---------------------------------------------------------------------------
 
+
 def validate_bam(path: str, index_path: Optional[str] = None) -> ValidationResult:
     """
     Validates BAM structural integrity: a correct BGZF container, the
@@ -398,7 +402,9 @@ def validate_bam(path: str, index_path: Optional[str] = None) -> ValidationResul
             magic = fh.read(4)
             if len(magic) < 4:
                 result.is_valid = False
-                result.errors.append(f"'{path}' is truncated: the file ends before its BAM signature could even be read.")
+                result.errors.append(
+                    f"'{path}' is truncated: the file ends before its BAM signature could even be read."
+                )
                 return result
             if magic != _BAM_MAGIC:
                 result.is_valid = False
@@ -493,7 +499,9 @@ def _validate_bai_index(bam_path: str, index_path: Optional[str], result: Valida
 
     if os.path.getsize(resolved) == 0:
         result.is_valid = False
-        result.errors.append(f"BAM index '{resolved}' is empty (0 bytes) -- it is corrupt or was never finished writing.")
+        result.errors.append(
+            f"BAM index '{resolved}' is empty (0 bytes) -- it is corrupt or was never finished writing."
+        )
         return
 
     try:
@@ -621,7 +629,9 @@ def _validate_crai_index(cram_path: str, index_path: Optional[str], result: Vali
 
     if os.path.getsize(resolved) == 0:
         result.is_valid = False
-        result.errors.append(f"CRAM index '{resolved}' is empty (0 bytes) -- it is corrupt or was never finished writing.")
+        result.errors.append(
+            f"CRAM index '{resolved}' is empty (0 bytes) -- it is corrupt or was never finished writing."
+        )
         return
 
     try:
@@ -629,7 +639,9 @@ def _validate_crai_index(cram_path: str, index_path: Optional[str], result: Vali
             fh.read(1)
     except (OSError, EOFError, zlib.error) as exc:
         result.is_valid = False
-        result.errors.append(f"CRAM index '{resolved}' is not a valid, complete gzip stream (corrupt or truncated): {exc}")
+        result.errors.append(
+            f"CRAM index '{resolved}' is not a valid, complete gzip stream (corrupt or truncated): {exc}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +651,9 @@ def _validate_crai_index(cram_path: str, index_path: Optional[str], result: Vali
 _VALIDATORS = {"fastq": validate_fastq, "bam": validate_bam, "cram": validate_cram}
 
 
-def validate_raw_input(path: str, expected_format: Optional[str] = None, index_path: Optional[str] = None) -> ValidationResult:
+def validate_raw_input(
+    path: str, expected_format: Optional[str] = None, index_path: Optional[str] = None
+) -> ValidationResult:
     """
     Convenience dispatcher: validates `path` as `expected_format`
     ("fastq" | "bam" | "cram"), or infers the expected format from the

@@ -20,16 +20,38 @@ import unittest
 from pipeline.acmg_rules import ACMGRuleEngine
 
 
-def _ensemble(models_used, classification, consensus_score, agreement_percentage=None, basis=None):
+def _ensemble(
+    models_used,
+    classification,
+    consensus_score,
+    agreement_percentage=None,
+    basis=None,
+    calibration_statuses=None,
+):
     if not models_used:
         return {
-            "models_used": [], "individual_scores": {}, "consensus_score": None,
-            "confidence": None, "agreement_percentage": None, "classification": None,
-            "basis": "no_models", "reasoning": "No splicing/regulatory AI model was available.",
+            "models_used": [],
+            "individual_scores": {},
+            "consensus_score": None,
+            "confidence": None,
+            "agreement_percentage": None,
+            "classification": None,
+            "basis": "no_models",
+            "reasoning": "No splicing/regulatory AI model was available.",
         }
+    individual = {}
+    for m in models_used:
+        entry = {"score": consensus_score, "classification": classification}
+        # Matches the real shape `status.py::_ensemble_model_status` reads
+        # (individual_scores[key]["details"]["calibration_status"]) -- only
+        # populated when a test asks for it, so existing tests that never
+        # cared about calibration disclosure are unaffected.
+        if calibration_statuses and m in calibration_statuses:
+            entry["details"] = {"calibration_status": calibration_statuses[m]}
+        individual[m] = entry
     return {
         "models_used": models_used,
-        "individual_scores": {m: {"score": consensus_score, "classification": classification} for m in models_used},
+        "individual_scores": individual,
         "consensus_score": consensus_score,
         "confidence": 0.5,
         "agreement_percentage": agreement_percentage,
@@ -101,6 +123,92 @@ class TestPP3EnsembleRouting(unittest.TestCase):
         self.assertEqual(sorted(result.evidence_sources), ["AI-ensemble(enformer+borzoi)", "AlphaMissense"])
         self.assertEqual(len(result.supporting_evidence), 2)
         self.assertEqual(result.confidence, "Moderate")  # >1 supporting evidence
+
+
+class TestEnsembleCalibrationDisclosure(unittest.TestCase):
+    """PP3/BP4's ensemble evidence must disclose each fired model's own
+    `individual_scores[key]["details"]["calibration_status"]` inline --
+    the exact read-and-disclose pattern `_bp7` already applies to
+    SpliceFormer/SpliceBERT (acmg_rules.py:2570-2579): read, never
+    hand-typed; an honest "not reported" fallback when the key is absent,
+    never invented; and a plain-language caveat that this is a raw model
+    score, not a validated clinical measure.
+
+    THE RED-FIRST CASES. Enformer/Borzoi already carry this same
+    calibration_status field (see status.py's own read of it), but
+    _pp3_bp4's ensemble branch (acmg_rules.py:2131-2163) only ever reads
+    models_used/classification/consensus_score/basis/agreement_percentage/
+    reasoning -- calibration_status is silently dropped on the floor for
+    the one PP3/BP4-feeding source that never discloses it.
+    """
+
+    def test_single_model_calibration_status_disclosed_in_pp3_evidence(self):
+        ensemble = _ensemble(
+            ["enformer"],
+            "large_effect",
+            0.8,
+            calibration_statuses={"enformer": "uncalibrated -- raw model output, no clinical validation"},
+        )
+        result = ACMGRuleEngine._pp3(None, None, ensemble)
+        self.assertEqual(result.status, "triggered")
+        text = " ".join(result.supporting_evidence)
+        self.assertIn(
+            "enformer (uncalibrated -- raw model output, no clinical validation)",
+            text,
+            f"calibration status not disclosed in PP3 evidence: {result.supporting_evidence!r}",
+        )
+
+    def test_missing_calibration_status_reports_honest_absence_not_a_guess(self):
+        ensemble = _ensemble(["borzoi"], "large_effect", 0.9)  # no calibration_statuses supplied at all
+        result = ACMGRuleEngine._pp3(None, None, ensemble)
+        text = " ".join(result.supporting_evidence)
+        self.assertIn(
+            "borzoi (calibration status not reported by this model)",
+            text,
+            f"a missing calibration_status must use the same honest-absence text _bp7 uses, "
+            f"not be silently omitted: {result.supporting_evidence!r}",
+        )
+
+    def test_two_model_consensus_discloses_both_models_calibration_independently(self):
+        ensemble = _ensemble(
+            ["enformer", "borzoi"],
+            "moderate_effect",
+            0.3,
+            agreement_percentage=95.0,
+            calibration_statuses={"enformer": "uncalibrated -- A", "borzoi": "uncalibrated -- B"},
+        )
+        result = ACMGRuleEngine._pp3(None, None, ensemble)
+        text = " ".join(result.supporting_evidence)
+        self.assertIn("enformer (uncalibrated -- A)", text)
+        self.assertIn("borzoi (uncalibrated -- B)", text)
+
+    def test_benign_direction_also_discloses_calibration(self):
+        ensemble = _ensemble(
+            ["enformer"],
+            "no_significant_effect",
+            0.02,
+            calibration_statuses={"enformer": "uncalibrated -- raw model output, no clinical validation"},
+        )
+        result = ACMGRuleEngine._bp4(None, None, ensemble)
+        self.assertEqual(result.status, "triggered")
+        text = " ".join(result.supporting_evidence)
+        self.assertIn(
+            "enformer (uncalibrated -- raw model output, no clinical validation)",
+            text,
+            f"BP4's benign-direction ensemble evidence must disclose calibration too, "
+            f"same as _bp7's benign branch: {result.supporting_evidence!r}",
+        )
+
+    def test_raw_score_caveat_present(self):
+        ensemble = _ensemble(["enformer"], "large_effect", 0.8, calibration_statuses={"enformer": "uncalibrated"})
+        result = ACMGRuleEngine._pp3(None, None, ensemble)
+        text = " ".join(result.supporting_evidence)
+        self.assertIn(
+            "not a validated clinical",
+            text,
+            f"missing the plain-language caveat _bp7 attaches to every calibration-qualified "
+            f"score: {result.supporting_evidence!r}",
+        )
 
 
 class TestBP4WithoutEnsemble(unittest.TestCase):
@@ -248,7 +356,6 @@ class TestEvaluateThreadsEnsembleResultThrough(unittest.TestCase):
         # the routing rules as specified (2 models -> use consensus).
         self.assertEqual(pp3["status"], "triggered")
         self.assertTrue(any("12.0%" in s for s in pp3["supporting_evidence"]))
-
 
         """Simulates a pre-existing call site that only knows about the
         original kwargs (no ensemble_result at all) -- must produce

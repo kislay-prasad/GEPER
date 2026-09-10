@@ -131,6 +131,7 @@ Orchestrated end-to-end by `pipeline/orchestrator.py::GeperPipeline.run()`.
 # models/my_new_model.py
 from models.base_model import BaseGenomicModel
 
+
 class MyNewModel(BaseGenomicModel):
     def cache_key(self) -> str:
         return "my_new_model"
@@ -147,6 +148,7 @@ class MyNewModel(BaseGenomicModel):
 ```python
 # models/__init__.py
 from models.my_new_model import MyNewModel
+
 MODEL_REGISTRY["my_new_model"] = MyNewModel
 ```
 

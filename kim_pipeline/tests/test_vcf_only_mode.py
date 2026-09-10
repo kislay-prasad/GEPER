@@ -8,7 +8,7 @@ These tests mock every external stage so they run without bwa/samtools/
 freebayes installed. They assert that:
   1. mode="vcf_only" runs FASTQ validation -> QC -> Alignment ->
      Variant Calling and then returns, without touching VEP/annotation/
-     ACMG/PGx/ancestry/reporting.
+     ACMG/ancestry/reporting.
   2. stop_after="variant_calling" behaves identically to mode="vcf_only".
   3. The default (mode="full", stop_after=None) behavior is completely
      unchanged -- i.e. this feature is fully backward compatible.

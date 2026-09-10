@@ -434,7 +434,41 @@ LABEL org.opencontainers.image.title="GEPER" \
 #   ca-certificates            -- every provider lookup in this pipeline
 #                                is HTTPS (ClinVar, gnomAD, ClinGen, ...)
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa samtools bcftools tabix minimap2 libtabixpp0 libseqlib2 \
+# ── VERSIONS PINNED 2026-09-10. READ THIS BEFORE CHANGING OR REMOVING THEM. ──
+# WHY: nothing here was pinned, so the genomics stack was whatever bookworm
+# happened to ship on build day, and CI's was whatever ubuntu-latest happened
+# to ship on run day. The two drifted independently and NOTHING REPORTED IT.
+# For a clinical artefact the question is not which version is newer, it is
+# WHICH VERSION THE REPORTS WERE VALIDATED AGAINST -- and that question has no
+# answer at all while the version floats.
+#
+# WHAT MAKES THE PIN LOAD-BEARING RATHER THAN TIDY: this pipeline PARSES
+# HUMAN-READABLE TOOL OUTPUT AS IF IT WERE AN API. The duplicate count is
+# obtained by string-matching "DUPLICATE TOTAL" in samtools' STDERR
+# (kim_pipeline/pipeline/alignment/bam_utils.py, mark_duplicates); flagstat is
+# read as `-O tsv` and coverage as its default table. A FORMAT CHANGE BETWEEN
+# VERSIONS CHANGES WHAT THIS PIPELINE RECORDS WITHOUT CHANGING A SINGLE CALL
+# AND WITHOUT ERRORING. That is why these are pinned and not merely noted.
+#
+# VALUES: measured with `dpkg -l` inside the shipped image
+# geper:kelly-master-d249a20 on 2026-09-10, and confirmed the same day to be
+# bookworm's current candidates -- so this pin CHANGES NOTHING TODAY. It fixes
+# what is already true in place, which is the only kind of pin that is safe to
+# add to a clinical image without re-validating it.
+#
+# *** THE COST, STATED SO NOBODY IS SURPRISED BY IT LATER: A PIN NOBODY
+# REVISITS IS A VERSION NOBODY UPGRADES. Bookworm WILL move under this line --
+# a security update to samtools or bcftools will make `apt-get install` fail
+# with "Version '1.16.1-1' for 'samtools' was not found", and the build stops
+# dead. THAT FAILURE IS THE FEATURE: it is a prompt to decide, deliberately,
+# whether to move a clinical pipeline onto a new aligner build -- which is
+# exactly the decision that was being made silently before. ***
+#
+# NOT PINNED, AND ON PURPOSE: libtabixpp0 and libseqlib2 (below) are runtime
+# shared libraries, not tools whose OUTPUT this pipeline reads. Leaving them
+# free lets apt apply security updates. If that distinction ever stops being
+# true, pin them too.
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa=0.7.17-7+b2 samtools=1.16.1-1 bcftools=1.16-1 tabix=1.16+ds-3 minimap2=2.24+dfsg-3+b1 libtabixpp0 libseqlib2 \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
     && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends libcurl4 libssl3 zlib1g libbz2-1.0 liblzma5 libncurses6 ca-certificates \

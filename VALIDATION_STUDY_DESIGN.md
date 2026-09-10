@@ -189,6 +189,55 @@ inference.
 - **[INVENTED]** — reasoned out here, nothing backs it. Flagged so a reviewer knows exactly
   where to push back hardest.
 
+### 0.2a What would make a `[VERIFIED-IN-REPO]` badge self-invalidating — proposed, not built (god's question, conv-validation-badges, 2026-09-10)
+
+**The structural defect, stated plainly:** a `[VERIFIED-IN-REPO]` badge as used throughout
+this document is a claim about a moment — this session, this commit — written in a form
+(bold text, present tense, "checked directly in this repo") that reads as a claim about
+whatever the reader's present is. Nothing re-checks it. §0.4/§0.4a is this document catching
+its own citations drifting **twice** on exactly this failure mode, both times by accident,
+both times because someone happened to re-run the underlying commands rather than because
+anything forced the check. A badge with no sha attached cannot be re-verified without redoing
+the original work by hand — which is precisely why it doesn't get redone, and why the PP5
+row that started this audit survived with a quote that no longer existed, at a line that had
+moved, describing something logically impossible, sitting in a table of otherwise-correct
+rows with the identical badge on every row.
+
+**Three options, in order of how much they'd actually fix versus how much they'd cost:**
+
+1. **Pin the sha, unconditionally, on every badge.** `[VERIFIED-IN-REPO @ abaa7c96]` instead
+   of `[VERIFIED-IN-REPO]`. Cheapest change — a formatting convention, no tooling — and it
+   converts an unanswerable question ("is this still true?") into an answerable one ("what
+   changed between that sha and now, in the cited file?"), which is exactly the `git diff`
+   invocation this audit ran by hand 19 times. Does not catch drift automatically; it only
+   makes catching it a five-second `git diff --stat` instead of a manual re-derivation of
+   what the citation was even supposed to prove. This is the weakest fix that is still a real
+   fix, and is the one §0.4 already does informally (naming `9112411`) without extending the
+   convention to the other 18 badges — which is exactly why only §0.4 caught its own second
+   drift and the PP5 row did not catch its first.
+2. **A quoted string a test greps for.** For badges that cite an exact string (PP5's reason
+   text, `_BP6_DEPRECATION_CAVEAT`'s content, `STAR_PRACTICE_GUIDELINE = 4`), a small CI check
+   — not built here, a proposal only — could grep the cited file for the quoted substring and
+   fail the build if it's gone, the same shape as
+   `tests/test_round16_not_evaluated_categories.py`'s existing drift-protection test for
+   `_NEVER_INTEGRATED_ACMG_CODES`. This catches the PP5 defect's first half (the quote no
+   longer existing) automatically and continuously, not just at audit time — but it cannot
+   catch a moved-but-still-correct line number (most of this audit's findings), and it cannot
+   catch a characterisation that is wrong while the quote is still accurate word-for-word,
+   which is PP5's more serious half. A passing grep is weaker evidence than it looks: it would
+   have stayed green through everything except the exact string going missing.
+3. **Drop the badge, cite the git blame instead, or don't cite a line at all.** The dispatch's
+   own framing — an unverifiable verification claim is worse than no claim — taken to its
+   conclusion: state the fact and let a reader run `git log -S"<distinctive phrase>"` or
+   `grep -rn` themselves rather than asserting a location that will go stale. Loses the
+   "reviewer can re-check it in seconds" property this document's own legend (§0.2) claims for
+   the badge, which is a real cost, not a free option.
+
+**Recommendation, not a decision:** option 1 (pin the sha on every badge) for all of them, plus
+option 2 for the handful whose entire evidentiary weight rests on one exact string (PP5, BP6's
+caveat, the star-rating default) rather than a broader "this function does X" claim that a line
+number alone can't fully capture anyway. Not built in this pass, per boundary.
+
 ### 0.3 Citation verification status — every external citation was attempted, 2026-08-22
 
 **The first draft of this document cited every external source from training knowledge,
@@ -277,6 +326,45 @@ self-checks failing (the first was the §0.1 token grep matching its own prose).
 prior regulatory correspondence informed this design, because none was available. Stated so
 its absence is not mistaken for its having been consulted and found silent.
 
+### 0.4a Re-verified 2026-09-10, during a stale-`[VERIFIED-IN-REPO]`-badge audit (conv-validation-badges) — §0.4's own warning came true a second time
+
+**§0.4 predicted this exact failure mode and it happened anyway, unnoticed until this audit.**
+Every `[VERIFIED-IN-REPO]` badge in this file (19 sites, this document's own PP5 row among
+them — see §2.1's channel table) was checked against the current tree at
+`abaa7c96bbd8e6a3efdee7d160a332f0d70922d5`, not re-derived from what this section already
+claimed:
+
+```
+git diff --stat validation-baseline-2026-08-21 abaa7c96 -- \
+    geper/pipeline/acmg_rules.py geper/pipeline/ps1_pm5/ \
+    geper/database/clinvar_client.py
+#  geper/database/clinvar_client.py |   8 +
+#  geper/pipeline/acmg_rules.py     | 311 ++++++++++++++++++++++++++++++++-------
+#  geper/pipeline/ps1_pm5/utils.py  |   2 +-
+#  3 files changed, 266 insertions(+), 55 deletions(-)
+
+git diff --stat validation-baseline-2026-08-21 abaa7c96 -- geper/config.py
+#  geper/config.py | 165 ++++++++++++++++++++++++++++++++++++++++++++++++--------
+#  1 file changed, 142 insertions(+), 23 deletions(-)
+```
+
+**§0.4's own "still byte-identical to the baseline tag" claim is false again, right now, for
+`acmg_rules.py` and `ps1_pm5/utils.py` — it was true only for the commit it was checked at
+(`9112411`) and has since drifted a second time through further legitimate work.**
+`config.py`'s drift is larger too: 142 insertions now, not the 39 §0.4 recorded.
+`MIN_STAR_RATING` moved again, `1710` → `1768`; every citation to it in this document has
+been updated in this pass, dated, with the prior value kept alongside the new one rather than
+silently overwritten (§2.1, §2.2, §2.4, §2.4's footnote). Several other line citations
+throughout this document — none of them self-labelled as pins the way `config.py:1710` was —
+had drifted the same way and are fixed at their sites, each marked "re-verified 2026-09-10."
+
+**Restated, because it is the actual finding:** a `[VERIFIED-IN-REPO]` badge with no sha
+attached is a claim about the moment it was written, presented in a form that reads as a claim
+about the present, and nothing re-checks it automatically. This section is proof the pattern
+recurs on a timescale of weeks even when a prior instance is documented in the same file the
+next drift happens to — see §0.2a's proposal for what would make a badge catch its own
+staleness instead of relying on someone re-running this exact audit again.
+
 ---
 
 #### Cross-tree claims — which state of `kim_pipeline/` they were read from
@@ -364,13 +452,12 @@ different picture, and that difference decides the study design:
 
 | Channel | Consumes ClinVar? | Whose record? | Reaches the **classification**? | Evidence |
 |---|---|---|---|---|
-| **PP5** | **No — never fires** | — | **No** | **[VERIFIED-IN-REPO]** `pipeline/acmg_rules.py:923-926` — `PP5` is set to `_not_evaluated` **unconditionally**, reason `"deprecated in the 2015 ACMG/AMP guideline update; not applied."` |
-| **BP6** | Yes | The variant's **own** record | **No** | **[VERIFIED-IN-REPO]** `acmg_rules.py:3509-3522` — `_combine` skips `BP6` in the point tally with a comment naming this exact circularity; `_BP6_DEPRECATION_CAVEAT` (`:2943-2951`) states it is "reported at capped Low confidence and is excluded from this engine's own point-based combining rules... so it cannot silently move the final classification". It **does** reach the human-readable evidence text. |
-| `_clinvar_crossref` | Yes | Own record | **No** | **[VERIFIED-IN-REPO]** `acmg_rules.py:3420`, and the comment at `:3511` — descriptive cross-reference, "kept out of these combining rules entirely". |
-| **PS1** (Strong, path.) | **Yes** | **Other** variants at the same codon, identical resulting AA change | **YES** | **[VERIFIED-IN-REPO]** `acmg_rules.py:1116-1140`; anchors filtered by `CONFIG.ps1_pm5.MIN_STAR_RATING` (**default 2**, `config.py:1710`
-as of `9112411`; the line was 1677 at the baseline tag — the value is unchanged, only its
-position moved, see §0.4); the variant's own record is excluded (`pipeline/ps1_pm5/decision.py:137`, *"excluding this variant's own record"*). |
-| **PM5** (Moderate, path.) | **Yes** | **Other** variants at the same codon, *different* AA change | **YES** | **[VERIFIED-IN-REPO]** `acmg_rules.py:1144-1170`; same threshold, same self-exclusion. |
+| **PP5** | **No — never fires** | — | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10 after a stale-badge audit — see §0.4a]** `pipeline/acmg_rules.py:957-962` — `PP5` is set to `_not_evaluated` **unconditionally**, reason `"recommended against by ClinGen's SVI Working Group (Biesecker & Harrison 2018) as circular with respect to an independent ACMG/AMP evaluation; not applied."` **PP5 is NOT "deprecated" — that word, and the quote and line range this row previously carried, do not exist in the file and never described anything that could be true: PP5 was *introduced by* the 2015 ACMG/AMP guideline, so it cannot have been deprecated *in* that same document.** The real reason is a **deliberate policy exclusion**, on ClinGen SVI's later (2018) recommendation — a decision GEPER made and must defend, not a fact about the 2015 guideline itself. (Separately, and left untouched per instruction: PP5's `_not_evaluated` category is `NOT_INTEGRATED`, the same bucket used for genuine data-integration gaps elsewhere in this table — arguably a mis-categorisation, since this is a policy choice with the data available, not a missing integration. Noted here, not opened, per god's explicit instruction not to open this card in this pass — tracked separately on the floor.) |
+| **BP6** | Yes | The variant's **own** record | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:3713-3725` — `_combine` skips `BP6` in the point tally with a comment naming this exact circularity; `_BP6_DEPRECATION_CAVEAT` (`:3092-3101`) states it is "reported at capped Low confidence and is excluded from this engine's own point-based combining rules... so it cannot silently move the final classification". It **does** reach the human-readable evidence text. |
+| `_clinvar_crossref` | Yes | Own record | **No** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:3623` (definition; called from `:983`), and the comment at `:3714-3715` — descriptive cross-reference, "kept out of these combining rules entirely". |
+| **PS1** (Strong, path.) | **Yes** | **Other** variants at the same codon, identical resulting AA change | **YES** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:1209-1234`; anchors filtered by `CONFIG.ps1_pm5.MIN_STAR_RATING` (**default 2**, `config.py:1768`
+as of this branch's base `abaa7c96` — the line has moved AGAIN since §0.4's own 2026-08-22 correction pinned it at `1710`; the value is still unchanged, only its position, see §0.4a); the variant's own record is excluded (`pipeline/ps1_pm5/decision.py:137`, *"excluding this variant's own record"*). |
+| **PM5** (Moderate, path.) | **Yes** | **Other** variants at the same codon, *different* AA change | **YES** | **[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:1237-1263`; same threshold, same self-exclusion. |
 
 **Three consequences, each of which changes the design:**
 
@@ -401,7 +488,7 @@ load-bearing part, so read it sceptically]**
 The proposed truth set is ClinVar's 3★ expert-panel + 4★ practice-guideline subset. Two
 verified facts collide inside it:
 
-- **[VERIFIED-IN-REPO]** PS1/PM5 admit anchors at ≥2★ (`config.py:1710`, see §0.4), so 3★ and 4★
+- **[VERIFIED-IN-REPO, re-verified 2026-09-10]** PS1/PM5 admit anchors at ≥2★ (`config.py:1768`, see §0.4a — moved again since §0.4's 2026-08-22 pin), so 3★ and 4★
   records are themselves *admissible anchors* — the truth tier and the anchor tier overlap.
 - **[GUIDANCE, corroborated in-repo]** ClinVar's expert panels curate **whole genes or gene
   sets**, not scattered variants: ENIGMA for *BRCA1/2*, InSiGHT for Lynch-syndrome genes
@@ -415,7 +502,7 @@ it. This is not record-level echo, and stratifying on "did ClinVar evidence fire
 isolate it — you need the **anchor's submitting organisation**.
 
 **GEPER already captures exactly that.** **[VERIFIED-IN-REPO]** `clinvar_client.py:355-372`
-(`_fetch_submitters`, batched VCV XML) and `pipeline/ps1_pm5/utils.py:161` capture the
+(`_fetch_submitters`, batched VCV XML, re-verified 2026-09-10 — range still exact) and `pipeline/ps1_pm5/utils.py:155` (was `:161`, minor drift, re-verified 2026-09-10) capture the
 submitting organisation per record. The provenance needed to measure curator circularity is
 already flowing through the pipeline; §2.5 uses it. **No new integration is required** —
 which is the reason this stratum is proposed at all, rather than named as an unaddressable
@@ -554,7 +641,7 @@ output**, not from any property of the variant chosen in advance.
 | **C — ablation of B** | The same variants as Arm B, re-run with PS1/PM5 forced not to trigger | Yields the **magnitude** of ClinVar's contribution (B − C) |
 
 **Sub-flag on Arm A: `bp6_fired`.** **[VERIFIED-IN-REPO + INVENTED]** BP6 cannot move the
-score (`acmg_rules.py:3509-3522`) but does reach the rendered evidence text. Arm A must
+score (`acmg_rules.py:3713-3725`, was `:3509-3522`, re-verified 2026-09-10) but does reach the rendered evidence text. Arm A must
 therefore be reported **twice** — with and without `bp6_fired` variants. The reason is not
 statistical: a clinician reading GEPER's evidence narrative is a consumer of that text, and
 an assessor will ask whether ClinVar's own verdict was visible to a human reader even where
@@ -575,9 +662,9 @@ on the A:B ratio in whatever variant set happened to be selected.
 must be verified before use]**
 
 **[VERIFIED-IN-REPO]** `CONFIG.ps1_pm5.MIN_STAR_RATING` is read from the environment
-(`config.py:1710`, `GEPER_PS1_PM5_MIN_STAR_RATING`, default `2` — see §0.4 on the line
-drift) and is the sole star-rating
-gate applied to PS1/PM5 anchors (`acmg_rules.py:1137`, `:1166`). ClinVar's maximum star
+(`config.py:1768`, `GEPER_PS1_PM5_MIN_STAR_RATING`, default `2` — moved again since §0.4's
+2026-08-22 pin, see §0.4a) and is the sole star-rating
+gate applied to PS1/PM5 anchors (`acmg_rules.py:1230`, `:1259`, was `:1137`/`:1166`, re-verified 2026-09-10). ClinVar's maximum star
 rating is 4 (`pipeline/ps1_pm5/models.py`, `STAR_PRACTICE_GUIDELINE = 4`).
 
 **Inferred:** setting `GEPER_PS1_PM5_MIN_STAR_RATING=5` should admit no anchor, so PS1 and
@@ -656,7 +743,7 @@ true after all. **Either way the ruling stands** — which is the point of testi
 that only ever argued *for* the conclusion.
 
 **One observation recorded without a defect claim attached.** `decision.py:47` carries a
-**second, independent default** (`min_star_rating: int = 2`) duplicating `config.py:1710`'s.
+**second, independent default** (`min_star_rating: int = 2`) duplicating `config.py:1768`'s (line moved again since §0.4's 2026-08-22 correction, re-verified 2026-09-10, see §0.4a).
 Both are `2` today, so nothing is wrong now. Were they ever to diverge, a caller constructing
 thresholds without going through `CONFIG` would silently get a different evidence bar with no
 error. **Not asserted as a live defect** — every construction site was not traced, and saying
@@ -2063,7 +2150,7 @@ Rubric 1a's falsifier (`VALIDATION_READINESS_RUBRIC.md` @ `89bf125`, verbatim):
 > Benign boundary is an automatic fail, no tolerance."*
 
 **It quantifies over CLASSIFICATIONS.** The quantity it inspects is
-`combine_result.classification` (`geper/pipeline/acmg_rules.py:957`). It never reads a score,
+`combine_result.classification` (`geper/pipeline/acmg_rules.py:684`, the `CombineResult.classification` field definition — was `:957`, now-wrong-location: that line now falls inside the PP5 `_not_evaluated` block after intervening insertions; re-verified 2026-09-10). It never reads a score,
 a category, or a rank. **Subsumption would therefore require that rank be a function of
 classification** — if it were, a buried pathogenic variant would have to have been
 mis-classified first, and F1 would catch it on the way past.
@@ -2407,7 +2494,7 @@ which it cannot. **Angela's text, Angela's call.** Flagged, not amended.
 
 ### 7.2 Rubric 1b's "confidence scores within a stated numeric tolerance"
 
-**[VERIFIED-IN-REPO]** `acmg_rules.py:601` — the per-criterion `confidence` field is
+**[VERIFIED-IN-REPO, re-verified 2026-09-10]** `acmg_rules.py:624` (was `:601`; the old line now falls inside an unrelated `DATA_UNAVAILABLE`-default comment) — the per-criterion `confidence` field is
 categorical (`"High" | "Moderate" | "Low"`), not numeric. A separate `significance_score`
 exists. Whichever is meant, "numeric tolerance" does not apply to the categorical field.
 Touches 1b, which is Andy's and Angela's, not mine. Flagged only.

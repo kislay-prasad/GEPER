@@ -695,17 +695,35 @@ class FastaCodonContextProvider:
         alt_aa = _translate(mut_codon_str)
 
         # Classify
-        # GUARD (2026-08-28): an undetermined amino acid ("?", from
-        # `_translate`'s codon-table fallback -- typically an "N" surviving
-        # into the reference FASTA at this codon) must never compare equal
-        # to another undetermined amino acid and be read as "no change".
-        # Two unknowns are not evidence of sameness: when an "N" sits
-        # elsewhere in the same codon (not at the variant's own position),
-        # it survives into BOTH ref_codon and mut_codon, so ref_aa == alt_aa
-        # == "?" previously satisfied this branch by plain string equality
-        # and reported synonymous_variant for a protein change that was
-        # never actually determined -- which then fed BP7 benign evidence.
-        if ref_aa == alt_aa and "?" not in (ref_aa, alt_aa):
+        # GUARD (2026-08-28, widened 2026-09-10): an undetermined amino acid
+        # ("?", from `_translate`'s codon-table fallback -- typically an "N"
+        # surviving into the reference FASTA at this codon) must never be
+        # read as a determined consequence of ANY kind, not just the
+        # equal-"?" "no change" misread the original guard covered (two
+        # unknowns are not evidence of sameness -- an "N" elsewhere in the
+        # same codon survives into BOTH ref_codon and mut_codon, so
+        # ref_aa == alt_aa == "?" used to satisfy the synonymous branch by
+        # plain string equality and fed BP7 benign evidence for a protein
+        # change nobody determined). A single-sided "?" is just as
+        # undetermined and was previously falling through this cascade's
+        # `else` to "missense" by elimination -- a confident consequence
+        # type manufactured from a codon that was never actually read, and
+        # exactly what routed it into the PS1/PM5 ClinVar lookup at
+        # orchestration/shared.py:352 (see clinvar/lookup.py's own "?" guard,
+        # which exists because this one didn't used to).
+        #
+        # "not_evaluated" is this provider's name for the honest-gap idiom
+        # the annotation layer already has for exactly this situation --
+        # `_map_consequence` (annotation/stage.py) maps any codon_change
+        # value it doesn't recognise (this one included) to
+        # CONSEQUENCE_NOT_DETERMINED for an SNV, which stage.py's own
+        # `var.consequence == "missense_variant"` gate (stage.py:1166) then
+        # keeps out of wildtype_aa/mutant_aa entirely, and which
+        # clinical_sections.py already renders as "Not determined" rather
+        # than a guessed classification.
+        if "?" in (ref_aa, alt_aa):
+            consequence = "not_evaluated"
+        elif ref_aa == alt_aa:
             consequence = "synonymous"
         elif alt_aa == "*":
             consequence = "stop_gained"

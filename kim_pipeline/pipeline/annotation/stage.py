@@ -372,6 +372,11 @@ class AnnotatedVariant:
     # These take precedence over the locally-generated hgvs field.
     vep_hgvs_c: str = ""  # VEP HGVSc (e.g. NM_000059.4:c.5266dup)
     vep_hgvs_p: str = ""  # VEP HGVSp (e.g. NP_000050.3:p.Gln1756fs)
+    # F3: VEP's own most-severe CSQ Consequence term, kept alongside (never
+    # overwriting) `consequence` above so the two independent derivations
+    # can be compared -- see `consequence_classes_disagree` near the top
+    # of this file. Detector only; not read by any stage today.
+    vep_consequence: str = ""
     # Annotation scores — populated from INFO field when present
     cadd_phred: Optional[float] = None
     revel_score: Optional[float] = None
@@ -597,6 +602,121 @@ def _extract_csq_hgvs(
     return best_hgvs_c, best_hgvs_p
 
 
+def _extract_csq_consequence(info: str, csq_fields: List[str]) -> str:
+    """VEP's own most-severe Consequence term from the CSQ INFO tag, kept
+    separate from `var.consequence` -- see that field's docstring on
+    `AnnotatedVariant` -- so the two derivations can be compared rather
+    than one silently overwriting the other.
+
+    Returns "" when CSQ is absent, matching `_extract_csq_hgvs`'s empty
+    convention. Reuses the same most-severe-entry selection as
+    `_extract_csq_hgvs` / `_extract_csq_scores` (`_SEVERITY_RANK`) so all
+    three functions pick the identical CSQ row for the same record.
+    """
+    csq_raw = ""
+    for part in info.split(";"):
+        if part.startswith("CSQ="):
+            csq_raw = part[4:]
+            break
+    if not csq_raw or not csq_fields:
+        return ""
+
+    best_rank = len(_SEVERITY_ORDER) + 1
+    best_consequence = ""
+
+    for entry_str in csq_raw.split(","):
+        values = entry_str.split("|")
+        entry: Dict[str, str] = {
+            csq_fields[i]: values[i] for i in range(min(len(csq_fields), len(values)))
+        }
+        raw = entry.get("Consequence", "")
+        consequences = raw.split("&")
+        rank = min(
+            (_SEVERITY_RANK.get(c, len(_SEVERITY_ORDER)) for c in consequences),
+            default=len(_SEVERITY_ORDER),
+        )
+        if rank < best_rank:
+            best_rank = rank
+            best_consequence = raw
+
+    return best_consequence
+
+
+# ─── Cross-derivation consequence check (F3) ─────────────────────────────────
+# kim_pipeline computes a protein consequence TWICE for the same variant:
+# `var.consequence` (this file's own GFF3 + codon_provider derivation, keyed
+# to whichever transcript `GffIndex.lookup()` resolves for this locus) and
+# VEP's own CSQ Consequence (keyed to whichever transcript VEP's own
+# most-severe ranking resolves, independently -- see `_extract_csq_consequence`
+# above). Nothing today reconciles them; `var.consequence` alone feeds the
+# ACMG is_missense/is_lof gates. This is a detector only -- it does not run
+# inside `AnnotationStage.run()` and does not change pipeline behaviour;
+# whether a disagreement should warn, block, or just be visible is a policy
+# call outside this function's scope.
+_LOF_TERMS = {
+    "transcript_ablation",
+    "splice_acceptor_variant",
+    "splice_donor_variant",
+    "stop_gained",
+    "frameshift_variant",
+    "stop_lost",
+    "start_lost",
+}
+_MISSENSE_TERMS = {"missense_variant", "protein_altering_variant"}
+_SILENT_TERMS = {
+    "synonymous_variant",
+    "stop_retained_variant",
+    "start_retained_variant",
+    "coding_sequence_variant",
+}
+_NONCODING_TERMS = {
+    "intron_variant",
+    "intergenic_variant",
+    "5_prime_UTR_variant",
+    "3_prime_UTR_variant",
+    "non_coding_transcript_exon_variant",
+    "non_coding_transcript_variant",
+    "upstream_gene_variant",
+    "downstream_gene_variant",
+    "gene_region_variant",
+    "NMD_transcript_variant",
+}
+
+
+def _consequence_class(term: str) -> str:
+    """Coarse bucket for one SO consequence term: lof / missense / inframe /
+    silent / noncoding / other. Used only to compare two independently
+    derived consequence terms at a tolerant granularity -- exact SO term
+    equality is a stricter, noisier check (e.g. "stop_gained" vs
+    "frameshift_variant" are both LOF but not equal strings)."""
+    if term in _LOF_TERMS:
+        return "lof"
+    if term in _MISSENSE_TERMS:
+        return "missense"
+    if term in ("inframe_insertion", "inframe_deletion"):
+        return "inframe"
+    if term in _SILENT_TERMS:
+        return "silent"
+    if term in _NONCODING_TERMS:
+        return "noncoding"
+    return "other"
+
+
+def consequence_classes_disagree(kim_consequence: str, vep_consequence: str) -> bool:
+    """True when kim_pipeline's own `var.consequence` and VEP's own CSQ
+    Consequence (most-severe entry, possibly "&"-joined) fall into
+    different coarse classes for the same variant -- see the module-level
+    note above `_consequence_class` for why F3 has two independent
+    derivations at all. Either empty string (not yet computed / no CSQ)
+    is not a disagreement -- there is nothing to compare yet."""
+    if not kim_consequence or not vep_consequence:
+        return False
+    vep_terms = vep_consequence.split("&")
+    kim_class = _consequence_class(kim_consequence)
+    vep_classes = {_consequence_class(t) for t in vep_terms}
+    return kim_class not in vep_classes
+
+
 def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
     """Stream-parse a plain or gzip-compressed VCF file, yielding one
     AnnotatedVariant per ALT allele (multi-allelic records expanded).
@@ -674,6 +794,9 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
             )
             # FIX 13: extract VEP HGVSc and HGVSp from CSQ tag
             vep_hgvs_c, vep_hgvs_p = _extract_csq_hgvs(info, csq_fields) if csq_fields else ("", "")
+            # F3: VEP's own most-severe Consequence term, captured alongside
+            # (see `consequence_classes_disagree` module-level note).
+            vep_consequence = _extract_csq_consequence(info, csq_fields) if csq_fields else ""
 
             for allele_idx, alt in enumerate(alt_alleles):
                 alt = alt.strip()
@@ -721,6 +844,7 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                     is_inframe_indel=is_inframe_indel,
                     vep_hgvs_c=vep_hgvs_c,
                     vep_hgvs_p=vep_hgvs_p,
+                    vep_consequence=vep_consequence,
                 )
 
                 # FIX 1: populate scores from CSQ (prefer CSQ over plain INFO)

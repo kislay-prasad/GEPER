@@ -12,6 +12,7 @@ Regression tests for the Issue 4 ACMG/AMP guideline audit:
 3. The core P/LP/LB/B combining-rule table (Richards et al. 2015,
    Table 5) is verified exhaustively against every documented rule.
 """
+
 from __future__ import annotations
 
 from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence, STATUS_NOT_EVALUATED
@@ -102,19 +103,25 @@ class TestPP5BP6ConfigurableOptOut:
         """Backward compatibility: default config (no override) must
         behave exactly as before this audit."""
         clf = AcmgClassifier(cfg={})
-        ev = _base_evidence(clinvar_significance="Pathogenic", clinvar_stars=2, clinvar_conflicting=False)
+        ev = _base_evidence(
+            clinvar_significance="Pathogenic", clinvar_stars=2, clinvar_conflicting=False
+        )
         result = clf.classify(ev)
         assert "PP5" in result.criteria_met
 
     def test_default_behavior_unchanged_bp6_fires(self):
         clf = AcmgClassifier(cfg={})
-        ev = _base_evidence(clinvar_significance="Benign", clinvar_stars=2, clinvar_conflicting=False)
+        ev = _base_evidence(
+            clinvar_significance="Benign", clinvar_stars=2, clinvar_conflicting=False
+        )
         result = clf.classify(ev)
         assert "BP6" in result.criteria_met
 
     def test_disable_flag_suppresses_pp5(self):
         clf = AcmgClassifier(cfg={"acmg_thresholds": {"disable_pp5_bp6": True}})
-        ev = _base_evidence(clinvar_significance="Pathogenic", clinvar_stars=3, clinvar_conflicting=False)
+        ev = _base_evidence(
+            clinvar_significance="Pathogenic", clinvar_stars=3, clinvar_conflicting=False
+        )
         result = clf.classify(ev)
         assert "PP5" not in result.criteria_met
         pp5 = next(c for c in result.all_criteria if c.code == "PP5")
@@ -123,7 +130,9 @@ class TestPP5BP6ConfigurableOptOut:
 
     def test_disable_flag_suppresses_bp6(self):
         clf = AcmgClassifier(cfg={"acmg_thresholds": {"disable_pp5_bp6": True}})
-        ev = _base_evidence(clinvar_significance="Benign", clinvar_stars=3, clinvar_conflicting=False)
+        ev = _base_evidence(
+            clinvar_significance="Benign", clinvar_stars=3, clinvar_conflicting=False
+        )
         result = clf.classify(ev)
         assert "BP6" not in result.criteria_met
         bp6 = next(c for c in result.all_criteria if c.code == "BP6")
@@ -135,8 +144,11 @@ class TestPP5BP6ConfigurableOptOut:
         opt-out actually propagates through to the final classification,
         not just the per-criterion status."""
         ev = _base_evidence(
-            is_missense=True, missense_constrained=True,  # PP2
-            clinvar_significance="Pathogenic", clinvar_stars=2, clinvar_conflicting=False,  # PP5
+            is_missense=True,
+            missense_constrained=True,  # PP2
+            clinvar_significance="Pathogenic",
+            clinvar_stars=2,
+            clinvar_conflicting=False,  # PP5
             in_hotspot=True,  # PM1 needs is_missense too
         )
         clf_default = AcmgClassifier(cfg={})
@@ -162,19 +174,82 @@ class TestCombiningRuleTable:
         clf = AcmgClassifier(cfg={})
         met = []
         for i in range(pvs):
-            met.append(CriteriaResult(code=f"PVS{i}", met=True, status=STATUS_MET, strength="very_strong", direction="pathogenic", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"PVS{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="very_strong",
+                    direction="pathogenic",
+                    reason="",
+                )
+            )
         for i in range(ps):
-            met.append(CriteriaResult(code=f"PS{i}", met=True, status=STATUS_MET, strength="strong", direction="pathogenic", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"PS{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="strong",
+                    direction="pathogenic",
+                    reason="",
+                )
+            )
         for i in range(pm):
-            met.append(CriteriaResult(code=f"PM{i}", met=True, status=STATUS_MET, strength="moderate", direction="pathogenic", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"PM{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="moderate",
+                    direction="pathogenic",
+                    reason="",
+                )
+            )
         for i in range(pp):
-            met.append(CriteriaResult(code=f"PP{i}", met=True, status=STATUS_MET, strength="supporting", direction="pathogenic", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"PP{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="supporting",
+                    direction="pathogenic",
+                    reason="",
+                )
+            )
         for i in range(ba):
-            met.append(CriteriaResult(code=f"BA{i}", met=True, status=STATUS_MET, strength="stand_alone", direction="benign", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"BA{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="stand_alone",
+                    direction="benign",
+                    reason="",
+                )
+            )
         for i in range(bs):
-            met.append(CriteriaResult(code=f"BS{i}", met=True, status=STATUS_MET, strength="strong", direction="benign", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"BS{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="strong",
+                    direction="benign",
+                    reason="",
+                )
+            )
         for i in range(bp):
-            met.append(CriteriaResult(code=f"BP{i}", met=True, status=STATUS_MET, strength="supporting", direction="benign", reason=""))
+            met.append(
+                CriteriaResult(
+                    code=f"BP{i}",
+                    met=True,
+                    status=STATUS_MET,
+                    strength="supporting",
+                    direction="benign",
+                    reason="",
+                )
+            )
         classification, _ = clf._classify(met)
         return classification
 

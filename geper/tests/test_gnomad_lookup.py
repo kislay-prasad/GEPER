@@ -81,12 +81,13 @@ class TestGnomadLookupBatch(unittest.TestCase):
             v1, v2 = _make_variant(pos=1), _make_variant(pos=2)
             # Pre-warm the cache for v1 only.
             from pipeline.gnomad.utils import variant_key
+
             cache.put(variant_key(v1.chrom, v1.pos, v1.ref, v1.alt, "GRCh38"), {"found": True, "pos": 1})
 
             results = lookup.query_variants_batch([v1, v2], assembly="GRCh38")
 
         provider.batch_query.assert_called_once()
-        (called_args, _), = [provider.batch_query.call_args]
+        ((called_args, _),) = [provider.batch_query.call_args]
         self.assertEqual(len(called_args[0]), 1)  # only v2 was actually fetched
         self.assertEqual([r["pos"] for r in results], [1, 2])  # order preserved
 

@@ -59,13 +59,17 @@ def _load_bench_variants() -> list:
                 continue
             fields = line.rstrip("\n").split("\t")
             chrom, pos, ref, alt = fields[0], int(fields[1]), fields[3], fields[4]
-            variants.append(Variant(chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt, qual=None, filter_status=None))
+            variants.append(
+                Variant(chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt, qual=None, filter_status=None)
+            )
     return variants
 
 
 def main() -> int:
     if not os.path.exists(_FIXTURE_PATH):
-        print(f"Benchmark fixture not found at {_FIXTURE_PATH}. Re-generate it (see this repo's test-data prep step) first.")
+        print(
+            f"Benchmark fixture not found at {_FIXTURE_PATH}. Re-generate it (see this repo's test-data prep step) first."
+        )
         return 1
 
     variants = _load_bench_variants()
@@ -105,7 +109,9 @@ def main() -> int:
     cache_hit_sources = sum(1 for r in results_d if r.get("source") == "cache")
 
     assert found_a == found_b == found_c, "All three cold-cache runs must agree on how many variants were found"
-    assert [r.get("found") for r in results_a] == [r.get("found") for r in results_d], "Cached results must match original"
+    assert [r.get("found") for r in results_a] == [r.get("found") for r in results_d], (
+        "Cached results must match original"
+    )
 
     print(f"Variants found in gnomAD fixture: {found_a} / {n}\n")
     print(f"{'Strategy':<32} {'Wall time':>12} {'Variants/sec':>14}")
@@ -117,11 +123,13 @@ def main() -> int:
         ("D: sequential, warm cache", elapsed_d),
     ):
         rate = n / elapsed if elapsed > 0 else float("inf")
-        print(f"{label:<32} {elapsed*1000:>10.1f}ms {rate:>12.1f}/s")
+        print(f"{label:<32} {elapsed * 1000:>10.1f}ms {rate:>12.1f}/s")
 
     print()
-    print(f"Cache: {cache_hit_sources}/{n} of run D's lookups served from cache "
-          f"(expect {n}/{n} -- every variant from run A should be warm).")
+    print(
+        f"Cache: {cache_hit_sources}/{n} of run D's lookups served from cache "
+        f"(expect {n}/{n} -- every variant from run A should be warm)."
+    )
     speedup_batch = elapsed_a / elapsed_b if elapsed_b > 0 else float("inf")
     speedup_cache = elapsed_a / elapsed_d if elapsed_d > 0 else float("inf")
     print(f"Batch (thread-pooled) vs sequential speedup: {speedup_batch:.1f}x")

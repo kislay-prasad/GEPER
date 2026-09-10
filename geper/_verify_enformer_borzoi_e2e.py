@@ -19,6 +19,7 @@ already uses -- everything else (plugin instantiation, `_load_impl`,
 `build_variant_result`, `ReportGenerator`) is the real, unmodified
 production code path.
 """
+
 import json
 from unittest import mock
 
@@ -80,9 +81,11 @@ def main():
     print("=" * 78)
     print(f"CONFIG.splicing.ENABLE_ENFORMER (real, default) = {CONFIG.splicing.ENABLE_ENFORMER}")
     print(f"CONFIG.splicing.ENABLE_BORZOI  (real, default)  = {CONFIG.splicing.ENABLE_BORZOI}")
-    print("(CONFIG is a frozen dataclass -- mocked at each plugin module's own "
-          "import site below, exactly like tests/test_enformer_plugin.py and "
-          "tests/test_borzoi_plugin.py already do.)")
+    print(
+        "(CONFIG is a frozen dataclass -- mocked at each plugin module's own "
+        "import site below, exactly like tests/test_enformer_plugin.py and "
+        "tests/test_borzoi_plugin.py already do.)"
+    )
 
     ref_seq = "ACGT" * 50000  # 200kb, within Enformer's expected input window
     alt_seq = "ACGT" * 49999 + "TTTT"  # same length, one window's worth of alt content
@@ -93,19 +96,18 @@ def main():
     print("          only the unreachable HF/GitHub weight download is mocked")
     print("=" * 78)
 
-    with mock.patch(
-        "pipeline.models.enformer_plugin.CONFIG"
-    ) as mock_enformer_config, mock.patch(
-        "pipeline.models.borzoi_plugin.CONFIG"
-    ) as mock_borzoi_config, mock.patch(
-        "pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True
-    ), mock.patch(
-        "enformer_pytorch.from_pretrained", return_value=_FakeEnformerModel()
-    ) as mock_enformer_from_pretrained, mock.patch(
-        "pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True
-    ), mock.patch(
-        "borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel()
-    ) as mock_borzoi_from_pretrained:
+    with (
+        mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_enformer_config,
+        mock.patch("pipeline.models.borzoi_plugin.CONFIG") as mock_borzoi_config,
+        mock.patch("pipeline.models.enformer_plugin.ensure_pip_package_available", return_value=True),
+        mock.patch(
+            "enformer_pytorch.from_pretrained", return_value=_FakeEnformerModel()
+        ) as mock_enformer_from_pretrained,
+        mock.patch("pipeline.models.borzoi_plugin.ensure_pip_package_available", return_value=True),
+        mock.patch(
+            "borzoi_pytorch.Borzoi.from_pretrained", return_value=_FakeBorzoiModel()
+        ) as mock_borzoi_from_pretrained,
+    ):
         mock_enformer_config.splicing.ENABLE_ENFORMER = True
         mock_enformer_config.splicing.ENFORMER_HF_REPO = "EleutherAI/enformer-official-rough"
         mock_borzoi_config.splicing.ENABLE_BORZOI = True
@@ -121,7 +123,9 @@ def main():
         print(f"[CLAIM 1] EnformerPlugin.metadata(): {enformer_instance.metadata()}")
 
         enformer_result = manager.predict("enformer", ref_seq, alt_seq)
-        assert mock_enformer_from_pretrained.called, "Enformer's from_pretrained was never called -- plugin did not really load"
+        assert mock_enformer_from_pretrained.called, (
+            "Enformer's from_pretrained was never called -- plugin did not really load"
+        )
         assert enformer_result is not None, "Enformer inference returned None"
         print(f"[CLAIM 1] from_pretrained called: {mock_enformer_from_pretrained.called}")
         print(f"[CLAIM 1] manager.predict('enformer', ref, alt) -> {enformer_result}")
@@ -134,7 +138,9 @@ def main():
         print(f"[CLAIM 2] BorzoiPlugin.metadata(): {borzoi_instance.metadata()}")
 
         borzoi_result = manager.predict("borzoi", ref_seq, alt_seq)
-        assert mock_borzoi_from_pretrained.called, "Borzoi's from_pretrained was never called -- plugin did not really load"
+        assert mock_borzoi_from_pretrained.called, (
+            "Borzoi's from_pretrained was never called -- plugin did not really load"
+        )
         assert borzoi_result is not None, "Borzoi inference returned None"
         print(f"[CLAIM 2] from_pretrained called: {mock_borzoi_from_pretrained.called}")
         print(f"[CLAIM 2] manager.predict('borzoi', ref, alt) -> {borzoi_result}")
@@ -151,10 +157,12 @@ def main():
         assert sorted(ensemble_result["models_used"]) == ["borzoi", "enformer"], ensemble_result["models_used"]
         assert ensemble_result["individual_scores"]["enformer"]["score"] == enformer_result["score"]
         assert ensemble_result["individual_scores"]["borzoi"]["score"] == borzoi_result["score"]
-        print("[CLAIM 3] EnsembleManager.evaluate() used BOTH models -- its "
-              "individual_scores dict's scores match each plugin's own direct "
-              "predict() call (each is a fresh, real inference call through "
-              "the same ModelManager, not a re-derived/faked value).")
+        print(
+            "[CLAIM 3] EnsembleManager.evaluate() used BOTH models -- its "
+            "individual_scores dict's scores match each plugin's own direct "
+            "predict() call (each is a fresh, real inference call through "
+            "the same ModelManager, not a re-derived/faked value)."
+        )
 
     # --- Claim 4: influence ACMG PP3/BP4 ---
     print()
@@ -186,9 +194,11 @@ def main():
     print(f"BP4 WITH    ensemble_result: {bp4_with}")
     assert pp3_without["status"] == "not_evaluated"
     assert pp3_with["status"] in ("triggered", "not_triggered")
-    print(f"[CLAIM 4] PP3 status changed from 'not_evaluated' to "
-          f"'{pp3_with['status']}' purely because ensemble_result was supplied "
-          f"-- i.e. Enformer/Borzoi's consensus is what ACMG PP3/BP4 acted on.")
+    print(
+        f"[CLAIM 4] PP3 status changed from 'not_evaluated' to "
+        f"'{pp3_with['status']}' purely because ensemble_result was supplied "
+        f"-- i.e. Enformer/Borzoi's consensus is what ACMG PP3/BP4 acted on."
+    )
 
     # --- Claim 5: real prediction content in the clinical report, not just status ---
     print()
@@ -197,13 +207,30 @@ def main():
     print("=" * 78)
     interpretation = {"interpretation_result": None}
     variant_result = build_variant_result(
-        variant_dict={"chrom": "chr7", "pos": 117559593, "ref": "A", "alt": "T",
-                      "id": "rs000", "filter": "PASS", "variant_type": "SNV"},
-        sequence_context={"chrom": "chr7", "window_start": 1, "window_end": 2,
-                           "flank_size": 100, "length": len(ref_seq)},
-        dna_model_results={}, rna_result={"skipped": True}, protein_result={"skipped": True},
-        blast_result={}, clinvar_result={"found": False}, dbsnp_result={"found": False},
-        interpretation=interpretation, errors=[],
+        variant_dict={
+            "chrom": "chr7",
+            "pos": 117559593,
+            "ref": "A",
+            "alt": "T",
+            "id": "rs000",
+            "filter": "PASS",
+            "variant_type": "SNV",
+        },
+        sequence_context={
+            "chrom": "chr7",
+            "window_start": 1,
+            "window_end": 2,
+            "flank_size": 100,
+            "length": len(ref_seq),
+        },
+        dna_model_results={},
+        rna_result={"skipped": True},
+        protein_result={"skipped": True},
+        blast_result={},
+        clinvar_result={"found": False},
+        dbsnp_result={"found": False},
+        interpretation=interpretation,
+        errors=[],
         ai_splicing_ensemble_result=ensemble_result,
         ai_model_status={
             "enformer": {"status": "used", "reason": "ran"},
@@ -222,9 +249,11 @@ def main():
     assert "Enformer" in md_text and "Borzoi" in md_text
     assert str(round(enformer_result["score"], 3)) in md_text or "score" in md_text.lower()
     assert "ai_splicing_ensemble" not in md_text  # this is a prediction section, not a raw dump
-    print("[CLAIM 5] The Markdown clinical report section contains each model's "
-          "own score/classification/confidence (a real prediction table), not "
-          "merely a 'Used' status line.")
+    print(
+        "[CLAIM 5] The Markdown clinical report section contains each model's "
+        "own score/classification/confidence (a real prediction table), not "
+        "merely a 'Used' status line."
+    )
 
     print()
     print("ALL 5 CLAIMS VERIFIED WITH REAL CODE EXECUTION.")

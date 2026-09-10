@@ -22,6 +22,7 @@ from pipeline.fastq.validator import FastqValidator, FastqValidationError
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+
 def _write_fastq(path: Path, records: list[tuple[str, str, str, str]]) -> None:
     """Write a FASTQ file from a list of (header, seq, plus, qual) tuples."""
     with open(path, "w") as fh:
@@ -35,6 +36,7 @@ def _minimal_record(seq: str = "ACGT", qual: str | None = None) -> tuple:
 
 
 # ─── Single-file tests ────────────────────────────────────────────────────────
+
 
 class TestValidateSingle:
     def test_valid_fastq_returns_stats(self, tmp_path):
@@ -126,6 +128,7 @@ class TestValidateSingle:
 
 
 # ─── Paired-end tests ─────────────────────────────────────────────────────────
+
 
 class TestValidatePaired:
     def _make_pair(

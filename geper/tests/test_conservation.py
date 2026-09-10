@@ -67,9 +67,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
     def test_parses_phylop_score_from_successful_bigwigsummary_call(self):
         provider = LocalBigWigProvider("phylop")
         fake_proc = mock.Mock(returncode=0, stdout="7.7619\n", stderr="")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", return_value=fake_proc
-        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", return_value=fake_proc) as mock_run,
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.PHYLOP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.phyloP100way.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             ann = provider.query("chr17", 7674858, "C", "T", "GRCh38")
@@ -81,9 +83,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
     def test_parses_phastcons_score_from_successful_bigwigsummary_call(self):
         provider = LocalBigWigProvider("phastcons")
         fake_proc = mock.Mock(returncode=0, stdout="1.0\n", stderr="")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", return_value=fake_proc
-        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", return_value=fake_proc) as mock_run,
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.PHASTCONS_GRCH38_LOCAL_BIGWIG = "/fake/hg38.phastCons100way.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             ann = provider.query("chr17", 7674858, "C", "T", "GRCh38")
@@ -95,9 +99,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
     def test_no_data_is_reported_as_not_found_not_error(self):
         provider = LocalBigWigProvider("phylop")
         fake_proc = mock.Mock(returncode=1, stdout="", stderr="no data returned")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", return_value=fake_proc
-        ), mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", return_value=fake_proc),
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.PHYLOP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.phyloP100way.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             ann = provider.query("chr17", 1, "C", "T", "GRCh38")
@@ -106,8 +112,9 @@ class TestLocalBigWigProvider(unittest.TestCase):
 
     def test_missing_binary_returns_none_not_error(self):
         provider = LocalBigWigProvider("phylop")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch.object(
-            LocalBigWigProvider, "is_available", return_value=False
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=False),
         ):
             fake_config.conservation.PHYLOP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.phyloP100way.bw"
             result = provider.query("chr17", 100, "C", "T", "GRCh38")
@@ -115,9 +122,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
 
     def test_timeout_reported_as_error(self):
         provider = LocalBigWigProvider("phylop")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="bigWigSummary", timeout=5)
-        ), mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="bigWigSummary", timeout=5)),
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.PHYLOP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.phyloP100way.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             ann = provider.query("chr17", 100, "C", "T", "GRCh38")
@@ -131,9 +140,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
         # exercised, if at all, via a real deployer-provisioned file).
         provider = LocalBigWigProvider("gerp")
         fake_proc = mock.Mock(returncode=0, stdout="5.01\n", stderr="")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", return_value=fake_proc
-        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", return_value=fake_proc) as mock_run,
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.gerp.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             ann = provider.query("chr17", 7674858, "C", "T", "GRCh38")
@@ -155,9 +166,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
         provider = LocalBigWigProvider("gerp")
         windows_path = r"C:\Users\Test User\bigwig data\hg38.gerp.bw"
         fake_proc = mock.Mock(returncode=0, stdout="2.5\n", stderr="")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", return_value=fake_proc
-        ) as mock_run, mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", return_value=fake_proc) as mock_run,
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = windows_path
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             provider.query("chr17", 7674858, "C", "T", "GRCh38")
@@ -185,9 +198,11 @@ class TestLocalBigWigProvider(unittest.TestCase):
         # call, or a stale/broken PATH entry) -- this must degrade to
         # a skipped local lookup, not an unhandled crash.
         provider = LocalBigWigProvider("gerp")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "subprocess.run", side_effect=FileNotFoundError("bigWigSummary")
-        ), mock.patch.object(LocalBigWigProvider, "is_available", return_value=True):
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("subprocess.run", side_effect=FileNotFoundError("bigWigSummary")),
+            mock.patch.object(LocalBigWigProvider, "is_available", return_value=True),
+        ):
             fake_config.conservation.GERP_GRCH38_LOCAL_BIGWIG = "/fake/hg38.gerp.bw"
             fake_config.conservation.QUERY_TIMEOUT_SECS = 5
             result = provider.query("chr17", 100, "C", "T", "GRCh38")
@@ -203,9 +218,10 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
             "track": "phyloP100way",
             "phyloP100way": [{"chrom": "chr17", "start": 7674857, "end": 7674858, "value": 7.7619}],
         }
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 3
@@ -224,9 +240,10 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
             "track": "phastCons100way",
             "phastCons100way": [{"chrom": "chr17", "start": 7674857, "end": 7674858, "value": 1.0}],
         }
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 3
@@ -244,9 +261,10 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
         fake_response = mock.Mock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"track": "phyloP100wayAll", "phyloP100wayAll": [{"value": 4.4}]}
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 1
@@ -262,9 +280,10 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
         fake_response = mock.Mock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"track": "phastCons100way", "phastCons100way": [{"value": 1.0}]}
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 1
@@ -278,8 +297,9 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
         fake_response = mock.Mock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"track": "phyloP100way", "phyloP100way": []}
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response),
         ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
@@ -295,8 +315,9 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
         fake_response = mock.Mock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"error": "can not find track=bogus"}
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response),
         ):
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
@@ -309,9 +330,7 @@ class TestUCSCApiProviderMocked(unittest.TestCase):
 
     def test_offline_mode_short_circuits_without_network_call(self):
         provider = UCSCApiProvider("phylop", endpoint="https://example-not-real.invalid/getData/track")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get"
-        ) as mock_get:
+        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch("requests.get") as mock_get:
             fake_config.conservation.ENABLE_UCSC_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = True
             result = provider.query("chr17", 100, "C", "T", "GRCh38")
@@ -337,9 +356,10 @@ class TestMyVariantGerpProviderMocked(unittest.TestCase):
             "_id": "chr17:g.7674858C>T",
             "dbnsfp": {"gerp": {"91_mammals": {"rankscore": 0.90056, "score": 5.01}}},
         }
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_MYVARIANT_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 3
@@ -355,9 +375,10 @@ class TestMyVariantGerpProviderMocked(unittest.TestCase):
         fake_response = mock.Mock()
         fake_response.status_code = 200
         fake_response.json.return_value = {"dbnsfp": {"gerp": {"91_mammals": {"score": 1.0}}}}
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
-        ) as mock_get:
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response) as mock_get,
+        ):
             fake_config.conservation.ENABLE_MYVARIANT_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
             fake_config.conservation.MAX_RETRIES = 1
@@ -378,8 +399,9 @@ class TestMyVariantGerpProviderMocked(unittest.TestCase):
         provider = MyVariantGerpProvider(endpoint="https://example-not-real.invalid/v1/variant")
         fake_response = mock.Mock()
         fake_response.status_code = 404
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get", return_value=fake_response
+        with (
+            mock.patch("pipeline.conservation.provider.CONFIG") as fake_config,
+            mock.patch("requests.get", return_value=fake_response),
         ):
             fake_config.conservation.ENABLE_MYVARIANT_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = False
@@ -401,9 +423,7 @@ class TestMyVariantGerpProviderMocked(unittest.TestCase):
 
     def test_offline_mode_short_circuits_without_network_call(self):
         provider = MyVariantGerpProvider(endpoint="https://example-not-real.invalid/v1/variant")
-        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch(
-            "requests.get"
-        ) as mock_get:
+        with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config, mock.patch("requests.get") as mock_get:
             fake_config.conservation.ENABLE_MYVARIANT_API_FALLBACK = True
             fake_config.conservation.OFFLINE_MODE = True
             result = provider.query("chr17", 100, "C", "T", "GRCh38")
@@ -416,7 +436,14 @@ class TestSingleScoreProvider(unittest.TestCase):
         local = mock.Mock()
         local.name = "local_bigwig"
         local.query.return_value = ConservationAnnotation(
-            chrom="chr17", pos=1, ref="C", alt="T", build="GRCh38", source="local_bigwig", found=True, phylop_score=5.0,
+            chrom="chr17",
+            pos=1,
+            ref="C",
+            alt="T",
+            build="GRCh38",
+            source="local_bigwig",
+            found=True,
+            phylop_score=5.0,
         )
         api = mock.Mock()
         sub = _SingleScoreProvider("phylop", local_provider=local, api_provider=api)
@@ -432,7 +459,14 @@ class TestSingleScoreProvider(unittest.TestCase):
         api = mock.Mock()
         api.name = "ucsc_api"
         api.query.return_value = ConservationAnnotation(
-            chrom="chr17", pos=1, ref="C", alt="T", build="GRCh38", source="ucsc_api", found=True, phylop_score=3.0,
+            chrom="chr17",
+            pos=1,
+            ref="C",
+            alt="T",
+            build="GRCh38",
+            source="ucsc_api",
+            found=True,
+            phylop_score=3.0,
         )
         sub = _SingleScoreProvider("phylop", local_provider=local, api_provider=api)
         with mock.patch("pipeline.conservation.provider.CONFIG") as fake_config:
@@ -470,7 +504,13 @@ class TestCompositeConservationProvider(unittest.TestCase):
     def _sub(self, score_type, score_field, value, source="ucsc_api"):
         sub = mock.Mock()
         sub.query.return_value = ConservationAnnotation(
-            chrom="chr17", pos=1, ref="C", alt="T", build="GRCh38", source=source, found=True,
+            chrom="chr17",
+            pos=1,
+            ref="C",
+            alt="T",
+            build="GRCh38",
+            source=source,
+            found=True,
             **{score_field: value},
         )
         return sub
@@ -496,9 +536,7 @@ class TestCompositeConservationProvider(unittest.TestCase):
         """One score type erroring must not hide the other's real result
         (mirrors EnsembleManager's own 0/1/2-model partial-success routing)."""
         failing_sub = mock.Mock()
-        failing_sub.query.return_value = ConservationAnnotation.from_error(
-            "chr17", 1, "C", "T", "GRCh38", "boom"
-        )
+        failing_sub.query.return_value = ConservationAnnotation.from_error("chr17", 1, "C", "T", "GRCh38", "boom")
         composite = CompositeConservationProvider(
             sub_providers={
                 "phylop": self._sub("phylop", "phylop_score", 7.76),
@@ -538,8 +576,15 @@ class TestConservationLookup(unittest.TestCase):
     def test_caches_successful_result_and_reuses_it(self):
         provider = mock.Mock()
         provider.query.return_value = ConservationAnnotation(
-            chrom="chr17", pos=7674858, ref="C", alt="T", build="GRCh38", source="ucsc_api", found=True,
-            phylop_score=7.76, phastcons_score=1.0,
+            chrom="chr17",
+            pos=7674858,
+            ref="C",
+            alt="T",
+            build="GRCh38",
+            source="ucsc_api",
+            found=True,
+            phylop_score=7.76,
+            phastcons_score=1.0,
         )
         cache = ConservationCache(max_size=10, ttl_seconds=None)
         lookup = ConservationLookup(provider=provider, cache=cache)
@@ -558,7 +603,14 @@ class TestConservationLookup(unittest.TestCase):
         pipeline/conservation/models.py's own docstring)."""
         provider = mock.Mock()
         provider.query.return_value = ConservationAnnotation(
-            chrom="chr17", pos=100, ref="C", alt="T", build="GRCh38", source="ucsc_api", found=True, phylop_score=1.0,
+            chrom="chr17",
+            pos=100,
+            ref="C",
+            alt="T",
+            build="GRCh38",
+            source="ucsc_api",
+            found=True,
+            phylop_score=1.0,
         )
         cache = ConservationCache(max_size=10, ttl_seconds=None)
         lookup = ConservationLookup(provider=provider, cache=cache)
@@ -572,9 +624,12 @@ class TestConservationLookup(unittest.TestCase):
 class TestConservationACMGExtension(unittest.TestCase):
     def _cfg(
         self,
-        phylop_conserved=2.0, phylop_not_conserved=0.0,
-        phastcons_conserved=0.8, phastcons_not_conserved=0.2,
-        gerp_conserved=2.0, gerp_not_conserved=0.0,
+        phylop_conserved=2.0,
+        phylop_not_conserved=0.0,
+        phastcons_conserved=0.8,
+        phastcons_not_conserved=0.2,
+        gerp_conserved=2.0,
+        gerp_not_conserved=0.0,
     ):
         cfg = mock.Mock()
         cfg.conservation.PHYLOP_CONSERVED_THRESHOLD = phylop_conserved
@@ -594,15 +649,27 @@ class TestConservationACMGExtension(unittest.TestCase):
 
     def test_conservation_signal_classifies_conserved_not_conserved_ambiguous(self):
         args = ("phylop_score", 2.0, 0.0)
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": 5.0}, *args)[0], "conserved")
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": -1.0}, *args)[0], "not_conserved")
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": 1.0}, *args)[0], "ambiguous")
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": 5.0}, *args)[0], "conserved"
+        )
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": -1.0}, *args)[0], "not_conserved"
+        )
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phylop_score": 1.0}, *args)[0], "ambiguous"
+        )
 
     def test_conservation_signal_works_for_phastcons_scale(self):
         args = ("phastcons_score", 0.8, 0.2)
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 1.0}, *args)[0], "conserved")
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 0.0}, *args)[0], "not_conserved")
-        self.assertEqual(ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 0.5}, *args)[0], "ambiguous")
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 1.0}, *args)[0], "conserved"
+        )
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 0.0}, *args)[0], "not_conserved"
+        )
+        self.assertEqual(
+            ACMGRuleEngine._conservation_signal({"found": True, "phastcons_score": 0.5}, *args)[0], "ambiguous"
+        )
 
     def test_pp3_triggers_on_conserved_phylop_alone(self):
         with mock.patch("pipeline.acmg_rules.CONFIG", self._cfg()):
@@ -633,7 +700,9 @@ class TestConservationACMGExtension(unittest.TestCase):
     def test_pp3_all_three_scores_conserved_agree(self):
         with mock.patch("pipeline.acmg_rules.CONFIG", self._cfg()):
             result = ACMGRuleEngine._pp3(
-                None, None, None,
+                None,
+                None,
+                None,
                 {"found": True, "phylop_score": 7.76, "phastcons_score": 1.0, "gerp_score": 5.01},
             )
         self.assertEqual(result.status, "triggered")
@@ -743,8 +812,16 @@ class TestConservationInOrchestratorResultShape(unittest.TestCase):
         from report.json_builder import build_variant_result
 
         result = build_variant_result(
-            variant_dict={}, sequence_context={}, dna_model_results={}, rna_result={}, protein_result={},
-            blast_result={}, clinvar_result={}, dbsnp_result={}, interpretation={}, errors=[],
+            variant_dict={},
+            sequence_context={},
+            dna_model_results={},
+            rna_result={},
+            protein_result={},
+            blast_result={},
+            clinvar_result={},
+            dbsnp_result={},
+            interpretation={},
+            errors=[],
         )
         self.assertEqual(result["conservation"], {"skipped": True, "found": False})
 
@@ -753,8 +830,16 @@ class TestConservationInOrchestratorResultShape(unittest.TestCase):
 
         cons = {"skipped": False, "found": True, "phylop_score": 7.76, "phastcons_score": 1.0}
         result = build_variant_result(
-            variant_dict={}, sequence_context={}, dna_model_results={}, rna_result={}, protein_result={},
-            blast_result={}, clinvar_result={}, dbsnp_result={}, interpretation={}, errors=[],
+            variant_dict={},
+            sequence_context={},
+            dna_model_results={},
+            rna_result={},
+            protein_result={},
+            blast_result={},
+            clinvar_result={},
+            dbsnp_result={},
+            interpretation={},
+            errors=[],
             conservation_result=cons,
         )
         self.assertEqual(result["conservation"], cons)

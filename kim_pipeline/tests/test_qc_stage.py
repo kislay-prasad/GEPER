@@ -31,6 +31,7 @@ from pipeline.qc.stage import (
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _write_fastq(path: Path, records: list) -> None:
     with open(path, "w") as fh:
         for h, s, q in records:
@@ -43,15 +44,17 @@ def _write_fastq_gz(path: Path, records: list) -> None:
             fh.write(f"{h}\n{s}\n+\n{q}\n")
 
 
-def _reads(n: int, seq: str = "ACGTACGTACGT", qual: str | None = None, prefix: str = "read") -> list:
+def _reads(
+    n: int, seq: str = "ACGTACGTACGT", qual: str | None = None, prefix: str = "read"
+) -> list:
     q = qual or "I" * len(seq)
-    return [(f"@{prefix}.{i+1} tile:1:1001:100{i}:200{i}", seq, q) for i in range(n)]
+    return [(f"@{prefix}.{i + 1} tile:1:1001:100{i}:200{i}", seq, q) for i in range(n)]
 
 
 # ─── _compute_qc unit tests ───────────────────────────────────────────────────
 
-class TestComputeQCBasics:
 
+class TestComputeQCBasics:
     def test_total_reads_counted(self, tmp_path):
         p = tmp_path / "r1.fastq"
         _write_fastq(p, _reads(5))
@@ -153,6 +156,7 @@ class TestComputeQCBasics:
 
     def test_missing_file_raises_qcerror(self):
         from pipeline.qc.stage import QCError
+
         with pytest.raises(QCError):
             _compute_qc("/nonexistent/path.fastq", DEFAULT_THRESHOLDS)
 
@@ -162,8 +166,8 @@ class TestComputeQCBasics:
         records = [("@r1", "ACGTACGT", "5555????")]  # 4 bases Q20, 4 bases Q30
         _write_fastq(p, records)
         m = _compute_qc(str(p), DEFAULT_THRESHOLDS)
-        assert m.q20_fraction == 1.0   # all ≥ Q20
-        assert m.q30_fraction == 0.5   # only 4 of 8 ≥ Q30
+        assert m.q20_fraction == 1.0  # all ≥ Q20
+        assert m.q30_fraction == 0.5  # only 4 of 8 ≥ Q30
 
     def test_per_base_phred_length(self, tmp_path):
         p = tmp_path / "r1.fastq"
@@ -176,9 +180,9 @@ class TestComputeQCBasics:
         # total=225, half=112.5; sorted desc: 100,50,50,25; cum 100->150>=112.5 -> N50=50
         records = [
             ("@r1", "A" * 100, "I" * 100),
-            ("@r2", "A" * 50,  "I" * 50),
-            ("@r3", "A" * 50,  "I" * 50),
-            ("@r4", "A" * 25,  "I" * 25),
+            ("@r2", "A" * 50, "I" * 50),
+            ("@r3", "A" * 50, "I" * 50),
+            ("@r4", "A" * 25, "I" * 25),
         ]
         _write_fastq(p, records)
         m = _compute_qc(str(p), DEFAULT_THRESHOLDS)
@@ -187,8 +191,8 @@ class TestComputeQCBasics:
     def test_filtered_reads_too_short(self, tmp_path):
         p = tmp_path / "r1.fastq"
         records = [
-            ("@r1", "AC", "II"),         # 2 bp — too short (< 25)
-            ("@r2", "A" * 30, "I" * 30), # ok
+            ("@r1", "AC", "II"),  # 2 bp — too short (< 25)
+            ("@r2", "A" * 30, "I" * 30),  # ok
         ]
         _write_fastq(p, records)
         m = _compute_qc(str(p), DEFAULT_THRESHOLDS)
@@ -197,8 +201,8 @@ class TestComputeQCBasics:
 
 # ─── QCStage integration tests ────────────────────────────────────────────────
 
-class TestQCStage:
 
+class TestQCStage:
     def test_run_produces_json_report(self, tmp_path):
         fq = tmp_path / "r1.fastq"
         _write_fastq(fq, _reads(50, seq="ACGTACGTACGT", qual="I" * 12))
@@ -262,12 +266,18 @@ class TestQCStage:
         """Lower threshold passes where default would fail."""
         fq = tmp_path / "r1.fastq"
         _write_fastq(fq, _reads(5, seq="ACGT", qual="5555"))  # Q20 reads
-        stage = QCStage(cfg={
-            "qc": {
-                "stop_on_failure": True,
-                "thresholds": {"min_mean_quality": 10.0, "min_total_reads": 1, "min_read_length": 1},
+        stage = QCStage(
+            cfg={
+                "qc": {
+                    "stop_on_failure": True,
+                    "thresholds": {
+                        "min_mean_quality": 10.0,
+                        "min_total_reads": 1,
+                        "min_read_length": 1,
+                    },
+                }
             }
-        })
+        )
         result = stage.run(str(fq), str(tmp_path / "qc"), sample_id="CUSTOM")
         assert result.qc_passed
 

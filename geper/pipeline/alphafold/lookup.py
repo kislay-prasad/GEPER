@@ -32,7 +32,11 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_SKIPPED_RESULT = {"skipped": True, "reason": "AlphaFold integration disabled via GEPER_ENABLE_ALPHAFOLD=false", "found": False}
+_SKIPPED_RESULT = {
+    "skipped": True,
+    "reason": "AlphaFold integration disabled via GEPER_ENABLE_ALPHAFOLD=false",
+    "found": False,
+}
 
 
 class AlphaFoldLookup:

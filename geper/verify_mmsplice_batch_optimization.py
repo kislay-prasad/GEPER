@@ -107,7 +107,9 @@ def run_after(n: int) -> float:
 if __name__ == "__main__":
     before_s = run_before(N_VARIANTS)
     after_s = run_after(N_VARIANTS)
-    print(f"MMSplice scoring stage, {N_VARIANTS} variants (simulated {PER_CALL_OVERHEAD_SECONDS * 1000:.0f}ms/Keras-call dispatch overhead):")
+    print(
+        f"MMSplice scoring stage, {N_VARIANTS} variants (simulated {PER_CALL_OVERHEAD_SECONDS * 1000:.0f}ms/Keras-call dispatch overhead):"
+    )
     print(f"  BEFORE (predict() x {N_VARIANTS}, unbatched):      {before_s:.2f}s")
     print(f"  AFTER  (predict_batch() x 1):               {after_s:.2f}s")
     print(f"  Speedup on MMSplice's Keras-call dispatch cost: {before_s / after_s:.1f}x")

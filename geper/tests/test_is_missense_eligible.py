@@ -43,8 +43,14 @@ def gene_transcript_result(gene):
 
 def _variant(chrom, pos, ref, alt, variant_type="SNV", info=None):
     return Variant(
-        chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt,
-        qual=None, filter_status=".", info=info or {},
+        chrom=chrom,
+        pos=pos,
+        variant_id=".",
+        ref=ref,
+        alt=alt,
+        qual=None,
+        filter_status=".",
+        info=info or {},
     )
 
 

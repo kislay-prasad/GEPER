@@ -70,8 +70,16 @@ class TestJsonBuilderClinGenBackwardCompatibility(unittest.TestCase):
         self.assertEqual(result["gnomad"], gnomad_payload)
         self.assertEqual(result["clingen"], {"skipped": True, "found": False})
         for expected_key in (
-            "variant", "blast", "clinvar", "dbsnp", "alphamissense", "mmsplice",
-            "gnomad", "clingen", "interpretation", "errors",
+            "variant",
+            "blast",
+            "clinvar",
+            "dbsnp",
+            "alphamissense",
+            "mmsplice",
+            "gnomad",
+            "clingen",
+            "interpretation",
+            "errors",
         ):
             self.assertIn(expected_key, result)
 

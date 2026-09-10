@@ -43,8 +43,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Expected format. If omitted, inferred from the file's extension -- either way, the actual "
         "check is content-based (magic bytes), not extension-trusting, so a mismatch is still caught.",
     )
-    parser.add_argument("--index", default=None, help="Path to the BAM/CRAM index file (.bai/.crai), if not the default '<file>.bai'/'<file>.crai' sibling.")
-    parser.add_argument("--json", action="store_true", help="Machine-readable JSON output instead of a human-readable report.")
+    parser.add_argument(
+        "--index",
+        default=None,
+        help="Path to the BAM/CRAM index file (.bai/.crai), if not the default '<file>.bai'/'<file>.crai' sibling.",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Machine-readable JSON output instead of a human-readable report."
+    )
     return parser
 
 
@@ -53,13 +59,18 @@ def main() -> int:
     result = validate_raw_input(args.file, expected_format=args.format, index_path=args.index)
 
     if args.json:
-        print(json.dumps({
-            "path": result.path,
-            "detected_format": result.detected_format,
-            "is_valid": result.is_valid,
-            "errors": result.errors,
-            "warnings": result.warnings,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "path": result.path,
+                    "detected_format": result.detected_format,
+                    "is_valid": result.is_valid,
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                },
+                indent=2,
+            )
+        )
     else:
         print(result.summary_line())
         for warning in result.warnings:

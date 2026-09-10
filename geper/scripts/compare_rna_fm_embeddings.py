@@ -22,6 +22,7 @@ CI once both packages can coexist in a build environment, so any
 future weight/version drift between the two is caught automatically
 rather than relying on a one-time manual check.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -88,9 +89,7 @@ def main():
             all_pass = False
             continue
         dim_match = emb_a.shape == emb_b.shape
-        cos_sim = torch.nn.functional.cosine_similarity(
-            emb_a.unsqueeze(0), emb_b.unsqueeze(0)
-        ).item()
+        cos_sim = torch.nn.functional.cosine_similarity(emb_a.unsqueeze(0), emb_b.unsqueeze(0)).item()
         ok = dim_match and cos_sim >= args.min_cosine_similarity
         all_pass = all_pass and ok
         print(f"{name:<28} {len(seq):>5} {cos_sim:>10.6f} {str(dim_match):>10}  {'OK' if ok else 'MISMATCH'}")

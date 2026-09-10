@@ -108,7 +108,7 @@ def validate_assembly(header_lines: List[str], cli_assembly: Optional[str]) -> O
             "Could not determine the input VCF's genome assembly/build from "
             "its header (no ##reference/##contig assembly tag and no "
             "recognizable chr1 contig length). Proceeding "
-            f"{'with --assembly=' + cli_assembly if cli_assembly else 'with Ensembl\'s default assembly'}; "
+            f"{'with --assembly=' + cli_assembly if cli_assembly else "with Ensembl's default assembly"}; "
             "if results look wrong, double-check the VCF was generated "
             "against the build you expect (GRCh37 vs GRCh38)."
         )

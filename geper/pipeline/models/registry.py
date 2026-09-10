@@ -25,10 +25,7 @@ class ModelRegistry:
 
     def register(self, key: str, model_cls: Type[PluginModel]) -> None:
         if not issubclass(model_cls, PluginModel):
-            raise TypeError(
-                f"'{model_cls}' must subclass PluginModel to be registered "
-                f"under key '{key}'."
-            )
+            raise TypeError(f"'{model_cls}' must subclass PluginModel to be registered under key '{key}'.")
         self._classes[key] = model_cls
 
     def get(self, key: str) -> Type[PluginModel]:
@@ -36,8 +33,7 @@ class ModelRegistry:
             return self._classes[key]
         except KeyError:
             raise KeyError(
-                f"No plugin registered under key '{key}'. Registered keys: "
-                f"{sorted(self._classes)}"
+                f"No plugin registered under key '{key}'. Registered keys: {sorted(self._classes)}"
             ) from None
 
     def keys(self) -> List[str]:

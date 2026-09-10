@@ -54,7 +54,9 @@ class TestAlphaFoldAnnotation(unittest.TestCase):
         self.assertEqual(err.error, "boom")
 
     def test_to_dict_shape(self):
-        ann = AlphaFoldAnnotation(accession="P04637", source="alphafold_db_api", found=True, mean_plddt=88.2, mean_plddt_band="confident")
+        ann = AlphaFoldAnnotation(
+            accession="P04637", source="alphafold_db_api", found=True, mean_plddt=88.2, mean_plddt_band="confident"
+        )
         d = ann.to_dict()
         self.assertEqual(d["mean_plddt"], 88.2)
         self.assertEqual(d["mean_plddt_band"], "confident")
@@ -93,7 +95,12 @@ class TestAlphaFoldLookupQueryVariant(unittest.TestCase):
     def test_position_specific_result_bypasses_cache(self):
         provider = mock.Mock()
         annotation = mock.Mock()
-        annotation.to_dict.return_value = {"found": True, "error": None, "affected_residue_plddt": 92.0, "affected_residue_band": "very_high"}
+        annotation.to_dict.return_value = {
+            "found": True,
+            "error": None,
+            "affected_residue_plddt": 92.0,
+            "affected_residue_band": "very_high",
+        }
         provider.query.return_value = annotation
 
         cache = mock.Mock()

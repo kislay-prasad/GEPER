@@ -24,7 +24,10 @@ _SAMPLE_ENTRY = {
     "sequence": {"length": 393},
     "comments": [
         {"commentType": "FUNCTION", "texts": [{"value": "Acts as a tumor suppressor."}]},
-        {"commentType": "DISEASE", "disease": {"diseaseId": "Li-Fraumeni syndrome", "description": "A cancer predisposition syndrome."}},
+        {
+            "commentType": "DISEASE",
+            "disease": {"diseaseId": "Li-Fraumeni syndrome", "description": "A cancer predisposition syndrome."},
+        },
     ],
     "features": [
         {"type": "Domain", "description": "DNA-binding", "location": {"start": {"value": 94}, "end": {"value": 289}}},
@@ -162,8 +165,10 @@ class TestUniProtLookupQueryVariant(unittest.TestCase):
         provider.query.return_value = annotation
 
         lookup = UniProtLookup(provider=provider, cache=None)
-        with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
-             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail") as fake_resolve:
+        with (
+            mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail") as fake_resolve,
+        ):
             fake_config.uniprot.ENABLED = True
             result = lookup.query_variant(_make_variant(), assembly="GRCh38", gene_symbol_hint="TP53")
 
@@ -173,9 +178,13 @@ class TestUniProtLookupQueryVariant(unittest.TestCase):
     def test_no_gene_resolved_returns_informative_not_found(self):
         provider = mock.Mock()
         lookup = UniProtLookup(provider=provider, cache=None)
-        not_found = GeneResolution(GeneResolutionStatus.NOT_FOUND, None, "none", reason="no gene overlaps this position.")
-        with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
-             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=not_found):
+        not_found = GeneResolution(
+            GeneResolutionStatus.NOT_FOUND, None, "none", reason="no gene overlaps this position."
+        )
+        with (
+            mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=not_found),
+        ):
             fake_config.uniprot.ENABLED = True
             result = lookup.query_variant(_make_variant())
 
@@ -191,12 +200,16 @@ class TestUniProtLookupQueryVariant(unittest.TestCase):
         provider = mock.Mock()
         lookup = UniProtLookup(provider=provider, cache=None)
         ambiguous = GeneResolution(
-            GeneResolutionStatus.AMBIGUOUS, None, "none",
+            GeneResolutionStatus.AMBIGUOUS,
+            None,
+            "none",
             reason="2 protein-coding genes genuinely overlap this position (STK11, CBARP) and could not be disambiguated.",
             candidates=["STK11", "CBARP"],
         )
-        with mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config, \
-             mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=ambiguous):
+        with (
+            mock.patch("pipeline.uniprot.lookup.CONFIG") as fake_config,
+            mock.patch("pipeline.uniprot.lookup.resolve_gene_symbol_detail", return_value=ambiguous),
+        ):
             fake_config.uniprot.ENABLED = True
             result = lookup.query_variant(_make_variant())
 

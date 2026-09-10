@@ -85,7 +85,12 @@ class LocalDatasetOrphanetProvider(OrphanetProviderBase):
             if self._loaded:  # re-check inside the lock
                 return
             path = self.local_file_path
-            if self._auto_fetch and CONFIG.orphanet.AUTO_FETCH_ENABLED and not CONFIG.orphanet.OFFLINE_MODE and not path:
+            if (
+                self._auto_fetch
+                and CONFIG.orphanet.AUTO_FETCH_ENABLED
+                and not CONFIG.orphanet.OFFLINE_MODE
+                and not path
+            ):
                 path = orphanet_bootstrap.ensure_gene_disorder_file()
             if path:
                 self._load(path)
@@ -93,7 +98,9 @@ class LocalDatasetOrphanetProvider(OrphanetProviderBase):
 
     def _load(self, path: str) -> None:
         if not os.path.exists(path):
-            logger.warning(f"Orphanet gene-disorder local file not found at '{path}'; local dataset lookups will be empty.")
+            logger.warning(
+                f"Orphanet gene-disorder local file not found at '{path}'; local dataset lookups will be empty."
+            )
             return
         try:
             by_gene, data_version = parse_gene_disorder_xml(path)
@@ -103,7 +110,9 @@ class LocalDatasetOrphanetProvider(OrphanetProviderBase):
         self._by_gene = by_gene
         self._data_version = data_version
         total_rows = sum(len(v) for v in by_gene.values())
-        logger.info(f"Loaded {total_rows} Orphanet gene-disorder association(s) for {len(by_gene)} gene(s) from '{path}' (release {data_version}).")
+        logger.info(
+            f"Loaded {total_rows} Orphanet gene-disorder association(s) for {len(by_gene)} gene(s) from '{path}' (release {data_version})."
+        )
 
     def query(self, gene_symbol: str) -> Optional[OrphanetGeneEvidence]:
         if not self.is_available():

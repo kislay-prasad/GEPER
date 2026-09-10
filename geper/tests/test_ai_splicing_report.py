@@ -35,18 +35,27 @@ def _minimal_variant_kwargs(**overrides):
     return base
 
 
-def _ensemble(models_used, classification="large_effect", consensus_score=0.8, agreement_percentage=95.0, confidence=0.6):
+def _ensemble(
+    models_used, classification="large_effect", consensus_score=0.8, agreement_percentage=95.0, confidence=0.6
+):
     if not models_used:
         return {
-            "models_used": [], "individual_scores": {}, "consensus_score": None,
-            "confidence": None, "agreement_percentage": None, "classification": None,
-            "basis": "no_models", "reasoning": "No splicing/regulatory AI model was available.",
+            "models_used": [],
+            "individual_scores": {},
+            "consensus_score": None,
+            "confidence": None,
+            "agreement_percentage": None,
+            "classification": None,
+            "basis": "no_models",
+            "reasoning": "No splicing/regulatory AI model was available.",
         }
     return {
         "models_used": models_used,
         "individual_scores": {
             m: {
-                "score": consensus_score, "classification": classification, "confidence": confidence,
+                "score": consensus_score,
+                "classification": classification,
+                "confidence": confidence,
                 "meta": {"model": m, "version": f"{m}-test-version"},
             }
             for m in models_used
@@ -70,15 +79,11 @@ class TestJSONReportSchema(unittest.TestCase):
         self.assertNotIn("ai_splicing_ensemble", result)
 
     def test_key_absent_when_zero_models_were_used(self):
-        result = build_variant_result(
-            **_minimal_variant_kwargs(ai_splicing_ensemble_result=_ensemble([]))
-        )
+        result = build_variant_result(**_minimal_variant_kwargs(ai_splicing_ensemble_result=_ensemble([])))
         self.assertNotIn("ai_splicing_ensemble", result)
 
     def test_key_present_when_one_model_was_used(self):
-        result = build_variant_result(
-            **_minimal_variant_kwargs(ai_splicing_ensemble_result=_ensemble(["enformer"]))
-        )
+        result = build_variant_result(**_minimal_variant_kwargs(ai_splicing_ensemble_result=_ensemble(["enformer"])))
         self.assertIn("ai_splicing_ensemble", result)
         self.assertEqual(result["ai_splicing_ensemble"]["models_used"], ["enformer"])
 
@@ -125,7 +130,9 @@ class TestMarkdownReportRendering(unittest.TestCase):
 
     def test_rendered_when_two_models_used_includes_all_required_fields(self):
         lines = ReportGenerator._render_ai_splicing_ensemble(
-            _ensemble(["enformer", "borzoi"], classification="moderate_effect", consensus_score=0.3, agreement_percentage=87.5)
+            _ensemble(
+                ["enformer", "borzoi"], classification="moderate_effect", consensus_score=0.3, agreement_percentage=87.5
+            )
         )
         text = "\n".join(lines)
         self.assertIn("AI Splicing Analysis", text)

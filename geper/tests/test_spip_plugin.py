@@ -36,17 +36,49 @@ _HEADER = (
 
 def _make_row(**overrides):
     values = {
-        "CHROM": "chr17", "POS": "29527614", "ID": "c.1062+1G>A", "REF": "G", "ALT": "A",
-        "QUAL": ".", "FILTER": ".", "INFO": ".",
-        "varID": "chr17:29527614G>A", "Interpretation": "Alter by SPiCE", "InterConfident": "90%",
-        "SPiPscore": "0.85", "strand": "+", "gNomen": "29527614", "varType": "substitution",
-        "ntChange": "c.1062+1G>A", "ExonInfo": "Exon 9", "exonSize": "100", "transcript": "NM_000267",
-        "gene": "NF1", "NearestSS": "Donor", "DistSS": "1", "RegType": "IntronCons",
-        "SPiCEproba": "0.95", "SPiCEinter_2thr": "Alter by SPiCE", "deltaMES": "8.5", "BP": "",
-        "mutInPBarea": "No", "deltaESRscore": "0.1", "posCryptMut": "", "sstypeCryptMut": "",
-        "probaCryptMut": "", "classProbaCryptMut": "", "nearestSStoCrypt": "", "nearestPosSStoCrypt": "",
-        "nearestDistSStoCrypt": "", "posCryptWT": "", "probaCryptWT": "", "classProbaCryptWT": "",
-        "posSSPhysio": "", "probaSSPhysio": "", "classProbaSSPhysio": "", "probaSSPhysioMut": "",
+        "CHROM": "chr17",
+        "POS": "29527614",
+        "ID": "c.1062+1G>A",
+        "REF": "G",
+        "ALT": "A",
+        "QUAL": ".",
+        "FILTER": ".",
+        "INFO": ".",
+        "varID": "chr17:29527614G>A",
+        "Interpretation": "Alter by SPiCE",
+        "InterConfident": "90%",
+        "SPiPscore": "0.85",
+        "strand": "+",
+        "gNomen": "29527614",
+        "varType": "substitution",
+        "ntChange": "c.1062+1G>A",
+        "ExonInfo": "Exon 9",
+        "exonSize": "100",
+        "transcript": "NM_000267",
+        "gene": "NF1",
+        "NearestSS": "Donor",
+        "DistSS": "1",
+        "RegType": "IntronCons",
+        "SPiCEproba": "0.95",
+        "SPiCEinter_2thr": "Alter by SPiCE",
+        "deltaMES": "8.5",
+        "BP": "",
+        "mutInPBarea": "No",
+        "deltaESRscore": "0.1",
+        "posCryptMut": "",
+        "sstypeCryptMut": "",
+        "probaCryptMut": "",
+        "classProbaCryptMut": "",
+        "nearestSStoCrypt": "",
+        "nearestPosSStoCrypt": "",
+        "nearestDistSStoCrypt": "",
+        "posCryptWT": "",
+        "probaCryptWT": "",
+        "classProbaCryptWT": "",
+        "posSSPhysio": "",
+        "probaSSPhysio": "",
+        "classProbaSSPhysio": "",
+        "probaSSPhysioMut": "",
         "classProbaSSPhysioMut": "",
     }
     values.update(overrides)
@@ -131,9 +163,7 @@ class TestSpipInference(unittest.TestCase):
 
     def test_no_output_rows_raises_runtime_error(self):
         instance = self._make_instance()
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_HEADER + "\n"
-        ):
+        with mock.patch("pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_HEADER + "\n"):
             with self.assertRaises(RuntimeError):
                 instance._infer_impl("A" * 10, "T" * 10, chrom="17", pos=29527614, ref="G", alt="A")
 
@@ -144,32 +174,33 @@ class TestSpipInference(unittest.TestCase):
             _make_row(gene="GENE_B", SPiPscore="0.9", Interpretation="Alter by SPiCE"),
         )
         with mock.patch("pipeline.models.spip_plugin.spip_loader.run_spip", return_value=rows_text):
-            result = instance._infer_impl(
-                "A" * 10, "T" * 10, chrom="17", pos=29527614, ref="G", alt="A", gene="GENE_B"
-            )
+            result = instance._infer_impl("A" * 10, "T" * 10, chrom="17", pos=29527614, ref="G", alt="A", gene="GENE_B")
         self.assertEqual(result["details"]["gene"], "GENE_B")
         self.assertEqual(result["classification"], "large_effect")
         self.assertEqual(result["details"]["num_transcripts_matched"], 2)
 
     def test_details_contain_expected_fields(self):
         instance = self._make_instance()
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_make_output(_make_row())
-        ):
+        with mock.patch("pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_make_output(_make_row())):
             result = instance._infer_impl("A" * 10, "T" * 10, chrom="17", pos=29527614, ref="G", alt="A")
         details = result["details"]
         for key in (
-            "interpretation", "inter_confident", "spip_score", "region_type",
-            "spice_proba", "delta_mes", "gene", "transcript", "calibration_status",
+            "interpretation",
+            "inter_confident",
+            "spip_score",
+            "region_type",
+            "spice_proba",
+            "delta_mes",
+            "gene",
+            "transcript",
+            "calibration_status",
         ):
             self.assertIn(key, details)
 
     def test_predict_via_base_class_tags_meta_correctly(self):
         instance = self._make_instance()
         instance._loaded = True
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_make_output(_make_row())
-        ):
+        with mock.patch("pipeline.models.spip_plugin.spip_loader.run_spip", return_value=_make_output(_make_row())):
             result = instance.predict("A" * 10, "T" * 10, chrom="17", pos=29527614, ref="G", alt="A")
         self.assertEqual(result["meta"]["model"], "spip")
 
@@ -194,14 +225,14 @@ class TestSpipLoadImpl(unittest.TestCase):
         self.instance._weight_cache.ensure_dir.return_value = Path("fake_cache_dir")
 
     def test_successful_load_prepares_runtime_dir(self):
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"
-        ), mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=True
-        ), mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.prepare_runtime_dir",
-            return_value=Path("fake_runtime_dir"),
-        ) as mock_prepare:
+        with (
+            mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"),
+            mock.patch("pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=True),
+            mock.patch(
+                "pipeline.models.spip_plugin.spip_loader.prepare_runtime_dir",
+                return_value=Path("fake_runtime_dir"),
+            ) as mock_prepare,
+        ):
             self.instance._load_impl()
 
         mock_prepare.assert_called_once()
@@ -210,31 +241,28 @@ class TestSpipLoadImpl(unittest.TestCase):
         self.assertIsNotNone(self.instance.model)
 
     def test_missing_rscript_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None
-        ):
+        with mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("Rscript", str(ctx.exception))
 
     def test_r_package_install_failure_raises_clear_error(self):
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"
-        ), mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=False
+        with (
+            mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"),
+            mock.patch("pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=False),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
         self.assertIn("R package", str(ctx.exception))
 
     def test_network_failure_is_sanitized(self):
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"
-        ), mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=True
-        ), mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.prepare_runtime_dir",
-            side_effect=ConnectionError("could not reach sourceforge.net"),
+        with (
+            mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"),
+            mock.patch("pipeline.models.spip_plugin.spip_loader.ensure_r_packages", return_value=True),
+            mock.patch(
+                "pipeline.models.spip_plugin.spip_loader.prepare_runtime_dir",
+                side_effect=ConnectionError("could not reach sourceforge.net"),
+            ),
         ):
             with self.assertRaises(RuntimeError) as ctx:
                 self.instance._load_impl()
@@ -242,9 +270,7 @@ class TestSpipLoadImpl(unittest.TestCase):
         self.assertNotIn("sourceforge.net", str(ctx.exception))
 
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):
-        with mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None
-        ):
+        with mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None):
             with self.assertRaises(ModelLoadError):
                 self.instance.load()
 
@@ -263,15 +289,17 @@ class TestSpipMetadataAndAvailability(unittest.TestCase):
             self.assertIn("ENABLE_SPIP", SpipPlugin.unavailability_reason())
 
     def test_available_when_flag_on_and_rscript_found(self):
-        with mock.patch("pipeline.models.spip_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"
+        with (
+            mock.patch("pipeline.models.spip_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value="Rscript"),
         ):
             mock_config.splicing.ENABLE_SPIP = True
             self.assertTrue(SpipPlugin.is_available())
 
     def test_unavailable_when_flag_on_but_rscript_missing(self):
-        with mock.patch("pipeline.models.spip_plugin.CONFIG") as mock_config, mock.patch(
-            "pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None
+        with (
+            mock.patch("pipeline.models.spip_plugin.CONFIG") as mock_config,
+            mock.patch("pipeline.models.spip_plugin.spip_loader.find_rscript", return_value=None),
         ):
             mock_config.splicing.ENABLE_SPIP = True
             self.assertFalse(SpipPlugin.is_available())

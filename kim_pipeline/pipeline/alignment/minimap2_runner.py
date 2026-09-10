@@ -61,8 +61,15 @@ def run_minimap2(
 
     rg = f"@RG\\tID:{sample_id}\\tSM:{sample_id}\\tPL:ILLUMINA"
     cmd: List[str] = [
-        minimap2, "-ax", preset, "-t", str(max(1, threads)), "-R", rg,
-        reference_fasta, fastq_r1,
+        minimap2,
+        "-ax",
+        preset,
+        "-t",
+        str(max(1, threads)),
+        "-R",
+        rg,
+        reference_fasta,
+        fastq_r1,
     ]
     if fastq_r2:
         cmd.append(fastq_r2)

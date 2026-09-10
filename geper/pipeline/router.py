@@ -57,10 +57,7 @@ class SequenceRouter:
         if not selected:
             # Defensive fallback -- should be unreachable given the
             # logic above, but routing must never return an empty list.
-            raise RoutingError(
-                f"Router failed to select any model for variant "
-                f"{variant.chrom}:{variant.pos}."
-            )
+            raise RoutingError(f"Router failed to select any model for variant {variant.chrom}:{variant.pos}.")
 
         # Preserve first-seen order while de-duplicating.
         deduped = list(dict.fromkeys(selected))
@@ -132,9 +129,7 @@ class SequenceRouter:
             return False
         return True
 
-    def is_missense_eligible(
-        self, variant: Variant, transcript_result: Optional[Dict[str, Any]]
-    ) -> bool:
+    def is_missense_eligible(self, variant: Variant, transcript_result: Optional[Dict[str, Any]]) -> bool:
         """
         Decide whether AlphaMissense should run for this variant.
         AlphaMissense scores exactly one thing: a single amino-acid

@@ -82,7 +82,11 @@ class TestReportIntegration(unittest.TestCase):
 
         styles = summary_module._build_stylesheet()
         table = summary_module._build_patient_header_table(
-            {"deidentified": True}, "SAMPLE01", "RUN01", "GRCh38", styles,
+            {"deidentified": True},
+            "SAMPLE01",
+            "RUN01",
+            "GRCh38",
+            styles,
         )
         # Last row is "Report Generated" -- its value cell must carry the IST label.
         label_cell, value_cell = table._cellvalues[-1]

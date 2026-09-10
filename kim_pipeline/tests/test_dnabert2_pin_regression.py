@@ -21,6 +21,7 @@ the from_pretrained call kwargs. No real model download, no dependency on
 torch/transformers actually being installed in the environment running this
 test.
 """
+
 from __future__ import annotations
 
 import sys

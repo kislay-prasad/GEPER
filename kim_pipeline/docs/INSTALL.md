@@ -12,6 +12,19 @@
 ```bash
 git clone https://github.com/your-org/geper.git
 cd kim_pipeline
+
+# Create and activate a virtual environment before the first `pip install`
+# below. Every `pip install` later in this file -- including
+# `pip install gunicorn` in "Start the API Server" -- must land in this
+# same interpreter, or the gunicorn arbiter can end up with a different
+# dependency set than the app it's serving (a pip-generated console
+# script embeds the absolute path of whichever interpreter ran that
+# install). This file had no existing venv convention, so this is the
+# plain stdlib one.
+python -m venv .venv
+source .venv/bin/activate      # Linux/macOS/WSL2
+# .venv\Scripts\activate       # Windows (PowerShell/cmd), if not using WSL2
+
 pip install -r requirements.txt
 ```
 

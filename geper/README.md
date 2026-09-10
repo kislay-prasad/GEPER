@@ -157,6 +157,18 @@ To route variants to it, add a rule in `pipeline/router.py::SequenceRouter.route
 ## 5. Installation
 
 ```bash
+# Create and activate a virtual environment before the first `pip install`
+# below, pinned to 3.11 or 3.12 per requirements.txt's own header comment
+# (forced by evo2's PyPI metadata) -- NOT this box's default interpreter,
+# which VENV_BUILD_RECIPE.md found to be 3.14 here. Every `pip install` in
+# this section must land in the same interpreter, or a later step can
+# silently resolve against (or be missing from) a different environment
+# than the one before it.
+python3.12 -m venv .venv                # Linux/macOS/WSL2
+source .venv/bin/activate
+# py -3.12 -m venv .venv                # Windows (PowerShell/cmd)
+# .venv\Scripts\activate
+
 pip install -r requirements.txt
 
 # HyenaDNA is not distributed on PyPI; install from source:

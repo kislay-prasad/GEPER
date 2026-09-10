@@ -2320,11 +2320,18 @@ the consolidated list.
 ##### Cross-tree check, stated because the finding is product-shaped
 
 **`kim_pipeline/` was checked directly, not assumed.** It has **no variant-prioritisation
-stage and no ranked output**: its only `priorit`/`rank` matches are
-`pipeline/annotation/gff_index.py:269-321` (deterministic **transcript** selection order) and
-`pipeline/pgx/stage.py:296` (deterministic **allele** specificity order), neither of which is
-a review queue. **F5 is therefore scoped to `geper/` only**, and that is a checked fact rather
-than a scope assumed from where the finding was made.
+stage and no ranked output**: at the time of this check, its only `priorit`/`rank` matches
+were `pipeline/annotation/gff_index.py:269-321` (deterministic **transcript** selection order)
+and `pipeline/pgx/stage.py:296` (deterministic **allele** specificity order), neither of which
+was a review queue. **F5 is therefore scoped to `geper/` only**, and that is a checked fact
+rather than a scope assumed from where the finding was made.
+**[CORRECTED 2026-09-10 (angela-mszpsmyw): `pipeline/pgx/` was deleted 2026-09-10 (merge
+`51320e1`) -- the second citation above is now a dead pointer, not a re-checkable one. This
+does not weaken the conclusion: one of the two examples proving "no ranking stage" no longer
+exists at all, which is consistent with, not contrary to, F5 being scoped to `geper/` only.
+Left the original citation in place rather than deleted, per this document's own standard of
+correcting rather than erasing a stale pointer, since the surrounding reasoning still needs
+both named examples to make its point as originally written.]**
 
 <<<EXPERT-JUDGEMENT-REQUIRED: EJ-24
   DECIDE   — whether a **score TIE across the ratified boundary** counts as an F5 inversion:
@@ -2505,7 +2512,7 @@ Agreement text was not reachable.
 | S1 | ClinVar 3★/4★ subset | **No** | Public domain; already flowing through the existing client; no new integration **[VERIFIED-IN-REPO @ c2258df1]** |
 | S2 | GIAB HG001-007 | **No, but licence citation is not closed** | Meredith's outstanding item 4: no GIAB-specific licence document was locatable. Inherited, not resolved |
 | S3 | An external QA scheme's materials | **Yes — unresolved** | Enrolment eligibility for a non-laboratory is unknown (§4.1). Blocks S3's design past its current state |
-| — | kim_pipeline PGx star-allele truth | **Yes — blocked** | PharmVar is CC-BY-NC-ND. **No usable ground truth exists for the PGx stage**, so no PGx validation is designed here. Named as an uncovered area rather than omitted |
+| — | kim_pipeline PGx star-allele truth | **Yes — blocked, then deleted** | PharmVar is CC-BY-NC-ND. **No usable ground truth exists for the PGx stage**, so no PGx validation is designed here. Named as an uncovered area rather than omitted. **[CORRECTED 2026-09-10 (angela-mszpsmyw): `kim_pipeline/pipeline/pgx/` was deleted 2026-09-10 (merge `51320e1`, the human's ruling to remove pharmacogenomics from the clinical report) -- the row's original reasoning (ground truth blocked, so no validation designed) is left as written, since it is still true of the period it describes and still the reason no PGx study exists in this document; the stage itself is now gone as well, which is a stronger, not weaker, version of "no PGx validation is designed here."]** |
 
 ### 6.3 Cross-lane dependencies
 

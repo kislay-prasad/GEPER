@@ -143,10 +143,17 @@ python bridge/run_combined.py \
 |---|---|
 | Bij AI annotation / AI models / databases / ACMG / report generation | **Unchanged** |
 | Kim FASTQ validation / QC / alignment / variant calling | **Unchanged** |
-| Kim's own annotation / ACMG / AI / PGx / ancestry / reporting stages | **Unchanged**, simply not invoked in the combined workflow |
+| Kim's own annotation / ACMG / AI / ancestry / reporting stages | **Unchanged**, simply not invoked in the combined workflow |
 | Kim `PipelineRunner.run()` | **+2 optional params**: `mode` (default `"full"`), `stop_after` (default `None`) |
 | Kim `main.py analyze` / `run_pipeline.py` CLI | **+2 optional flags**: `--mode`, `--stop-after` |
 | New `bridge/` package | **New**, zero duplication of either project's logic |
+
+**[CORRECTED 2026-09-10 (angela-mszpsmyw): the "Kim's own annotation / ACMG / AI / ancestry
+/ reporting stages" row above originally also listed "PGx" among Kim's own stages.
+`kim_pipeline/pipeline/pgx/` was deleted 2026-09-10 (merge `51320e1`, the human's ruling to
+remove pharmacogenomics from the clinical report and delete the computation) -- there is no
+PGx stage left to describe as "unchanged, simply not invoked." Removed from the row rather
+than left describing something that no longer exists.]**
 
 No duplicate interpretation ever occurs: Kim's annotation/ACMG/AI/reporting
 code paths are structurally unreachable once `mode="vcf_only"` triggers the

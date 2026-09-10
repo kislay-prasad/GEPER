@@ -115,9 +115,15 @@ confirmed GEPER's own dependencies are installed and reachable):
   resolvable coordinate).
 - ClinVar lookup for `MT:3243 A>G` has a real chance of returning existing
   pathogenic evidence, since m.3243A>G is a well-documented variant.
-- GEPER's PGx star-allele module targets nuclear pharmacogenes — expect it
-  to report "not applicable" for this mitochondrial variant, which is
-  correct behavior, not an error.
+- **[CORRECTED 2026-09-10 (angela-mszpsmyw): this bullet originally read "GEPER's PGx
+  star-allele module targets nuclear pharmacogenes — expect it to report 'not applicable'
+  for this mitochondrial variant, which is correct behavior, not an error." `kim_pipeline`'s
+  PGx module (`pipeline/pgx/`) -- the only PGx code that ever existed in this codebase; `geper/`
+  never had one, per `docs/BIJ_AI_CAPABILITY_AUDIT.md`'s own capability inventory -- was deleted
+  2026-09-10 (merge `51320e1`). There is no PGx behavior, "not applicable" or otherwise, left to
+  expect for this variant. Removed rather than left describing a module that does not exist;
+  the pre-existing "GEPER's" attribution was itself imprecise (PGx was always `kim_pipeline`'s,
+  not `geper/`'s) and is now moot either way.]**
 - ACMG automation and clinical report generation should complete normally
   and produce `geper_results.json` / `geper_report.md`.
 

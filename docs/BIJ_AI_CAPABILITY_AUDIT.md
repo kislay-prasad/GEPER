@@ -104,9 +104,18 @@ audit's subject.
   (pipeline/utils/genome_build.py:36). `detect_genome_build` (:54-119):
   header → contig-length lookup → weak chr-prefix guess; never raises.
   `warn_if_unsupported_build` (:122-155): **non-blocking**, logs only,
-  never halts. `runner.py:601-614` runs this post-variant-calling,
-  non-fatally. `config_validator.py` has **no** genome-build validation
-  section at all.
+  never halts. `runner.py` runs this post-variant-calling, non-fatally.
+  **UPDATED 2026-09-10**: this entry previously ended "`config_validator.py`
+  has **no** genome-build validation section at all", which is no longer
+  the whole picture. `genome_build.py::check_vcf_gff3_build_consistency`
+  now compares the input VCF against the transcript GFF3 and RAISES
+  `ConfigValidationError` on a definite disagreement -- the first
+  blocking genome-build check in kim. It is called from `runner.py`
+  AFTER the vcf_only early return, so it applies to standalone runs
+  (`--mode full`, the default), which are the runs that build HGVS `c.`
+  positions from the GFF3; a bridge run never loads that file.
+  `config_validator.py` itself still has no build section -- the check
+  lives with the other build logic and reuses that module's exception.
 - **Outputs, vcf_only mode**: `qc_report.json`/`.html`, `aligned.markdup.bam`
   +`.bai`+`alignment_metrics.json`, `variants.vcf` (raw FreeBayes),
   `variants.norm.vcf` (if bcftools available), `filtered_variants.vcf`

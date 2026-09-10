@@ -23,7 +23,12 @@ never indexed with samtools), and "cannot confirm" must not read as
 
 VCF is deliberately NOT checked here -- this class never sees the VCF
 file at all (the orchestrator hands it already-parsed (chrom, pos, ref,
-alt, transcript_id) tuples); a VCF-vs-FASTA/GFF3 cross-check would need
+alt, transcript_id) tuples). THE VCF-vs-GFF3 CROSS-CHECK THIS DOCSTRING
+FLAGGED AS A FOLLOW-UP NOW EXISTS (2026-09-10) as
+`utils/genome_build.py::check_vcf_gff3_build_consistency`, which RAISES
+rather than warns and is called from `runner.py`; it is tested by
+`tests/test_vcf_gff3_build_disagreement_blocks.py`, not here. The
+original note read: a VCF-vs-FASTA/GFF3 cross-check would need
 runner.py's already-detected build (see its own
 `checkpoint["detected_genome_build"]`, populated by
 pipeline/utils/genome_build.py's `warn_if_unsupported_build`) threaded

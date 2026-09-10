@@ -632,6 +632,29 @@ class PipelineRunner:
                 result.success = True
                 return result
 
+            # ── Preflight: VCF vs GFF3 genome build ───────────────────────
+            # Deliberately placed AFTER the vcf_only early return above,
+            # not with the VCF build detection before it. In vcf_only
+            # mode kim never loads the GFF3 -- annotation and reporting
+            # do not run -- so a build disagreement between the VCF and a
+            # configured-but-unused GFF3 is not a defect of that run, and
+            # blocking it here would refuse bridge runs for a file they
+            # never open. From this point on the GFF3's transcript model
+            # IS used, to build every HGVS c. position.
+            #
+            # Raises ConfigValidationError on a definite disagreement;
+            # deliberately NOT wrapped in a try/except, unlike the
+            # detection above -- that block swallows failures to keep an
+            # advisory warning advisory, and swallowing this one would
+            # reinstate exactly the silence this check exists to end.
+            _gff_for_build_check = (self._cfg.get("annotation", {}) or {}).get("refseq_gff") or (
+                self._cfg.get("rna_analysis", {}) or {}
+            ).get("refseq_gff")
+            if _gff_for_build_check:
+                from pipeline.utils.genome_build import check_vcf_gff3_build_consistency
+
+                check_vcf_gff3_build_consistency(filtered_vcf, _gff_for_build_check)
+
             # ── Stage 2b: VEP Annotation ──────────────────────────────────
             vep_out = str(work_dir / "vep_annotation")
             vep_result = None

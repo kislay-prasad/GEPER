@@ -488,7 +488,15 @@ class FastaCodonContextProvider:
         `checkpoint["detected_genome_build"]`, from
         pipeline/utils/genome_build.py's `warn_if_unsupported_build`)
         threaded into make_codon_provider_from_cfg -- out of this
-        file's scope, left as a follow-up.
+        file's scope.
+
+        THAT FOLLOW-UP IS NOW DONE, ELSEWHERE AND IN A DIFFERENT SHAPE
+        (2026-09-10): `utils/genome_build.py::check_vcf_gff3_build_consistency`
+        compares the VCF and the GFF3 directly and RAISES on a definite
+        disagreement, called from `runner.py` after the vcf_only early
+        return. It did not need threading through this constructor after
+        all. This method is unchanged and still WARNS about the
+        FASTA-vs-GFF3 pair, which remains its own question.
         """
         fasta_length = self._fasta.chrom_length("chr1") if self._fasta else None
         gff_length = _detect_gff_chr1_length(self._gff_path)

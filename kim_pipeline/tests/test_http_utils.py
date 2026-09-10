@@ -9,6 +9,7 @@ Covers:
 - Successful response on 2nd attempt returns correctly
 - ConnectionError triggers retries
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,6 +21,7 @@ import requests
 # Ensure project root is in path
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from pipeline.utils.http import _api_get
@@ -94,26 +96,32 @@ class TestApiGetNoRetryOn404(unittest.TestCase):
     @patch("pipeline.utils.http.time.sleep")
     @patch("pipeline.utils.http.requests.get")
     def test_400_no_retry(self, mock_get, mock_sleep):
-        mock_get.return_value = _make_response(400)
+        mock_400 = _make_response(400)
+        mock_get.return_value = mock_400
         result = _api_get("https://example.com", params={}, max_retries=3)
         self.assertEqual(mock_get.call_count, 1)
         mock_sleep.assert_not_called()
+        self.assertIs(result, mock_400)
 
     @patch("pipeline.utils.http.time.sleep")
     @patch("pipeline.utils.http.requests.get")
     def test_401_no_retry(self, mock_get, mock_sleep):
-        mock_get.return_value = _make_response(401)
+        mock_401 = _make_response(401)
+        mock_get.return_value = mock_401
         result = _api_get("https://example.com", params={}, max_retries=3)
         self.assertEqual(mock_get.call_count, 1)
         mock_sleep.assert_not_called()
+        self.assertIs(result, mock_401)
 
     @patch("pipeline.utils.http.time.sleep")
     @patch("pipeline.utils.http.requests.get")
     def test_403_no_retry(self, mock_get, mock_sleep):
-        mock_get.return_value = _make_response(403)
+        mock_403 = _make_response(403)
+        mock_get.return_value = mock_403
         result = _api_get("https://example.com", params={}, max_retries=3)
         self.assertEqual(mock_get.call_count, 1)
         mock_sleep.assert_not_called()
+        self.assertIs(result, mock_403)
 
 
 class TestApiGetSuccessOnSecondAttempt(unittest.TestCase):

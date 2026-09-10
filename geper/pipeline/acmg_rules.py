@@ -21,9 +21,21 @@ Every triggered/not_triggered criterion carries: rationale, supporting
 evidence, conflicting evidence, evidence sources, and a qualitative
 confidence. Nothing here is invented -- every string is built from a field
 already present in an existing provider result dict (ClinVar, gnomAD,
-ClinGen, AlphaMissense, MMSplice, protein translation, InterPro, dbSNP).
+ClinGen, AlphaMissense, MMSplice, protein translation, InterPro).
 If the input evidence a rule needs is missing/skipped/errored, that rule
 reports "not_evaluated" rather than assuming a direction.
+
+dbSNP is NOT one of those sources, and never has been -- this line named
+it since the repository's initial commit (`cb79edc`) despite no criterion
+ever reading it; corrected 2026-09-10 (conv-providerlist) after the human
+asked for an authoritative provider list from the code and the mismatch
+surfaced. `dbsnp_result` IS a real, accepted parameter of `evaluate()`
+below, and IS read once -- but only as part of the infrastructure gate at
+`evidence_queries_completed` (this module's `_evidence_query_results`
+tuple, see `evaluate`'s own body), which decides `interpretation_outcome`
+(`pipeline/interpretation_outcome.py`), never a criterion's rationale
+string. That gate's inclusion of dbSNP is deliberate and under separate
+review, not part of this correction -- untouched here.
 
 This engine does NOT replace `InterpretationEngine.interpret()`'s existing
 `summary` / `confidence` / `significance_score` / `supporting_evidence`

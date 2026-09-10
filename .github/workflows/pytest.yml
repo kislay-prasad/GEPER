@@ -22,6 +22,46 @@ on:
   pull_request:
 
 jobs:
+  # WHAT THIS JOB CLOSES, AND WHAT IT DOES NOT -- read both before trusting
+  # a green tick here.
+  #
+  # CLOSES (enforcement): until this job existed, mypy ran ONLY in a local
+  # pre-commit hook. Nothing checked types on a machine where nobody ran
+  # `pre-commit install`, or on a commit made with `--no-verify`. A fresh
+  # checkout on every push closes all of that, because it does not depend
+  # on anyone's machine being configured.
+  #
+  # DOES NOT CLOSE (disarming): this job runs mypy against whatever
+  # mypy.ini says at that commit. A mypy.ini that disables the checks --
+  # `ignore_errors` on the scoped modules, say -- makes mypy legitimately
+  # report zero errors, and THIS JOB GOES GREEN. Running is not detecting.
+  # A GREEN TICK HERE IS NOT EVIDENCE THAT THE CONFIGURATION IS INTACT.
+  # That is what the canary test (geper/tests/test_mypy_canary.py) is for,
+  # and it is a separate mechanism on purpose.
+  mypy:
+    name: mypy (ACMG interpretation path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned to the same version the pre-commit hook uses
+      # (.pre-commit-config.yaml, mirrors-mypy rev v2.3.0), so local and CI
+      # cannot disagree about what an error is. pydantic is here for the
+      # same reason it is in the hook's additional_dependencies: mypy.ini
+      # enables the pydantic plugin and cannot load it otherwise.
+      - name: Install mypy
+        run: pip install "mypy==2.3.0" "pydantic>=2.13,<3.0"
+
+      # No file arguments: mypy checks the `files =` scope from mypy.ini
+      # itself, exactly as the pre-commit hook does with
+      # `pass_filenames: false`.
+      - name: Run mypy over the configured scope
+        run: python -m mypy --config-file=mypy.ini
+
   geper-tests:
     name: geper/ pytest
     runs-on: ubuntu-latest

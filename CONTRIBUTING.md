@@ -227,6 +227,31 @@ standing the floor already gives `bad-*` and `.triaged` artifacts, for
 the same reason: nobody who didn't create something gets to decide it is
 disposable.
 
+### That container is a **Docker** container, and its running state is not
+
+The port above tells you where it listens. It does not tell you that it is
+a container, that a container is either running or not, or that a reboot
+ends every container on the machine. Before this paragraph the word
+"docker" appeared **zero** times in this file, while the container itself
+was named -- the dependency was documented and its *volatility* was not.
+
+```bash
+docker ps -a --filter name=kelly-clinical-test   # is it there, is it Up
+docker start kelly-clinical-test                 # starting it is safe
+```
+
+**Use `127.0.0.1`, not `localhost`, in `CLINICAL_TEST_DSN`.** Measured: when
+the database is unreachable, `localhost` costs 20s per test rather than 10s,
+because psycopg tries both address families and each waits out the full
+timeout. Against a live database the two are equivalent; against a stopped
+container the documented form is twice the wait.
+
+If it is down and you run the suite anyway, `clinical/tests/conftest.py`
+now stops the session in about three seconds with a message naming the
+address. It used to be ~500 errors reading only `psycopg.errors.
+ConnectionTimeout: connection timeout expired`, which names no host, no
+port and no container, and which arrives immediately after your own edit.
+
 ### Why not just `pytest` at the repo root
 
 It fails collection outright:

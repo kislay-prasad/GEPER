@@ -94,7 +94,7 @@ class TestPdfRenderSiteUsesTheLabel:
 
         patient = normalize_patient_metadata(None)
         qc_rows = qc_status_summary({"q30_fraction": 0.9}, {"mean_depth": 30, "pct_mapped": 98})
-        dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {}, {})
+        dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {})
         interpretation = clinical_interpretation(dashboard)
         merged = merge_variants_with_acmg(
             [

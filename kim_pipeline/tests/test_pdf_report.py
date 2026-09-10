@@ -20,7 +20,7 @@ from pipeline.reporting.clinical_sections import (
 def _minimal_kwargs():
     patient = normalize_patient_metadata(None)
     qc_rows = qc_status_summary({"q30_fraction": 0.9}, {"mean_depth": 30, "pct_mapped": 98})
-    dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {}, {})
+    dashboard = variant_dashboard([{"classification": "Uncertain_Significance"}], {})
     interpretation = clinical_interpretation(dashboard)
     merged = merge_variants_with_acmg(
         [
@@ -210,23 +210,6 @@ class TestRenderClinicalPdf:
         kwargs["merged_variants"] = []
         out = str(tmp_path / "report.pdf")
         render_clinical_pdf(out, sample_id="S01", **kwargs)  # must not raise
-
-    def test_pgx_section_rendered_when_present(self, tmp_path):
-        from pypdf import PdfReader
-
-        kwargs = _minimal_kwargs()
-        kwargs["pgx_annotations"] = [
-            {
-                "gene": "CYP2D6",
-                "diplotype": "*1/*4",
-                "phenotype": "Intermediate Metabolizer",
-                "evidence_level": "1A",
-            }
-        ]
-        out = str(tmp_path / "report.pdf")
-        render_clinical_pdf(out, sample_id="S01", **kwargs)
-        text = "".join(p.extract_text() for p in PdfReader(out).pages)
-        assert "CYP2D6" in text
 
     def test_reportlab_unavailable_raises_specific_error(self, tmp_path, monkeypatch):
         import builtins

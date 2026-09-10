@@ -47,7 +47,6 @@ from pipeline.reporting.clinical_sections import (
     consequence_display_label,
 )
 from pipeline.reporting import pdf_report as _pdf_report_mod
-from pipeline.pgx.stage import PGX_VALIDATION_CAVEAT
 
 logger = logging.getLogger("geper.pipeline.reporting.stage")
 
@@ -195,7 +194,6 @@ _HTML_TEMPLATE = """\
   <div class="dash-tile Likely_Pathogenic"><span class="dash-value">{dash_likely_pathogenic}</span><span class="dash-label">Likely Pathogenic</span></div>
   <div class="dash-tile VUS"><span class="dash-value">{dash_vus}</span><span class="dash-label">VUS</span></div>
   <div class="dash-tile Benign"><span class="dash-value">{dash_benign_total}</span><span class="dash-label">Benign / Likely Benign</span></div>
-  <div class="dash-tile"><span class="dash-value">{dash_pgx}</span><span class="dash-label">PGx Findings</span></div>
 </div>
 <p class="meta" style="margin-top:10px;">Ancestry: <strong>{dash_ancestry}</strong></p>
 </div>
@@ -232,13 +230,6 @@ _HTML_TEMPLATE = """\
 <h2 class="section-title">Variant Detail ({n_variants} PASS variants)</h2>
 {variants_table}
 </div>
-
-<div class="section">
-<h2 class="section-title">Pharmacogenomics (PGx)</h2>
-<p style="color:#777;font-size:0.85em;"><em>{pgx_caveat}</em></p>
-{pgx_section}
-</div>
-
 
 <div class="section">
 <h2 class="section-title">Ancestry Inference</h2>
@@ -487,42 +478,6 @@ def _variants_to_html_table(
     return f"<table><tr>{header_html}</tr>{rows_html}</table>"
 
 
-def _pgx_to_html_section(pgx_result: Any) -> str:
-    """Render PGx annotations as an HTML table section."""
-    if not pgx_result:
-        return "<p><em>PGx analysis not performed.</em></p>"
-    annotations = (
-        getattr(pgx_result, "annotations", None) or pgx_result.get("annotations", [])
-        if isinstance(pgx_result, dict)
-        else []
-    )
-    if not annotations:
-        return "<p><em>No PGx annotations available.</em></p>"
-    header = "<tr><th>Gene</th><th>Diplotype</th><th>Phenotype</th><th>Activity Score</th><th>Drug Implications</th><th>Evidence</th></tr>"
-    rows = ""
-    for ann in annotations:
-        if isinstance(ann, dict):
-            gene = ann.get("gene", "")
-            diplotype = ann.get("diplotype", "")
-            phenotype = ann.get("phenotype", "")
-            score = ann.get("activity_score")
-            drugs = ann.get("affected_drugs", [])
-            evidence = ann.get("evidence_level", "")
-        else:
-            gene = getattr(ann, "gene", "")
-            diplotype = getattr(ann, "diplotype", "")
-            phenotype = getattr(ann, "phenotype", "")
-            score = getattr(ann, "activity_score", None)
-            drugs = getattr(ann, "affected_drugs", [])
-            evidence = getattr(ann, "evidence_level", "")
-        drug_str = (
-            "; ".join(f"{d.get('drug', '')}: {d.get('implication', '')}" for d in drugs) or "None"
-        )
-        score_str = f"{score:.1f}" if score is not None else "N/A"
-        rows += f"<tr><td>{gene}</td><td>{diplotype}</td><td>{phenotype}</td><td>{score_str}</td><td style='font-size:0.85em'>{drug_str}</td><td>{evidence}</td></tr>"
-    return f"<table>{header}{rows}</table>"
-
-
 def _ancestry_to_html_section(ancestry_result: Any) -> str:
     """Render Ancestry inference result as an HTML section."""
     if not ancestry_result:
@@ -664,12 +619,7 @@ class ReportingStage:
         ann_d = self._to_dict(annotation_result)
         acmg_d = acmg_results or []
 
-        # PGx and Ancestry sections
-        pgx_d = (
-            pgx_result.to_dict()
-            if pgx_result is not None and hasattr(pgx_result, "to_dict")
-            else {}
-        )
+        # Ancestry section
         ancestry_d = (
             ancestry_result.to_dict()
             if ancestry_result is not None and hasattr(ancestry_result, "to_dict")
@@ -697,7 +647,6 @@ class ReportingStage:
             "acmg_evidence": acmg_d,
             "acmg_results": acmg_d,
             "variants": variants,
-            "pharmacogenomics": pgx_d,
             "ancestry": ancestry_d,
         }
         json_path = str(out / "report.json")
@@ -722,7 +671,7 @@ class ReportingStage:
         acmg_list = acmg_d if isinstance(acmg_d, list) else []
         qc_thresholds = (self._full_cfg.get("reporting") or {}).get("qc_thresholds")
         qc_rows = qc_status_summary(qc_d, align_d, qc_thresholds)
-        dashboard = variant_dashboard(acmg_list, pgx_d, ancestry_d)
+        dashboard = variant_dashboard(acmg_list, ancestry_d)
         interpretation = clinical_interpretation(dashboard)
         merged_variants = merge_variants_with_acmg(variants, acmg_list)
 
@@ -741,7 +690,6 @@ class ReportingStage:
             dash_likely_pathogenic=dashboard["likely_pathogenic"],
             dash_vus=dashboard["vus"],
             dash_benign_total=dashboard["benign"] + dashboard["likely_benign"],
-            dash_pgx=dashboard["pgx_findings"],
             dash_ancestry=dashboard["ancestry_summary"],
             interpretation_summary=interpretation["summary"],
             interpretation_follow_up=interpretation["follow_up"],
@@ -757,8 +705,6 @@ class ReportingStage:
                 variants, self._gene_unavailable_reason(self._full_cfg)
             ),
             n_variants=len(variants),
-            pgx_section=_pgx_to_html_section(pgx_result),
-            pgx_caveat=PGX_VALIDATION_CAVEAT,
             ancestry_section=_ancestry_to_html_section(ancestry_result),
             lab_disclaimer=lab_disclaimer,
         )
@@ -777,7 +723,6 @@ class ReportingStage:
                 dashboard=dashboard,
                 interpretation=interpretation,
                 merged_variants=merged_variants,
-                pgx_annotations=pgx_d.get("annotations") if isinstance(pgx_d, dict) else None,
                 ancestry_summary=dashboard["ancestry_summary"],
                 reference_genome=reference_genome,
                 pipeline_version=PIPELINE_VERSION,

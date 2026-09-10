@@ -25,7 +25,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pipeline.pgx.stage import PGX_VALIDATION_CAVEAT
 from pipeline.reporting.clinical_sections import consequence_display_label
 
 logger = logging.getLogger("geper.pipeline.reporting.pdf_report")
@@ -69,7 +68,6 @@ def render_clinical_pdf(
     dashboard: Dict[str, Any],
     interpretation: Dict[str, str],
     merged_variants: List[Dict[str, Any]],
-    pgx_annotations: Optional[List[Dict[str, Any]]] = None,
     ancestry_summary: Optional[str] = None,
     reference_genome: str = "N/A",
     pipeline_version: str = "Bij AI",
@@ -228,7 +226,6 @@ def render_clinical_pdf(
     story.append(Spacer(1, 4))
     story.append(
         Paragraph(
-            f"<b>Pharmacogenomic findings:</b> {dashboard.get('pgx_findings', 0)} &nbsp;&nbsp; "
             f"<b>Ancestry:</b> {ancestry_summary or dashboard.get('ancestry_summary', 'Not performed')}",
             body_style,
         )
@@ -289,34 +286,6 @@ def render_clinical_pdf(
         story.append(var_table)
     else:
         story.append(Paragraph("No variants to display.", body_style))
-
-    # ── PGx section ──
-    if pgx_annotations:
-        story.append(Spacer(1, 10))
-        story.append(Paragraph("Pharmacogenomics (PGx)", section_style))
-        story.append(Paragraph(f"<i>{PGX_VALIDATION_CAVEAT}</i>", small_style))
-        pgx_data = [["Gene", "Diplotype", "Phenotype", "Evidence"]]
-        for a in pgx_annotations:
-            pgx_data.append(
-                [
-                    a.get("gene", ""),
-                    a.get("diplotype", ""),
-                    a.get("phenotype", ""),
-                    a.get("evidence_level", ""),
-                ]
-            )
-        pgx_table = Table(pgx_data, colWidths=[70, 90, 150, 90])
-        pgx_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2a6ab5")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cccccc")),
-                ]
-            )
-        )
-        story.append(pgx_table)
 
     # ── Footer (drawn on every page: disclaimer, reference genome,
     #    pipeline version, timestamp, Page X of Y) ──

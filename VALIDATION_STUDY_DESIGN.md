@@ -1170,7 +1170,9 @@ scoring semantics (§7.3).
              [**[INVENTED]** as originally described — the clause NUMBER is right, but this
              token originally described 7.3.7.3 as "evaluation of performance in
              interlaboratory comparison", treating 7.3.7.2 and 7.3.7.3 as two stages of one
-             EQA requirement. They are not: 7.3.7.2 is Internal quality control and 7.3.7.3
+             EQA requirement. Verification (2026-08-22, the same citation-verification
+             pass as EJ-05/EJ-12/EJ-15 and §4.3, tabulated in §9) establishes they are
+             not: 7.3.7.2 is Internal quality control and 7.3.7.3
              is External quality assessment. Retained as INVENTED because the description,
              not merely the number, was wrong. See §4.3]. CLIA 42 CFR §493.801-493.865,
              proficiency testing programme requirements and unsuccessful-participation
@@ -2489,8 +2491,10 @@ Agreement text was not reachable.
              the Indian Council of Medical Research, released 12 October 2017]. ISO
              15189:2022, biological reference intervals and clinical decision limits and
              their applicability to the served population [**[INVENTED]** — this token
-             originally cited **clause 7.3.4**. Verification establishes that **7.3.4 is
-             "Evaluation of measurement uncertainty (MU)"**, not reference intervals.
+             originally cited **clause 7.3.4**. Verification (2026-08-22, the same
+             citation-verification pass as EJ-05/EJ-15/EJ-16 and §4.3, tabulated in
+             §9) establishes that **7.3.4 is "Evaluation of measurement uncertainty
+             (MU)"**, not reference intervals.
              Biological reference intervals and clinical decision limits ARE a subject of
              clause 7.3, but at a different subclause — most likely 7.3.5, which could NOT
              be confirmed to this document's standard and is therefore not asserted.

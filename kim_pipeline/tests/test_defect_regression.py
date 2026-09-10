@@ -595,10 +595,23 @@ class TestClinVarCache:
         The constructor was deliberately not changed to accept both keys;
         see b2e819c.
 
-        When the key mismatch in `_lkp()` is corrected to `tsv_gz_path`
-        pointing at a real local-mode fixture, this mock should be removed
-        and the test rewritten to exercise the real offline path. A mock
-        nobody revisits is how a test stops testing.
+        DO NOT REMOVE THIS MOCK. It was previously described here as
+        something to remove "when the key mismatch in `_lkp()` is
+        corrected" -- that claim was tested directly (2026-09-10) and is
+        false: removing the mock does not reach the local TSV path.
+        `_lkp()`'s mis-keyed config makes `self._backend` stay `"api"`
+        regardless (see the routing above), so `lookup()` calls
+        `_api_lookup()` and reaches a live network request to NCBI,
+        which returns real data on an environment with outbound network
+        -- confirmed against a real BRCA1 coordinate. This test exercises
+        the API-FALLBACK path, not the local one, and the mock is the
+        only thing between this suite and a live NCBI call on that path.
+        Reaching local mode instead would require fixing the mis-keyed
+        config `_lkp()` passes -- the config keys themselves are a
+        human-ruled design decision (tsv_path is a correct key for a
+        different section; accepting it under `clinvar:` would hide
+        exactly this class of copy-paste error) and are not changed
+        here or by this test.
         """
         lkp = self._lkp()
         with patch.object(type(lkp), "_api_lookup", return_value=None):

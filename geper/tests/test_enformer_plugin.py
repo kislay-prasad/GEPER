@@ -315,7 +315,28 @@ class TestEnformerMetadataAndAvailability(unittest.TestCase):
         self.assertNotIn("has not been attempted", reason)
 
     def test_unavailability_reason_under_not_checked_says_not_checked(self):
-        with mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config:
+        """NOT_CHECKED is MOCKED here, not inherited from the box.
+
+        *** THIS PREVIOUSLY LEFT `check_pip_package_availability` REAL
+        AND RELIED ON enformer-pytorch NOT BEING INSTALLED. *** That is
+        a dependency on an UNPINNED package's absence: enformer-pytorch
+        is not in `geper/requirements.txt`, so the state this test needs
+        is whatever the box happens to have, and a developer who
+        installs the package turns this green test red -- for succeeding
+        rather than for breaking.
+        Its own sibling three lines above
+        (`..._under_absent_does_not_claim_no_attempt`) already mocked
+        the status explicitly; the pair was asymmetric and this is the
+        half that had not been done. Measured 2026-09-10 with the real
+        function poisoned: this test reached it, the sibling did not.
+        """
+        with (
+            mock.patch("pipeline.models.enformer_plugin.CONFIG") as mock_config,
+            mock.patch(
+                "pipeline.models.enformer_plugin.check_pip_package_availability",
+                return_value=PackageCheckStatus.NOT_CHECKED,
+            ),
+        ):
             mock_config.splicing.ENABLE_ENFORMER = True
             reason = EnformerPlugin.unavailability_reason()
         self.assertIn("enformer-pytorch", reason)

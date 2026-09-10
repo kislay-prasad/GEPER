@@ -144,7 +144,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, cast
 
-from pipeline.provenance import VersionStatus
+from pipeline.provenance import HashVerification, VersionStatus
 from report.clinical_report_builder import candidate_interpretation_of
 from report.models import compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
@@ -201,6 +201,86 @@ def _require_results(output_dir: str) -> str:
             f"before it can be reviewed."
         )
     return results_path
+
+
+def _check_no_model_hash_mismatch(document: Dict[str, Any]) -> None:
+    """
+    Refuses `approve()` before it writes anything if this run recorded a
+    model-weight hash MISMATCH for any model -- human-ruled 2026-09-10:
+    "a signer approving a report without visibility into a mismatch is
+    signing something they cannot vouch for; the signature becomes
+    decorative." `hash_verification: MISMATCH` is written into
+    `geper_results.json` at run time
+    (`pipeline/orchestrator.py::run`, opt-in via
+    `CONFIG.VERIFY_MODEL_ARTIFACT_HASHES`/`GEPER_VERIFY_MODEL_HASHES`) but
+    nothing downstream reads it -- not `approve()` before this change, not
+    the rendered Markdown (`report/report_generator.py::_render_provenance`)
+    or PDF (`report/summary.py`), both of which show only
+    identifier/status/reason from each `model_checkpoints` entry. That is
+    not missing information, it is suppression, however unintentional: the
+    fact is already on disk and the signer is the one party not told. This
+    function is the fix -- called from `approve()` immediately after the
+    document loads and before any write (patient_meta, the JSON rewrite,
+    PDF regeneration, the manifest), so a refusal here leaves nothing on
+    disk changed.
+
+    NO BYPASS OF ANY KIND EXISTS FOR THIS CHECK, DELIBERATELY: no flag, no
+    env var, no "force". A mismatch means the cached weights this run used
+    do not match what the cache claims to hold -- corrupted or substituted
+    -- and the only correct response is fixing the cache and re-running,
+    never signing off on unknown weights. Consistent with
+    `require_reviewed()`'s own content-hash check just below, which has
+    never had an override either.
+
+    WHAT THE MESSAGE NAMES, AND WHAT IT DOES NOT (yet): the model, and the
+    EXPECTED sha256 the cache declared (`cache_declared_sha256` -- the one
+    hash this record actually persists). It does NOT name the ACTUAL
+    observed hash, because nothing in this codebase persists it today:
+    `pipeline/models/cache.py::WeightCache.verify_checksum` computes it
+    (as `actual`, line ~83) purely to compare and log at error level, then
+    discards it -- `pipeline/provenance.py::verify_model_artifact` never
+    receives it back, only the boolean match/no-match, so it never reaches
+    `ResolvedModelArtifact` or this JSON. Threading the actual hash into
+    the persisted record would need a second, separate change to
+    `pipeline/provenance.py`/`pipeline/models/cache.py` -- named here as a
+    real gap against the human's stated design ("the expected and the
+    actual"), not silently worked around.
+    """
+    checkpoints = document.get("model_checkpoints") or {}
+    mismatches: List[Dict[str, Any]] = []
+    for name, value in checkpoints.items():
+        if not isinstance(value, dict):
+            continue
+        artifact = value.get("loaded_artifact")
+        if not isinstance(artifact, dict):
+            continue
+        if artifact.get("hash_verification") == HashVerification.MISMATCH.value:
+            mismatches.append(
+                {
+                    "name": name,
+                    "expected_sha256": artifact.get("cache_declared_sha256"),
+                    "resolved_path": artifact.get("resolved_path"),
+                }
+            )
+    if not mismatches:
+        return
+
+    lines = [
+        "Approval refused: model-weight hash MISMATCH recorded for this run -- signing off would "
+        "attest to findings produced by weights that do not match what the model cache declares.",
+    ]
+    for m in mismatches:
+        lines.append(
+            f"  - {m['name']}: expected sha256 (declared by the cache) = {m['expected_sha256']!r}; "
+            f"the actual observed hash was logged at error level by this run and is not stored in "
+            f"this record (cache file: {m['resolved_path']!r})."
+        )
+    lines.append(
+        "This means the cached weights are corrupted or were substituted after this run recorded "
+        "them -- re-verify or re-download the model cache for the model(s) named above and re-run "
+        "this sample, then approve the fresh run. There is no override for this check."
+    )
+    raise SignoffError("\n".join(lines))
 
 
 def require_reviewed(document: Dict[str, Any], consumer: str = "This system", output_dir: Optional[str] = None) -> None:
@@ -546,10 +626,15 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
 
     Returns the manifest dict that was also written to
     `geper_signoff_manifest.json`. Raises `SignoffError` if `output_dir`
-    has no `geper_results.json` (nothing to approve).
+    has no `geper_results.json` (nothing to approve), OR if this run
+    recorded a model-weight hash MISMATCH for any model (see
+    `_check_no_model_hash_mismatch`, human-ruled 2026-09-10) -- checked
+    immediately below, before any write, so a refusal here leaves the
+    directory exactly as it was.
     """
     results_path = _require_results(output_dir)
     document = _load_document(results_path)
+    _check_no_model_hash_mismatch(document)
 
     physician = f"{clinician_name}, Reg. No. {reg_number}, {hospital}"
     patient_meta_path = _patient_meta_path(output_dir)

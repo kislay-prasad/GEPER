@@ -387,7 +387,8 @@ which, do not assume either").
   support the classification derived from it. BP6 is evaluated (can be
   flagged "triggered") but explicitly excluded from the point-combining
   loop, so it contributes zero regardless.
-- kim_pipeline/ (pipeline/acmg/classifier.py:872-933,1230-1269): PP5 and
+- kim_pipeline/ (`pipeline/acmg/classifier.py:867-931,1223-1263` at
+  `ff9e5ae`; re-measured 2026-09-10, the file shortened by six lines): PP5 and
   BP6 both **ON by default** (`disable_pp5_bp6=False`). The classifier's
   own docstring (:887-889) **names the same SVI recommendation and
   declines to follow it** — stated reason: "to preserve existing behavior
@@ -411,15 +412,32 @@ which, do not assume either").
   PP3 nor BP4 triggers. Docstring states this was a considered choice,
   citing ACMG/AMP 2015 and Pejaver et al. 2022, and explicitly rejecting
   majority voting.
-- kim_pipeline/ (classifier.py:796-840,1160-1197) does **strict-majority
+- kim_pipeline/ (`pipeline/acmg/classifier.py:793-836,1155-1191` at
+  `ff9e5ae`; re-measured 2026-09-10) does **strict-majority
   voting** instead (`n_dam >= max(1, len(votes)//2+1)`).
 - **Additional finding, not in CROSS_TREE_DIVERGENCES.md**: kim_pipeline's
   in-silico ensemble for this vote is effectively **three** predictors in
   current deployment (CADD, REVEL, AlphaMissense), not four — SpliceAI was
   removed 2026-08-22 for CC BY-NC 4.0 licensing (pipeline/vep/stage.py
-  docstring:13-25), but the PP3/BP4 vote-counting code still references it
-  as a source; it always contributes `None` now (each append guarded
-  `is not None` — the removal degrades silently rather than raising).
+  docstring:13-25).
+  **CORRECTED 2026-09-10 (third movement on this claim, same day).** The
+  rest of this sentence read, and was true when written:
+
+      "but the PP3/BP4 vote-counting code still references it as a
+       source; it always contributes `None` now (each append guarded
+       `is not None` — the removal degrades silently rather than
+       raising)."
+
+  It is false at `ff9e5ae`, which removed the PP3 and BP4 SpliceAI **vote
+  branches themselves** — not the input path — together with both
+  threshold defaults (`pp3_spliceai`, `bp4_spliceai`) and both validator
+  ranges. The vote-counting code no longer references SpliceAI at all: at
+  `ff9e5ae` each of `_pp3` and `_bp4` contains exactly three
+  `votes.append(...)` calls (CADD, REVEL, AlphaMissense), and a
+  whole-file search of `pipeline/acmg/classifier.py` for "spliceai"
+  returns nothing. The clause about `is not None` guards is still true
+  **of the three predictors that remain**; it is no longer true of
+  SpliceAI, because there is nothing left to guard.
   **PROVENANCE OF THAT SENTENCE, 2026-09-10, because it is currently
   true for a reason its author did not have**: as written it was
   FALSE. The 2026-08-22 VEP removal it cites did not make the score
@@ -433,8 +451,10 @@ which, do not assume either").
   silently left standing: a claim that is right by accident is not the
   same as a claim that was right, and this document has been wrong on
   this exact point before.** **This is not a cosmetic
-  change: the majority threshold at `classifier.py:831`
-  (`met = n_dam >= max(1, len(votes)//2+1)`, symmetric BP4 site :1188)
+  change: the majority threshold
+  (`met = n_dam >= max(1, len(votes)//2+1)`, `classifier.py:826` at
+  `ff9e5ae`, symmetric BP4 site `:1181` — re-measured 2026-09-10, these
+  previously read `:831`/`:1188`)
   fell from 3-of-4 damaging calls required to 2-of-3 — a licensing
   decision silently lowered the evidence bar for a pathogenicity
   criterion.** See §1 (CANNOT DO TODAY, the expanded SpliceAI entry) for
@@ -638,7 +658,9 @@ which, do not assume either").
 - Neither engine evaluates PS4 (case/control cohort frequency) or BS2/
   (kim's naming) healthy-adult-observation data — both explicitly and
   permanently `not_evaluated` in automated mode on both sides.
-  [geper: acmg_rules.py:291; kim: classifier.py:457-470,993-1004]
+  [geper: acmg_rules.py:291; kim: `classifier.py:454-469,988-999` at
+  `ff9e5ae` -- re-measured 2026-09-10, this previously read
+  `:457-470,993-1004`]
 - **CORRECTED AGAIN 2026-09-10 (second correction, same row, same day).**
   This row was corrected in the morning and the corrected text went stale
   in the afternoon, under its own author, when the code changed. Both the
@@ -668,9 +690,17 @@ which, do not assume either").
   can put a SpliceAI score on a variant any more, and `spliceai_score` is
   now genuinely always `None` in kim_pipeline. Scope: kim_pipeline only
   (geper/ never integrated SpliceAI at all).
+  **Still true for exactly the reason stated, and now ALSO true for a
+  second, independent one (added 2026-09-10):** `ff9e5ae` removed the
+  PP3/BP4 SpliceAI vote branches, so even a score that somehow reached a
+  variant would no longer reach those two criteria. `b394bfa` closed the
+  input; `ff9e5ae` removed the consumer. Neither supersedes the other and
+  the attribution above is unchanged.
 
   **Guarded by** `kim_pipeline/tests/test_spliceai_input_is_closed.py`
-  (9 tests, 4 subtests), which asserts on **ACMG classification
+  (12 tests, 4 subtests at `ff9e5ae`, measured 2026-09-10; it was 9 when
+  this row was written, and `ff9e5ae` converted three more into it), which
+  asserts on **ACMG classification
   outcomes** rather than on parsing -- a test that only showed the fields
   were unread would go green on a rename while the vote it feeds carried
   on moving.
@@ -682,6 +712,15 @@ which, do not assume either").
   `VariantEvidence` directly, so closing the VCF-side input never reached
   it -- but the argument for carrying a SpliceAI score in it has gone,
   and that open question is recorded there rather than resolved here.
+  **`ff9e5ae` did NOT close that question, and it is worth saying why
+  (checked 2026-09-10 rather than assumed):** the score that test carries
+  feeds BP7's gate via `orchestration/shared.py::synonymous_or_intronic`,
+  where an ABSENT score and a CONFIRMED-LOW score are deliberately
+  distinguished. That consumer is live, and `ff9e5ae` left it alone on
+  purpose — it removed the PP3/BP4 votes only. So the structure this test
+  exercises has NOT lost its consumer; what it lost, back at `b394bfa`,
+  was the reachability argument its docstring gives for the score. The
+  question stays open, and stays where it is recorded.
 
   **CITED BY COMMIT AND TEST NAME, NOT BY LINE NUMBER, DELIBERATELY.**
   Both this row and the test docstring previously carried undated
@@ -689,24 +728,73 @@ which, do not assume either").
   `:1124-1133` there) and every one of them now points at unrelated
   code. A line number pinned to a revision is a durable fact; an undated
   one silently claims to be about HEAD forever.
-  **Consequence, not just absence**: PP3/BP4's majority-vote threshold
-  (`classifier.py:831`, symmetric BP4 site `classifier.py:1188`) is
-  `met = n_dam >= max(1, len(votes) // 2 + 1)` — a threshold computed over
-  however many voters are actually present (each vote append is guarded
-  `is not None`, so a missing predictor degrades silently rather than
-  raising, `classifier.py:814-815,1171-1172`). With SpliceAI present that
-  was 3-of-4 damaging calls required; with it absent (the VEP-CSQ path,
-  unannotated input), it is 2-of-3. **Given the 2026-09-10 correction
-  above, "absent" is not the universal case**: on input the caller has
-  pre-annotated with SpliceAI upstream, the fallback restores the vote
-  and the threshold reverts to 3-of-4 for that variant. So the actual
-  consequence is an evidence bar that silently VARIES per-input (2-of-3
-  or 3-of-4, depending on what the caller's VCF happens to carry) rather
-  than a single, permanently-lowered 2-of-3 — an inconsistency, not just
-  a reduction. **A licensing decision silently changed the evidence bar
-  for a pathogenicity criterion** — nobody chose that as a clinical
-  position, it is a side effect of removing one voter from a
-  majority-of-present formula.
+  **Consequence, not just absence — REWRITTEN 2026-09-10 AT `ff9e5ae`,
+  AND DELIBERATELY NOT BY RESTORING WHAT THIS PASSAGE REPLACED.**
+  PP3/BP4's majority-vote threshold is
+  `met = n_dam >= max(1, len(votes) // 2 + 1)` (`classifier.py:826` at
+  `ff9e5ae`, symmetric BP4 site `:1181`), computed over however many
+  voters are actually present. The text here read, and was true when it
+  was written earlier the same day:
+
+      "(each vote append is guarded `is not None`, so a missing
+       predictor degrades silently rather than raising,
+       `classifier.py:814-815,1171-1172`). With SpliceAI present that
+       was 3-of-4 damaging calls required; with it absent (the VEP-CSQ
+       path, unannotated input), it is 2-of-3. **Given the 2026-09-10
+       correction above, "absent" is not the universal case**: on input
+       the caller has pre-annotated with SpliceAI upstream, the fallback
+       restores the vote and the threshold reverts to 3-of-4 for that
+       variant. So the actual consequence is an evidence bar that
+       silently VARIES per-input (2-of-3 or 3-of-4, depending on what
+       the caller's VCF happens to carry) rather than a single,
+       permanently-lowered 2-of-3 — an inconsistency, not just a
+       reduction."
+
+  Two things are wrong with that at `ff9e5ae`, and they are **not the
+  same kind of wrong**.
+
+  **(a) A dead citation inside a sentence that is still true.**
+  `classifier.py:814-815,1171-1172` was cited as the guarded vote
+  appends. Those were the SpliceAI appends and `ff9e5ae` deleted them; at
+  `ff9e5ae`, line 814 is `if not votes:`. The claim the cite was
+  supporting — each append guarded `is not None`, so a missing predictor
+  degrades silently rather than raising — **remains true of the three
+  predictors that are left**, and now lives at `classifier.py:807-812`
+  (PP3) and `:1162-1168` (BP4). A true sentence with a dead cite, not a
+  false claim.
+
+  **(b) The clinical conclusion, which is the half that matters, is
+  FALSE.** `ff9e5ae` removed the **vote branches**, not the input path.
+  **There is no vote left to restore, so a caller-annotated VCF restores
+  nothing, and the bar cannot vary with what the input carries.** The
+  per-input inconsistency described above does not exist at `ff9e5ae`.
+
+  **AND THAT MAKES THE SENTENCE THIS PASSAGE ORIGINALLY REPLACED CORRECT
+  AGAIN — WHICH IS WHY IT IS NOT BEING RESTORED.** The original text said
+  the bar was permanently lowered to 2-of-3. It was corrected this
+  morning for being wrong; it is right again at `ff9e5ae`, for a reason
+  unrelated to why it was written and unrelated to why it was wrong.
+  **A sentence restored is indistinguishable from a correction never
+  made**, so the history is written down instead of the wording being
+  reverted. This is the third time this claim has moved in one day.
+
+  **What is true at `ff9e5ae`, measured rather than restored**: the PP3
+  ballot is CADD, REVEL and AlphaMissense — and REVEL and AlphaMissense
+  are additionally gated on `e.is_missense` (`classifier.py:809,811`;
+  symmetric BP4 `:1164,:1166`). So the denominator is **3 for a missense
+  variant and 1 — CADD alone — for a non-missense one**, fixed by the
+  variant's own consequence and independent of the input VCF's
+  annotations. "Permanently 2-of-3" is therefore the right shape but
+  still not exactly right: it is the missense case, and it is the one
+  this passage is about. **This does not change the structural analysis
+  referred out below** — the formula is untouched by `ff9e5ae`, and the
+  incompatibility recorded there was never contingent on SpliceAI. Noted
+  and stopped there.
+
+  **A licensing decision silently changed the evidence bar for a
+  pathogenicity criterion** — nobody chose that as a clinical position,
+  it is a side effect of removing one voter from a majority-of-present
+  formula.
   **This is known and unresolved, not a fresh finding of this audit**:
   Kelly found it first, and found the deeper version — cards
   `kelly-classifier-denominator-fix-pp3-bp4` and

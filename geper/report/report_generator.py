@@ -240,7 +240,13 @@ def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
     timestamp = consent.get("timestamp")
     if timestamp:
         parts.append(f"Recorded: {timestamp}")
-    return "**Data processing consent (DPDP Act 2023):** " + " · ".join(parts)
+    # Statutory citation removed pending counsel (human ruling, 2026-09-10):
+    # an unsourced legal claim inside a generated clinical report reads as
+    # verified because of where it sits. The consent VALUES below are this
+    # module's own recorded data and stay; only the Act name is withheld
+    # until counsel confirms it. Restore verbatim if confirmed -- the exact
+    # removed string is `"**Data processing consent (DPDP Act 2023):** "`.
+    return "**Data processing consent:** " + " · ".join(parts)
 
 
 class ReportGenerator:

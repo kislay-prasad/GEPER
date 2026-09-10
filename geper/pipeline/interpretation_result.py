@@ -467,23 +467,38 @@ def build_interpretation_result(
     # _render_interpretation` renders. See the correction at
     # `interpretation.py`'s gnomAD call site and
     # `tests/test_gnomad_weight_reaches_the_reader.py`.)
-    # independently restates one fact PM2's own `supporting_evidence`
+    # once independently restated one fact PM2's own `supporting_evidence`
     # also states, worded differently ("gnomAD: variant not found in
     # the population database (PM2 evidence -- absent from gnomAD)."
     # vs. PM2's own "gnomAD: variant not found."), so the exact-string
-    # `_dedupe` below never catches it and it showed twice. Dropped
-    # from the legacy seed here rather than kept in sync by hand: PM2's
-    # own criterion-level text is the more precise, current source.
-    # (InterPro's equivalent legacy/PM1 duplicate was removed at its
-    # source, `InterpretationEngine._biological_context_evidence`,
-    # since that duplicate had no `significance_score` weight riding on
-    # it to preserve.)
-    _SUPERSEDED_LEGACY_EVIDENCE = (
-        "gnomAD: variant not found in the population database (PM2 evidence -- absent from gnomAD).",
-    )
-    supporting_evidence = [
-        line for line in (interpretation.get("supporting_evidence") or []) if line not in _SUPERSEDED_LEGACY_EVIDENCE
-    ]
+    # `_dedupe` below never caught it and it showed twice. A
+    # `_SUPERSEDED_LEGACY_EVIDENCE` tuple used to filter that one
+    # sentence out here.
+    #
+    # THE FILTER IS GONE (2026-09-11) BECAUSE ITS SUBJECT IS GONE: the
+    # HIGH 3 Q4-B/T3-F1 ruling removed the append at the source, so
+    # `interpret()` reads `for _text, weight in gnomad_criteria:` and
+    # that sentence is never placed in `supporting_evidence` by anything.
+    # A filter whose input cannot occur is not protection, it is a
+    # statement about the past that reads as one about the present --
+    # and it was kept alive by a test that HAND-BUILT the impossible
+    # input itself. Same treatment as InterPro's equivalent legacy/PM1
+    # duplicate, which was likewise removed at its source rather than
+    # filtered downstream.
+    #
+    # AND IT NEVER COVERED THE SURFACE IT LOOKED LIKE IT COVERED:
+    # this filter only ever touched the merged `InterpretationResult`.
+    # `report_generator.py::_render_interpretation` renders the LEGACY
+    # `interpretation["supporting_evidence"]` list directly (:1391), so
+    # a re-appended sentence would have reached the Markdown report
+    # whether or not this line existed.
+    #
+    # THE GUARANTEE NOW LIVES WHERE IT CAN FAIL: if anyone re-appends
+    # that sentence, `tests/test_supporting_evidence_dedup.py` goes RED
+    # on the real `interpret()` path -- both because the fact would then
+    # be stated twice and because the legacy list would carry it again.
+    # A comment saying "do not re-add this" would not have.
+    supporting_evidence = list(interpretation.get("supporting_evidence") or [])
     conflicting_evidence: List[str] = []
     for rule in triggered_rules:
         supporting_evidence.extend(rule.get("supporting_evidence") or [])

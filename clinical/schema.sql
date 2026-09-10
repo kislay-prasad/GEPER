@@ -792,9 +792,10 @@ CREATE TABLE reviewer_claims (
     -- constraint cannot see the rest of the table.
     --
     -- A superseded claim is still a claim that was made, and the read path
-    -- must not quietly drop it. ISO 15189 7.4.1.8's rule for amended reports
-    -- -- the original is never modified and never withdrawn from the record
-    -- -- is the same rule one level down.
+    -- must not quietly drop it. GEPER's own rule for amended reports (spec
+    -- 15.2, implementing ISO 15189 7.4.1.8 b)/d)) -- the original is never
+    -- modified and never withdrawn from the record -- is the same rule one
+    -- level down.
     supersedes          UUID,
 
     -- Human ruling, tombstone-cascade (2026-09-09, following D2): a
@@ -1228,9 +1229,10 @@ GRANT  USAGE, SELECT          ON SEQUENCE audit_log_log_id_seq TO clinical_app;
 -- reason audit_log is: both are exactly what someone would want to alter after
 -- the fact. A reviewer's disagreement quietly edited into an agreement, or a
 -- release event's consumer or content_hash rewritten after a report went out,
--- would leave no trace that anything had changed -- and ISO 15189 7.4.1.8's
--- requirement that the original is never modified and never withdrawn from the
--- record cannot be met by a table the application is free to rewrite.
+-- would leave no trace that anything had changed -- and GEPER's own rule
+-- (spec 15.2, implementing ISO 15189 7.4.1.8 b)/d)) that the original is
+-- never modified and never withdrawn from the record cannot be met by a
+-- table the application is free to rewrite.
 --
 -- A wrong claim is corrected by appending a correcting claim that names the
 -- one it replaces, which is what reviewer_claims.supersedes is for and what

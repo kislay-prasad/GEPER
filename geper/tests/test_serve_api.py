@@ -74,7 +74,12 @@ class TestServeApiDefaultsDoNotCollideWithKimPipeline(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 1)
         _, kwargs = mock_run.call_args
         self.assertEqual(kwargs["port"], 8001, "must not default to kim_pipeline's own default port (8000)")
-        self.assertEqual(kwargs["host"], "0.0.0.0")
+        self.assertEqual(
+            kwargs["host"],
+            "127.0.0.1",
+            "default must be loopback-only -- see the 'keyless local' bind-all fix "
+            "this assertion was updated for; --host 0.0.0.0 is now an explicit choice, not a default",
+        )
 
     def test_kim_pipelines_env_var_name_has_no_effect_here(self):
         """The actual namespace-collision proof: setting GEPER_API_PORT
@@ -96,6 +101,62 @@ class TestServeApiDefaultsDoNotCollideWithKimPipeline(unittest.TestCase):
             serve_api.main()
 
         self.assertEqual(mock_run.call_args.kwargs["port"], 8001, "GEPER_API_PORT must not leak into this script")
+
+
+class TestBindAllWithoutAuthWarning(unittest.TestCase):
+    """`_warn_if_bind_all_without_auth` must fire on the PAIR (bind-all AND
+    auth off), never on either half alone -- a warning that also fires on
+    a normal deployment (`--host 0.0.0.0` with real GEPER_API_KEYS set)
+    teaches people to ignore it. Patches `sys.modules["api.main"]` with a
+    stub carrying only the one attribute the warning reads (`_API_KEYS`),
+    rather than a real import, so this does not depend on fastapi being
+    installed in whichever interpreter runs this file."""
+
+    def test_warns_when_bind_all_and_auth_off(self):
+        import io
+        from unittest import mock
+
+        import serve_api
+
+        fake_api_main = mock.Mock(_API_KEYS=None)
+        with (
+            mock.patch.dict(sys.modules, {"api.main": fake_api_main}),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+        ):
+            serve_api._warn_if_bind_all_without_auth("0.0.0.0")
+        out = fake_err.getvalue()
+        self.assertIn("WARNING", out)
+        self.assertIn("0.0.0.0", out)
+        self.assertIn("authentication", out.lower())
+
+    def test_no_warning_when_bind_all_but_real_keys_set(self):
+        """The normal-deployment case: bind-all with real auth configured
+        must stay silent."""
+        import io
+        from unittest import mock
+
+        import serve_api
+
+        fake_api_main = mock.Mock(_API_KEYS={"a-real-key"})
+        with (
+            mock.patch.dict(sys.modules, {"api.main": fake_api_main}),
+            mock.patch("sys.stderr", new_callable=io.StringIO) as fake_err,
+        ):
+            serve_api._warn_if_bind_all_without_auth("0.0.0.0")
+        self.assertEqual(fake_err.getvalue(), "")
+
+    def test_no_warning_on_loopback_regardless_of_auth_state(self):
+        """The default (127.0.0.1) must never warn -- and must not even
+        import api.main to check, so this must pass with no stub at all."""
+        import io
+        from unittest import mock
+
+        import serve_api
+
+        sys.modules.pop("api.main", None)
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as fake_err:
+            serve_api._warn_if_bind_all_without_auth("127.0.0.1")
+        self.assertEqual(fake_err.getvalue(), "")
 
 
 if __name__ == "__main__":

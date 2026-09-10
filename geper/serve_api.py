@@ -10,7 +10,9 @@ Usage:
     python serve_api.py --reload   # development hot-reload
 
 Environment overrides:
-    GEPER_STRUCTURES_API_HOST       Bind host (default: 0.0.0.0)
+    GEPER_STRUCTURES_API_HOST       Bind host (default: 127.0.0.1 -- loopback-only;
+                                     pass --host 0.0.0.0 or set this var explicitly
+                                     to bind every interface)
     GEPER_STRUCTURES_API_PORT       Bind port (default: 8001)
     GEPER_STRUCTURES_API_LOG_LEVEL  Logging level (default: info)
 
@@ -37,9 +39,26 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
-def main() -> None:
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def _is_loopback(host: str) -> bool:
+    return host in _LOOPBACK_HOSTS
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Split out from main() so the parsed default is directly readable
+    (`build_parser().parse_args([]).host`) without importing uvicorn or
+    binding a port -- see the loopback-default fix this function was
+    extracted for."""
     parser = argparse.ArgumentParser(description="Bij AI structures API server")
-    parser.add_argument("--host", default=os.getenv("GEPER_STRUCTURES_API_HOST", "0.0.0.0"))
+    # Default flipped from 0.0.0.0 to 127.0.0.1 (loopback-only) -- same fix
+    # and same reason as kim_pipeline/serve_api.py's own default flip: this
+    # script is launched with no --host override by anyone following a
+    # "run it locally" recipe, and was binding every network interface
+    # while auth is off by default. This flip makes it local by default
+    # rather than by luck; pass --host 0.0.0.0 explicitly to bind broadly.
+    parser.add_argument("--host", default=os.getenv("GEPER_STRUCTURES_API_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("GEPER_STRUCTURES_API_PORT", "8001")))
     parser.add_argument("--reload", action="store_true", help="Enable hot-reload (dev only)")
     parser.add_argument(
@@ -47,13 +66,45 @@ def main() -> None:
         default=os.getenv("GEPER_STRUCTURES_API_LOG_LEVEL", "info").lower(),
         choices=["debug", "info", "warning", "error"],
     )
-    args = parser.parse_args()
+    return parser
+
+
+def _warn_if_bind_all_without_auth(host: str) -> None:
+    """Runtime warning at bind time -- see kim_pipeline/serve_api.py's
+    identical helper for the full reasoning (conditioned on the pair:
+    bind-all AND auth currently off, not either alone)."""
+    if _is_loopback(host):
+        return
+    import importlib
+
+    # importlib.import_module (not `import api.main as x`) -- see
+    # kim_pipeline/serve_api.py's identical helper for why: the `as` form
+    # resolves via an attribute on the parent package, invisible to a
+    # sys.modules patch in tests.
+    _api_app = importlib.import_module("api.main")
+
+    if _api_app._API_KEYS is None:
+        print(
+            f"WARNING: binding to {host} (all interfaces) with authentication "
+            "disabled (GEPER_API_KEYS is not set). This API will be reachable, "
+            "unauthenticated, from any host that can route to this machine's "
+            "network interfaces -- not just this machine. Set GEPER_API_KEYS "
+            "before binding broadly, or drop --host to keep the default "
+            "(127.0.0.1, local-only).",
+            file=sys.stderr,
+        )
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     try:
         import uvicorn
     except ImportError:
         print("ERROR: uvicorn not installed. Run: pip install uvicorn[standard]", file=sys.stderr)
         sys.exit(1)
+
+    _warn_if_bind_all_without_auth(args.host)
 
     print(f"Starting Bij AI Structures API on http://{args.host}:{args.port}")
     print(f"Swagger UI: http://{args.host}:{args.port}/docs")

@@ -64,10 +64,16 @@ audit's subject.
 - **Genome build**: `detect_vcf_assembly` (pipeline/assembly_validator.py:
   54-79) scans VCF header markers, falls back to contig-length
   fingerprinting (GRCh37 249,250,621 vs GRCh38 248,956,422).
-  `validate_assembly` (:92-131): undetermined → warns, proceeds (never
-  blocks). Detected build vs. `--assembly` disagreement → raises
-  `AssemblyMismatchError` (:119-129), halts before any variant is
-  processed.
+  `validate_assembly`: undetermined AND no `--assembly` → raises
+  `AssemblyMismatchError`, halting the run (changed 2026-09-10; it
+  previously warned and proceeded, which let Ensembl's default build
+  silently become the answer). Undetermined but `--assembly` given →
+  warns and proceeds, because the caller has established the build.
+  Detected build vs. `--assembly` disagreement → raises
+  `AssemblyMismatchError`, halts before any variant is processed.
+  Cited by function name rather than line number: the previous version
+  of this entry carried `:92-131` and `:119-129`, both of which had
+  moved.
 - **Outputs**, all confirmed as actual file-write calls in
   `GeperPipeline.run` (pipeline/orchestrator.py): `geper_results.json`
   (:883,953), `geper_report.md` (:954), `geper_report_full.pdf` (:963-971,

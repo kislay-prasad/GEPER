@@ -83,6 +83,7 @@ class TestSubmissionStoreClosesConnections:
             submission_key="key-1",
             vcf_path="/path/to/vcf",
             assembly="hg38",
+            sample_ref="sample-1",
             consent_ref="consent-1",
         )
         _assert_no_new_connections(before, "create_submission")
@@ -94,6 +95,7 @@ class TestSubmissionStoreClosesConnections:
             submission_key="key-1",
             vcf_path="/path/to/vcf",
             assembly="hg38",
+            sample_ref="sample-1",
             consent_ref="consent-1",
         )
         before = len(_live_connections())

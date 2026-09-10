@@ -303,3 +303,61 @@ class TestDataAccessIsRequestScoped:
 
         assert len(seen) == 2, f"expected one DataAccess per request, got {len(seen)}"
         assert seen[0] != seen[1], "both requests shared one DataAccess -- the singleton is back"
+
+
+class TestAuthenticationIsRequiredOnEVERYRoute:
+    """
+    The three tests in `TestAuthenticationIsRequired` above all call
+    `/exceptions/orders/{order_id}`. That pinned authentication for ONE of the
+    three routes and left the other two covered only for their happy path --
+    so a route that lost its auth dependency would have shipped green.
+
+    MEASURED, NOT SUPPOSED. Replacing `/worklist`'s credential check with one
+    that hands back a fabricated `Session` when no credentials are presented --
+    an unauthenticated read of clinical exception data -- left the whole
+    existing suite at 19 passed. It noticed nothing. These tests fail against
+    that same break.
+
+    Each route is asserted separately rather than in a loop over a table: a
+    loop shares one assertion, so the first route to fail hides the rest, and
+    the failure name no longer says which route lost its auth.
+    """
+
+    def test_worklist_without_credentials_is_401(self, client, seeded):
+        response = client.get("/exceptions/worklist", params={"owner": "orderer"})
+        assert response.status_code == 401, (
+            f"/exceptions/worklist answered {response.status_code} to a caller with no "
+            f"credentials: {response.text[:200]}"
+        )
+        assert response.json()["detail"] == "Authentication failed."
+
+    def test_worklist_with_unknown_session_is_401(self, client, seeded):
+        response = client.get(
+            "/exceptions/worklist",
+            params={"owner": "orderer"},
+            headers={"Authorization": f"Bearer {uuid.uuid4()}"},
+        )
+        assert response.status_code == 401, response.text
+        assert response.json()["detail"] == "Authentication failed."
+
+    def test_resolve_without_credentials_is_401(self, client, seeded):
+        _session, _order_id, exception_id = seeded
+        response = client.patch(
+            f"/exceptions/{exception_id}",
+            json={"resolution_action": "corrected", "resolution_note": "n"},
+        )
+        assert response.status_code == 401, (
+            f"PATCH /exceptions/{{exception_id}} answered {response.status_code} to a caller "
+            f"with no credentials: {response.text[:200]}"
+        )
+        assert response.json()["detail"] == "Authentication failed."
+
+    def test_resolve_with_unknown_session_is_401(self, client, seeded):
+        _session, _order_id, exception_id = seeded
+        response = client.patch(
+            f"/exceptions/{exception_id}",
+            json={"resolution_action": "corrected", "resolution_note": "n"},
+            headers={"Authorization": f"Bearer {uuid.uuid4()}"},
+        )
+        assert response.status_code == 401, response.text
+        assert response.json()["detail"] == "Authentication failed."

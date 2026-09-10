@@ -182,7 +182,24 @@ class TestStageEvidenceEmptyStringErrorIsNotDroppedAsAbsent(unittest.TestCase):
     with `found=True` it came back `FOUND` -- both instead of `ERROR`,
     which is exactly the misclassification described above. They pass
     at HEAD, and a green run here is the fix holding, not the claim
-    being empty. The fix touches two sites in
+    being empty.
+
+    THIS CLAIM'S OWN CORRECTION COMMIT: `8311ee8` (2026-08-31), which
+    replaced an earlier, uncheckable "both tests below are RED" /
+    "written before the fix exists" wording with the reconstruction
+    above -- because the fix commit (`8612e45`) is an ancestor of the
+    commit that added these tests (`2bc81b6`), no commit ever existed
+    with the tests present and the fix absent, so the red state cannot
+    be recovered by `git checkout` and is stated here from a manual
+    reconstruction instead. Independently re-run and re-confirmed
+    2026-09-10 (conv-stageschemas): re-verified 29 passed at HEAD and
+    the two NOT_FOUND/FOUND failures above at `8612e45^`, matching this
+    docstring exactly, rather than trusting either the docstring or
+    `8311ee8`'s own commit message on their word. Citing `8311ee8` here
+    directly so a future re-check of this claim starts with `git show
+    8311ee8`, not a fresh investigation from a stale paraphrase of it.
+
+    The fix touches two sites in
     tandem, not one -- fixing `from_raw`'s `if error:` alone (to
     `is not None`) without also fixing the validator's `not self.error`
     (to `is None`) would convert today's silent misclassification into a

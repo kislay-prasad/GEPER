@@ -193,6 +193,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         score_overrides["pp3_revel"] = args.revel
         score_overrides["bp4_revel"] = args.revel
     if getattr(args, "spliceai", None) is not None:
+        # THRESHOLD override only -- not a score. Kept deliberately: with the
+        # SpliceAI input closed no spliceai_score is ever populated, so these
+        # thresholds are unreachable dead config, exactly like the
+        # pp3_spliceai/bp4_spliceai keys still allowlisted in api/main.py.
+        # Removing either is a separate, user-visible decision.
         score_overrides["pp3_spliceai"] = args.spliceai
         score_overrides["bp4_spliceai"] = args.spliceai
     if score_overrides:
@@ -429,7 +434,6 @@ def cmd_classify(args: argparse.Namespace) -> int:
         gene=args.gene,
         cadd_phred=args.cadd,
         revel_score=args.revel,
-        spliceai_score=args.spliceai,
         gnomad_af=args.gnomad_af,
         is_lof=args.lof,
         lof_gene_intolerant=args.lof_intolerant,
@@ -444,7 +448,6 @@ def cmd_classify(args: argparse.Namespace) -> int:
     comp_score = EvidenceAggregator.compute_computational_score(
         cadd_phred=args.cadd,
         revel_score=args.revel,
-        spliceai_score=args.spliceai,
     )
     ev_result = aggregator.aggregate_from_acmg(
         acmg_result,
@@ -671,7 +674,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--spliceai",
         type=float,
         metavar="0-1",
-        help="Override ACMG PP3/BP4 SpliceAI score threshold",
+        help="Override ACMG PP3/BP4 SpliceAI score threshold (unreachable: SpliceAI input closed)",
     )
     p_analyze.add_argument(
         "--mode",
@@ -716,7 +719,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_clf.add_argument("--gene", metavar="SYMBOL", help="Gene symbol (e.g. BRCA1)")
     p_clf.add_argument("--cadd", type=float, metavar="PHRED", help="CADD Phred score")
     p_clf.add_argument("--revel", type=float, metavar="0-1", help="REVEL score [0-1]")
-    p_clf.add_argument("--spliceai", type=float, metavar="0-1", help="SpliceAI delta score [0-1]")
     p_clf.add_argument("--gnomad-af", type=float, metavar="AF", help="gnomAD allele frequency")
     p_clf.add_argument("--lof", action="store_true", help="Flag as loss-of-function variant")
     p_clf.add_argument(

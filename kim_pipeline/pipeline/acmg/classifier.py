@@ -34,7 +34,6 @@ Usage::
         gnomad_af=0.000001,
         cadd_phred=38.5,
         revel_score=0.94,
-        spliceai_score=0.01,
         clinvar_significance="Pathogenic",
         is_lof=False,
         lof_gene_intolerant=True,

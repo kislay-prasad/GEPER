@@ -26,20 +26,25 @@ absence needed to be handled explicitly rather than relying on the
 default.
 
 **CORRECTED 2026-09-10**: this docstring previously said
-`spliceai_score` is "always `None` now" -- it is not. This removal only
-covers what THIS module (the VEP-CSQ path) supplies. A separate,
-un-fixed fallback in `pipeline/annotation/stage.py:733-743` and
-`:1145-1157` reads SpliceAI's own `SpliceAI=`/`DS_AG`/`DS_AL`/`DS_DG`/
-`DS_DL` delta-score fields straight out of the input VCF's INFO and
-feeds a live score to PP3/BP4 whenever the caller has pre-annotated with
-SpliceAI upstream -- a standard splicing-analysis step, independent of
-VEP. Evidence this is real and exercised, not just a reading of the
-code: `kim_pipeline/tests/test_undetermined_aa_guard.py:388-389` (added
-2026-08-28). This same "always `None`" mistake was independently made
-twice more, citing this docstring as its evidence in one case
-(`docs/BIJ_AI_CAPABILITY_AUDIT.md`, `geper/LICENSE_AUDIT.md`, both
-corrected 2026-09-10) -- fixed here too so no document or comment in
-either repo still makes the claim.
+`spliceai_score` is "always `None` now". At the time that was FALSE and
+was corrected to say so: this module's removal only ever covered the
+VEP-CSQ path, while a separate fallback in
+`pipeline/annotation/stage.py` read SpliceAI's own `SpliceAI=`/`DS_AG`/
+`DS_AL`/`DS_DG`/`DS_DL` fields straight out of the input VCF's INFO and
+fed a live score to PP3/BP4. That same "always `None`" mistake was
+independently made twice more, citing this docstring as its evidence in
+one case (`docs/BIJ_AI_CAPABILITY_AUDIT.md`, `geper/LICENSE_AUDIT.md`).
+
+**UPDATED 2026-09-10 (SpliceAI input closed)**: those two fallback sites
+have since been REMOVED, so `spliceai_score` is now genuinely never
+populated by either path. *** THE CLAIM IS ONLY TRUE BECAUSE THE INPUT
+WAS CLOSED -- IT WAS NOT TRUE WHEN IT WAS FIRST WRITTEN, AND IT WOULD
+STOP BEING TRUE AGAIN THE MOMENT ANY READER OF THOSE INFO FIELDS COMES
+BACK. *** It is not a property of removing SpliceAI from VEP. What
+guards it now is
+`kim_pipeline/tests/test_spliceai_input_is_closed.py`, which asserts on
+ACMG OUTCOMES rather than on parsing, so a re-introduced input fails a
+classification assertion rather than merely a grep.
 
 Config section::
 

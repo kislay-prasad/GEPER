@@ -624,19 +624,49 @@ def build_variant_result(
     # pipeline/models/ensemble.py::EnsembleManager) -- additive,
     # schema-preserving key. Only added to the result dict when real
     # ensemble evidence exists (i.e. `ai_splicing_ensemble_result` was
-    # actually passed in AND at least one model produced a result).
-    # This means:
+    # actually passed in AND at least one model produced a result OR a
+    # model genuinely crashed -- see below). This means:
     #   - Every existing/legacy caller of `build_variant_result` (which
     #     never passes this kwarg) gets a result dict with EXACTLY the
     #     same set of keys as before this change -- the key is not
     #     merely empty, it is entirely absent, which is the strongest
     #     form of schema backward compatibility.
     #   - A caller that wires the ensemble in but for a variant where
-    #     both Enformer and Borzoi were unavailable also gets no key
-    #     here (there is nothing to report), matching the Markdown
-    #     renderer's "hide the section entirely" behavior for the same
-    #     case -- see report/report_generator.py::_render_ai_splicing_ensemble.
-    if ai_splicing_ensemble_result and ai_splicing_ensemble_result.get("models_used"):
+    #     both Enformer and Borzoi were CLEANLY disabled/unavailable
+    #     also gets no key here (there is genuinely nothing to report),
+    #     matching the Markdown renderer's "hide the section entirely"
+    #     behavior for that same case -- see report/report_generator.py
+    #     ::_render_ai_splicing_ensemble.
+    #
+    # `or ai_splicing_ensemble_result.get("error") is not None` (2026-09-11
+    # fix, third surface of the same defect the Markdown renderer and
+    # EnsembleManager.evaluate() were already fixed for): `error` is set
+    # by `EnsembleManager.evaluate()` ONLY on a genuine model crash,
+    # never on a clean disable, so this does not change the clean-disable
+    # case above at all -- it only stops a genuine crash from being
+    # indistinguishable, in the JSON, from a stage that was never
+    # attempted. Before this, the Markdown said "_Failed: ..._" and the
+    # JSON said NOTHING -- no key, as if nothing had ever been tried,
+    # which is a STRONGER fabricated absence than the Markdown one: a
+    # missing key is not a claim a downstream JSON consumer can be
+    # suspicious of, and JSON is the format most likely to be read by
+    # another SYSTEM rather than a person who might notice a missing
+    # section. Every OTHER additive key in this function (gnomad,
+    # clingen, uniprot, mmsplice, etc., all immediately above) already
+    # follows this exact principle -- pass through whatever real result
+    # was actually given, including any `error` it carries, and only
+    # substitute a placeholder when nothing was given at all -- this key
+    # was the one exception, checking internal content (`models_used`)
+    # rather than mere presence. There is no other stage in this
+    # function that ALSO conditionally omits its key on content (every
+    # sibling's condition is `is not None`, never a content check), so
+    # this is not copying a second precedent for the omission shape
+    # itself -- it is bringing this one key in line with the universal
+    # "never let a genuine attempt collapse into a placeholder" principle
+    # every sibling key already follows.
+    if ai_splicing_ensemble_result and (
+        ai_splicing_ensemble_result.get("models_used") or ai_splicing_ensemble_result.get("error") is not None
+    ):
         result["ai_splicing_ensemble"] = ai_splicing_ensemble_result
 
     return result

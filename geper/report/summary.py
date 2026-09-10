@@ -781,6 +781,13 @@ def _load_cropped_logo_image(path: str) -> BytesIO:
     return buf
 
 
+SCOPE_LINE = (
+    "Variant interpretation from a supplied VCF — produced by the GEPER engine. "
+    "Sequencing, alignment and variant calling are performed upstream; any run-level "
+    "QC shown here is supplied by that run and is not computed by this report."
+)
+
+
 def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """
     First-page report header: the title, with a logo placed to its
@@ -2383,10 +2390,17 @@ def generate_pdf(
         bottomMargin=30 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
-        title="Bij AI Clinical Genomic Analysis Report",
+        title="Bij AI Clinical Genomic Analysis Report — variant interpretation from a supplied VCF (GEPER engine)",
     )
 
     story: List[Any] = list(_build_report_header(logo_path, styles))
+    # WHAT THIS REPORT IS, said on the report itself -- see SCOPE_LINE.
+    # Added to the STORY rather than inside _build_report_header on purpose:
+    # that function's letterhead sizes the logo to the TITLE's height
+    # (`logo_h = title_height`), so putting this in the title would double
+    # the logo, and adding it to the header's return value would change a
+    # contract its own tests pin.
+    story.append(Paragraph(SCOPE_LINE, styles["Footnote"]))
     story.append(Spacer(1, 4 * mm))
     # What this document IS, before it says what it found. Placement,
     # not emphasis: this claim was already in the page footer at 6.5pt,

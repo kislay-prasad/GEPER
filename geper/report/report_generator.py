@@ -249,6 +249,9 @@ def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
     return "**Data processing consent:** " + " · ".join(parts)
 
 
+from report.summary import SCOPE_LINE  # noqa: E402 -- one source of truth for the scope line
+
+
 class ReportGenerator:
     """Builds a Markdown report from a GEPER JSON result document."""
 
@@ -257,6 +260,13 @@ class ReportGenerator:
         lines.append("# Bij AI Variant Analysis Report")
         lines.append("")
         lines.append(_render_review_status_banner(json_document))
+        # WHAT THIS REPORT IS -- the same line the PDF renderers carry, from the
+        # same constant, so the three surfaces cannot drift. It sits AFTER the
+        # review-status banner deliberately: that banner is the most
+        # safety-critical line in the document and several governance tests
+        # read it by position, so nothing may be inserted above it.
+        lines.append("")
+        lines.append(f"*{SCOPE_LINE}*")
         lines.append("")
         # Displayed in IST (report is for Indian hospitals); the
         # stored `generated_at` itself stays UTC (see

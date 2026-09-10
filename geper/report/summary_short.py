@@ -328,6 +328,9 @@ def _ordered_variants(variants: List[Dict[str, Any]]) -> List[tuple]:
 # ---------------------------------------------------------------------------
 
 
+from report.summary import SCOPE_LINE  # noqa: E402 -- one source of truth for the scope line
+
+
 def _build_short_header(logo_path: Optional[str], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """Compact letterhead line: optional logo plus the report title. Same graceful degradation as the full report -- a missing or corrupt logo logs and falls back to the text-only title, never fails the render."""
     content_width = _PAGE_W - 2 * _MARGIN
@@ -730,10 +733,16 @@ def generate_short_pdf(
         bottomMargin=28 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
-        title="Bij AI Clinical Genomic Summary Report",
+        title="Bij AI Clinical Genomic Summary Report — variant interpretation from a supplied VCF (GEPER engine)",
     )
 
     story: List[Any] = list(_build_short_header(logo_path, styles))
+    # WHAT THIS REPORT IS -- the same line the full report carries, and for
+    # the same reason: both trees in this repository render a "Clinical
+    # Genomic Report" under one brand, so either alone reads as the whole
+    # product. In the STORY rather than the title because this header sizes
+    # its logo to the title's height.
+    story.append(Paragraph(SCOPE_LINE, styles["Footnote"]))
     story.append(Spacer(1, 3 * mm))
     story.append(_build_identity_block(patient, sample_id, resolved_run_id, assembly, len(variants), styles))
     story.append(Spacer(1, 4 * mm))

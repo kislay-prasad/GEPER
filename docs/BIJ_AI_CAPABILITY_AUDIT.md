@@ -409,9 +409,21 @@ which, do not assume either").
   current deployment (CADD, REVEL, AlphaMissense), not four — SpliceAI was
   removed 2026-08-22 for CC BY-NC 4.0 licensing (pipeline/vep/stage.py
   docstring:13-25), but the PP3/BP4 vote-counting code still references it
-  as a source; it simply always contributes `None` now (each append
-  guarded `is not None`, `classifier.py:814-815,1171-1172` — the removal
-  degrades silently rather than raising). **This is not a cosmetic
+  as a source; it always contributes `None` now (each append guarded
+  `is not None` — the removal degrades silently rather than raising).
+  **PROVENANCE OF THAT SENTENCE, 2026-09-10, because it is currently
+  true for a reason its author did not have**: as written it was
+  FALSE. The 2026-08-22 VEP removal it cites did not make the score
+  always-`None` — it made a separate, un-fixed INFO fallback
+  unconditionally true, which is precisely the correction recorded in
+  the CANNOT DO TODAY entry below. The sentence became true only when
+  the merge `b394bfa` closed that input outright, for licence reasons,
+  weeks later and for unrelated purposes. It is now guarded by
+  `kim_pipeline/tests/test_spliceai_input_is_closed.py`, which asserts
+  on ACMG outcomes rather than on parsing. **Recorded rather than
+  silently left standing: a claim that is right by accident is not the
+  same as a claim that was right, and this document has been wrong on
+  this exact point before.** **This is not a cosmetic
   change: the majority threshold at `classifier.py:831`
   (`met = n_dam >= max(1, len(votes)//2+1)`, symmetric BP4 site :1188)
   fell from 3-of-4 damaging calls required to 2-of-3 — a licensing
@@ -618,26 +630,56 @@ which, do not assume either").
   (kim's naming) healthy-adult-observation data — both explicitly and
   permanently `not_evaluated` in automated mode on both sides.
   [geper: acmg_rules.py:291; kim: classifier.py:457-470,993-1004]
-- **CORRECTED 2026-09-10** (this row previously said the SpliceAI score
-  "is always `None`", citing only a code comment as evidence -- it is not
-  always `None`, and the corrected claim below cites the code that proves
-  it). kim_pipeline's VEP-CSQ path for SpliceAI was deliberately fixed to
-  permanently return `None` (2026-08-22, licence) -- but that fix is what
-  makes a SEPARATE, un-fixed fallback guard (`if var.spliceai_score is
-  None:`) unconditionally true, and that fallback reads `SpliceAI=` /
-  `DS_AG` / `DS_AL` / `DS_DG` / `DS_DL` straight out of the input VCF's
-  own INFO field and takes the max.
-  [kim_pipeline/pipeline/annotation/stage.py:733-743, :1145-1157 --
-  CODE, not the vep/stage.py:13-25 module comment this entry previously
-  cited, which asserts the same "always `None`" mistake]. Scope:
-  kim_pipeline only (not geper/, which never integrated SpliceAI at all).
-  On any input VCF the caller has already run through Illumina's SpliceAI
-  tool upstream (a standard splicing-analysis step, independent of VEP),
-  this fallback fires and produces a real, non-`None` `spliceai_score`
-  that reaches PP3/BP4 exactly like any other predictor. Evidence, not
-  just a reading of the code: `kim_pipeline/tests/
-  test_undetermined_aa_guard.py:388-389` (added 2026-08-28) documents and
-  exercises exactly this path, and currently PASSES.
+- **CORRECTED AGAIN 2026-09-10 (second correction, same row, same day).**
+  This row was corrected in the morning and the corrected text went stale
+  in the afternoon, under its own author, when the code changed. Both the
+  claim AND the evidence it cited went stale together. The corrected text
+  read, and was true when written:
+
+      "kim_pipeline's VEP-CSQ path for SpliceAI was deliberately fixed to
+       permanently return `None` (2026-08-22, licence) -- but that fix is
+       what makes a SEPARATE, un-fixed fallback guard (`if
+       var.spliceai_score is None:`) unconditionally true, and that
+       fallback reads `SpliceAI=` / `DS_AG` / `DS_AL` / `DS_DG` /
+       `DS_DL` straight out of the input VCF's own INFO field and takes
+       the max. ... On any input VCF the caller has already run through
+       Illumina's SpliceAI tool upstream (a standard splicing-analysis
+       step, independent of VEP), this fallback fires and produces a
+       real, non-`None` `spliceai_score` that reaches PP3/BP4 exactly
+       like any other predictor. Evidence, not just a reading of the
+       code: `kim_pipeline/tests/test_undetermined_aa_guard.py:388-389`
+       (added 2026-08-28) documents and exercises exactly this path, and
+       currently PASSES."
+
+  **CURRENT STATE: BOTH INFO FALLBACKS ARE GONE.** The merge `b394bfa`
+  ("close the SpliceAI INPUT, not another route") removed both sites, for
+  the same CC BY-NC 4.0 licence reason the VEP path was removed. Closing
+  the VEP route had not narrowed the input -- it guaranteed the fallback
+  ran -- so the input itself was closed instead. No caller-annotated VCF
+  can put a SpliceAI score on a variant any more, and `spliceai_score` is
+  now genuinely always `None` in kim_pipeline. Scope: kim_pipeline only
+  (geper/ never integrated SpliceAI at all).
+
+  **Guarded by** `kim_pipeline/tests/test_spliceai_input_is_closed.py`
+  (9 tests, 4 subtests), which asserts on **ACMG classification
+  outcomes** rather than on parsing -- a test that only showed the fields
+  were unread would go green on a rename while the vote it feeds carried
+  on moving.
+
+  **The evidence this row previously cited went stale with it**:
+  `test_undetermined_aa_guard.py`'s docstring asserted the same
+  reachability in different words, and is corrected in the same commit as
+  this row. Its test still passes and is unchanged -- it builds
+  `VariantEvidence` directly, so closing the VCF-side input never reached
+  it -- but the argument for carrying a SpliceAI score in it has gone,
+  and that open question is recorded there rather than resolved here.
+
+  **CITED BY COMMIT AND TEST NAME, NOT BY LINE NUMBER, DELIBERATELY.**
+  Both this row and the test docstring previously carried undated
+  coordinates (`stage.py:733-743`/`:1145-1157` here, `:719-729`/
+  `:1124-1133` there) and every one of them now points at unrelated
+  code. A line number pinned to a revision is a durable fact; an undated
+  one silently claims to be about HEAD forever.
   **Consequence, not just absence**: PP3/BP4's majority-vote threshold
   (`classifier.py:831`, symmetric BP4 site `classifier.py:1188`) is
   `met = n_dam >= max(1, len(votes) // 2 + 1)` — a threshold computed over

@@ -384,13 +384,34 @@ class TestEndToEndDerivedThroughTheRealComponents:
         is False and the misread reaches nothing. Measured across all four
         guard combinations: BP7 False in every one.
 
-        It is reachable on an input the CALLER already annotated -- stage.py
-        :719-729 and :1124-1133 still parse SpliceAI= and DS_AG/AL/DG/DL
-        straight out of INFO; only VEP's plugin path was removed
-        (vep/stage.py:406-409). So the score is here deliberately: without it
-        this test passes in both directions and is another control that
-        cannot fire, which is exactly the fault this class was written to
-        remove.
+        CORRECTED 2026-09-10. This paragraph previously read, and was
+        true when written:
+
+            "It is reachable on an input the CALLER already annotated --
+             stage.py :719-729 and :1124-1133 still parse SpliceAI= and
+             DS_AG/AL/DG/DL straight out of INFO; only VEP's plugin path
+             was removed (vep/stage.py:406-409). So the score is here
+             deliberately: without it this test passes in both
+             directions and is another control that cannot fire, which
+             is exactly the fault this class was written to remove."
+
+        Both of those INFO parses were REMOVED by the merge
+        `b394bfa` ("close the SpliceAI INPUT, not another route"), which
+        closed the input for licence reasons; `kim_pipeline/tests/
+        test_spliceai_input_is_closed.py` guards it by asserting on ACMG
+        OUTCOMES rather than on parsing. So no caller-annotated VCF can
+        put a SpliceAI score on a variant any more.
+
+        *** THIS CHANGES ONLY THE CLAIM, NOT THIS TEST. The fixture and
+        the assertions below are untouched and still pass: they build
+        `VariantEvidence` directly, so closing the VCF-side input never
+        reached them. *** But the JUSTIFICATION above for carrying a
+        SpliceAI score is now gone, and by this class's own standard
+        that leaves an open question -- whether a control whose
+        reachability argument has evaporated should still carry that
+        input at all. Deliberately NOT answered here: that is a question
+        about test design, not a stale sentence, and it is recorded
+        rather than quietly resolved by an edit to a docstring.
         """
         from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence
 

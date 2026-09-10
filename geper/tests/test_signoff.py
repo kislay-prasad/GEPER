@@ -243,6 +243,119 @@ class TestApprove(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# approve() -- model-weight hash MISMATCH refusal (human-ruled 2026-09-10:
+# "a signer approving a report without visibility into a mismatch is
+# signing something they cannot vouch for; the signature becomes
+# decorative"). No override/flag/env var exists for this check, by design.
+# ---------------------------------------------------------------------------
+
+
+def _write_run_with_model_checkpoints(root: str, model_checkpoints: dict, name: str = "run1") -> str:
+    """Same as `_write_run`, plus an explicit `model_checkpoints` key -- the
+    real orchestrator's own shape (`pipeline/provenance.py::
+    finalize_model_checkpoint_provenance`), not hand-abbreviated."""
+    output_dir = os.path.join(root, name)
+    os.makedirs(output_dir, exist_ok=True)
+    document = _make_document()
+    document["model_checkpoints"] = model_checkpoints
+    with open(os.path.join(output_dir, s.RESULTS_FILENAME), "w", encoding="utf-8") as fh:
+        json.dump(document, fh)
+    return output_dir
+
+
+_MISMATCH_CHECKPOINTS = {
+    "esm2": {
+        "identifier": "facebook/esm2_t33_650M_UR50D@main",
+        "status": "used",
+        "reason": "",
+        "resolved_version": "main",
+        "loaded_artifact": {
+            "requested_path": "/cache/esm2/model.safetensors",
+            "resolved_path": "/cache/esm2/blobs/deadbeef00000000000000000000000000000000000000000000000000000000",
+            "served_revision": "main",
+            "cache_declared_sha256": "deadbeef00000000000000000000000000000000000000000000000000000000",
+            "hash_verification": "mismatch",
+            "version_status": "unknown",
+            "note": "MISMATCH: bytes do not match the cache's declared sha256 -- corrupted or substituted model cache",
+        },
+    }
+}
+
+_VERIFIED_CHECKPOINTS = {
+    "esm2": {
+        "identifier": "facebook/esm2_t33_650M_UR50D@main",
+        "status": "used",
+        "reason": "",
+        "resolved_version": "main",
+        "loaded_artifact": {
+            "requested_path": "/cache/esm2/model.safetensors",
+            "resolved_path": "/cache/esm2/blobs/cafebabe00000000000000000000000000000000000000000000000000000000",
+            "served_revision": "main",
+            "cache_declared_sha256": "cafebabe00000000000000000000000000000000000000000000000000000000",
+            "hash_verification": "verified",
+            "version_status": "hash_only",
+            "note": "bytes streamed and matched the hash declared by the cache",
+        },
+    }
+}
+
+
+class TestApproveModelHashMismatch(unittest.TestCase):
+    def test_mismatch_refuses_and_names_model_and_expected_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run_with_model_checkpoints(tmp, _MISMATCH_CHECKPOINTS)
+            with self.assertRaises(SignoffError) as ctx:
+                s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            message = str(ctx.exception)
+            self.assertIn("esm2", message)
+            self.assertIn("deadbeef", message)  # the expected sha256
+            self.assertIn("MISMATCH", message)
+            self.assertIn("re-run", message)
+
+    def test_mismatch_leaves_nothing_on_disk_changed(self):
+        # A block that half-writes is worse than no block -- the check must
+        # run before ANY side effect (patient_meta, the results JSON
+        # rewrite, PDF regeneration, the manifest).
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run_with_model_checkpoints(tmp, _MISMATCH_CHECKPOINTS)
+            results_path = os.path.join(output_dir, s.RESULTS_FILENAME)
+            with open(results_path, "rb") as fh:
+                results_before = fh.read()
+            files_before = sorted(os.listdir(output_dir))
+
+            with self.assertRaises(SignoffError):
+                s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+
+            files_after = sorted(os.listdir(output_dir))
+            self.assertEqual(files_before, files_after, "approve() must not create any new file on refusal")
+            with open(results_path, "rb") as fh:
+                results_after = fh.read()
+            self.assertEqual(results_before, results_after, "approve() must not modify geper_results.json on refusal")
+
+    def test_verified_hash_does_not_block_approval(self):
+        # Negative control: a model_checkpoints entry that HAS a
+        # hash_verification result, but not a mismatch, must not trip the
+        # new check -- proves the check discriminates rather than refusing
+        # on the mere presence of the field.
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run_with_model_checkpoints(tmp, _VERIFIED_CHECKPOINTS)
+            manifest = s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            self.assertTrue(os.path.exists(s._manifest_path(output_dir)))
+            self.assertEqual(manifest["clinician_name"], "Dr. Rajesh Sharma")
+
+    def test_absent_model_checkpoints_still_approves(self):
+        # Every pre-existing TestApprove test already exercises this
+        # (`_make_document()` has no `model_checkpoints` key at all), but
+        # made explicit here as the backward-compatibility case this new
+        # check must not break: a document with nothing recorded for
+        # models is not the same as a document with a mismatch.
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run(tmp)
+            s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            self.assertTrue(os.path.exists(s._manifest_path(output_dir)))
+
+
+# ---------------------------------------------------------------------------
 # override()
 # ---------------------------------------------------------------------------
 

@@ -5,6 +5,7 @@ Tests for pipeline/reporting/clinical_sections.py (Issue 3): patient
 metadata normalization, QC status indicators, the variant summary
 dashboard, clinical interpretation text, and the variant/ACMG merge.
 """
+
 from __future__ import annotations
 
 from pipeline.reporting.clinical_sections import (
@@ -28,9 +29,14 @@ class TestNormalizePatientMetadata:
         assert meta["is_deidentified"] is True
 
     def test_full_metadata_used_as_is(self):
-        meta = normalize_patient_metadata({
-            "name": "Jane Doe", "dob": "1990-01-01", "sex": "F", "physician": "Dr. Smith",
-        })
+        meta = normalize_patient_metadata(
+            {
+                "name": "Jane Doe",
+                "dob": "1990-01-01",
+                "sex": "F",
+                "physician": "Dr. Smith",
+            }
+        )
         assert meta["name"] == "Jane Doe"
         assert meta["dob"] == "1990-01-01"
         assert meta["sex"] == "F"
@@ -66,7 +72,8 @@ class TestQcStatusSummary:
 
     def test_warning_band(self):
         rows = qc_status_summary(
-            {"q30_fraction": 0.75}, {"mean_depth": 15, "pct_mapped": 92},
+            {"q30_fraction": 0.75},
+            {"mean_depth": 15, "pct_mapped": 92},
         )
         statuses = {r["label"]: r["status"] for r in rows}
         assert statuses["Mean Coverage"] == "WARNING"
@@ -75,7 +82,8 @@ class TestQcStatusSummary:
 
     def test_fail_band(self):
         rows = qc_status_summary(
-            {"q30_fraction": 0.3}, {"mean_depth": 2, "pct_mapped": 50},
+            {"q30_fraction": 0.3},
+            {"mean_depth": 2, "pct_mapped": 50},
         )
         statuses = {r["label"]: r["status"] for r in rows}
         assert statuses["Mean Coverage"] == "FAIL"
@@ -95,7 +103,8 @@ class TestQcStatusSummary:
 
     def test_custom_thresholds_override_defaults(self):
         rows = qc_status_summary(
-            {}, {"mean_depth": 5},
+            {},
+            {"mean_depth": 5},
             thresholds={"mean_depth": {"pass_min": 4.0, "warn_min": 1.0}},
         )
         coverage_row = next(r for r in rows if r["label"] == "Mean Coverage")
@@ -117,7 +126,7 @@ class TestVariantDashboard:
             {"classification": "Benign"},
             {"classification": "Likely_Benign"},
         ]
-        d = variant_dashboard(acmg, {}, {})
+        d = variant_dashboard(acmg, {})
         assert d["total_variants"] == 6
         assert d["pathogenic"] == 2
         assert d["likely_pathogenic"] == 1
@@ -126,58 +135,45 @@ class TestVariantDashboard:
         assert d["likely_benign"] == 1
 
     def test_unknown_classification_not_counted_but_not_dropped_from_total(self):
-        d = variant_dashboard([{"classification": "SomethingWeird"}], {}, {})
+        d = variant_dashboard([{"classification": "SomethingWeird"}], {})
         assert d["total_variants"] == 1
         assert d["pathogenic"] == 0
 
-    def test_pgx_findings_count(self):
-        d = variant_dashboard([], {"annotations": [{}, {}]}, {})
-        assert d["pgx_findings"] == 2
-
-    def test_pgx_findings_zero_when_missing(self):
-        d = variant_dashboard([], {}, {})
-        assert d["pgx_findings"] == 0
-
     def test_ancestry_summary_present(self):
-        d = variant_dashboard([], {}, {"primary_population": "EUR", "confidence": "High"})
+        d = variant_dashboard([], {"primary_population": "EUR", "confidence": "High"})
         assert d["ancestry_summary"] == "EUR (confidence: High)"
 
     def test_ancestry_summary_not_performed(self):
-        d = variant_dashboard([], {}, {})
+        d = variant_dashboard([], {})
         assert d["ancestry_summary"] == "Not performed"
 
     def test_none_inputs_do_not_raise(self):
-        d = variant_dashboard(None, None, None)
+        d = variant_dashboard(None, None)
         assert d["total_variants"] == 0
 
 
 class TestClinicalInterpretation:
     def test_no_variants(self):
-        d = variant_dashboard([], {}, {})
+        d = variant_dashboard([], {})
         result = clinical_interpretation(d)
         assert "No variants" in result["summary"]
 
     def test_actionable_findings_recommend_genetic_counseling(self):
-        d = variant_dashboard([{"classification": "Pathogenic"}], {}, {})
+        d = variant_dashboard([{"classification": "Pathogenic"}], {})
         result = clinical_interpretation(d)
         assert "actionable" in result["summary"]
         assert "genetic counseling" in result["follow_up"].lower()
 
     def test_vus_only_recommends_periodic_review(self):
-        d = variant_dashboard([{"classification": "Uncertain_Significance"}], {}, {})
+        d = variant_dashboard([{"classification": "Uncertain_Significance"}], {})
         result = clinical_interpretation(d)
         assert "Uncertain Significance" in result["summary"]
         assert "re-review" in result["follow_up"] or "periodic" in result["follow_up"].lower()
 
     def test_all_benign_no_actionable_language(self):
-        d = variant_dashboard([{"classification": "Benign"}], {}, {})
+        d = variant_dashboard([{"classification": "Benign"}], {})
         result = clinical_interpretation(d)
         assert "No specific follow-up" in result["follow_up"]
-
-    def test_pgx_findings_mentioned_in_summary(self):
-        d = variant_dashboard([{"classification": "Benign"}], {"annotations": [{}]}, {})
-        result = clinical_interpretation(d)
-        assert "pharmacogenomic" in result["summary"].lower()
 
     def test_never_raises_on_empty_dashboard(self):
         clinical_interpretation({})  # must not raise
@@ -186,7 +182,15 @@ class TestClinicalInterpretation:
 class TestMergeVariantsWithAcmg:
     def test_basic_merge_by_position(self):
         variants = [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "gene_name": "MT-TL1"}]
-        acmg = [{"chrom": "MT", "pos": 3243, "ref": "A", "alt": "G", "classification": "Uncertain_Significance"}]
+        acmg = [
+            {
+                "chrom": "MT",
+                "pos": 3243,
+                "ref": "A",
+                "alt": "G",
+                "classification": "Uncertain_Significance",
+            }
+        ]
         merged = merge_variants_with_acmg(variants, acmg)
         assert len(merged) == 1
         assert merged[0]["gene_name"] == "MT-TL1"
@@ -211,7 +215,16 @@ class TestMergeVariantsWithAcmg:
         assert "acmg" not in merged[0]
 
     def test_acmg_only_variant_still_included(self):
-        acmg = [{"chrom": "17", "pos": 999, "ref": "C", "alt": "G", "gene": "Y", "classification": "Benign"}]
+        acmg = [
+            {
+                "chrom": "17",
+                "pos": 999,
+                "ref": "C",
+                "alt": "G",
+                "gene": "Y",
+                "classification": "Benign",
+            }
+        ]
         merged = merge_variants_with_acmg([], acmg)
         assert len(merged) == 1
         assert merged[0]["gene_name"] == "Y"

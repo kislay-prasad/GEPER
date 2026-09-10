@@ -320,7 +320,6 @@ class TestFix8ConfigOverridesAllowlist:
                     "evidence_engine": {},
                     "evidence_thresholds": {},
                     "blast": {},
-                    "pgx": {},
                     "ancestry": {},
                 }
             )

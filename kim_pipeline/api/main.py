@@ -732,7 +732,6 @@ async def start_pipeline(
             "evidence_engine",
             "evidence_thresholds",
             "blast",
-            "pgx",
             "ancestry",
         }
     )

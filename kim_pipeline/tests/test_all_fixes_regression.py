@@ -767,74 +767,10 @@ class TestFix6CanonicalTranscript:
         assert tx == "NM_long.1"
 
 
-# ─── FIX 7: PGx allele detection + indel normalization ───────────────────────
-
-
-class TestFix7PGxAlleleDetection:
-    """Star allele definitions use real VCF alleles; indel normalization works."""
-
-    def test_no_del_ins_placeholders(self):
-        """No star allele definition uses 'del' or 'ins' as the ALT allele."""
-        from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS
-
-        for gene, alleles in STAR_ALLELE_VARIANTS.items():
-            for allele, variants in alleles.items():
-                for chrom, pos, ref, alt in variants:
-                    assert alt.upper() not in ("DEL", "INS"), (
-                        f"{gene} {allele} still uses placeholder ALT={alt!r}"
-                    )
-
-    def test_cyp2d6_star3_vcf_key(self):
-        """CYP2D6 *3 is now left-normalised REF=CA, ALT=C."""
-        from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS
-
-        star3 = STAR_ALLELE_VARIANTS["CYP2D6"]["*3"]
-        assert len(star3) == 1
-        chrom, pos, ref, alt = star3[0]
-        assert ref == "CA" and alt == "C", f"Expected CA>C, got {ref}>{alt}"
-
-    def test_cyp3a5_star7_vcf_key(self):
-        """CYP3A5 *7 is now left-normalised insertion."""
-        from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS
-
-        star7 = STAR_ALLELE_VARIANTS["CYP3A5"]["*7"]
-        assert len(star7) == 1
-        chrom, pos, ref, alt = star7[0]
-        # Insertion: alt should be longer than ref
-        assert len(alt) > len(ref), f"Expected insertion, got {ref}>{alt}"
-
-    def test_normalise_indel_key(self):
-        """_normalise_indel_key strips shared leading prefix bases (beyond anchor)."""
-        from pipeline.pgx.stage import _normalise_indel_key
-
-        # "AACA" → "A": two bases share prefix (A,A), leaving CA vs empty after anchor
-        # The function keeps at minimum 1 anchor base, so strips inner shared prefix
-        chrom, pos, ref, alt = _normalise_indel_key("22", 100, "AACA", "AA")
-        # "AACA"/"AA": i goes 0(A==A), but min(4,2)-1=1, so i stops at 1
-        # After stripping 1 prefix: ref="ACA", alt="A", pos=101
-        assert pos == 101
-        assert ref == "ACA" and alt == "A"
-
-    def test_detect_star_allele_with_normalised_key(self):
-        """_detect_star_alleles matches VCF-normalised indel keys."""
-        from pipeline.pgx.stage import _detect_star_alleles
-
-        # CYP2D6 *3 definition: ("22", 42126610, "CA", "C")
-        # A VCF might represent the same deletion as ("22", 42126610, "CA", "C")
-        variants = {("22", 42126610, "CA", "C"): "heterozygous"}
-        detected, _ = _detect_star_alleles("CYP2D6", variants)
-        assert "*3" in detected
-
-    def test_cyp2d6_star5_cnv_not_assessed(self, caplog):
-        """CYP2D6 *5 (CNV) is reported as not assessed, not silently skipped."""
-        from pipeline.pgx.stage import _detect_star_alleles
-        import logging
-
-        with caplog.at_level(logging.INFO, logger="geper.pipeline.pgx"):
-            _ = _detect_star_alleles("CYP2D6", {})
-        assert any("CNV" in r.message for r in caplog.records), (
-            "CYP2D6 *5 CNV not-assessed warning not logged"
-        )
+# FIX 7 (PGx allele detection + indel normalization) was removed 2026-09-10
+# along with the PGx package itself: a deliberate clinical-disclosure
+# deletion, ruled by the human; see kim_pipeline/pipeline/reporting's
+# commit history for the ruling.
 
 
 # ─── FIX 9: ACMG conflict handling ───────────────────────────────────────────
@@ -1220,20 +1156,3 @@ class TestEdgeCases:
         clf._explain = lambda met, cls: cls
         cls, _ = clf._classify([])
         assert cls == "Uncertain_Significance"
-
-    def test_pgx_star3_cyp2d6_detection_from_vcf(self):
-        """CYP2D6 *3 detected from real left-normalised VCF key."""
-        from pipeline.pgx.stage import _detect_star_alleles
-
-        # Real VCF representation after left-normalisation of rs35742686 deletion
-        variants = {("22", 42126610, "CA", "C"): "heterozygous"}
-        detected, _ = _detect_star_alleles("CYP2D6", variants)
-        assert "*3" in detected, f"CYP2D6 *3 not detected; got {detected}"
-
-    def test_pgx_cyp2c9_star6_detection(self):
-        """CYP2C9 *6 detected from left-normalised VCF key."""
-        from pipeline.pgx.stage import _detect_star_alleles
-
-        variants = {("10", 94949280, "GA", "G"): "heterozygous"}
-        detected, _ = _detect_star_alleles("CYP2C9", variants)
-        assert "*6" in detected, f"CYP2C9 *6 not detected; got {detected}"

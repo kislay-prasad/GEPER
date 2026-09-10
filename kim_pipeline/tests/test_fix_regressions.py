@@ -1,22 +1,21 @@
 """
 tests/test_fix_regressions.py
 ──────────────────────────────
-Regression tests for the five defect fixes:
+Regression tests for the defect fixes below. (FIX 3 -- PGx diplotype
+genotype/zygosity -- was removed 2026-09-10 along with the PGx package
+itself: a deliberate clinical-disclosure deletion, ruled by the human;
+see kim_pipeline/pipeline/reporting's commit history for the ruling.)
 
   FIX 1 — minus-strand multi-exon codon translation
   FIX 2 — ClinVar conflicting significance
-  FIX 3 — PGx diplotype genotype / zygosity
   FIX 4 — PM2 distinguishes absent from lookup failure
   FIX 5 — API path validation
 """
+
 from __future__ import annotations
 
-import os
 import sys
-import tempfile
-import textwrap
 from pathlib import Path
-from typing import List, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -27,17 +26,22 @@ _ROOT = _HERE.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+# These must follow the sys.path fixup above, so they cannot live in the
+# module's top import block -- consolidated here (rather than scattered
+# one per FIX section, as before) so ruff's E402 has one place to except.
+from pipeline.annotation.codon_provider import (  # noqa: E402
+    CdsRecord,
+    FastaCodonContextProvider,
+)
+from pipeline.clinvar.lookup import ClinVarLookup  # noqa: E402
+from pipeline.evidence.aggregator import EvidenceAggregator  # noqa: E402
+from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence  # noqa: E402
+from pipeline.gnomad.lookup import GnomadLookup, GnomadLookupOutcome, GnomadHit  # noqa: E402
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIX 1 — Minus-strand multi-exon codon translation
 # ═══════════════════════════════════════════════════════════════════════════════
-
-from pipeline.annotation.codon_provider import (
-    CdsRecord,
-    FastaCodonContextProvider,
-    _reverse_complement,
-    _translate,
-)
 
 
 def _make_provider(fasta_dict: dict, cds_map: dict) -> FastaCodonContextProvider:
@@ -49,6 +53,7 @@ def _make_provider(fasta_dict: dict, cds_map: dict) -> FastaCodonContextProvider
 
     # Inject in-memory FASTA
     from pipeline.annotation.codon_provider import _FastaReader
+
     reader = _FastaReader.__new__(_FastaReader)
     reader._path = "/fake.fasta"
     reader._has_samtools = False
@@ -59,8 +64,9 @@ def _make_provider(fasta_dict: dict, cds_map: dict) -> FastaCodonContextProvider
 
 
 def _cds(chrom, start, end, strand, phase=0, transcript_id="TX1") -> CdsRecord:
-    return CdsRecord(chrom=chrom, start=start, end=end, strand=strand,
-                     phase=phase, transcript_id=transcript_id)
+    return CdsRecord(
+        chrom=chrom, start=start, end=end, strand=strand, phase=phase, transcript_id=transcript_id
+    )
 
 
 class TestFix1PlusStrandMultiExon:
@@ -282,31 +288,29 @@ class TestFix1MinusStrandMultiExon:
 # FIX 2 — ClinVar conflicting significance
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from pipeline.clinvar.lookup import ClinVarLookup
-from pipeline.evidence.aggregator import EvidenceAggregator
-
 
 class TestFix2ClinVarConflicting:
     """sig_to_score must not assign pathogenic weight to conflicting strings."""
 
-    @pytest.mark.parametrize("sig,stars,expected", [
-        ("Pathogenic", 2, 1.0),
-        ("Likely pathogenic", 1, 0.75),
-        ("Benign", 2, 0.0),
-        ("Likely benign", 1, 0.25),
-        # THE BUG: "Conflicting interpretations of pathogenicity" contains "pathogenic"
-        # — before the fix it returned 1.0; after fix it must return 0.5
-        ("Conflicting interpretations of pathogenicity", 2, 0.5),
-        ("Conflicting interpretations of benignity", 2, 0.5),
-        ("Conflicting interpretations of pathogenicity", 0, 0.5),
-        ("Uncertain significance", 0, 0.5),
-        ("VUS", 0, 0.5),
-    ])
+    @pytest.mark.parametrize(
+        "sig,stars,expected",
+        [
+            ("Pathogenic", 2, 1.0),
+            ("Likely pathogenic", 1, 0.75),
+            ("Benign", 2, 0.0),
+            ("Likely benign", 1, 0.25),
+            # THE BUG: "Conflicting interpretations of pathogenicity" contains "pathogenic"
+            # — before the fix it returned 1.0; after fix it must return 0.5
+            ("Conflicting interpretations of pathogenicity", 2, 0.5),
+            ("Conflicting interpretations of benignity", 2, 0.5),
+            ("Conflicting interpretations of pathogenicity", 0, 0.5),
+            ("Uncertain significance", 0, 0.5),
+            ("VUS", 0, 0.5),
+        ],
+    )
     def test_sig_to_score(self, sig, stars, expected):
         score = ClinVarLookup.sig_to_score(sig, stars)
-        assert score == expected, (
-            f"sig_to_score({sig!r}, {stars}) = {score}, expected {expected}"
-        )
+        assert score == expected, f"sig_to_score({sig!r}, {stars}) = {score}, expected {expected}"
 
     def test_sig_to_score_unrecognised_returns_none(self):
         # ISSUE 4 FIX (stale test): sig_to_score intentionally returns None
@@ -317,16 +321,19 @@ class TestFix2ClinVarConflicting:
         # 0.5 for "Unknown significance"; that assertion was stale.
         assert ClinVarLookup.sig_to_score("Unknown significance", 0) is None
 
-    @pytest.mark.parametrize("sig,stars,expected", [
-        ("Pathogenic", 2, 1.0),
-        ("Likely pathogenic", 1, 0.75),
-        ("Benign", 2, 0.0),
-        ("Likely benign", 1, 0.25),
-        ("Conflicting interpretations of pathogenicity", 2, 0.5),
-        ("Conflicting interpretations of benignity", 1, 0.5),
-        ("Mixed significance", 0, None),
-        ("Unknown significance", 0, None),  # aggregator returns None for unknown
-    ])
+    @pytest.mark.parametrize(
+        "sig,stars,expected",
+        [
+            ("Pathogenic", 2, 1.0),
+            ("Likely pathogenic", 1, 0.75),
+            ("Benign", 2, 0.0),
+            ("Likely benign", 1, 0.25),
+            ("Conflicting interpretations of pathogenicity", 2, 0.5),
+            ("Conflicting interpretations of benignity", 1, 0.5),
+            ("Mixed significance", 0, None),
+            ("Unknown significance", 0, None),  # aggregator returns None for unknown
+        ],
+    )
     def test_aggregator_clinvar_sig_to_score(self, sig, stars, expected):
         score = EvidenceAggregator.clinvar_sig_to_score(sig, stars)
         assert score == expected, (
@@ -337,20 +344,25 @@ class TestFix2ClinVarConflicting:
         """Conflicting significance must never result in a Pathogenic composite tier."""
         agg = EvidenceAggregator()
         from pipeline.evidence.aggregator import EvidenceInput
+
         # Give very high ACMG + conflicting ClinVar
         conflicting_score = EvidenceAggregator.clinvar_sig_to_score(
             "Conflicting interpretations of pathogenicity", 2
         )
         assert conflicting_score == 0.5, "Conflicting must score as 0.5"
-        result = agg.aggregate(EvidenceInput(
-            acmg_score=0.95,
-            clinvar_score=conflicting_score,
-        ))
+        result = agg.aggregate(
+            EvidenceInput(
+                acmg_score=0.95,
+                clinvar_score=conflicting_score,
+            )
+        )
         # With conflicting at 0.5, the composite must be < pure pathogenic scenario
-        pure_result = agg.aggregate(EvidenceInput(
-            acmg_score=0.95,
-            clinvar_score=1.0,
-        ))
+        pure_result = agg.aggregate(
+            EvidenceInput(
+                acmg_score=0.95,
+                clinvar_score=1.0,
+            )
+        )
         assert result.composite_score < pure_result.composite_score
 
     def test_genuine_pathogenic_still_scores_high(self):
@@ -360,156 +372,8 @@ class TestFix2ClinVarConflicting:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# FIX 3 — PGx diplotype zygosity
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from pipeline.pgx.stage import _parse_vcf_variants, _detect_star_alleles, _call_diplotype
-from pipeline.pgx.diplotypes import STAR_ALLELE_VARIANTS, DIPLOTYPE_PHENOTYPES
-
-
-def _write_vcf(tmp_path: Path, lines: List[str]) -> str:
-    p = tmp_path / "test.vcf"
-    header = (
-        "##fileformat=VCFv4.1\n"
-        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE\n"
-    )
-    p.write_text(header + "\n".join(lines) + "\n")
-    return str(p)
-
-
-class TestFix3PGxZygosity:
-    """VCF parsing must read FORMAT/GT and distinguish het from hom."""
-
-    def test_heterozygous_unphased(self, tmp_path):
-        vcf = _write_vcf(tmp_path, [
-            "1\t1000\t.\tA\tT\t.\tPASS\t.\tGT\t0/1"
-        ])
-        variants = _parse_vcf_variants(vcf)
-        assert ("1", 1000, "A", "T") in variants
-        assert variants[("1", 1000, "A", "T")] == "heterozygous"
-
-    def test_homozygous_alt_unphased(self, tmp_path):
-        vcf = _write_vcf(tmp_path, [
-            "1\t1000\t.\tA\tT\t.\tPASS\t.\tGT\t1/1"
-        ])
-        variants = _parse_vcf_variants(vcf)
-        assert ("1", 1000, "A", "T") in variants
-        assert variants[("1", 1000, "A", "T")] == "homozygous_alt"
-
-    def test_heterozygous_phased(self, tmp_path):
-        vcf = _write_vcf(tmp_path, [
-            "1\t1000\t.\tA\tT\t.\tPASS\t.\tGT\t0|1"
-        ])
-        variants = _parse_vcf_variants(vcf)
-        assert variants[("1", 1000, "A", "T")] == "heterozygous"
-
-    def test_homozygous_alt_phased(self, tmp_path):
-        vcf = _write_vcf(tmp_path, [
-            "1\t1000\t.\tA\tT\t.\tPASS\t.\tGT\t1|1"
-        ])
-        variants = _parse_vcf_variants(vcf)
-        assert variants[("1", 1000, "A", "T")] == "homozygous_alt"
-
-    def test_detect_star_alleles_heterozygous_single_allele(self):
-        """Het variant → single allele detected → *1/*allele diplotype."""
-        gene = list(STAR_ALLELE_VARIANTS.keys())[0]
-        allele_defs = STAR_ALLELE_VARIANTS[gene]
-        # Pick first allele that has defining variants
-        target_allele = None
-        target_vars = None
-        for a, v in allele_defs.items():
-            if v:
-                target_allele = a
-                target_vars = v
-                break
-        if target_allele is None:
-            pytest.skip(f"No allele with defining variants for gene {gene}")
-
-        # Build het variant dict
-        variants = {
-            (c.lstrip("chr"), pos, r.upper(), alt.upper()): "heterozygous"
-            for c, pos, r, alt in target_vars
-        }
-        detected, _ = _detect_star_alleles(gene, variants)
-        diplotype, a1, a2 = _call_diplotype(gene, detected)
-        # Het: one allele → *1/*allele
-        assert target_allele in diplotype
-        assert "*1" in diplotype
-
-    def test_detect_star_alleles_homozygous_gives_homozygous_diplotype(self):
-        """Hom alt variant → allele appears twice → *allele/*allele diplotype."""
-        gene = list(STAR_ALLELE_VARIANTS.keys())[0]
-        allele_defs = STAR_ALLELE_VARIANTS[gene]
-        target_allele = None
-        target_vars = None
-        for a, v in allele_defs.items():
-            if v:
-                target_allele = a
-                target_vars = v
-                break
-        if target_allele is None:
-            pytest.skip(f"No allele with defining variants for gene {gene}")
-
-        # Build hom variant dict
-        variants = {
-            (c.lstrip("chr"), pos, r.upper(), alt.upper()): "homozygous_alt"
-            for c, pos, r, alt in target_vars
-        }
-        detected, _ = _detect_star_alleles(gene, variants)
-        diplotype, a1, a2 = _call_diplotype(gene, detected)
-        # Hom: allele appears twice → *allele/*allele
-        assert a1 == a2 == target_allele, (
-            f"Expected homozygous {target_allele}/{target_allele}, got {diplotype}"
-        )
-
-    def test_no_format_column_treated_as_heterozygous(self, tmp_path):
-        """VCF without FORMAT column — presence counts as heterozygous."""
-        p = tmp_path / "noformat.vcf"
-        p.write_text(
-            "##fileformat=VCFv4.1\n"
-            "#CHROM\tPOS\tID\tREF\tALT\n"
-            "1\t1000\t.\tA\tT\n"
-        )
-        variants = _parse_vcf_variants(str(p))
-        assert ("1", 1000, "A", "T") in variants
-        assert variants[("1", 1000, "A", "T")] == "heterozygous"
-
-    def test_phenotype_changes_with_zygosity(self):
-        """Homozygous call should change phenotype vs heterozygous for a real gene."""
-        gene = None
-        target_allele = None
-        target_vars = None
-        # Find a gene+allele where *allele/*allele has a distinct phenotype from *1/*allele
-        from pipeline.pgx.stage import _predict_phenotype
-        for g, allele_defs in STAR_ALLELE_VARIANTS.items():
-            for a, v in allele_defs.items():
-                if not v:
-                    continue
-                pheno_het = _predict_phenotype(g, "*1", a)
-                pheno_hom = _predict_phenotype(g, a, a)
-                if pheno_het != pheno_hom:
-                    gene, target_allele, target_vars = g, a, v
-                    break
-            if gene:
-                break
-
-        if gene is None:
-            pytest.skip("No gene with distinct het/hom phenotypes in diplotype table")
-
-        from pipeline.pgx.stage import _predict_phenotype
-        het_pheno = _predict_phenotype(gene, "*1", target_allele)
-        hom_pheno = _predict_phenotype(gene, target_allele, target_allele)
-        assert het_pheno != hom_pheno, (
-            f"Expected different phenotypes for het and hom of {gene} {target_allele}"
-        )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # FIX 4 — PM2 distinguishes absent from lookup failure
 # ═══════════════════════════════════════════════════════════════════════════════
-
-from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence
-from pipeline.gnomad.lookup import GnomadLookup, GnomadLookupOutcome, GnomadHit
 
 
 class TestFix4PM2Absent:
@@ -517,7 +381,10 @@ class TestFix4PM2Absent:
 
     def _evidence(self, **kwargs) -> VariantEvidence:
         return VariantEvidence(
-            chrom="1", pos=100, ref="A", alt="T",
+            chrom="1",
+            pos=100,
+            ref="A",
+            alt="T",
             gene="TEST",
             **kwargs,
         )
@@ -561,8 +428,14 @@ class TestFix4GnomadLookupOutcomes:
     """GnomadLookup must return distinct outcomes for absent, present, unavailable."""
 
     def test_outcome_present(self):
-        hit = GnomadHit(af=0.001, af_popmax=0.002, ac=100, an=100000,
-                        backend_used="local", outcome=GnomadLookupOutcome.PRESENT)
+        hit = GnomadHit(
+            af=0.001,
+            af_popmax=0.002,
+            ac=100,
+            an=100000,
+            backend_used="local",
+            outcome=GnomadLookupOutcome.PRESENT,
+        )
         assert hit.outcome == GnomadLookupOutcome.PRESENT
 
     def test_outcome_absent_is_not_present(self):
@@ -579,8 +452,10 @@ class TestFix4GnomadLookupOutcomes:
         lookup = GnomadLookup(cfg={"gnomad": {"vcf_path": str(vcf)}})
         # Patch _require to raise so tabix appears missing
         from pipeline.fastq.errors import FastqPipelineError
-        with patch("pipeline.gnomad.lookup._require",
-                   side_effect=FastqPipelineError("tabix not found")):
+
+        with patch(
+            "pipeline.gnomad.lookup._require", side_effect=FastqPipelineError("tabix not found")
+        ):
             result = lookup._tabix_lookup("1", 100, "A", "T")
         assert result == GnomadLookupOutcome.UNAVAILABLE
 
@@ -588,6 +463,7 @@ class TestFix4GnomadLookupOutcomes:
         """API timeout must return UNAVAILABLE."""
         lookup = GnomadLookup(cfg={})
         from requests.exceptions import Timeout
+
         with patch("requests.post", side_effect=Timeout("timed out")):
             result = lookup.lookup("1", 100, "A", "T")
         assert result == GnomadLookupOutcome.UNAVAILABLE
@@ -597,9 +473,7 @@ class TestFix4GnomadLookupOutcomes:
         lookup = GnomadLookup(cfg={})
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "data": {"variant": {"genome": None}}
-        }
+        mock_resp.json.return_value = {"data": {"variant": {"genome": None}}}
         with patch("requests.post", return_value=mock_resp):
             result = lookup._api_lookup("1", 100, "A", "T")
         assert result == GnomadLookupOutcome.ABSENT
@@ -609,8 +483,10 @@ class TestFix4GnomadLookupOutcomes:
         vcf = tmp_path / "corrupt.vcf.gz"
         vcf.write_bytes(b"\x00" * 100)
         lookup = GnomadLookup(cfg={"gnomad": {"vcf_path": str(vcf)}})
-        with patch("pipeline.gnomad.lookup._require", return_value="tabix"), \
-             patch("pipeline.gnomad.lookup._run", side_effect=RuntimeError("corrupt")):
+        with (
+            patch("pipeline.gnomad.lookup._require", return_value="tabix"),
+            patch("pipeline.gnomad.lookup._run", side_effect=RuntimeError("corrupt")),
+        ):
             result = lookup._tabix_lookup("1", 100, "A", "T")
         assert result == GnomadLookupOutcome.UNAVAILABLE
 
@@ -618,6 +494,7 @@ class TestFix4GnomadLookupOutcomes:
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIX 5 — API path validation
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestFix5PathValidation:
     """_validate_path_in_roots must reject traversal and absolute escapes."""
@@ -632,6 +509,7 @@ class TestFix5PathValidation:
 
     def _validator(self):
         from api.main import _validate_path_in_roots
+
         return _validate_path_in_roots
 
     def test_allowed_upload_path(self, tmp_path):
@@ -649,6 +527,7 @@ class TestFix5PathValidation:
         (tmp_path / "outside").mkdir()
         outside.touch()
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             self._validator()(str(outside), upload_dir)
         assert exc_info.value.status_code == 400
@@ -658,6 +537,7 @@ class TestFix5PathValidation:
         upload_dir.mkdir()
         traversal = str(upload_dir / ".." / ".." / "etc" / "passwd")
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc_info:
             self._validator()(traversal, upload_dir)
         assert exc_info.value.status_code == 400
@@ -693,6 +573,7 @@ class TestFix5PathValidation:
         except (OSError, NotImplementedError):
             pytest.skip("Symlinks not supported on this platform")
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException):
             self._validator()(str(link), upload_dir)
 

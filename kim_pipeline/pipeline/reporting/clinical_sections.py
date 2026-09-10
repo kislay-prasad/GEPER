@@ -145,14 +145,11 @@ _CLASSIFICATION_LABELS = [
 
 def variant_dashboard(
     acmg_d: Optional[List[Dict]],
-    pgx_d: Optional[Dict],
     ancestry_d: Optional[Dict],
 ) -> Dict[str, Any]:
     """Aggregate counts for the top-of-report dashboard: total variants,
-    a count per ACMG tier, PGx finding count, and a one-line ancestry
-    summary."""
+    a count per ACMG tier, and a one-line ancestry summary."""
     acmg_d = acmg_d or []
-    pgx_d = pgx_d or {}
     ancestry_d = ancestry_d or {}
 
     counts = {label: 0 for label in _CLASSIFICATION_LABELS}
@@ -161,7 +158,6 @@ def variant_dashboard(
         if cls in counts:
             counts[cls] += 1
 
-    pgx_annotations = pgx_d.get("annotations") or []
     ancestry_primary = ancestry_d.get("primary_population")
     ancestry_confidence = ancestry_d.get("confidence")
     if ancestry_primary:
@@ -176,7 +172,6 @@ def variant_dashboard(
         "vus": counts["Uncertain_Significance"],
         "likely_benign": counts["Likely_Benign"],
         "benign": counts["Benign"],
-        "pgx_findings": len(pgx_annotations),
         "ancestry_summary": ancestry_summary,
     }
 
@@ -193,7 +188,6 @@ def clinical_interpretation(dashboard: Dict[str, Any]) -> Dict[str, str]:
     actionable = dashboard.get("pathogenic", 0) + dashboard.get("likely_pathogenic", 0)
     vus = dashboard.get("vus", 0)
     total = dashboard.get("total_variants", 0)
-    pgx = dashboard.get("pgx_findings", 0)
 
     if total == 0:
         summary = "No variants met inclusion criteria for ACMG classification in this sample."
@@ -212,12 +206,6 @@ def clinical_interpretation(dashboard: Dict[str, Any]) -> Dict[str, str]:
         summary = (
             f"All {total} classified variant(s) were classified as Benign or Likely "
             f"Benign — no clinically actionable findings in this analysis."
-        )
-
-    if pgx:
-        summary += (
-            f" {pgx} pharmacogenomic finding(s) were also identified — see PGx section "
-            f"(diplotype calls are not yet validated against ground truth)."
         )
 
     if actionable > 0:

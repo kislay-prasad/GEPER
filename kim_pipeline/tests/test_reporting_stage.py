@@ -244,7 +244,7 @@ class TestIssue3ClinicalReportOverhaul:
 
     def test_empty_run_still_works_with_new_sections(self, tmp_path):
         """Backward-compat / robustness: an empty run (no acmg, no patient
-        metadata, no pgx/ancestry) must not crash with the new sections."""
+        metadata, no ancestry) must not crash with the new sections."""
         stage = ReportingStage({"reporting": {"generate_pdf": False}})
         result = stage.run(sample_id="EMPTY", output_dir=str(tmp_path))
         assert Path(result.json_path).exists()

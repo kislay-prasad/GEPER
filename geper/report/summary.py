@@ -1823,7 +1823,22 @@ def _build_indian_population_frequency_flowables(
     gnomad_sas_af = ipf.get("gnomad_af_sas")
 
     flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Indian Population Frequency:</b>", styles["BodyText"])]
-    if gnomad_sas_af is not None:
+    if ipf.get("gnomad_sas_error") is not None:
+        # Same fix and same wording as `_build_1000_genomes_sas_flowables`'s
+        # `sas_error` branch four lines below, and as
+        # `report_generator.py`'s Section 11 Markdown equivalent -- a
+        # genuine gnomAD lookup failure must not render identically to a
+        # variant that was never queried (2026-09-11 fix; this bullet was
+        # the one sub-block of this function that still collapsed the two).
+        flow.append(
+            Paragraph(
+                f"• gnomAD (South Asian, SAS): Lookup failed (external service issue: "
+                f"{esc(ipf['gnomad_sas_error'])}) -- not evidence of no South Asian subpopulation "
+                "data, see Annotation Detail below.",
+                styles["BulletText"],
+            )
+        )
+    elif gnomad_sas_af is not None:
         flow.append(Paragraph(f"• gnomAD (South Asian, SAS): AF = {gnomad_sas_af:.2e}", styles["BulletText"]))
     elif ipf.get("gnomad_sas_queried"):
         flow.append(Paragraph("• gnomAD (South Asian, SAS): variant not found in this source.", styles["BulletText"]))

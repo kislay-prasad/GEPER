@@ -226,8 +226,25 @@ def _lookup(chrom: str, pos: int, ref: str, alt: str) -> Dict[str, Any]:
     try:
         payload = _post(name)
     except ExternalAPIError as exc:
-        logger.warning(f"IndiGenomes query failed for {name}: {exc}")
-        return {"status": "error", "error": str(exc)}
+        # `str(exc)` is "" for an exception raised without a message, and an
+        # empty error string is indistinguishable from no error at all to any
+        # truthiness-based consumer -- the same fact
+        # `pipeline/orchestrator.py::_run_mmsplice_stage` already guards
+        # against with `str(exc) or type(exc).__name__` (d1128ee). One
+        # variable feeds both the log line and the returned field so they
+        # cannot diverge.
+        #
+        # THIS PATH IS UNREACHABLE TODAY and is fixed anyway: measured
+        # 2026-09-11 at c09c9f4, `_run_indigenomes_stage` has ZERO call sites
+        # (`process_variant` calls `_indigenomes_retired_result()` instead)
+        # and `CONFIG.indigenomes.ENABLED` defaults to False. Nothing
+        # STRUCTURAL prevents it being reached -- the orchestrator's own
+        # comment says the stage is kept for reinstatement, not deleted.
+        # Dormant is not fixed, and a defect that is unreachable only because
+        # nobody currently calls it is armed, not disarmed.
+        detail = str(exc) or type(exc).__name__
+        logger.warning(f"IndiGenomes query failed for {name}: {detail}")
+        return {"status": "error", "error": detail}
 
     records = payload.get("mydata") or []
     match = None

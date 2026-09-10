@@ -116,15 +116,23 @@ class MMSpliceService:
         try:
             return self._predict_impl(variant, start)
         except Exception as exc:  # noqa: BLE001 - graceful degradation is the whole point of this method
+            # `str(exc)` is "" for any exception raised without a message
+            # (see d1128ee), and an empty error string is indistinguishable
+            # from no error at all to a truthiness check. One variable feeds
+            # the log line, the reason and `error`, so they cannot diverge --
+            # the same shape `_run_mmsplice_stage` already uses one layer up.
+            detail = str(exc) or type(exc).__name__
             logger.error(
                 f"MMSplice prediction failed unexpectedly for "
-                f"{variant.chrom}:{variant.pos}{variant.ref}>{variant.alt}: {exc}"
+                f"{variant.chrom}:{variant.pos}{variant.ref}>{variant.alt}: {detail}"
             )
             return _null_result(
                 supported=False,
                 predicted=False,
-                reason=f"internal error during MMSplice prediction: {exc}",
+                reason=f"internal error during MMSplice prediction: {detail}",
                 runtime_ms=(time.time() - start) * 1000.0,
+                # A crash is the definition of "could not determine an answer".
+                error=f"internal error during MMSplice prediction: {detail}",
             )
 
     def predict_batch(self, variants: List[Variant]) -> List[Dict]:
@@ -147,8 +155,17 @@ class MMSpliceService:
             try:
                 prep = self._prepare(variant, start)
             except Exception as exc:  # noqa: BLE001
-                logger.error(f"MMSplice batch preparation failed for {variant.chrom}:{variant.pos}: {exc}")
-                results[i] = _null_result(False, False, f"internal error: {exc}", (time.time() - start) * 1000.0)
+                # Same contract as `predict` above, and the same reason a bare
+                # `str(exc)` will not do here either.
+                detail = str(exc) or type(exc).__name__
+                logger.error(f"MMSplice batch preparation failed for {variant.chrom}:{variant.pos}: {detail}")
+                results[i] = _null_result(
+                    False,
+                    False,
+                    f"internal error: {detail}",
+                    (time.time() - start) * 1000.0,
+                    error=f"internal error during MMSplice batch preparation: {detail}",
+                )
                 continue
             if isinstance(prep, dict):
                 results[i] = prep  # ineligible / not predicted / cache hit
@@ -173,7 +190,20 @@ class MMSpliceService:
                 if self.cache and cache_keys[idx] is not None:
                     self.cache.put(cache_keys[idx], result)
 
-        return [r if r is not None else _null_result(False, False, "unexpected: no result produced") for r in results]
+        # A slot still None here means the predictor returned fewer rows than
+        # were sent and `zip` truncated. Whatever that is, it is not a
+        # completed search that found nothing, so it carries `error` too.
+        return [
+            r
+            if r is not None
+            else _null_result(
+                False,
+                False,
+                "unexpected: no result produced",
+                error="MMSplice produced no result for this variant (batch returned fewer rows than sent)",
+            )
+            for r in results
+        ]
 
     # ------------------------------------------------------------------
     # Internal pipeline
@@ -276,11 +306,19 @@ class MMSpliceService:
         try:
             ref_window, alt_window, overhang = self._build_windows(variant, best_exon)
         except ExternalAPIError as exc:
+            # THE TWIN OF THE `_fetch_overlapping_exons` HANDLER ABOVE, and it
+            # was left out when that one was fixed. Ensembl never answered, so
+            # this is a lookup failure, not a completed negative -- and because
+            # this branch reports `supported=True`, without `error` the report
+            # renders it under "_Skipped:", the heading it uses for work that
+            # finished. A fix applied at one call site of a subsystem is
+            # evidence about the others, not assurance about them.
             return _null_result(
                 supported=True,
                 predicted=False,
                 reason=f"reference sequence fetch failed: {exc}",
                 runtime_ms=(time.time() - start) * 1000.0,
+                error=str(exc) or type(exc).__name__,
             )
 
         return ref_window, alt_window, overhang, cache_key

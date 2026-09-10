@@ -576,19 +576,44 @@ which, do not assume either").
   (kim's naming) healthy-adult-observation data — both explicitly and
   permanently `not_evaluated` in automated mode on both sides.
   [geper: acmg_rules.py:291; kim: classifier.py:457-470,993-1004]
-- kim_pipeline's classifier does not score SpliceAI evidence — removed for
-  licensing; the score is always `None` though the vote-counting code
-  still references it as a source. [pipeline/vep/stage.py:13-25]
+- **CORRECTED 2026-09-10** (this row previously said the SpliceAI score
+  "is always `None`", citing only a code comment as evidence -- it is not
+  always `None`, and the corrected claim below cites the code that proves
+  it). kim_pipeline's VEP-CSQ path for SpliceAI was deliberately fixed to
+  permanently return `None` (2026-08-22, licence) -- but that fix is what
+  makes a SEPARATE, un-fixed fallback guard (`if var.spliceai_score is
+  None:`) unconditionally true, and that fallback reads `SpliceAI=` /
+  `DS_AG` / `DS_AL` / `DS_DG` / `DS_DL` straight out of the input VCF's
+  own INFO field and takes the max.
+  [kim_pipeline/pipeline/annotation/stage.py:733-743, :1145-1157 --
+  CODE, not the vep/stage.py:13-25 module comment this entry previously
+  cited, which asserts the same "always `None`" mistake]. Scope:
+  kim_pipeline only (not geper/, which never integrated SpliceAI at all).
+  On any input VCF the caller has already run through Illumina's SpliceAI
+  tool upstream (a standard splicing-analysis step, independent of VEP),
+  this fallback fires and produces a real, non-`None` `spliceai_score`
+  that reaches PP3/BP4 exactly like any other predictor. Evidence, not
+  just a reading of the code: `kim_pipeline/tests/
+  test_undetermined_aa_guard.py:388-389` (added 2026-08-28) documents and
+  exercises exactly this path, and currently PASSES.
   **Consequence, not just absence**: PP3/BP4's majority-vote threshold
   (`classifier.py:831`, symmetric BP4 site `classifier.py:1188`) is
   `met = n_dam >= max(1, len(votes) // 2 + 1)` — a threshold computed over
   however many voters are actually present (each vote append is guarded
   `is not None`, so a missing predictor degrades silently rather than
   raising, `classifier.py:814-815,1171-1172`). With SpliceAI present that
-  was 3-of-4 damaging calls required; with it absent, it is 2-of-3. **A
-  licensing decision silently lowered the evidence bar for a pathogenicity
-  criterion** — nobody chose that as a clinical position, it is a side
-  effect of removing one voter from a majority-of-present formula.
+  was 3-of-4 damaging calls required; with it absent (the VEP-CSQ path,
+  unannotated input), it is 2-of-3. **Given the 2026-09-10 correction
+  above, "absent" is not the universal case**: on input the caller has
+  pre-annotated with SpliceAI upstream, the fallback restores the vote
+  and the threshold reverts to 3-of-4 for that variant. So the actual
+  consequence is an evidence bar that silently VARIES per-input (2-of-3
+  or 3-of-4, depending on what the caller's VCF happens to carry) rather
+  than a single, permanently-lowered 2-of-3 — an inconsistency, not just
+  a reduction. **A licensing decision silently changed the evidence bar
+  for a pathogenicity criterion** — nobody chose that as a clinical
+  position, it is a side effect of removing one voter from a
+  majority-of-present formula.
   **This is known and unresolved, not a fresh finding of this audit**:
   Kelly found it first, and found the deeper version — cards
   `kelly-classifier-denominator-fix-pp3-bp4` and

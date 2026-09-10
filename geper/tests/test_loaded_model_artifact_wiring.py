@@ -202,7 +202,7 @@ class CaptureIsActuallyWiredTest(unittest.TestCase):
 
         self.assertIn(
             "reset_loaded_model_artifacts",
-            inspect.getsource(GeperPipeline._capture_run_level_provenance),
+            inspect.getsource(GeperPipeline._capture_startup_provenance),
             "without this a resumed or second run in one process inherits the previous "
             "run's observations -- a carried-forward claim about bytes this run never opened",
         )

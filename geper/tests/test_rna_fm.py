@@ -508,6 +508,86 @@ class TestFallbackDoesNotMaskAnAllowlistGap(unittest.TestCase):
         mock_sleep.assert_not_called()
 
 
+class TestFreshDownloadForcesStrictUnpickling(unittest.TestCase):
+    """HIGH-priority security card, ATTACK half (the human's ruling,
+    2026-09-10): a GENUINE FRESH download -- no cached file, no HF
+    mirror hit -- must not silently accept a pickled class outside
+    `_allow_argparse_namespace_in_checkpoints`'s allowlist via
+    `torch.hub.load_state_dict_from_url`'s own hardcoded
+    `weights_only=False` default. `TestFallbackDoesNotMaskAnAllowlistGap`
+    above closed the ACCIDENT half (drift on a file we already hold);
+    this closes the ATTACK half (a file we fetch fresh) -- see
+    `_load_pretrained_with_fallback`'s own comment at step 2.
+
+    Uses REAL `torch.hub.load_state_dict_from_url` throughout (via
+    `_real_fm_style_loader`), never mocked -- a mocked assertion here
+    would prove nothing about whether `weights_only` was genuinely
+    forced. `_cached_weights_path` is mocked to return `None` purely to
+    force step 2 despite the checkpoint physically sitting at torch
+    hub's own cache path -- exactly what the real function would
+    return if the file genuinely weren't cached yet, and the file is
+    pre-placed there (not fetched by us) only so
+    `load_state_dict_from_url`'s own real "already downloaded" branch
+    finds it without a real network call, reproducing a COMPLETED
+    genuine download, not a download we performed ourselves.
+
+    Fail-closed is a claim about what happens when something goes
+    wrong, so a test that only shows the happy path still works proves
+    nothing: this class shows BOTH directions on the exact same code
+    path -- a checkpoint carrying a class outside the allowlist is
+    refused, and an ordinary legitimate checkpoint still loads.
+    """
+
+    def setUp(self):
+        self.instance = RNAFMModel.__new__(RNAFMModel)
+        self.instance.logger = mock.Mock()
+        self.instance.device = "cpu"
+
+    def test_unlisted_class_is_refused_on_the_fresh_download_path(self):
+        with tempfile.TemporaryDirectory() as hub_dir:
+            checkpoints = Path(hub_dir) / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            weight_file = checkpoints / "RNA-FM_pretrained.pth"
+            torch.save(
+                {"args": argparse.Namespace(arch="test_arch"), "extra_field": _UnlistedCheckpointField(1)},
+                weight_file,
+            )
+            real_loader = _real_fm_style_loader(hub_dir)
+
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._cached_weights_path", return_value=None),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+            ):
+                with self.assertRaises(ModelLoadError) as ctx:
+                    self.instance._load_pretrained_with_fallback(real_loader, "rna_fm_t12")
+
+        message = str(ctx.exception)
+        self.assertIn("allowlist", message.lower())
+        self.assertIn("_allow_argparse_namespace_in_checkpoints", message)
+
+    def test_ordinary_legitimate_checkpoint_still_loads_on_the_fresh_download_path(self):
+        with tempfile.TemporaryDirectory() as hub_dir:
+            checkpoints = Path(hub_dir) / "checkpoints"
+            checkpoints.mkdir(parents=True)
+            weight_file = checkpoints / "RNA-FM_pretrained.pth"
+            torch.save(
+                {"args": argparse.Namespace(arch="test_arch"), "model": {"weight": torch.zeros(4)}},
+                weight_file,
+            )
+            real_loader = _real_fm_style_loader(hub_dir)
+
+            with (
+                mock.patch("torch.hub.get_dir", return_value=hub_dir),
+                mock.patch("models.rna_fm._cached_weights_path", return_value=None),
+                mock.patch("models.rna_fm._fetch_from_official_hf_mirror", return_value=None),
+            ):
+                result = self.instance._load_pretrained_with_fallback(real_loader, "rna_fm_t12")
+
+        self.assertEqual(result["args"].arch, "test_arch")
+        self.assertEqual(result["model"]["weight"].tolist(), [0.0, 0.0, 0.0, 0.0])
+
+
 class TestRNAFMLoadImplIntegration(unittest.TestCase):
     """Exercises _load_impl end to end with a fully mocked `fm` module,
     confirming the sanitized failure propagates the way

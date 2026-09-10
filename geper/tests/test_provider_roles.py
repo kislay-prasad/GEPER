@@ -131,13 +131,20 @@ class DisagreementsStayVisibleTest(unittest.TestCase):
     artefact exists to prevent.
     """
 
-    def test_the_bundle_requires_two_providers_no_criterion_reads(self):
+    def test_the_bundle_requires_three_providers_no_criterion_reads(self):
+        """
+        *** THREE, NOT TWO -- AND THE THIRD IS THE ONE THAT MATTERS. *** This
+        assertion originally named only blast and alphafold, the two flagged in
+        the report. The table itself surfaced `dbsnp` as a third: it is a
+        REQUIRED field of RawEvidenceBundle and no criterion reads it, so the
+        report's raw-evidence display demands a source the engine ignores.
+        """
         bundle = set(keys_with_role(ProviderRole.IN_RAW_EVIDENCE_BUNDLE))
         read = set(keys_with_role(ProviderRole.READ_BY_A_CRITERION))
         self.assertEqual(
             bundle - read,
-            {"blast", "alphafold"},
-            "RawEvidenceBundle requires blast and alphafold, which no criterion reads -- "
+            {"blast", "alphafold", "dbsnp"},
+            "RawEvidenceBundle requires blast, alphafold and dbsnp, which no criterion reads -- "
             "either correct for its purpose or a defect, and nobody has ruled",
         )
 
@@ -180,9 +187,12 @@ class TheTableIsInertTest(unittest.TestCase):
         import pipeline.provider_roles as module
 
         doc = module.__doc__ or ""
-        for phrase in ("consumption", "dbSNP", "cannot"):
+        # Case-insensitive: the docstring shouts its most important sentences,
+        # and the warning must survive being re-cased, not just re-worded.
+        lowered = doc.lower()
+        for phrase in ("consumption", "dbsnp", "cannot"):
             with self.subTest(phrase=phrase):
-                self.assertIn(phrase, doc)
+                self.assertIn(phrase, lowered)
 
     def test_the_discarded_readings_are_documented(self):
         import pipeline.provider_roles as module

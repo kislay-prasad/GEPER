@@ -159,7 +159,17 @@ jobs:
       # tests locally with model packages installed, or explicitly via
       # `pytest -m live_network` or `pytest -m real_pip`.
       - name: Run pytest
-        run: python -m pytest tests/ api/tests/ -v
+        # -rs prints the REASON for every skip. Without it, verbose mode
+        # reports a skip COUNT and nothing else, so a test that stopped
+        # running because its binary is absent looks exactly like one that
+        # was always meant to skip. That is not hypothetical: bwa and
+        # minimap2 are installed by no job in this file, so every test gated
+        # on them has skipped on every run, green, for as long as those
+        # steps have existed, and the log could not show it. Measured
+        # 2026-09-10 against run 34449813288, which reported totals only.
+        # Do not drop -rs to quieten the log: the noise is the coverage
+        # report.
+        run: python -m pytest tests/ api/tests/ -v -rs
 
   kim_pipeline-tests:
     name: kim_pipeline/ pytest
@@ -187,7 +197,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run pytest
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v -rs
 
 
   clinical-tests:
@@ -237,7 +247,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run pytest
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v -rs
 
   shared-tests:
     name: shared/ pytest (process control)
@@ -258,7 +268,7 @@ jobs:
 
       - name: Run pytest
         run: |
-          python -m pytest shared/tests/ -v
+          python -m pytest shared/tests/ -v -rs
           # Exit code 5 means no tests collected — treat as failure
           # (empty test suite is not success, it's an infrastructure problem)
           EXIT_CODE=$?

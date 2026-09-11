@@ -765,7 +765,10 @@ def generate_short_pdf(
         bottomMargin=28 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
-        title="Bij AI Clinical Genomic Summary Report — variant interpretation from a supplied VCF (GEPER engine)",
+        title=(
+            "Bij AI Clinical Genomic Summary Report — variant interpretation from a supplied VCF"
+            " — Bij AI variant-interpretation component (GEPER)"
+        ),
     )
 
     story: List[Any] = list(_build_short_header(logo_path, styles))

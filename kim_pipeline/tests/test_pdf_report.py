@@ -8,6 +8,7 @@ clinical PDF generator (Issue 3).
 from __future__ import annotations
 
 from pipeline.reporting.pdf_report import render_clinical_pdf, ReportLabUnavailableError
+from pipeline.reporting.stage import PIPELINE_VERSION
 from pipeline.reporting.clinical_sections import (
     normalize_patient_metadata,
     qc_status_summary,
@@ -54,7 +55,7 @@ def _minimal_kwargs():
         interpretation=interpretation,
         merged_variants=merged,
         reference_genome="GRCh38",
-        pipeline_version="Bij AI v8",
+        pipeline_version=PIPELINE_VERSION,
     )
 
 
@@ -105,7 +106,9 @@ class TestRenderClinicalPdf:
         render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
         text = "".join(p.extract_text() for p in PdfReader(out).pages)
         assert "GRCh38" in text
-        assert "Bij AI v8" in text
+        # Was "Bij AI v8" -- the whole-product name, superseded 2026-09-11
+        # (Option B): the version names the component, as the scope line does.
+        assert "Bij AI sequencing-analysis component v8" in text
 
     def test_lab_disclaimer_present(self, tmp_path):
         from pypdf import PdfReader

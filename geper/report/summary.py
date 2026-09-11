@@ -803,7 +803,8 @@ def _load_cropped_logo_image(path: str) -> BytesIO:
 
 
 SCOPE_LINE = (
-    "Variant interpretation from a supplied VCF — produced by the GEPER engine. "
+    "Variant interpretation from a supplied VCF — produced by the Bij AI "
+    "variant-interpretation component (GEPER). "
     "Sequencing, alignment and variant calling are performed upstream; any run-level "
     "QC shown here is supplied by that run and is not computed by this report."
 )
@@ -2885,7 +2886,10 @@ def generate_pdf(
         bottomMargin=30 * mm,
         leftMargin=_MARGIN,
         rightMargin=_MARGIN,
-        title="Bij AI Clinical Genomic Analysis Report — variant interpretation from a supplied VCF (GEPER engine)",
+        title=(
+            "Bij AI Clinical Genomic Analysis Report — variant interpretation from a supplied VCF"
+            " — Bij AI variant-interpretation component (GEPER)"
+        ),
     )
 
     story: List[Any] = list(_build_report_header(logo_path, styles))

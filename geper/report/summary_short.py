@@ -75,6 +75,11 @@ from report.clinical_report_builder import (
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
     _variant_reviewer_flags,
+    DATA_ATTRIBUTION_HEADING,
+    EVIDENCE_SOURCES_USED_HEADING,
+    NO_EVIDENCE_SOURCES_TEXT,
+    reference_blocks,
+    report_revision_banners,
 )
 from report.pdf_escape import esc
 from report.summary import (
@@ -593,22 +598,21 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     # already computed and `report/report_generator.py`'s Markdown
     # section 16 already renders -- gated on `evidence_sources`, i.e.
     # only sources this run actually used, never a static catalogue.
-    references = (clinical or {}).get("references") or []
+    # Ruling (A), 2026-09-11: the fixed licence notices follow as their own
+    # labelled "Data attribution" block instead of sharing that list.
+    evidence_refs, attribution = reference_blocks(clinical)
     flow.append(Spacer(1, 1 * mm))
-    if references:
-        flow.append(
-            Paragraph(
-                "References: " + "<br/>".join(f"• {esc(r)}" for r in references),
-                styles["Footnote"],
-            )
-        )
+    if evidence_refs:
+        evidence_text = "<br/>".join(f"• {esc(r)}" for r in evidence_refs)
     else:
-        flow.append(
-            Paragraph(
-                "References: No evidence sources contributed to this variant's interpretation.",
-                styles["Footnote"],
-            )
+        evidence_text = esc(NO_EVIDENCE_SOURCES_TEXT)
+    flow.append(Paragraph(f"{EVIDENCE_SOURCES_USED_HEADING}: {evidence_text}", styles["Footnote"]))
+    flow.append(
+        Paragraph(
+            f"{DATA_ATTRIBUTION_HEADING}: " + "<br/>".join(f"• {esc(r)}" for r in attribution),
+            styles["Footnote"],
         )
+    )
 
     flow.append(Spacer(1, 3 * mm))
     return flow
@@ -785,6 +789,12 @@ def generate_short_pdf(
         )
     )
     story.append(Spacer(1, 4 * mm))
+    # Revision traceability (amended / superseded / re-analysis): same block
+    # and wording as the full PDF and Markdown, above the result. None of the
+    # four states -> nothing printed.
+    for banner in report_revision_banners(document):
+        story.append(Paragraph(esc(banner), styles["Flag"]))
+        story.append(Spacer(1, 2 * mm))
 
     story.append(Paragraph("Result", styles["SectionHeading"]))
     if variants:

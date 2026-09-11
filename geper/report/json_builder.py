@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from utils.logger import get_logger
-from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER, build_clinical_report
+from report.clinical_report_builder import RESEARCH_USE_DISCLAIMER, build_clinical_report, normalize_report_revision
 from pipeline.provenance import get_stale_fallbacks
 from pipeline.stage_schemas import build_raw_evidence_bundle, validate_interpretation_result_for_report
 
@@ -34,6 +34,7 @@ class JSONResultBuilder:
         patient_consent: Optional[Dict[str, Any]] = None,
         qc_metrics: Optional[Dict[str, Any]] = None,
         service_health_registry: Any = None,
+        report_revision: Optional[Dict[str, Any]] = None,
     ):
         self.input_vcf_path = input_vcf_path
         # Genome reference build resolved by the orchestrator's assembly
@@ -155,6 +156,15 @@ class JSONResultBuilder:
         # falls back to the live registry rather than treating it as
         # "nothing failed".
         self.service_health_registry = service_health_registry
+        # Revision traceability (amendment / supersession / re-analysis) --
+        # see `report/clinical_report_builder.py::normalize_report_revision`.
+        # Validated HERE, at construction, so malformed facts fail before a
+        # run writes anything rather than at render time. `None` (the
+        # default, and every plain pipeline run) is written as an explicit
+        # `null`: this process cannot know whether the clinical platform
+        # will store the run as a re-analysis, so it must not claim "not a
+        # re-analysis".
+        self.report_revision = normalize_report_revision(report_revision)
 
     def add_variant_result(self, variant_result: Dict[str, Any]) -> None:
         self.variant_results.append(variant_result)
@@ -345,6 +355,10 @@ class JSONResultBuilder:
             # fabricated default) whenever no consent object was
             # actually supplied in --patient-meta.
             "patient_consent": self.patient_consent,
+            # Revision-traceability flags + the banner text every surface
+            # prints (card HUMAN-CLINICAL-report-revision-traceability-...).
+            # `null` when no revision facts were supplied -- see __init__.
+            "report_revision": self.report_revision,
         }
 
     def write(self, output_path: str) -> str:

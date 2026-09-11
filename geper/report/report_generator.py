@@ -26,6 +26,11 @@ from report.clinical_report_builder import (
     _variant_hgvs_or_locus,
     _variant_reviewer_flags,
     variant_allele_fraction_text,
+    DATA_ATTRIBUTION_HEADING,
+    EVIDENCE_SOURCES_USED_HEADING,
+    NO_EVIDENCE_SOURCES_TEXT,
+    reference_blocks,
+    report_revision_banners,
 )
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
@@ -268,6 +273,13 @@ class ReportGenerator:
         lines.append("")
         lines.append(f"*{SCOPE_LINE}*")
         lines.append("")
+        # Revision traceability (amended / superseded / re-analysis): above
+        # every finding, below the line-3 review-status banner, which must
+        # stay where governance tests read it. None of the four states ->
+        # nothing printed. See `clinical_report_builder.report_revision_banners`.
+        for banner in report_revision_banners(json_document):
+            lines.append(f"> {banner}")
+            lines.append("")
         # Displayed in IST (report is for Indian hospitals); the
         # stored `generated_at` itself stays UTC (see
         # report/json_builder.py) -- only this human-facing line
@@ -1209,14 +1221,23 @@ class ReportGenerator:
             lines.append(f"- {lim}")
         lines.append("")
 
-        lines.append("### 16. References")
+        # Ruling (A), 2026-09-11: two blocks, two different claims -- what
+        # this run used (gated), then the fixed licence notices. Was a single
+        # "### 16. References" list mixing both.
+        evidence_refs, attribution = reference_blocks(clinical_report)
+        lines.append(f"### 16. {EVIDENCE_SOURCES_USED_HEADING}")
         lines.append("")
-        refs = clinical_report.get("references") or []
-        if refs:
-            for r in refs:
+        if evidence_refs:
+            for r in evidence_refs:
                 lines.append(f"- {r}")
         else:
-            lines.append("*No evidence sources contributed to this variant's interpretation.*")
+            lines.append(f"*{NO_EVIDENCE_SOURCES_TEXT}*")
+        lines.append("")
+
+        lines.append(f"### {DATA_ATTRIBUTION_HEADING}")
+        lines.append("")
+        for r in attribution:
+            lines.append(f"- {r}")
         lines.append("")
 
         lines.append("### 17. Evidence Sources")

@@ -19,7 +19,7 @@ repeatedly."
 """
 
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
@@ -27,6 +27,7 @@ from pipeline.stage_schemas import StageStatus as _StageStatus
 from pipeline.vcf_parser import VAF_NO_SAMPLE_COLUMNS_REASON
 from utils.logger import get_logger
 from utils.service_health import HEALTH, ServiceStatus
+from utils.timezone_utils import format_ist_from_iso
 
 logger = get_logger(__name__)
 
@@ -461,7 +462,11 @@ def build_clinical_report(
         "sequence_context": _sequence_context(ir, raw),
         "recommendations": ir.get("recommendations", []),
         "limitations": _limitations(ir),
+        # Ruling (A), 2026-09-11: `references` is ONLY what this run used;
+        # the unconditional licence notices are their own block. See
+        # `DATA_ATTRIBUTION` / `reference_blocks`.
         "references": _references(ir),
+        "data_attribution": list(DATA_ATTRIBUTION),
         "evidence_sources": ir.get("evidence_sources", []),
     }
 
@@ -1058,17 +1063,255 @@ def _limitations(ir: Dict[str, Any]) -> List[str]:
     return limitations
 
 
+# RULING (A), human via god 2026-09-11 (card HUMAN-DECISION-THE-REFERENCES-
+# LIST-CONFLATES-...): the sources a run USED and the licence notices the
+# product attributes UNCONDITIONALLY are two different claims and are rendered
+# as two labelled blocks on every surface. Until then `_references()` appended
+# Orphanet and AlphaFold to the gated list, so a run that used only HPO and
+# ClinVar listed four "References", two of which it never consulted -- "a
+# fabricated citation in the exact place a reader goes to check everything
+# else." The headings are the ruled wording; the notices' own text is
+# unchanged.
+EVIDENCE_SOURCES_USED_HEADING = "Evidence sources used in this run"
+DATA_ATTRIBUTION_HEADING = "Data attribution"
+NO_EVIDENCE_SOURCES_TEXT = "No evidence sources contributed to this variant's interpretation."
+
+# Fixed licence notices, attributed in every report -- see `_ORPHANET_REFERENCE`
+# and `_ALPHAFOLD_REFERENCE` above for why each is unconditional. Order kept
+# from the old single list (Orphanet, then AlphaFold).
+DATA_ATTRIBUTION = (_ORPHANET_REFERENCE, _ALPHAFOLD_REFERENCE)
+
+
 def _references(ir: Dict[str, Any]) -> List[str]:
+    """Only the sources this variant's evidence actually came from (gated on
+    `evidence_sources`). The unconditional licence notices are NOT in here any
+    more -- they are `DATA_ATTRIBUTION`, carried as the clinical report's
+    separate `data_attribution` key."""
     sources = ir.get("evidence_sources", [])
-    references = [_REFERENCES[s] for s in sources if s in _REFERENCES]
-    # Orphanet and AlphaFold are cited unconditionally, not gated on `evidence_sources`
-    # -- see their respective _*_REFERENCE comments for why. Appended after
-    # the conditional entries, rather than merged into `_REFERENCES` itself,
-    # so that dict's docstring-documented "only what actually contributed to
-    # this variant" contract stays true for every other entry in it.
-    references.append(_ORPHANET_REFERENCE)
-    references.append(_ALPHAFOLD_REFERENCE)
-    return references
+    return [_REFERENCES[s] for s in sources if s in _REFERENCES]
+
+
+def reference_blocks(clinical: Optional[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
+    """
+    `(evidence_sources_used, data_attribution)` for one variant's clinical
+    report -- the ONE place every renderer (Markdown, full PDF, short PDF)
+    gets its two blocks from, so they cannot drift.
+
+    The attribution notices are filtered out of `references` rather than
+    trusted to be absent: a `geper_results.json` written before the split
+    carries them mixed into that list, and `review/signoff.py` re-renders
+    stored documents. Without the filter a re-rendered legacy document would
+    list Orphanet/AlphaFold as sources the run used -- the exact claim the
+    ruling removes. Attribution itself is the fixed tuple, not read from the
+    document: it is unconditional by design, so there is nothing per-run to
+    read.
+    """
+    references = (clinical or {}).get("references") or []
+    evidence = [r for r in references if r not in DATA_ATTRIBUTION]
+    return evidence, list(DATA_ATTRIBUTION)
+
+
+# ---------------------------------------------------------------------------
+# Revision traceability (amendment / supersession / re-analysis)
+#
+# Card HUMAN-CLINICAL-report-revision-traceability-...: RULED 2026-09-10
+# "SURFACE IT" ("Amended and reanalysed reports must say so ON THE PAGE, with
+# the reason retrievable"), 2026-09-11 "KEEP THE REASON ON THE PAGE ... APPLY
+# TO TODAY'S GEPER RENDERERS", wording signed off 2026-09-11 (banners 1, 2, 4
+# approved; 3 revised). THE FOUR TEMPLATES BELOW ARE THAT SIGNED-OFF WORDING,
+# VERBATIM. Do not reword them; tests pin them as literals.
+#
+# WHERE THE FACTS COME FROM. The clinical platform (clinical/schema.sql) is
+# the system of record: `amendments` (original_report_id, amendment_report_id,
+# reason NOT NULL, created_at, created_by, supersedes_amendment_id) and
+# `interpretations.parent_interpretation_id` (re-analysis lineage, spec 15.3).
+# This renderer layer has no database access, so a caller holding those rows
+# states them in `document["report_revision"]` (see
+# `normalize_report_revision` for the shape) -- via `JSONResultBuilder(
+# report_revision=...)` or `apply_report_revision()` for a stored document --
+# and every surface renders from that one block.
+#
+# BANNER 3 HAS NO REASON SLOT, DELIBERATELY. `interpretations` has no
+# re-analysis-reason column (`create_reanalysis` takes no reason), so the
+# ruled wording states that structurally ("The system does not record reasons
+# for re-analysis.") rather than as a finding about this report. If a reason
+# column is ever added, the ruling is: render the reason when present and
+# OMIT that sentence when absent -- that is a wording change for this block,
+# not something to bolt on silently.
+# ---------------------------------------------------------------------------
+
+REPORT_REVISION_AMENDED_BANNER = (
+    "THIS IS AN AMENDED REPORT. It amends a report originally issued on {date}. "
+    "Reason for amendment: {reason}. Amended by {who} on {when}."
+)
+REPORT_REVISION_SUPERSEDED_BANNER = (
+    "*** THIS REPORT HAS BEEN SUPERSEDED. An amended report was issued on {when} for the reason below; "
+    "do not act on this document without first obtaining the amended report ({id}). "
+    "Reason for the amendment: {reason}. ***"
+)
+REPORT_REVISION_REANALYSIS_BANNER = (
+    "THIS REPORT IS BASED ON A RE-ANALYSIS of the VCF data underlying interpretation {id}, "
+    "originally interpreted on {date}. The system does not record reasons for re-analysis."
+)
+REPORT_REVISION_REANALYSED_SINCE_BANNER = (
+    "One or more re-analyses of the underlying VCF data exist since this report was issued. This report "
+    "reflects the original analysis only; it has not been retracted or superseded by the re-analysis "
+    "(see spec 15.3 -- re-analysis creates a new branch, it does not replace this one)."
+)
+
+_REVISION_REQUIRED_FIELDS = {
+    "amends": ("original_report_id", "original_issued_at", "reason", "amended_by", "amended_at"),
+    "superseded_by": ("amendment_report_id", "amended_at", "reason"),
+    "reanalysis_of": ("parent_interpretation_id", "parent_interpreted_at"),
+}
+
+
+def _revision_value(value: Any) -> Any:
+    """JSON-safe copy of one field: datetimes/dates/UUIDs become strings."""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _revision_block(kind: str, block: Any) -> Optional[Dict[str, Any]]:
+    if not block:
+        return None
+    if not isinstance(block, dict):
+        raise ValueError(f"report_revision.{kind} must be an object, got {type(block).__name__}")
+    out = {k: _revision_value(v) for k, v in block.items()}
+    # FAIL CLOSED. Every one of these is NOT NULL in the clinical schema, so
+    # a block missing one is corrupted input. Rendering it anyway would print
+    # an amendment with a blank reason, or -- worse -- let a caller's partial
+    # dict fall through to "no banner", which is an amended report reading as
+    # an original: the exact failure this block exists to prevent.
+    missing = [f for f in _REVISION_REQUIRED_FIELDS[kind] if not str(out.get(f) or "").strip()]
+    if missing:
+        raise ValueError(f"report_revision.{kind} is missing required field(s) {missing}; refusing to render it")
+    return out
+
+
+def _revision_date(value: str) -> str:
+    return format_ist_from_iso(value, "%Y-%m-%d")
+
+
+def _revision_when(value: str) -> str:
+    return format_ist_from_iso(value)
+
+
+def _revision_reason(value: str) -> str:
+    # The template supplies the sentence's closing period; strip one the
+    # author typed so it never renders as "..variant..". Wording untouched.
+    reason = str(value).strip()
+    return reason[:-1].rstrip() if reason.endswith(".") else reason
+
+
+def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
+    """
+    Validate a caller's revision facts and return the block written to
+    `document["report_revision"]`, or `None` when none were supplied.
+
+    Input (every key optional; an absent/empty key means "not in that
+    state"):
+      amends:          {original_report_id, original_issued_at, reason,
+                        amended_by, amended_at}      -- banner 1
+      superseded_by:   {amendment_report_id, amended_at, reason}  -- banner 2
+      reanalysis_of:   {parent_interpretation_id, parent_interpreted_at}
+                                                       -- banner 3
+      reanalysed_since: list of {interpretation_id, created_at}, non-empty
+                        when any re-analysis branches from this report's
+                        interpretation                -- banner 4
+
+    Output adds the machine-readable flags (`is_amendment`, `is_superseded`,
+    `is_reanalysis`, `has_been_reanalysed`) and `banners`, the rendered text
+    in display order. Superseded comes FIRST: "do not act on this document"
+    outranks every other statement on the page.
+
+    `None` stays `None` -- NOT an all-false block. A pipeline run cannot know
+    whether the clinical platform will later store it as a re-analysis, so an
+    unsupplied state must not read as "not a re-analysis". An explicitly
+    supplied block with no state (`{}`) is all-false with no banners.
+
+    Raises `ValueError` on a state block missing a required field (see
+    `_revision_block`).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"report_revision must be an object, got {type(raw).__name__}")
+
+    amends = _revision_block("amends", raw.get("amends"))
+    superseded_by = _revision_block("superseded_by", raw.get("superseded_by"))
+    reanalysis_of = _revision_block("reanalysis_of", raw.get("reanalysis_of"))
+    reanalysed_since_raw = raw.get("reanalysed_since") or []
+    if not isinstance(reanalysed_since_raw, list):
+        raise ValueError("report_revision.reanalysed_since must be a list")
+    reanalysed_since = [
+        {k: _revision_value(v) for k, v in item.items()} if isinstance(item, dict) else _revision_value(item)
+        for item in reanalysed_since_raw
+    ]
+
+    banners: List[str] = []
+    if superseded_by:
+        banners.append(
+            REPORT_REVISION_SUPERSEDED_BANNER.format(
+                when=_revision_when(superseded_by["amended_at"]),
+                id=superseded_by["amendment_report_id"],
+                reason=_revision_reason(superseded_by["reason"]),
+            )
+        )
+    if amends:
+        banners.append(
+            REPORT_REVISION_AMENDED_BANNER.format(
+                date=_revision_date(amends["original_issued_at"]),
+                reason=_revision_reason(amends["reason"]),
+                who=amends["amended_by"],
+                when=_revision_when(amends["amended_at"]),
+            )
+        )
+    if reanalysis_of:
+        banners.append(
+            REPORT_REVISION_REANALYSIS_BANNER.format(
+                id=reanalysis_of["parent_interpretation_id"],
+                date=_revision_date(reanalysis_of["parent_interpreted_at"]),
+            )
+        )
+    if reanalysed_since:
+        banners.append(REPORT_REVISION_REANALYSED_SINCE_BANNER)
+
+    return {
+        "is_amendment": amends is not None,
+        "is_superseded": superseded_by is not None,
+        "is_reanalysis": reanalysis_of is not None,
+        "has_been_reanalysed": bool(reanalysed_since),
+        "amends": amends,
+        "superseded_by": superseded_by,
+        "reanalysis_of": reanalysis_of,
+        "reanalysed_since": reanalysed_since,
+        "banners": banners,
+    }
+
+
+def apply_report_revision(document: Dict[str, Any], revision: Any) -> Dict[str, Any]:
+    """Stamp validated revision facts onto an already-built (e.g. stored and
+    reloaded) document before re-rendering it. Returns the same dict."""
+    document["report_revision"] = normalize_report_revision(revision)
+    return document
+
+
+def report_revision_banners(document: Optional[Dict[str, Any]]) -> List[str]:
+    """
+    The banner texts every renderer prints at the top of the document, in
+    display order; `[]` when the document carries no revision state (absent
+    key, `null`, or a block in no state) -- the negative case renders nothing.
+
+    Re-derived from the block's FACTS on every render rather than trusting a
+    stored `banners` list, so a hand-edited or stale document cannot print
+    wording that differs from the signed-off templates above.
+    """
+    normalized = normalize_report_revision((document or {}).get("report_revision"))
+    return normalized["banners"] if normalized else []
 
 
 # ---------------------------------------------------------------------------

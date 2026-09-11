@@ -359,6 +359,11 @@ class TestGenerateShortPdf(unittest.TestCase):
         # `report/clinical_report_builder.py::_references()` already
         # gates on `evidence_sources` -- never a static catalogue this
         # module invents on its own.
+        #
+        # Heading REPLACED per ruling (A) on the references-list card
+        # (2026-09-11): the gated list is now labelled "Evidence sources
+        # used in this run", separate from the "Data attribution" block
+        # of fixed licence notices.
         alphamissense_ref = (
             "AlphaMissense -- Cheng et al. 2023, Science (DOI: 10.1126/science.adg7492); "
             "Copyright (2023) DeepMind Technologies Limited, available under CC-BY-4.0."
@@ -371,8 +376,12 @@ class TestGenerateShortPdf(unittest.TestCase):
             out = os.path.join(tmp, "short.pdf")
             generate_short_pdf(doc, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertIn("References:", text)
-        self.assertIn("AlphaMissense", text)
+        self.assertNotIn("References:", text)
+        flat = " ".join(text.split())
+        self.assertIn("Evidence sources used in this run:", flat)
+        self.assertIn("AlphaMissense", flat)
+        self.assertLess(flat.index("Evidence sources used in this run:"), flat.index("AlphaMissense"))
+        self.assertLess(flat.index("AlphaMissense"), flat.index("Data attribution:"))
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
     def test_references_absent_when_run_never_used_that_source(self):
@@ -389,8 +398,9 @@ class TestGenerateShortPdf(unittest.TestCase):
             out = os.path.join(tmp, "short.pdf")
             generate_short_pdf(doc, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertIn("References: No evidence sources contributed", text)
-        self.assertNotIn("AlphaMissense", text)
+        flat = " ".join(text.split())
+        self.assertIn("Evidence sources used in this run: No evidence sources contributed", flat)
+        self.assertNotIn("AlphaMissense", flat)
 
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")

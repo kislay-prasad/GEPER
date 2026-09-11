@@ -664,7 +664,7 @@ async def _save_upload(file: UploadFile, allowed_suffixes: tuple) -> str:
                 )
             out.write(chunk)
 
-    logger.info("Uploaded file: %s → %s (%d bytes)", file.filename, dest.name, written)
+    logger.info("Uploaded file: %s -> %s (%d bytes)", file.filename, dest.name, written)
     return str(dest)
 
 

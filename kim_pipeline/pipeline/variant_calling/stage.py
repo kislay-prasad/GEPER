@@ -179,7 +179,7 @@ class VariantCallingStage:
                     else:
                         if _norm_result.returncode == 0:
                             logger.info(
-                                "[%s] bcftools norm complete: left-aligned and trimmed indels → %s",
+                                "[%s] bcftools norm complete: left-aligned and trimmed indels -> %s",
                                 sample_id,
                                 normalised_vcf_path,
                             )

@@ -332,7 +332,7 @@ class BLASTStage:
 
         blast_version = self._get_version(blastn)
         logger.info(
-            "[%s] BLAST Stage: %s seqs → db=%s (version=%s)",
+            "[%s] BLAST Stage: %s seqs -> db=%s (version=%s)",
             sample_id,
             len(sequences),
             effective_db,

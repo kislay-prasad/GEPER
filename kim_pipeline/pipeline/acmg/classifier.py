@@ -284,7 +284,7 @@ class AcmgClassifier:
             explanation=explanation,
         )
         logger.info(
-            "[ACMG] %s:%d %s>%s gene=%s → %s (score=%.4f) criteria_met=%s criteria_unknown=%s",
+            "[ACMG] %s:%d %s>%s gene=%s -> %s (score=%.4f) criteria_met=%s criteria_unknown=%s",
             evidence.chrom,
             evidence.pos,
             evidence.ref,

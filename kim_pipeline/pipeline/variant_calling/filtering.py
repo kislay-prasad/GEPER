@@ -111,7 +111,7 @@ def apply_pass_filter(
     input_counts = _parse_variant_counts(input_vcf)
     norm_counts = _parse_variant_counts(normalized_vcf)
     logger.info(
-        "bcftools norm: %d input records → %d normalized records",
+        "bcftools norm: %d input records -> %d normalized records",
         input_counts["records"],
         norm_counts["records"],
     )

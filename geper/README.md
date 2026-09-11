@@ -1142,7 +1142,7 @@ three):
 | torch | 2.7.1 | flash-attn (Evo2 only) is compiled against this exact ABI |
 | torchvision | 0.22.1 | Must match the torch pin exactly, or import fails with "undefined symbol" |
 | torchaudio | 2.7.1 | Not imported by Bij AI itself, but pinned defensively — see the troubleshooting row below |
-| transformers | ≥5.12.1,<6.0.0 | |
+| transformers | 4.56.2 | Exactly what the shipped image runs (Dockerfile's last-wins pin): Enformer needs exactly 4.56.2, Borzoi <5. Was a 5.x range until 2026-09-11, which the image never satisfied |
 | accelerate | ≥1.14.0,<2.0.0 | |
 | tensorflow | ≥2.16.0,<3.0.0 | MMSplice only |
 

@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 # Passed to every auto-install as `pip install --constraint <this file>`
 # (see `ensure_pip_package_available` below). requirements.txt already
 # carries every version pin GEPER's own core stack actually depends on
-# (torch==2.7.1, transformers>=5.12.1,<6.0.0, torchvision==0.22.1, ...),
+# (torch==2.7.1, transformers==4.56.2, torchvision==0.22.1, ...),
 # so pointing pip's own constraint-resolution at it -- rather than
 # hand-maintaining a second, parallel list of "packages that must not
 # move" -- makes pip itself refuse (clean non-zero exit, no partial

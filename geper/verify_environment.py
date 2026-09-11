@@ -69,8 +69,9 @@ EXPECTED = {
     "torch": "2.7.1",
     "torchvision": "0.22.1",
     "torchaudio": "2.7.1",
-    "transformers_min": "5.12.1",
-    "transformers_max_exclusive": "6.0.0",
+    # Exact, not a range: the version the shipped image runs (Dockerfile's
+    # last-wins pin; requirements.txt matches it -- human ruling 2026-09-11).
+    "transformers": "4.56.2",
     "accelerate_min": "1.14.0",
     "accelerate_max_exclusive": "2.0.0",
     "tensorflow_min": "2.16.0",
@@ -272,18 +273,19 @@ def check_transformers() -> CheckResult:
             "transformers",
             "FAIL",
             "transformers is not installed.",
-            fix=f"pip install 'transformers>={EXPECTED['transformers_min']},<{EXPECTED['transformers_max_exclusive']}'",
+            fix=f"pip install transformers=={EXPECTED['transformers']}",
         )
     import transformers  # noqa: WPS433
 
-    if _in_range(transformers.__version__, EXPECTED["transformers_min"], EXPECTED["transformers_max_exclusive"]):
+    if transformers.__version__.split("+")[0] == EXPECTED["transformers"]:
         return CheckResult("transformers", "PASS", f"transformers {transformers.__version__} detected.")
     return CheckResult(
         "transformers",
         "FAIL",
-        f"transformers {transformers.__version__} detected; Bij AI requires "
-        f">={EXPECTED['transformers_min']},<{EXPECTED['transformers_max_exclusive']}.",
-        fix=f"pip install 'transformers>={EXPECTED['transformers_min']},<{EXPECTED['transformers_max_exclusive']}'",
+        f"transformers {transformers.__version__} detected; Bij AI pins "
+        f"{EXPECTED['transformers']} -- the version the shipped image runs "
+        f"(see requirements.txt for why).",
+        fix=f"pip install transformers=={EXPECTED['transformers']}",
     )
 
 

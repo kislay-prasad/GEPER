@@ -187,6 +187,12 @@ class BorzoiPlugin(PluginModel):
                 "load anything else. See this module's docstring."
             )
 
+        # UPDATE 2026-09-11: requirements.txt now pins `transformers==4.56.2`
+        # (what the shipped image runs -- human ruling), not the
+        # `>=5.12.1,<6.0.0` described below. The conclusion is unchanged:
+        # borzoi-pytorch 0.5.1's `>=4.57.6,<5.0.0` still has zero overlap
+        # with the pin, so the constrained auto-install is still refused.
+        #
         # MANUAL INSTALL REQUIRED IN A CORRECTLY-PINNED ENVIRONMENT -- BY
         # DESIGN, NOT A BUG. Same class of conflict as enformer_plugin.py's
         # identical note -- confirmed independently for this package, not

@@ -264,8 +264,11 @@ RUN pip install --no-cache-dir /tmp/torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x
 #       "transformers[torch]==4.56.2"   <- EXACT pin, no range
 #   - borzoi-pytorch==0.5.1   (latest) requires_dist:
 #       "transformers<5.0.0,>=4.57.6"   <- floor is ABOVE 4.56.2
-#   - geper/requirements.txt (and geper/GEPER_Colab.ipynb) both currently
-#     pin "transformers>=5.12.1,<6.0.0" -- satisfies NEITHER of the above.
+#   - geper/requirements.txt (and geper/GEPER_Colab.ipynb) both pinned
+#     "transformers>=5.12.1,<6.0.0" -- satisfying NEITHER of the above --
+#     until 2026-09-11, when (human ruling) both were changed to
+#     "transformers==4.56.2", the version this image ships (see the final
+#     pin below; geper/tests/test_transformers_pin_matches_image.py).
 #
 # These three constraints are mutually exclusive: no single transformers
 # version satisfies enformer-pytorch's exact ==4.56.2 pin AND
@@ -336,15 +339,16 @@ RUN pip install --no-cache-dir "mmsplice==2.4.0" --no-deps
 # --- Final, authoritative transformers pin ------------------------------
 # Must be the LAST pip install touching transformers: guarantees this
 # exact version wins regardless of what any package installed above
-# (geper/requirements.txt's own >=5.12.1 pin, enformer-pytorch's own
-# ==4.56.2 pin which should already land here anyway, or anything else's
-# transitive resolution) actually resolved to.
+# (geper/requirements.txt's own pin, enformer-pytorch's own ==4.56.2 pin
+# which should already land here anyway, or anything else's transitive
+# resolution) actually resolved to.
 #
-# ACTION NEEDED, flagged for the user rather than silently done here:
-# geper/requirements.txt and geper/GEPER_Colab.ipynb should probably be
-# updated to match this pin (or this override removed, if a future
-# decision goes the other way) -- see this Dockerfile's file-level
-# docstring and DOCKER.md "Known open questions" for the full writeup.
+# RESOLVED 2026-09-11 (human ruling: "Bring the requirement in line with
+# the image"): geper/requirements.txt and geper/GEPER_Colab.ipynb now pin
+# transformers==4.56.2, matching this line. THIS LINE IS THE AUTHORITY:
+# geper/tests/test_transformers_pin_matches_image.py reads the version
+# from here and fails if requirements.txt, verify_environment.py, the
+# Colab notebook or the README matrix disagree with it.
 # geper/pipeline/models/enformer_plugin.py's `all_tied_weights_keys`
 # monkey-patch (its own `_load_impl`) is an `if not hasattr(...)` no-op
 # guard and does nothing under transformers 4.x -- harmless either way,

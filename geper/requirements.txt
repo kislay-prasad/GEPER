@@ -53,7 +53,16 @@
 # CPU-only development machines (no Evo2) can instead install plain
 # `torch==2.7.1` from PyPI -- everything else in this file works identically.
 torch==2.7.1
-transformers>=5.12.1,<6.0.0
+# transformers is pinned to EXACTLY what the shipped image runs (the
+# Dockerfile's last-wins `pip install "transformers==4.56.2"`), by human
+# ruling 2026-09-11: "The image is what ships, so a requirements file
+# demanding a version the runtime doesn't have is a claim about the product
+# that the product contradicts." Why the image needs 4.56.2: enformer-pytorch
+# 0.8.12 hard-pins transformers==4.56.2 and borzoi-pytorch requires <5 --
+# neither runs on 5.x (see the Dockerfile's transformers writeup). This line
+# was `>=5.12.1,<6.0.0` until then, a range the image never satisfied.
+# tests/test_transformers_pin_matches_image.py fails if the two diverge again.
+transformers==4.56.2
 accelerate>=1.14.0,<2.0.0
 
 # einops is pinned to exactly 0.8.1 (not left as a loose >=) because Evo2's

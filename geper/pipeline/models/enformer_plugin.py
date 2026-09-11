@@ -173,6 +173,12 @@ class EnformerPlugin(PluginModel):
         self._weight_cache = WeightCache()
 
     def _load_impl(self) -> None:
+        # UPDATE 2026-09-11: requirements.txt now pins `transformers==4.56.2`
+        # (what the shipped image runs -- human ruling), which IS
+        # enformer-pytorch's own pin, so the constrained auto-install below
+        # is no longer refused on transformers' account. The paragraph below
+        # describes the earlier `>=5.12.1,<6.0.0` pin and is kept as history.
+        #
         # MANUAL INSTALL REQUIRED IN A CORRECTLY-PINNED ENVIRONMENT -- BY
         # DESIGN, NOT A BUG. `enformer-pytorch` cannot be acquired through
         # the auto-install call below in any environment holding GEPER's

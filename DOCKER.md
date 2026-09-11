@@ -168,8 +168,8 @@ assumed):
 
 | Package | Version | Declared `transformers` requirement |
 |---|---|---|
-| `geper/requirements.txt` (committed) | — | `>=5.12.1,<6.0.0` |
-| `geper/GEPER_Colab.ipynb` (committed) | — | `>=5.12.1,<6.0.0` |
+| `geper/requirements.txt` (committed) | — | `>=5.12.1,<6.0.0` at the time; `==4.56.2` since 2026-09-11 |
+| `geper/GEPER_Colab.ipynb` (committed) | — | `>=5.12.1,<6.0.0` at the time; `==4.56.2` since 2026-09-11 |
 | `enformer-pytorch` | 0.8.12 (latest) | `==4.56.2` **exactly** |
 | `borzoi-pytorch` | 0.5.1 (latest) | `>=4.57.6,<5.0.0` |
 
@@ -197,7 +197,12 @@ declares support for.**
    *other* conflict listed there is new and worth investigating.
 
 **Action needed from you, not resolved here:**
-- `geper/requirements.txt` and `geper/GEPER_Colab.ipynb` should probably
+- RESOLVED 2026-09-11 (human ruling: "Bring the requirement in line with
+  the image"): both now pin `transformers==4.56.2`, and
+  `geper/tests/test_transformers_pin_matches_image.py` fails if they,
+  `verify_environment.py` or the README matrix drift from the Dockerfile's
+  pin again. Original note, kept as history:
+  `geper/requirements.txt` and `geper/GEPER_Colab.ipynb` should probably
   be updated to `transformers==4.56.2` (or a compatible range) to match
   reality — left untouched in this pass since it's a substantive,
   debatable change outside "containerize with Docker."

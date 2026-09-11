@@ -212,10 +212,17 @@ RUN git config --global advice.detachedHead false \
 # torch/transformers/numpy stack is an OPTIONAL `[ai]` extra
 # (kim_pipeline/pyproject.toml) that is commented out of kim_pipeline's own
 # requirements.txt and is never installed here. This is also consistent
-# with how this image actually uses Kim: bridge/combined_pipeline.py always
+# with how the bridge path uses Kim: bridge/combined_pipeline.py always
 # runs Kim with `mode="vcf_only"`, so Kim's own AI/annotation/reporting
-# stages (the ones that would want the `[ai]` extra) are never invoked
-# through this image at all -- see README_INTEGRATION.md.
+# stages (the ones that would want the `[ai]` extra) are never invoked BY
+# THE BRIDGE PATH -- see README_INTEGRATION.md. They ARE reachable from this
+# image: kim_pipeline/api/main.py calls `runner.run()` without a mode, so it
+# gets the runner's default `mode="full"` (pipeline/orchestration/runner.py),
+# and Kim's own CLI defaults to `--mode full` (kim_pipeline/main.py). Both
+# are installed in this same venv, so anyone who starts Kim directly in a
+# container from this image hits the live AI path. (Corrected 2026-09-11,
+# god's ruling under the human's #8: the earlier wording, "never invoked
+# through this image at all", was a claim about the image and was false.)
 #
 # If kim_pipeline's `[ai]` extra is ever added to its own requirements.txt,
 # or Kim starts being run standalone in full mode from this same image,
@@ -452,7 +459,12 @@ LABEL org.opencontainers.image.title="GEPER" \
 #        absence is ANNOUNCED, not silent: is_available() is False and the
 #        orchestrator lists it with the reason "no 'Rscript' executable
 #        found in this environment". THIS REMOVAL THEREFORE CHANGES WHAT THE
-#        DEFAULT CONFIGURATION PRODUCES: SPiP no longer runs.
+#        DEFAULT CONFIGURATION PRODUCES: SPiP no longer runs. The human was
+#        shown this and ruled "drop SPiP" (2026-09-11); the image therefore
+#        sets GEPER_ENABLE_SPIP=false (below), so reports say SPiP was
+#        DISABLED BY CONFIGURATION rather than that R is missing.
+#        The local-BLAST egress above is being made fail-fast in
+#        blast_client.py on a separate card, not here.
 #
 #    The 143 tracked non-Python files were swept too (prose -- .md/.txt/
 #    .rst/.html -- excluded): 8 name one of these binaries, and none adds a
@@ -599,6 +611,15 @@ ENV PYTHONUNBUFFERED=1
 # module at /app/shared/ remains importable. Without this, Kim's subprocess
 # fails with "ModuleNotFoundError: No module named 'shared'".
 ENV PYTHONPATH=/app:${PYTHONPATH}
+
+# SPiP OFF BY CONFIGURATION (2026-09-11, the human's ruling: "drop SPiP").
+# R is not in this image (see the REMOVED block above), so SPiP cannot run
+# here either way. Without this line every report would explain its absence
+# as "no 'Rscript' executable found in this environment" -- which reads as a
+# missing dependency, an accident. With it, the report says SPiP was
+# "disabled via CONFIG.splicing.ENABLE_SPIP" -- which is what happened: a
+# decision. geper/config.py reads this variable; "false" disables.
+ENV GEPER_ENABLE_SPIP=false
 
 # GEPER_NCBI_EMAIL / GEPER_NCBI_API_KEY are deliberately NOT baked in with
 # real values here (they're per-user credentials, and geper/config.py's

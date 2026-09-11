@@ -102,7 +102,7 @@ from typing import Any, Dict, List, Optional
 
 from config import CONFIG
 from utils.auto_install import PackageCheckStatus, check_pip_package_availability
-from utils.exceptions import ExternalAPIError
+from utils.exceptions import ExternalAPIError, PipelineError
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -399,6 +399,42 @@ class BLASTClient:
             built_db_path = ensure_local_blast_db(self.reference_fasta, self.local_db_path)
             if built_db_path:
                 self.local_db_path = built_db_path
+
+        # Local BLAST configured but `blastn` absent: REFUSE, never fall
+        # through to remote. Ruled 2026-09-11 by god under the human's #21
+        # ("ABSENT is a confirmed missing prerequisite and should kill the
+        # run"): once ncbi-blast+ left the shipped image, a site that set a
+        # local database to keep patient sequence on-premises was silently
+        # resolved to REMOTE by `_resolve_auto_mode` below -- the sequence
+        # left the site under an INFO line that never said a configured
+        # local database had been ignored. An operator who configured local
+        # BLAST did it on purpose; choosing remote for them is an egress
+        # decision nobody made. Every documented local-database source
+        # counts (see the module docstring), not just one variable. Only
+        # "auto" is refused, because only "auto" falls through to remote:
+        # explicit mode="remote" is the operator choosing egress, and
+        # explicit mode="local" never leaves the site (it fails at the first
+        # search, as before). The message names the SOURCE, not the path --
+        # the round-28 rule for this file (see `_search_local`): what's
+        # raised names the failure, never the local filesystem path.
+        if not disabled and mode == "auto" and self.local_db_path and shutil.which("blastn") is None:
+            if local_db_path:
+                local_db_source = "the local_db_path argument (--blast-db)"
+            elif CONFIG.api.BLAST_LOCAL_DB_PATH:
+                local_db_source = next(
+                    (var for var in ("GEPER_BLAST_DATABASE", "GEPER_BLAST_LOCAL_DB") if os.environ.get(var)),
+                    "GEPER_BLAST_DATABASE / GEPER_BLAST_LOCAL_DB",
+                )
+            else:
+                local_db_source = "BLASTDB"
+            raise PipelineError(
+                f"Local BLAST is configured (via {local_db_source}) but the "
+                "`blastn` binary is not on PATH, so local BLAST cannot run. Refusing rather than "
+                "falling back to remote NCBI BLAST, which would send sequence off-site -- a "
+                "decision nobody made for this deployment. Install BLAST+ so `blastn` is on PATH, "
+                f"or unset {local_db_source} and set GEPER_BLAST_MODE=remote to choose remote BLAST "
+                "explicitly."
+            )
 
         if mode == "auto" and not disabled:
             mode = self._resolve_auto_mode(self.local_db_path)

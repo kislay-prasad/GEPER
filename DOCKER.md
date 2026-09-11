@@ -675,6 +675,47 @@ wired up in `docker-compose.yml`.
 
 ---
 
+## Service tiers that exist in this repo but nothing starts
+
+Two things in this codebase run a real, maintained server (not dead
+code, not a placeholder) and are nonetheless started by nothing: no
+`command:` in `docker-compose.yml`, no CI docker step, no systemd
+unit, no Procfile, no other launcher of any kind anywhere in the
+repository. If you came here looking for how to deploy either one,
+the honest answer is that this repository does not currently do so —
+deploying either is a separate decision with its own operational
+design (a supervisor for multiple processes, restart policy, and for
+`geper/api/`, a companion Postgres service and DSN wiring), not a
+one-line fix.
+
+- **`geper/api/`** — the FastAPI structural-annotation app
+  (`api/main.py`) and its two queue workers (`submission_worker.py`,
+  `exception_retry_worker.py`). The root `Dockerfile`'s `CMD
+  ["/bin/bash"]` is a deliberate toolbox choice, not an oversight (see
+  that line's own comment), and `docker-compose.yml`'s one `geper`
+  service inherits it with no `command:` override — so this tier is
+  never reachable through the image or compose as they stand today.
+  Both workers already fail closed without `CLINICAL_DSN` configured
+  (confirmed by `tests/test_worker_clinical_dsn_fail_closed.py`), so
+  the unlaunched state costs nothing if someone runs one by hand.
+- **`clinical/Dockerfile`** — the clinical service image (session
+  auth, exceptions worklist, `/readyz` against a bootstrapped
+  Postgres). Deliberately its own file, for the reasons in its own
+  header comment. It is real and already verified working by actually
+  starting the container and probing it (commit `1b895b3`), but
+  nothing else in this repository — no compose service, no CI job, no
+  other Dockerfile — references it. `docker-compose.yml` also
+  provisions no Postgres service at all, so wiring this in needs a
+  companion database and bootstrap step, not just one compose block.
+
+Ruled 2026-09-11 (human, via god): document this as an unstarted
+toolbox rather than add a launcher — "designing a launcher for
+something nobody starts is building a product decision into
+infrastructure." If either tier is later deployed, that deployment is
+its own decision with its own card, not an extension of this one.
+
+---
+
 ## Environment variables
 
 ### Required for real use

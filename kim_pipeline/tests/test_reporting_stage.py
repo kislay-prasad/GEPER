@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.reporting.stage import ReportingStage
+from pipeline.reporting.stage import ReportingStage, _acmg_to_html_table
 
 
 def _fake_qc() -> dict:
@@ -394,3 +394,70 @@ class TestFix1ReportingPathRegression:
         assert Path(result.html_path).exists(), (
             f"ReportResult.html_path={result.html_path!r} does not exist on disk"
         )
+
+
+class TestAcmgCrashRowDoesNotFabricate:
+    """A per-variant result whose classification stage raised (shared.py's
+    per-variant Exception handler appends {..., "error": ...} with no
+    classification/clinvar_unavailable_reason/gnomad_unavailable_reason keys,
+    by construction) must render as a failure, never as a normal-looking
+    Uncertain_Significance / Found / Found row.
+    """
+
+    def _crashed_item(self):
+        return {
+            "chrom": "17",
+            "pos": 41244936,
+            "ref": "A",
+            "alt": "G",
+            "gene": "BRCA1",
+            "error": "IndexError: list index out of range",
+            "disclaimer": "Exploratory only.",
+        }
+
+    def _normal_item(self):
+        return {
+            "chrom": "13",
+            "pos": 32340000,
+            "ref": "C",
+            "alt": "T",
+            "gene": "BRCA2",
+            "classification": "Pathogenic",
+            "score": "8.5",
+            "criteria_met": ["PS1", "PM2"],
+            "criteria_unknown": [],
+            "clinvar_unavailable_reason": None,
+            "gnomad_af": 0.0001,
+            "gnomad_af_popmax": 0.0002,
+            "final_tier": "Tier1",
+            "composite_score": "0.95",
+            "disclaimer": "Exploratory only.",
+        }
+
+    def test_crashed_row_does_not_render_fabricated_defaults(self):
+        html = _acmg_to_html_table([self._crashed_item()])
+        assert "Uncertain_Significance" not in html, (
+            "a crashed variant must not render the real ACMG category "
+            "'Uncertain_Significance' as if it were a genuine classification"
+        )
+        assert ">Found<" not in html, (
+            "a crashed variant must not render a bare 'Found' for ClinVar/gnomAD "
+            "-- evidence gathering never ran"
+        )
+        assert "Found (frequency not available)" not in html, (
+            "a crashed variant must not render gnomAD's genuine-but-empty-AF "
+            "fallback text -- gnomAD was never queried"
+        )
+
+    def test_crashed_row_renders_the_captured_error(self):
+        html = _acmg_to_html_table([self._crashed_item()])
+        assert "Classification failed" in html
+        assert "IndexError: list index out of range" in html
+
+    def test_normal_row_unaffected_by_the_error_branch(self):
+        """Control: a variant with no `error` key renders exactly as before."""
+        html = _acmg_to_html_table([self._normal_item()])
+        assert "Pathogenic" in html
+        assert "Found" in html
+        assert "AF: 1.00e-04 (popmax: 2.00e-04)" in html
+        assert "Classification failed" not in html

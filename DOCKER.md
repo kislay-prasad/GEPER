@@ -242,6 +242,25 @@ property without either cost — you pay the download once, on first
 real run, and never again across container restarts/recreations as
 long as the volume isn't deleted.
 
+**Named plainly (2026-09-11, human ruling, option C): this section
+describes the DEFAULT image — the one `docker build` actually produces
+from this repo's `Dockerfile` (confirmed: zero hits for
+`model_cache_seed`, `COPY.*model`, or `ARG.*seed` in it). It needs live
+network access on first real use, full stop.** That is a real
+requirement gap against `docs/BIJ_AI_CAPABILITY_AUDIT.md`'s own
+"standing on-premise packaging requirement" (a no-internet deployment
+must ship the weights baked in) — this section's own reasoning for why
+weights are a volume here does not resolve that gap, it explains why
+*this* image chose not to close it. The next section describes the
+*other*, offline-capable image (`geper:bridge-ready`) this design
+tradeoff does not apply to — but that image has no build path in this
+repository (see below): a 4.6 GB artefact that exists on one machine
+only. Building a repo-buildable, weights-baked variant is tracked as an
+open deliverable, not started by this note (see
+PACKAGING-offline-sites-shipped-image-must-contain-model-weights-
+huggingface-acquisition-is-not-an-install-path) — this is a
+documentation correction, not authorization to build one.
+
 ### The offline model-cache seed (`model_cache_seed/`) -- where it lives and how to rebuild it
 
 Everything above describes the *volume* path, which needs a live

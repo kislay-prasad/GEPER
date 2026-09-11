@@ -6,12 +6,12 @@ Bij AI sequencing-analysis component v8 — unified command-line interface.
 
 Subcommands
 ───────────
-  analyze     Full FASTQ → Report pipeline (GEPER primary workflow)
+  analyze     Full FASTQ → Report pipeline (primary workflow)
   vcf         Annotate + classify an existing VCF (skip alignment & variant calling)
   classify    Classify a single variant from CLI flags (ACMG + evidence score)
   serve       Start the FastAPI REST server
   validate    Validate a config file without running the pipeline
-  test        Run the GEPER test suite
+  test        Run the Bij AI sequencing-analysis component test suite
 
 Examples
 ────────
@@ -49,6 +49,10 @@ import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional
+
+# What this component calls itself -- the same import-free constants the
+# reports use (pipeline/reporting/component_identity.py).
+from pipeline.reporting.component_identity import COMPONENT_NAME, PIPELINE_VERSION, SCOPE_LINE
 
 logger = logging.getLogger("geper.main")
 
@@ -93,7 +97,7 @@ def _setup_logging(level: str = "INFO") -> None:
 
 
 def _print_startup_validation(args: argparse.Namespace, cfg: Dict) -> None:
-    """Print the GEPER startup validation banner and run the consolidated
+    """Print the startup validation banner and run the consolidated
     dependency check before Stage 1. Raises DependencyValidationError if a
     required external tool is missing, or FileNotFoundError if --ref/--r1
     don't exist (both are caught by the caller for a clean CLI exit).
@@ -103,9 +107,10 @@ def _print_startup_validation(args: argparse.Namespace, cfg: Dict) -> None:
     """
     from pipeline.utils.dependency_validator import assert_required_dependencies
 
-    print("=" * 30)
-    print("Bij AI Environment Validation")
-    print("=" * 30)
+    banner = f"{COMPONENT_NAME} Environment Validation"
+    print("=" * len(banner))
+    print(banner)
+    print("=" * len(banner))
 
     py_ok = sys.version_info[:2] >= (3, 10)
     print(f"Python     : {sys.version.split()[0]} {'OK' if py_ok else 'UNSUPPORTED (<3.10)'}")
@@ -285,7 +290,7 @@ def cmd_vcf(args: argparse.Namespace) -> int:
     build_detection = warn_if_unsupported_build(str(vcf_path), sample_id=sample_id)
     if build_detection.build and build_detection.build != SUPPORTED_BUILD:
         print(
-            f"  [WARN] Detected genome build {build_detection.build}, but Bij AI only "
+            f"  [WARN] Detected genome build {build_detection.build}, but the {COMPONENT_NAME} only "
             f"supports {SUPPORTED_BUILD}. ClinVar/gnomAD results will be "
             f"coordinate-mismatched. Liftover to {SUPPORTED_BUILD} first.",
             file=sys.stderr,
@@ -508,7 +513,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    """Start the GEPER FastAPI REST server."""
+    """Start the Bij AI sequencing-analysis component FastAPI REST server."""
     _setup_logging(args.log_level)
     try:
         import uvicorn
@@ -555,7 +560,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"Starting Bij AI API server on {args.host}:{args.port} …")
+    print(f"Starting the {COMPONENT_NAME} API server on {args.host}:{args.port} …")
     uvicorn.run(
         "api.main:app",
         host=args.host,
@@ -570,7 +575,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    """Validate a GEPER config file without running anything."""
+    """Validate a config file without running anything."""
     _setup_logging(args.log_level)
     cfg = _load_config(args.config)
 
@@ -608,7 +613,7 @@ def cmd_verify_environment(args: argparse.Namespace) -> int:
 
 
 def cmd_test(args: argparse.Namespace) -> int:
-    """Run the GEPER test suite via pytest."""
+    """Run the Bij AI sequencing-analysis component test suite via pytest."""
     _setup_logging(args.log_level)
     try:
         import pytest
@@ -630,14 +635,13 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    # The same constant the reports print (pipeline/reporting/stage.py
-    # re-exports it), so the CLI and the reports cannot name this component
-    # differently. Import-free module: --version/--help need nothing else.
-    from pipeline.reporting.component_identity import COMPONENT_NAME, PIPELINE_VERSION
-
+    # The same constants the reports print (imported at module top from the
+    # import-free component_identity.py), so the CLI and the reports cannot
+    # name or describe this component differently: the name, then the
+    # ratified scope sentence verbatim.
     parser = argparse.ArgumentParser(
         prog="geper",
-        description=f"{PIPELINE_VERSION} — Genomic Evidence Pipeline with Evidence-based Risk assessment",
+        description=f"{PIPELINE_VERSION}\n{SCOPE_LINE}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=PIPELINE_VERSION)

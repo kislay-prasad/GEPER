@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # resolution decided by a version number went the same way, silently.
 name = "kim-pipeline"
 version = "12.0.0"
-description = "Bij AI — Genomic Evidence Pipeline with Evidence-based Risk assessment (v8)"
+description = "Bij AI sequencing-analysis component v8 — Sequencing analysis from FASTQ: QC, alignment and variant calling, with ACMG classification of the variants called here."
 readme = "docs/INSTALL.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

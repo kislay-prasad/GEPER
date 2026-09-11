@@ -1,6 +1,6 @@
-# Bij AI — External Bioinformatics Tool Installation Guide
+# Bij AI sequencing-analysis component — External Bioinformatics Tool Installation Guide
 
-Bij AI's core pipeline (FASTQ → Alignment → Variant Calling → Annotation →
+The sequencing-analysis component's core pipeline (FASTQ → Alignment → Variant Calling → Annotation →
 Report) depends on a small set of external, non-Python bioinformatics
 binaries. This document explains how to install them on every supported
 platform.
@@ -18,12 +18,12 @@ only**.
 | `freebayes` | **Yes**   | Variant calling                             |
 | `bcftools`  | **Yes**   | VCF normalization and filtering             |
 | `minimap2`  | Optional  | Alternate aligner (only if configured as the active aligner) |
-| `vep`       | Optional  | External Ensembl VEP annotation (Bij AI degrades gracefully without it) |
+| `vep`       | Optional  | External Ensembl VEP annotation (the sequencing-analysis component degrades gracefully without it) |
 
-Before running the pipeline, Bij AI performs a single consolidated
+Before running the pipeline, the sequencing-analysis component performs a single consolidated
 dependency check at startup (see `python main.py verify-environment` and
 the automatic pre-flight check in `python main.py analyze`). If a
-**required** tool is missing, Bij AI fails immediately with one clear
+**required** tool is missing, the sequencing-analysis component fails immediately with one clear
 error listing everything that's missing — it will not fail partway
 through a multi-hour run.
 
@@ -109,7 +109,7 @@ docker run --rm -v "$(pwd)/data:/data" geper:latest analyze \
     --ref /data/GRCh38.fasta --output-dir /data/out
 ```
 
-Using Docker isolates Bij AI from host-level version drift and is the
+Using Docker isolates the sequencing-analysis component from host-level version drift and is the
 most reliable way to guarantee `verify-environment` reports PASS on any
 machine with Docker installed.
 
@@ -136,7 +136,7 @@ which bwa samtools bcftools freebayes minimap2
 
 ## Windows (via WSL2 — recommended)
 
-Native Windows binaries for these tools are not maintained; run Bij AI
+Native Windows binaries for these tools are not maintained; run the sequencing-analysis component
 inside WSL2 (Ubuntu) instead:
 
 1. Install WSL2 and an Ubuntu distribution:
@@ -145,14 +145,14 @@ inside WSL2 (Ubuntu) instead:
    ```
 2. Open the Ubuntu shell and follow the **Ubuntu / Debian** or
    **Conda / Bioconda** instructions above.
-3. Run Bij AI entirely from within the WSL2 shell — do not attempt to mix
+3. Run the sequencing-analysis component entirely from within the WSL2 shell — do not attempt to mix
    native Windows Python with WSL2-installed binaries.
 
 ---
 
 ## VEP (optional)
 
-VEP is optional; Bij AI runs without it (gene-dependent ACMG criteria such
+VEP is optional; the sequencing-analysis component runs without it (gene-dependent ACMG criteria such
 as PM1/PM5/PP2/BP1 will be marked "not_evaluated" rather than failing).
 To install it:
 
@@ -171,7 +171,7 @@ consequence terms and HGVS notation. It is **not** enough to get
 CADD/REVEL/AlphaMissense scores (used for PP3/BP4 computational evidence)
 -- those are separate VEP plugins, and each needs its own data file
 downloaded independently. Leaving them unconfigured is fully supported:
-Bij AI runs VEP without them and those scores simply come back absent
+The sequencing-analysis component runs VEP without them and those scores simply come back absent
 (other PP3/BP4 evidence, and non-computational ACMG criteria, are
 unaffected). To enable them:
 
@@ -181,7 +181,7 @@ unaffected). To enable them:
    - **CADD**: https://cadd.gs.washington.edu/download (`whole_genome_SNVs.tsv.gz` + its `.tbi`, GRCh38)
    - **REVEL**: https://sites.google.com/site/revelgenomics/downloads (pre-formatted VEP plugin release)
    - **AlphaMissense**: https://console.cloud.google.com/storage/browser/dm_alphamissense (`AlphaMissense_hg38.tsv.gz`)
-3. Point Bij AI at both in config:
+3. Point the sequencing-analysis component at both in config:
    ```yaml
    vep:
      dir_plugins: "/home/you/.vep/Plugins"
@@ -191,7 +191,7 @@ unaffected). To enable them:
    ```
 
 A bare plugin name with no data file is not a valid VEP invocation --
-Bij AI only ever requests a plugin when its `*_data` config key is set, so
+The sequencing-analysis component only ever requests a plugin when its `*_data` config key is set, so
 partial setup (e.g. CADD configured, REVEL and AlphaMissense not) is safe
 and simply yields fewer computational scores, not a failure.
 

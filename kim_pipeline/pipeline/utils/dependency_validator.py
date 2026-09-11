@@ -33,6 +33,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from pipeline.reporting.component_identity import COMPONENT_NAME
+
 # ─── Tool registry ─────────────────────────────────────────────────────────────
 # name          -> (candidate executable names, version_args, required?)
 # Some tools have alternate/interchangeable binaries (e.g. bwa vs bwa-mem2);
@@ -90,7 +92,7 @@ TOOL_SPECS: List[ToolSpec] = [
         candidates=("vep",),
         version_args=("--help",),
         required=False,
-        notes="Optional external annotator. Bij AI degrades gracefully without it.",
+        notes=f"Optional external annotator. The {COMPONENT_NAME} degrades gracefully without it.",
     ),
 ]
 
@@ -181,7 +183,7 @@ class DependencyValidationError(RuntimeError):
         message = (
             f"Missing required external tool(s): {missing}.\n\n"
             f"{report.as_table()}\n\n"
-            f"Install missing tools before running Bij AI. See "
+            f"Install missing tools before running the {COMPONENT_NAME}. See "
             f"docs/INSTALL_DEPENDENCIES.md or run ./install_dependencies.sh.\n"
             f"You can also run `python main.py verify-environment` for a full "
             f"environment check."

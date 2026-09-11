@@ -27,12 +27,9 @@ from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED
 # Ratified wording (2026-09-11, Option B): names THIS tree as a component of
 # Bij AI rather than as the whole product. One constant, rendered by both the
 # HTML report (stage.py) and the ReportLab PDF (pdf_report.py), so the two
-# cannot drift. Clinician-facing text -- change only with human sign-off.
-SCOPE_LINE = (
-    "Sequencing analysis from FASTQ — produced by the Bij AI sequencing-analysis "
-    "component (Kim): QC, alignment and variant calling, with ACMG classification "
-    "of the variants called here."
-)
+# cannot drift -- defined in the import-free component_identity.py (so
+# main.py --help can print it too) and re-exported here.
+from pipeline.reporting.component_identity import SCOPE_LINE  # noqa: E402,F401
 
 
 # ─── Patient metadata ───────────────────────────────────────────────────────────

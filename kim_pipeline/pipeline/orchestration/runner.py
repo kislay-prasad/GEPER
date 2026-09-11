@@ -1104,8 +1104,10 @@ class PipelineRunner:
 def _build_cli_parser():
     import argparse
 
+    from pipeline.reporting.component_identity import PIPELINE_VERSION
+
     p = argparse.ArgumentParser(
-        description="Bij AI genomic pipeline: FASTQ → QC → Alignment → Variant Calling "
+        description=f"{PIPELINE_VERSION}: FASTQ → QC → Alignment → Variant Calling "
         "→ Annotation → Report",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1130,7 +1132,8 @@ def _build_cli_parser():
             "'vcf_only' stops after Variant Calling and returns "
             "filtered_variants.vcf, skipping Kim's own annotation/ACMG/"
             "ancestry/reporting stages — used when Kim is feeding "
-            "another interpretation pipeline (e.g. Bij AI)."
+            "another interpretation pipeline (e.g. the Bij AI "
+            "variant-interpretation component (GEPER))."
         ),
     )
     p.add_argument(

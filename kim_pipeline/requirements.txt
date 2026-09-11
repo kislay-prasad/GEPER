@@ -1,4 +1,4 @@
-# Bij AI v8 — Python dependencies
+# Bij AI sequencing-analysis component v8 — Python dependencies
 # Install: pip install -r requirements.txt
 # Or with extras: pip install -e ".[all]"
 

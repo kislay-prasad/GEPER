@@ -86,7 +86,9 @@ class EnvironmentReport:
         return "PASS"
 
     def render(self) -> str:
-        lines = ["=" * 60, "Bij AI Environment Verification", "=" * 60]
+        from pipeline.reporting.component_identity import COMPONENT_NAME
+
+        lines = ["=" * 60, f"{COMPONENT_NAME} Environment Verification", "=" * 60]
         for c in self.checks:
             lines.append(f"[{c.status:7s}] {c.name}: {c.detail}")
         if self.tool_report is not None:

@@ -517,6 +517,95 @@ class TestStatusAndProgress:
         assert "progress_pct" in r.json()
 
 
+class TestStatusAndProgressSnapshotAtomicity:
+    """UNTRACED-kim-api-main-py-mutates-a-run-dict... -- confirmed the same
+    `_RUNS[run_id]` object is written by three unsynchronised execution
+    contexts (a background thread, its done-callback, the request handler
+    itself) with zero locking, and the response comprehension reads multiple
+    keys sequentially from it -- a torn read. Ruled: snapshot-then-serialise,
+    not a lock. These tests drive the exact boundary the fix depends on: a
+    write to `run` that lands AFTER `_snapshot_run` has already been called
+    (standing in for a concurrent writer -- `_run_pipeline_sync` or
+    `_on_done` -- landing mid-response) must NOT reach the response."""
+
+    def _seeded_run(self, run_id: str) -> dict:
+        return {
+            "run_id": run_id,
+            "sample_id": "S01",
+            "status": "running",
+            "stage": "align",
+            "progress_pct": 10.0,
+            "stages_completed": ["qc"],
+            "stages_failed": [],
+            "started_at": None,
+            "finished_at": None,
+            "elapsed_seconds": None,
+            "error": None,
+            "report_json_path": None,
+            "report_html_path": None,
+        }
+
+    def test_status_response_unaffected_by_a_write_landing_after_the_snapshot(
+        self, client, monkeypatch
+    ):
+        import api.main as main_mod
+
+        run_id = "snap-status-1"
+        _RUNS[run_id] = self._seeded_run(run_id)
+        orig_snapshot = main_mod._snapshot_run
+
+        def spy_snapshot(run):
+            snap = orig_snapshot(run)  # the real, pre-mutation snapshot
+            # Stand-in for a concurrent writer (`_run_pipeline_sync`/`_on_done`)
+            # mutating the SHARED object after this point -- which is exactly
+            # what the fix must not let the response see.
+            run["progress_pct"] = 999.0
+            run["stage"] = "CONCURRENT-WRITE-AFTER-SNAPSHOT"
+            return snap
+
+        monkeypatch.setattr(main_mod, "_snapshot_run", spy_snapshot)
+        r = client.get(f"/api/v1/pipeline/{run_id}/status")
+        body = r.json()
+        assert body["progress_pct"] == 10.0, (
+            "response must reflect the snapshot, not a write that landed after it"
+        )
+        assert body["stage"] == "align"
+
+    def test_progress_response_unaffected_by_a_write_landing_after_the_snapshot(
+        self, client, monkeypatch
+    ):
+        import api.main as main_mod
+
+        run_id = "snap-progress-1"
+        _RUNS[run_id] = self._seeded_run(run_id)
+        orig_snapshot = main_mod._snapshot_run
+
+        def spy_snapshot(run):
+            snap = orig_snapshot(run)
+            run["progress_pct"] = 999.0
+            run["stage"] = "CONCURRENT-WRITE-AFTER-SNAPSHOT"
+            return snap
+
+        monkeypatch.setattr(main_mod, "_snapshot_run", spy_snapshot)
+        r = client.get(f"/api/v1/pipeline/{run_id}/progress")
+        body = r.json()
+        assert body["progress_pct"] == 10.0
+        assert body["stage"] == "align"
+
+    def test_snapshot_is_a_distinct_object_decoupled_from_the_source(self):
+        """The property the fix relies on: mutating the source dict after
+        `_snapshot_run` returns must not be visible through the returned copy."""
+        import api.main as main_mod
+
+        run = self._seeded_run("snap-unit-1")
+        snapshot = main_mod._snapshot_run(run)
+        run["progress_pct"] = 12345.0
+        run["stage"] = "mutated-after-snapshot"
+        assert snapshot["progress_pct"] == 10.0
+        assert snapshot["stage"] == "align"
+        assert snapshot is not run
+
+
 # ─── Report download endpoint ─────────────────────────────────────────────────
 
 

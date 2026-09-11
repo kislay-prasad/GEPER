@@ -865,6 +865,23 @@ def _get_run(run_id: str) -> Dict:
     return run
 
 
+def _snapshot_run(run: Dict) -> Dict:
+    """Shallow-copy `run` -- the shared `_RUNS[run_id]` object also written by
+    `_run_pipeline_sync` (a background thread) and `_on_done` (its
+    done-callback) with zero locking. `dict(run)` is a single call that never
+    releases the GIL back to another Python-level thread mid-copy, so the
+    result is a self-consistent view of every key as of one instant, even
+    though nothing here prevents a writer from continuing to mutate `run`
+    itself afterward. Ruled 2026-09-11: "a lock around three unsynchronised
+    contexts invites a fourth that forgets it. Snapshot makes the read atomic
+    by construction rather than by everyone's discipline." A caller must
+    build its response from THIS return value, never from `run` again --
+    reading `run` after taking the snapshot reintroduces the exact torn read
+    this exists to close.
+    """
+    return dict(run)
+
+
 @app.get(
     "/api/v1/pipeline/{run_id}/status",
     tags=["pipeline"],
@@ -880,7 +897,10 @@ async def pipeline_status(
     if run["status"] == "running":
         _refresh_progress_from_checkpoint(run_id, run)
 
-    return RunStatusResponse(**{k: run[k] for k in RunStatusResponse.model_fields if k in run})
+    snapshot = _snapshot_run(run)
+    return RunStatusResponse(
+        **{k: snapshot[k] for k in RunStatusResponse.model_fields if k in snapshot}
+    )
 
 
 @app.get(
@@ -893,11 +913,12 @@ async def pipeline_progress(run_id: str, _auth: None = Depends(_require_api_key)
     run = _get_run(run_id)
     if run["status"] == "running":
         _refresh_progress_from_checkpoint(run_id, run)
+    snapshot = _snapshot_run(run)
     return {
         "run_id": run_id,
-        "status": run["status"],
-        "stage": run.get("stage"),
-        "progress_pct": run["progress_pct"],
+        "status": snapshot["status"],
+        "stage": snapshot.get("stage"),
+        "progress_pct": snapshot["progress_pct"],
     }
 
 

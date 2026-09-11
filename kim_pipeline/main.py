@@ -640,7 +640,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # name or describe this component differently: the name, then the
     # ratified scope sentence verbatim.
     parser = argparse.ArgumentParser(
-        prog="geper",
+        # The installed command's name (pyproject.toml [project.scripts],
+        # kim-pipeline = "main:cli"); was "geper", the platform's name, until
+        # 2026-09-12. Only the usage line and error prefix print it.
+        prog="kim-pipeline",
         description=f"{PIPELINE_VERSION}\n{SCOPE_LINE}",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -800,7 +803,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def cli() -> None:
-    """Main entry point for ``geper`` console script (pyproject.toml)."""
+    """Main entry point for the ``kim-pipeline`` console script (pyproject.toml)."""
     parser = _build_parser()
     args = parser.parse_args()
     sys.exit(args.func(args))

@@ -531,7 +531,31 @@ which, do not assume either").
   evidence for the standing on-premise packaging requirement (a
   deployment with no internet access must ship the model weights baked
   into the image; a deployment that lets each model download on first use
-  cannot function without network access at all, let alone quickly):
+  cannot function without network access at all, let alone quickly).
+
+  **Named plainly (2026-09-11, human ruling on
+  AUDIT-GAP-first-run-model-acquisition-cost, option C): the "Baked
+  image (offline)" column below is `geper:bridge-ready`
+  (`sha256:a8a5fe67...`), a DIFFERENT image from the one the repo's own
+  `Dockerfile` actually builds by default. The default build produces
+  the "First run" column's image — weights are a runtime-downloaded
+  volume (DOCKER.md:215-244's own deliberate design), and `grep -niE
+  "model_cache_seed|COPY.*model|ARG.*seed" Dockerfile` returns zero. The
+  4.6 GB `model_cache_seed/` tree that makes `bridge-ready` offline-
+  capable exists on one machine only, in **no repository**, with no
+  build path that reproduces it (DOCKER.md's own "offline model-cache
+  seed" section). So: THIS REQUIREMENT IS CURRENTLY UNMET BY THE IMAGE
+  THIS REPOSITORY ACTUALLY SHIPS. Ruled (human, via god, 2026-09-11):
+  "softening the audit to match reality is how a requirement disappears
+  without anyone deciding to drop it" — the requirement stands, stated
+  as an OPEN, UNDELIVERED DELIVERABLE, not as already met and not
+  weakened to describe only what exists today. A no-internet site
+  cannot run the default shipped image: ~4.12 GB and ~47 minutes of
+  live network access would be required on first run (see the byte
+  table below), and there is currently no repository-buildable image
+  that avoids this. Building one is a separate, not-yet-authorized
+  piece of work — see PACKAGING-offline-sites-shipped-image-must-
+  contain-model-weights-huggingface-acquisition-is-not-an-install-path.**
 
   | Model    | First run (acquisition-dominated) | Baked image (offline) | Ratio |
   |----------|-----------------------------------:|-----------------------:|------:|

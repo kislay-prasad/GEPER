@@ -10,10 +10,21 @@ report."
 DNABERT-2 and ESM-2 fire independently per variant
 (pipeline/orchestration/shared.py::run_acmg_evidence_batch): DNABERT-2 needs
 ref_sequence/alt_sequence, ESM-2 needs wildtype_aa/mutant_aa. These tests
-drive the real function (mocking only GnomadLookup and AiEngine, the same
-pattern test_fixes_6_to_11.py already uses) and assert `ai_models_used` on
-the returned per-variant record reflects what ACTUALLY ran for that
-variant -- not whether the AI engine was merely constructable.
+drive the real function and assert `ai_models_used` on the returned
+per-variant record reflects what ACTUALLY ran for that variant -- not
+whether the AI engine was merely constructable.
+
+FIXED 2026-09-11 (kelly, then god, then this file): the first version of
+this harness mocked GnomadLookup and AiEngine but left
+pipeline.constraint.lookup.GnomadConstraintLookup live -- it posts to
+gnomad.broadinstitute.org (constraint/lookup.py:39, :362), so every run of
+this file hit gnomAD's real API and CI's result depended on a third party's
+rate limit (kelly reproduced this locally: HTTP 429). Now mocked the same
+way test_consequence_disagreement_report_caveat.py mocks it, AND
+requests.get/requests.post are patched and asserted UNCALLED in every test
+-- a swallowed network error looks exactly like a clean offline run
+otherwise, so the assertion is what actually proves offline rather than
+merely intending it.
 """
 
 from __future__ import annotations
@@ -27,6 +38,7 @@ _ROOT = _HERE.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from pipeline.constraint.lookup import GnomadConstraintLookup  # noqa: E402
 from pipeline.gnomad.lookup import GnomadLookup, GnomadLookupOutcome  # noqa: E402
 from pipeline.orchestration.shared import run_acmg_evidence_batch  # noqa: E402
 
@@ -35,19 +47,29 @@ _CFG = {"gnomad": {"enabled": True}, "clinvar": {"enabled": False}, "vep": {"ena
 
 def _run(variant: dict, ai_engine_factory) -> dict:
     """Runs the real run_acmg_evidence_batch for one variant, with gnomAD
-    short-circuited to UNAVAILABLE (irrelevant to this card) and
+    short-circuited to UNAVAILABLE (irrelevant to this card), the gnomAD
+    constraint lookup stubbed (same three seams
+    test_consequence_disagreement_report_caveat.py stubs), and
     pipeline.ai.engine.AiEngine replaced by `ai_engine_factory`, exactly the
     seam shared.py itself imports through (`from pipeline.ai.engine import
     AiEngine`, inside the function -- so patching the module attribute is
-    what the real call site actually sees)."""
+    what the real call site actually sees). requests.get/requests.post are
+    patched and asserted uncalled -- this run must be offline, provably,
+    not just by omission."""
     base = {"chrom": "17", "pos": 43057051, "ref": "A", "alt": "T", "gene_name": "BRCA1"}
     base.update(variant)
     with (
         patch.object(GnomadLookup, "lookup", return_value=GnomadLookupOutcome.UNAVAILABLE),
         patch.object(GnomadLookup, "lookup_batch", return_value=None),
+        patch.object(GnomadConstraintLookup, "lookup", return_value=None),
+        patch.object(GnomadConstraintLookup, "is_lof_intolerant", return_value=False),
+        patch.object(GnomadConstraintLookup, "is_missense_constrained", return_value=False),
         patch("pipeline.ai.engine.AiEngine", ai_engine_factory),
+        patch("requests.get") as net_get,
+        patch("requests.post") as net_post,
     ):
         batch = run_acmg_evidence_batch([base], _CFG, sample_id="TESTSAMPLE")
+    assert not net_get.called and not net_post.called, "this test must be offline"
     assert len(batch) == 1
     return batch[0]
 

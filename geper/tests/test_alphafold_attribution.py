@@ -132,32 +132,27 @@ class TestRenderedReportsCiteAlphaFold(unittest.TestCase):
         _assert_attribution_present(self, text, "Full PDF (summary.py)")
 
     @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-    def test_short_pdf_has_no_references_section_at_all(self):
+    def test_short_pdf_now_cites_alphafold(self):
         """
-        NOT a regression test for the AlphaFold fix -- a documented,
-        pre-existing scope boundary. `report/summary_short.py` never
-        reads `clinical["references"]` at all (grepped: zero hits) and
-        never renders a References section for ANY source, AlphaFold or
-        otherwise (Orphanet's own unconditional citation is equally
-        absent here). It also never surfaces a distinguishable AlphaFold
-        confidence band, model version, or 3D-viewer URL -- only an
-        aggregate confidence label (`_confidence_text`) that is
-        mathematically influenced by many categories including but not
-        naming AlphaFold. Recorded here as a known, current fact rather
-        than asserted as a defect: whether CC-BY-4.0 requires attribution
-        on a summary view that never names or shows the licensed content
-        directly is a judgment call for whoever owns that decision, not
-        this test. If the short PDF is ever changed to surface AlphaFold
-        content directly (a band, version, or link), this test should be
-        replaced with one requiring attribution there too.
+        SUPERSEDES test_short_pdf_has_no_references_section_at_all, per its
+        own docstring: "If the short PDF is ever changed to surface
+        AlphaFold content directly... this test should be replaced with one
+        requiring attribution there too." That change is this one -- ruling
+        on AM-04-attribution-condition-unresolved, item 2 (human via god,
+        2026-09-11): "YES, THE SHORT PDF NEEDS A REFERENCES SECTION. A
+        sign-off document with zero source attribution is wrong independent
+        of what CC BY 4.0 requires... a clinician signing should be able to
+        see what the conclusion rests on." `report/summary_short.py` now
+        renders the same `references` list the full PDF and Markdown
+        already render (built by `_references()`, which cites AlphaFold
+        unconditionally -- see `_ALPHAFOLD_REFERENCE`'s own comment), so
+        the short PDF must carry the same required attribution substrings.
         """
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "short.pdf")
             generate_short_pdf(_document_with_alphafold_variant(), out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        normalized = _normalize(text)
-        self.assertNotIn("References", normalized)
-        self.assertFalse(any(s in normalized for s in _REQUIRED_SUBSTRINGS))
+        _assert_attribution_present(self, text, "Short PDF (summary_short.py)")
 
 
 if __name__ == "__main__":

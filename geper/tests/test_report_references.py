@@ -184,24 +184,39 @@ class TestFullPdfReferencesRendering(unittest.TestCase):
 
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
-class TestShortPdfDeliberatelyOmitsReferences(unittest.TestCase):
+class TestShortPdfNowRendersReferences(unittest.TestCase):
     """
-    The short-form PDF (`report/summary_short.py`) deliberately excludes
-    limitations/supporting-evidence/reference-style detail sections by
-    design (see that module's own docstring: "no supporting-evidence
-    list, no limitations list ... all of that lives in the full report,
-    which this one names") -- confirming that design holds for the new
-    References content too, rather than assuming it does.
+    SUPERSEDES TestShortPdfDeliberatelyOmitsReferences. Ruling on
+    AM-04-attribution-condition-unresolved, item 2 (human via god,
+    2026-09-11): "YES, THE SHORT PDF NEEDS A REFERENCES SECTION. A
+    sign-off document with zero source attribution is wrong independent
+    of what CC BY 4.0 requires... a clinician signing should be able to
+    see what the conclusion rests on." The short PDF now renders the
+    same References list the full PDF and Markdown already render
+    (`_references()`, gated on `evidence_sources` for conditional
+    entries, unconditional for Orphanet/AlphaFold) -- confirming that
+    holds, rather than assuming it does.
     """
 
-    def test_short_pdf_does_not_render_a_references_section(self):
+    def test_orphanet_and_hpo_appear_in_short_pdf(self):
         document = _document(evidence_sources=["HPO", "ClinVar"])
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "r_short.pdf")
             generate_short_pdf(document, out)
             text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
-        self.assertNotIn("Orphanet", text)
-        self.assertNotIn("References:", text)
+        self.assertIn("References:", text)
+        self.assertIn("Orphanet/Orphadata", text)
+        self.assertIn("Human Phenotype Ontology", text)
+
+    def test_hpo_absent_from_short_pdf_when_not_evaluated(self):
+        document = _document(evidence_sources=["ClinVar"])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "r_short_no_hpo.pdf")
+            generate_short_pdf(document, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertIn("References:", text)
+        self.assertIn("Orphanet/Orphadata", text)
+        self.assertNotIn("Human Phenotype Ontology", text)
 
 
 if __name__ == "__main__":

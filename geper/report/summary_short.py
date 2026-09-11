@@ -7,7 +7,7 @@ the exact `document` shape `report/json_builder.py::JSONResultBuilder.build()`
 produces (or the single-`variant_result` ad hoc shape `generate_pdf`
 also accepts), and reads only fields the full report already reads --
 `clinical_report["executive_summary"]`, `["acmg_classification"]`,
-`["confidence"]`, `interpretation_result["gene_symbol"]`,
+`["confidence"]`, `["references"]`, `interpretation_result["gene_symbol"]`,
 `normalization["hgvs_c"]/["hgvs_g"]`, and `case_prioritization`.
 Nothing here re-derives ACMG classification, confidence, evidence, or
 phenotype ranking, and nothing here gathers new evidence; it is purely
@@ -586,6 +586,29 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
     if flags:
         flow.append(Spacer(1, 1 * mm))
         flow.append(Paragraph("! Reviewer attention: " + "; ".join(flags) + ".", styles["Flag"]))
+
+    # AM-04/#10 ruling (human, 2026-09-11): a dual sign-off document must
+    # show what the classification rests on. `clinical["references"]` is
+    # the SAME list `report/clinical_report_builder.py::_references()`
+    # already computed and `report/report_generator.py`'s Markdown
+    # section 16 already renders -- gated on `evidence_sources`, i.e.
+    # only sources this run actually used, never a static catalogue.
+    references = (clinical or {}).get("references") or []
+    flow.append(Spacer(1, 1 * mm))
+    if references:
+        flow.append(
+            Paragraph(
+                "References: " + "<br/>".join(f"• {esc(r)}" for r in references),
+                styles["Footnote"],
+            )
+        )
+    else:
+        flow.append(
+            Paragraph(
+                "References: No evidence sources contributed to this variant's interpretation.",
+                styles["Footnote"],
+            )
+        )
 
     flow.append(Spacer(1, 3 * mm))
     return flow

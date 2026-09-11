@@ -40,6 +40,7 @@ import uuid
 from pathlib import Path
 
 from pipeline.hpo.utils import is_well_formed_hpo_id
+from report.clinical_report_builder import _QC_METRIC_ORDER
 from shared.process_control import spawn_tracked, kill_process_tree_now
 
 from .submission_store import SubmissionStore
@@ -108,6 +109,48 @@ def _hpo_terms_to_cli_arg(hpo_terms) -> str:
         raise ValueError(f"hpo_terms contained malformed HPO ID(s): {malformed!r} (expected 'HP:#######').")
 
     return ",".join(terms)
+
+
+def _qc_metrics_validated(qc_metrics) -> dict:
+    """
+    Converts the platform's `qc_metrics` JSON -- a flat
+    {metric_name: number} dict, e.g. {"mean_coverage_depth": 45.2} --
+    into the `{"status": "found", "value": float, "reason": None}`-per-
+    metric shape `report/clinical_report_builder.py::_parse_qc_metrics`
+    requires. Raises ValueError, naming exactly what's wrong, on
+    anything that isn't a dict of real numbers keyed by one of
+    `_QC_METRIC_ORDER` -- same "convert, and if conversion fails, RAISE
+    rather than proceed" pattern `_hpo_terms_to_cli_arg` above already
+    applies (2026-09-08 ruling).
+
+    2026-09-11 ruling (PHASE8-bij-interpret, option A): the platform's
+    own tests (geper/api/tests/test_interpretations_api.py:78,
+    test_submission_worker.py:247) use {"depth": 50} as "a normal
+    qc_metrics submission". Written through unconverted, that shape
+    reached `_parse_qc_metrics` as a `.get()` miss on every recognized
+    key and rendered "Not reported by the upstream sequencing/alignment
+    pipeline for this run" about a value that WAS reported -- a FALSE
+    SENTENCE in a clinical report. Option C (aliasing an unrecognized
+    key like "depth" onto "mean_coverage_depth") is deliberately NOT
+    done here: guessing clinical meaning from a key name is how a wrong
+    mapping becomes invisible.
+    """
+    if not isinstance(qc_metrics, dict):
+        raise ValueError(f"qc_metrics must be a JSON object keyed by metric name, got {qc_metrics!r}.")
+
+    unrecognized = [k for k in qc_metrics if k not in _QC_METRIC_ORDER]
+    if unrecognized:
+        raise ValueError(
+            f"qc_metrics contained unrecognized key(s) {unrecognized!r}; "
+            f"recognized metric names are {list(_QC_METRIC_ORDER)!r}."
+        )
+
+    converted = {}
+    for key, value in qc_metrics.items():
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(f"qc_metrics[{key!r}] must be a real number, got {value!r}.")
+        converted[key] = {"status": "found", "value": float(value), "reason": None}
+    return converted
 
 
 class InterpretationWorker:
@@ -258,9 +301,20 @@ class InterpretationWorker:
                 # path. Mirrored here (not reused directly --
                 # that helper is shaped around a kim_pipeline checkpoint
                 # dict, not this submission's already-final qc_metrics dict).
+                #
+                # CONVERT, DO NOT DEGRADE (2026-09-11 ruling, PHASE8-
+                # bij-interpret option A, same pattern as hpo_terms
+                # above): _qc_metrics_validated raises ValueError, caught
+                # by this function's own existing generic `except
+                # Exception` handler below, on any key it doesn't
+                # recognize -- rather than writing the platform's raw
+                # dict through unconverted, which is what let
+                # {"depth": 50} reach `_parse_qc_metrics` as a silent
+                # `.get()` miss and render a false "not reported" for a
+                # value that was, in fact, reported.
                 qc_metrics_path = os.path.join(output_dir, "qc_metrics.json")
                 with open(qc_metrics_path, "w", encoding="utf-8") as fh:
-                    json.dump(submission.qc_metrics, fh)
+                    json.dump(_qc_metrics_validated(submission.qc_metrics), fh)
                 cmd.extend(["--qc-metrics-json", qc_metrics_path])
 
             logger.info(f"Executing: {' '.join(cmd)}")

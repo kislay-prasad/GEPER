@@ -326,7 +326,14 @@ def test_csv_carries_both_columns_and_appends_them_last():
     """
     from report.export_lims import _CSV_COLUMNS
 
-    assert _CSV_COLUMNS[-2:] == ["variant_allele_fraction", "variant_allele_fraction_status"]
+    # Was `_CSV_COLUMNS[-2:] == [...]`. Restated 2026-09-11 when
+    # `reference_assembly` was appended after the pair: what this pins is
+    # that the pair ships adjacent and at the positions it was appended to
+    # -- the message below -- not that nothing may ever follow it. A later
+    # run-level column appended after it leaves those positions unchanged.
+    vaf = _CSV_COLUMNS.index("variant_allele_fraction")
+    assert _CSV_COLUMNS[vaf : vaf + 2] == ["variant_allele_fraction", "variant_allele_fraction_status"]
+    assert vaf == _CSV_COLUMNS.index("run_caveats") + 1, "the pair follows run_caveats directly"
     assert _CSV_COLUMNS.index("run_caveats") < _CSV_COLUMNS.index("variant_allele_fraction"), (
         "appended after the previously-last column, so existing column positions are unchanged"
     )

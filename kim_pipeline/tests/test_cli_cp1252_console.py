@@ -94,7 +94,8 @@ def test_main_help_on_cp1252():
 def test_main_subcommand_help_on_cp1252(sub):
     code, out, err = _run_cp1252([str(_KIM_ROOT / "main.py"), sub, "--help"])
     assert code == 0, err
-    assert f"usage: geper {sub}" in out
+    # Was "usage: geper {sub}": prog renamed to the console-script name 2026-09-12.
+    assert f"usage: kim-pipeline {sub}" in out
 
 
 def test_runner_help_on_cp1252():

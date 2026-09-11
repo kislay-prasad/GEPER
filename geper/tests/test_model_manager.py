@@ -227,6 +227,58 @@ class TestWeightCache(unittest.TestCase):
             missing = Path(d) / "nope.bin"
             self.assertFalse(cache.verify_checksum(missing, "0" * 64))
 
+    def test_verify_checksum_detailed_none_expected_no_actual_computed(self):
+        # No bytes are read when there is nothing to check against -- the
+        # actual hash must be None, not a value nobody asked for.
+        with tempfile.TemporaryDirectory() as d:
+            cache = WeightCache(cache_dir=d)
+            path = Path(d) / "f.bin"
+            path.write_bytes(b"data")
+            result = cache.verify_checksum_detailed(path, expected_sha256=None)
+            self.assertTrue(result.matches)
+            self.assertIsNone(result.actual_sha256)
+
+    def test_verify_checksum_detailed_match_returns_actual_hash(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache = WeightCache(cache_dir=d)
+            path = Path(d) / "f.bin"
+            path.write_bytes(b"hello world")
+            correct = cache.sha256_of(path)
+            result = cache.verify_checksum_detailed(path, correct)
+            self.assertTrue(result.matches)
+            self.assertEqual(result.actual_sha256, correct)
+
+    def test_verify_checksum_detailed_mismatch_still_returns_actual_hash(self):
+        # THE CARD: a mismatch must not discard the hash it computed to
+        # reach that verdict -- this is the value a refusal needs to name.
+        with tempfile.TemporaryDirectory() as d:
+            cache = WeightCache(cache_dir=d)
+            path = Path(d) / "f.bin"
+            path.write_bytes(b"hello world")
+            correct = cache.sha256_of(path)
+            result = cache.verify_checksum_detailed(path, "0" * 64)
+            self.assertFalse(result.matches)
+            self.assertEqual(result.actual_sha256, correct)
+
+    def test_verify_checksum_detailed_missing_file_no_actual_computed(self):
+        with tempfile.TemporaryDirectory() as d:
+            cache = WeightCache(cache_dir=d)
+            missing = Path(d) / "nope.bin"
+            result = cache.verify_checksum_detailed(missing, "0" * 64)
+            self.assertFalse(result.matches)
+            self.assertIsNone(result.actual_sha256)
+
+    def test_verify_checksum_still_bool_and_unchanged(self):
+        # `verify_checksum` itself must keep its exact pre-change contract --
+        # a thin wrapper, bool only, for its existing callers.
+        with tempfile.TemporaryDirectory() as d:
+            cache = WeightCache(cache_dir=d)
+            path = Path(d) / "f.bin"
+            path.write_bytes(b"hello world")
+            correct = cache.sha256_of(path)
+            self.assertIs(cache.verify_checksum(path, correct), True)
+            self.assertIs(cache.verify_checksum(path, "0" * 64), False)
+
     def test_clear_removes_plugin_directory(self):
         with tempfile.TemporaryDirectory() as d:
             cache = WeightCache(cache_dir=d)

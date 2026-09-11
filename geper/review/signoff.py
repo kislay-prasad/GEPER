@@ -232,19 +232,16 @@ def _check_no_model_hash_mismatch(document: Dict[str, Any]) -> None:
     `require_reviewed()`'s own content-hash check just below, which has
     never had an override either.
 
-    WHAT THE MESSAGE NAMES, AND WHAT IT DOES NOT (yet): the model, and the
-    EXPECTED sha256 the cache declared (`cache_declared_sha256` -- the one
-    hash this record actually persists). It does NOT name the ACTUAL
-    observed hash, because nothing in this codebase persists it today:
-    `pipeline/models/cache.py::WeightCache.verify_checksum` computes it
-    (as `actual`, line ~83) purely to compare and log at error level, then
-    discards it -- `pipeline/provenance.py::verify_model_artifact` never
-    receives it back, only the boolean match/no-match, so it never reaches
-    `ResolvedModelArtifact` or this JSON. Threading the actual hash into
-    the persisted record would need a second, separate change to
-    `pipeline/provenance.py`/`pipeline/models/cache.py` -- named here as a
-    real gap against the human's stated design ("the expected and the
-    actual"), not silently worked around.
+    WHAT THE MESSAGE NAMES: the model, the EXPECTED sha256 the cache
+    declared (`cache_declared_sha256`), and -- as of this change -- the
+    ACTUAL observed hash (`observed_sha256`), now persisted by
+    `pipeline/provenance.py::verify_model_artifact` via
+    `WeightCache.verify_checksum_detailed`, which returns the bytes-on-disk
+    hash it computed rather than discarding it after only logging it. A
+    record written before this change (or one where `hash_verification`
+    reached MISMATCH some other way this function does not anticipate) may
+    still lack `observed_sha256`; that case is named explicitly below
+    rather than silently printing `None`.
     """
     checkpoints = document.get("model_checkpoints") or {}
     mismatches: List[Dict[str, Any]] = []
@@ -259,6 +256,7 @@ def _check_no_model_hash_mismatch(document: Dict[str, Any]) -> None:
                 {
                     "name": name,
                     "expected_sha256": artifact.get("cache_declared_sha256"),
+                    "observed_sha256": artifact.get("observed_sha256"),
                     "resolved_path": artifact.get("resolved_path"),
                 }
             )
@@ -270,10 +268,16 @@ def _check_no_model_hash_mismatch(document: Dict[str, Any]) -> None:
         "attest to findings produced by weights that do not match what the model cache declares.",
     ]
     for m in mismatches:
+        if m["observed_sha256"]:
+            observed_clause = f"actual observed sha256 = {m['observed_sha256']!r}"
+        else:
+            # Named, not silently printed as None -- a record written before
+            # `observed_sha256` existed, or one that reached MISMATCH by a
+            # path this function does not anticipate.
+            observed_clause = "actual observed hash is not present in this record"
         lines.append(
             f"  - {m['name']}: expected sha256 (declared by the cache) = {m['expected_sha256']!r}; "
-            f"the actual observed hash was logged at error level by this run and is not stored in "
-            f"this record (cache file: {m['resolved_path']!r})."
+            f"{observed_clause} (cache file: {m['resolved_path']!r})."
         )
     lines.append(
         "This means the cached weights are corrupted or were substituted after this run recorded "

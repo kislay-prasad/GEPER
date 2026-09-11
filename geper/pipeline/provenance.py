@@ -273,6 +273,13 @@ class ResolvedModelArtifact(BaseModel):
     # `observed_sha256`: a reader seeing "observed" would believe the bytes
     # were read, and until `hash_verification is VERIFIED` they were not.
     cache_declared_sha256: Optional[str] = None
+    # The bytes-on-disk hash `verify_model_artifact` actually computed,
+    # populated only when bytes were streamed (VERIFIED or MISMATCH) --
+    # `None` for UNVERIFIABLE/NOT_VERIFIED, where no read happened to
+    # produce one. Previously computed and logged at error level by
+    # `WeightCache.verify_checksum` and then discarded; this is that same
+    # value, kept.
+    observed_sha256: Optional[str] = None
     hash_verification: HashVerification = HashVerification.UNVERIFIABLE
     version_status: VersionStatus = VersionStatus.UNKNOWN
     note: str = ""
@@ -325,11 +332,15 @@ def verify_model_artifact(artifact: ResolvedModelArtifact) -> ResolvedModelArtif
     which is why the free declared hash is what every run records and this is
     reachable rather than automatic.
 
-    THIS IS ALSO THE FIRST PRODUCTION CALLER OF `WeightCache.verify_checksum`,
-    which had none: it existed, carried five test assertions, and was invoked by
-    nothing -- and returns True when `expected_sha256` is None, so it would have
-    passed by default even once wired. Routing through it here gives it both a
-    caller and a non-None expected hash.
+    THIS IS ALSO THE FIRST PRODUCTION CALLER OF `WeightCache.verify_checksum`
+    (via `verify_checksum_detailed`, its bool-plus-actual-hash sibling),
+    which had none: it existed, carried five test assertions, and was invoked
+    by nothing -- and returns True when `expected_sha256` is None, so it would
+    have passed by default even once wired. Routing through it here gives it
+    both a caller and a non-None expected hash. `verify_checksum_detailed`
+    additionally returns the bytes-on-disk hash it computed to reach that
+    verdict, threaded below into `observed_sha256` -- the one this record
+    previously discarded after only logging it.
     """
     if artifact.cache_declared_sha256 is None or artifact.resolved_path is None:
         return artifact.model_copy(
@@ -343,11 +354,15 @@ def verify_model_artifact(artifact: ResolvedModelArtifact) -> ResolvedModelArtif
 
     from pipeline.models.cache import WeightCache
 
-    matches = WeightCache().verify_checksum(Path(artifact.resolved_path), artifact.cache_declared_sha256)
+    checksum_result = WeightCache().verify_checksum_detailed(
+        Path(artifact.resolved_path), artifact.cache_declared_sha256
+    )
+    matches = checksum_result.matches
 
     if matches:
         return artifact.model_copy(
             update={
+                "observed_sha256": checksum_result.actual_sha256,
                 "hash_verification": HashVerification.VERIFIED,
                 # Only now is this HASH_ONLY's own definition -- "a content hash
                 # of the actual bytes used is known" -- actually satisfied.
@@ -367,6 +382,7 @@ def verify_model_artifact(artifact: ResolvedModelArtifact) -> ResolvedModelArtif
     )
     return artifact.model_copy(
         update={
+            "observed_sha256": checksum_result.actual_sha256,
             "hash_verification": HashVerification.MISMATCH,
             # Deliberately NOT HASH_ONLY. A mismatched artifact has no known
             # content hash -- it has a REFUTED one, which is a different thing.

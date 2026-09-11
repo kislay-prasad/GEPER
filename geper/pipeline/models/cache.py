@@ -19,12 +19,23 @@ version of this per plugin.
 
 import hashlib
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from config import CONFIG
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class ChecksumResult(NamedTuple):
+    """What `verify_checksum` discards and `verify_checksum_detailed` keeps:
+    the bytes-on-disk hash it already computed to reach `matches`, not a
+    second read. `actual_sha256` is `None` exactly when no bytes were
+    streamed to produce it (`expected_sha256 is None`, or the file is
+    missing) -- never a placeholder for "not checked"."""
+
+    matches: bool
+    actual_sha256: Optional[str]
 
 
 class WeightCache:
@@ -76,15 +87,29 @@ class WeightCache:
         default pass through here. A new caller must reproduce that
         guard itself -- nothing in this file enforces it.
         """
+        return self.verify_checksum_detailed(path, expected_sha256).matches
+
+    def verify_checksum_detailed(self, path: Path, expected_sha256: Optional[str]) -> "ChecksumResult":
+        """
+        Same rules as `verify_checksum` (see its docstring for the
+        `expected_sha256 is None` / missing-file caveats), but also returns
+        the bytes-on-disk hash this call computed to reach its verdict --
+        the value `verify_checksum` has always thrown away after logging it.
+        Added so `pipeline.provenance.verify_model_artifact` can persist the
+        observed hash into the run's own record instead of leaving it only
+        in this log line; `verify_checksum` itself is UNCHANGED, a thin
+        wrapper over this, kept for its five existing test assertions and
+        any other bool-only caller.
+        """
         if expected_sha256 is None:
-            return True
+            return ChecksumResult(matches=True, actual_sha256=None)
         if not path.is_file():
-            return False
+            return ChecksumResult(matches=False, actual_sha256=None)
         actual = self.sha256_of(path)
         matches = actual.lower() == expected_sha256.lower()
         if not matches:
             logger.error(f"Checksum mismatch for cached weights at '{path}': expected {expected_sha256}, got {actual}.")
-        return matches
+        return ChecksumResult(matches=matches, actual_sha256=actual)
 
     def clear(self, plugin_key: str) -> None:
         directory = self.cache_dir / plugin_key

@@ -365,8 +365,21 @@ def _parse_patient_meta(patient_meta: Optional[Union[Dict[str, Any], str]]) -> D
         disclaimer text) -- that must remain the common case a lab can
         stay in while still having a named clinician review and sign
         off on a report (see `_icmr_ai_disclosure_footer_text`, which
-        reads exactly this field to decide "DRAFT" vs "reviewed by
-        {physician}"). Coupling `physician` to `patient_name` would
+        NAMES this field as the reviewer once `document["review_status"]`
+        has already established that the report is reviewed).
+        CORRECTED 2026-09-11 -- this sentence previously read: "which
+        reads exactly this field to decide \"DRAFT\" vs \"reviewed by
+        {physician}\"". That describes the design this codebase
+        DELIBERATELY REVERSED on 2026-08-21, and it described it as
+        current: when `physician` decided the DRAFT banner, an input
+        file could assert a review that no sign-off had performed.
+        `_icmr_ai_disclosure_footer_text`'s own docstring, ~170 lines
+        above in this same file, has said since then that review state
+        comes from `document["review_status"]` "and from nothing else"
+        and that `physician` is "ATTRIBUTION ONLY". A caveat corrected
+        in one place and left standing in another is worse than an
+        uncorrected one, because the corrected copy is a reader's
+        evidence that someone checked. Coupling `physician` to `patient_name` would
         force a lab to fabricate or attach a real patient name purely
         to unlock sign-off on an otherwise-intentionally-de-identified
         run -- backwards from what de-identification is for. (Earlier

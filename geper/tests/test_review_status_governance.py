@@ -324,10 +324,17 @@ class TestPdfPhysicianCannotSubstituteForSignoff(unittest.TestCase):
         rather than dangerous, but it is the other half of the same bug
         and its behaviour changes under the fix. Deliberately does NOT
         assert what positive text should replace DRAFT (e.g. whether
-        physician becomes pure attribution or something else) -- that
-        wording is an open design question for Kelly/the human per the
-        card, not yet settled; only that the false DRAFT claim on an
-        actually-reviewed report must go away."""
+        physician becomes pure attribution or something else); only that
+        the false DRAFT claim on an actually-reviewed report must go
+        away. CORRECTED 2026-09-11 -- this docstring previously called
+        that wording "an open design question for Kelly/the human per
+        the card, not yet settled". IT WAS SETTLED ON 2026-08-21 and
+        settled the way this test guessed: `review/signoff.py`'s module
+        docstring records that review state now comes from
+        `review_status` and that "`physician` is now attribution only".
+        The assertions below never depended on the open/settled
+        question, which is exactly why the stale half went unnoticed --
+        a green test is no evidence about the prose in it."""
         with tempfile.TemporaryDirectory() as tmp:
             output_dir = _write_run(tmp)
             with open(os.path.join(output_dir, s.RESULTS_FILENAME), encoding="utf-8") as fh:

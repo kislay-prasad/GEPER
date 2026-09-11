@@ -7,11 +7,18 @@ ARCHITECTURE NOTE -- read before wiring this in anywhere: GEPER's
 implemented pipeline (`pipeline/orchestrator.py::GeperPipeline`,
 invoked via `main.py --vcf`) does not itself ingest FASTQ/BAM/CRAM,
 align reads, or call variants -- it consumes an already-called VCF
-only (see `pipeline/vcf_parser.py`). The "9-stage FASTQ-to-report
-pipeline" mentioned in `pipeline/acmg_rules.py`'s PP4 docstring is this
-project's documented *target* architecture; the stages upstream of VCF
-calling (raw-read intake, alignment, variant calling) are not
-implemented anywhere in this codebase today. This module is therefore
+only (see `pipeline/vcf_parser.py`). The stages upstream of VCF
+calling -- raw-read intake, alignment, variant calling -- are not
+implemented anywhere in this codebase.
+CORRECTED 2026-09-11: this paragraph previously attributed a target
+architecture to a phrase, "9-stage FASTQ-to-report pipeline", that it
+said was "mentioned in `pipeline/acmg_rules.py`'s PP4 docstring". THAT
+DOCSTRING DOES NOT CONTAIN THE PHRASE AND NEVER MENTIONS SUCH A
+PIPELINE, and the citation above was the phrase's only occurrence in
+the repository -- a pointer whose only referent was itself. The
+architectural claim it was attached to is true and is kept; the
+citation is dropped rather than repointed, because no file makes that
+claim for me to point at. This module is therefore
 standalone, dependency-free infrastructure for wherever that intake
 eventually happens (a future GEPER stage, or a pre-flight check ahead
 of an external aligner/caller a lab already runs) -- it is intentionally

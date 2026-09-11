@@ -701,6 +701,13 @@ _CSV_COLUMNS = [
     # frequency in `gnomad_global_af` above.
     "variant_allele_fraction",
     "variant_allele_fraction_status",
+    # Run-level genome build (`run.reference_assembly`), repeated in every
+    # row exactly as `run_caveats` is. Ruled 2026-09-11: "put the build on
+    # every rendered surface" -- and this was the one surface without it,
+    # although the LIMS JSON export already carried it. A CSV-only consumer
+    # cannot go and read the JSON for it. Appended last, for the same
+    # column-stability reason as the two entries above.
+    "reference_assembly",
 ]
 
 
@@ -754,6 +761,7 @@ def _csv_row(run: LIMSRun, finding: LIMSFinding) -> Dict[str, Any]:
         # never one without the other -- see that list's comment.
         "variant_allele_fraction": v.variant_allele_fraction,
         "variant_allele_fraction_status": v.variant_allele_fraction_status,
+        "reference_assembly": run.reference_assembly,
     }
 
 

@@ -1881,12 +1881,15 @@ def _build_indian_population_frequency_flowables(
             Paragraph("• 1000 Genomes Project (South Asian, SAS): not queried for this variant.", styles["BulletText"])
         )
     if ipf.get("common_in_indian_population"):
-        threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
-        flow.append(
-            Paragraph(
-                f"! Common in Indian populations (at or above the {threshold_pct} threshold).", styles["StatusWarn"]
-            )
+        # Ruling #18 (2026-09-11): the number only when recorded; `:g` so a
+        # recorded 0.5% is not rounded to a "0%"/"1%" the pipeline never used.
+        recorded_threshold = ipf.get("common_af_threshold")
+        threshold_text = (
+            f"the {recorded_threshold * 100:g}% threshold"
+            if recorded_threshold is not None
+            else "the pipeline's configured threshold"
         )
+        flow.append(Paragraph(f"! Common in Indian populations (at or above {threshold_text}).", styles["StatusWarn"]))
     return flow
 
 
@@ -2562,8 +2565,20 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
                     styles["BulletText"],
                 )
             )
+        elif blast.get("skipped"):
+            flow.append(
+                Paragraph(
+                    f"• BLAST: not run for this variant ({esc(blast.get('reason') or 'no reason recorded')}) -- "
+                    "not evidence of no homology.",
+                    styles["BulletText"],
+                )
+            )
+        elif blast.get("hit_count") is None:
+            flow.append(
+                Paragraph("• BLAST: hit count not recorded -- not evidence of no homology.", styles["BulletText"])
+            )
         else:
-            flow.append(Paragraph(f"• BLAST: {blast.get('hit_count', 0)} homology hit(s)", styles["BulletText"]))
+            flow.append(Paragraph(f"• BLAST: {blast['hit_count']} homology hit(s)", styles["BulletText"]))
         if sequence_context.get("ensembl_note"):
             flow.append(Paragraph(esc(sequence_context["ensembl_note"]), styles["Footnote"]))
 

@@ -535,7 +535,36 @@ RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire
 # shared libraries, not tools whose OUTPUT this pipeline reads. Leaving them
 # free lets apt apply security updates. If that distinction ever stops being
 # true, pin them too.
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa=0.7.17-7+b2 samtools=1.16.1-1 bcftools=1.16-1 tabix=1.16+ds-3 libtabixpp0 libseqlib2 \
+#
+# ── libhts3 IS PINNED, AND IT IS THE EXCEPTION TO THAT RULE (2026-09-11, on
+#    the human's ruling "PIN, AND PIN CI TO WHAT SHIPS"). libhts3 IS htslib,
+#    and htslib is not a library beside the tools -- IT IS THE PART OF THEM
+#    THAT READS AND WRITES THE DATA. samtools, bcftools and tabix link it, and
+#    so does the freebayes binary compiled in the builder stage: `ldd
+#    /usr/local/bin/freebayes` in geper:kelly-master-d249a20 resolves
+#    libhts.so.3 to THIS package. Pinning the four tools while htslib floated
+#    would have pinned the version strings a reader checks and left the
+#    variant caller's own reads free to move underneath them.
+#    VALUE: 1.16+ds-3, measured with dpkg-query in ALL 18 geper and
+#    geper-clinical images on the build host (18 of 18 agree), and on
+#    2026-09-11 confirmed as bookworm's current candidate by `apt-get install
+#    -s` of this exact line in a clean python:3.12-slim-bookworm -- the first
+#    time this pin line has been RESOLVED rather than read. So this pin, too,
+#    changes nothing today. NOTE bookworm is now Debian OLDSTABLE: the day it
+#    moves to archive.debian.org, every pin on this line stops resolving at
+#    once. That is the designed failure described above, arriving all at once.
+#    CI INSTALLS THESE VERSIONS BY READING THEM FROM THIS LINE (see
+#    .github/workflows/pytest.yml) -- change them here and CI follows; there is
+#    no second copy to drift.
+#    NOT PINNED: libhtscodecs2 (1.3.0-4 in the same image), htslib's CRAM codec
+#    library. No production code path in either tree reads CRAM (the only
+#    mention outside tests is raw_input_validator.py recognising the magic
+#    bytes, which does not decode it). If CRAM input is ever accepted, pin it.
+#    AND NOT PINNED: the BUILDER stage's htslib headers, pulled in unversioned
+#    by libvcflib-dev/libseqlib-dev to compile freebayes. The runtime library
+#    above is what executes; the headers are not measured here, because no
+#    builder-stage image is retained on the build host to measure them from.
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa=0.7.17-7+b2 samtools=1.16.1-1 bcftools=1.16-1 tabix=1.16+ds-3 libhts3=1.16+ds-3 libtabixpp0 libseqlib2 \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
     && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends libcurl4 libssl3 zlib1g libbz2-1.0 liblzma5 libncurses6 ca-certificates \

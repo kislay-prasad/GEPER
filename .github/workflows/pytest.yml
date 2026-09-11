@@ -62,22 +62,84 @@ jobs:
       - name: Run mypy over the configured scope
         run: python -m mypy --config-file=mypy.ini
 
+  # ── THIS JOB AND kim_pipeline-tests RUN IN THE PRODUCT'S OWN BASE IMAGE, AND
+  #    THAT IS THE POINT OF THEM (2026-09-11, the human's ruling: "PIN, AND PIN
+  #    CI TO WHAT SHIPS. CI tests what ships; it does not get its own version.")
+  #
+  #    BEFORE THIS, both jobs ran on ubuntu-latest and installed samtools/
+  #    bcftools/tabix unpinned from Ubuntu noble: htslib 1.19. The shipped image
+  #    runs htslib 1.16 from Debian bookworm. THREE MINOR VERSIONS APART, AND
+  #    NOTHING SAID SO -- every green tick was evidence about a machine that
+  #    RESEMBLED the product. And the clinical question -- WHICH VERSION WERE
+  #    THE REPORTS VALIDATED AGAINST -- had no answer while both sides floated.
+  #
+  #    NOW: `container:` is the SAME tag as the Dockerfile's runtime `FROM`, and
+  #    the htslib stack is installed at the versions READ OUT OF THE DOCKERFILE'S
+  #    PINNED LINE, then checked with dpkg-query against that line. There is one
+  #    declaration of these versions, in the Dockerfile. CHANGE THEM THERE.
+  #
+  #    WHAT THIS COSTS, so a later reader does not rediscover it:
+  #    - actions/setup-python is gone from these two jobs: it installs its own
+  #      interpreter, which would be a second Python beside the product's. The
+  #      interpreter is now the base image's own 3.12.x -- the one that ships.
+  #      Its pip cache went with it (`cache: "pip"`).
+  #    - The base tag is not digest-pinned, in the Dockerfile or here. Both
+  #      float TOGETHER, which keeps CI equal to a build made the same day; it
+  #      does not make either reproducible.
+  #    - python:3.12-slim has NO C COMPILER. Measured 2026-09-11 in that image:
+  #      every requirement of geper/, kim_pipeline/ and clinical/ resolves to a
+  #      wheel except antlr4-python3-runtime 4.9.3, which is pure Python and
+  #      built there with no compiler present. A future sdist-only dependency
+  #      WITH C code will fail this job at install. That is correct: it would
+  #      fail the product image the same way.
+  #    - The htslib pins have been RESOLVED (apt-get install -s, 2026-09-11) but
+  #      no image carrying them has been built. If this job fails at the pinned
+  #      install, read the Dockerfile's pin note before touching either file.
   geper-tests:
     name: geper/ pytest
     runs-on: ubuntu-latest
+    container: python:3.12-slim-bookworm
     defaults:
       run:
         working-directory: geper
     env:
       GEPER_DEV_INSECURE: "1"
     steps:
+      # git first, so actions/checkout makes a real clone rather than falling
+      # back to a tarball without .git. `/` because the job's working-directory
+      # (geper) does not exist until the checkout below.
+      - name: Install git
+        working-directory: /
+        run: apt-get update && apt-get install -y --no-install-recommends git
+
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: geper/requirements.txt
+      # IDENTICAL IN kim_pipeline-tests. One declaration of the versions (the
+      # Dockerfile); two copies of this step that read it.
+      - name: Install the SHIPPED htslib stack (versions read from the Dockerfile)
+        working-directory: .
+        run: |
+          PINS=$(tr -d '\r' < Dockerfile | grep -oE '(^| )(samtools|bcftools|tabix|libhts3)=[^ ]+' | tr -d ' ' | sort -u)
+          echo "Dockerfile pins:"; echo "$PINS"
+          N=$(printf '%s\n' "$PINS" | grep -c . || true)
+          NAMES=$(printf '%s\n' "$PINS" | cut -d= -f1 | sort -u | grep -c . || true)
+          if [ "$N" -ne 4 ] || [ "$NAMES" -ne 4 ]; then
+            echo "::error::Expected exactly ONE pinned version each for samtools, bcftools, tabix and libhts3 in the Dockerfile; found $N pin(s) over $NAMES name(s). CI installs what the Dockerfile pins, so it cannot proceed without that line."
+            exit 1
+          fi
+          apt-get update
+          apt-get install -y --no-install-recommends $PINS
+          # What apt ACTUALLY installed, not what was asked for.
+          for p in $PINS; do
+            name=${p%%=*}; want=${p#*=}
+            got=$(dpkg-query -W -f='${Version}' "$name")
+            if [ "$got" != "$want" ]; then
+              echo "::error::$name: installed $got, the Dockerfile pins $want"
+              exit 1
+            fi
+            echo "$name $got == Dockerfile pin"
+          done
+          samtools --version | head -2
 
       - name: Install shared package (subprocess-reachable import resolution)
         working-directory: .
@@ -142,9 +204,6 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
-
-      - name: Install tabix
-        run: sudo apt-get update && sudo apt-get install -y tabix
 
       # Fails loudly if the CUDA stack came back -- the pins above drifting
       # from requirements.txt is the expected way for that to happen, and it
@@ -211,23 +270,47 @@ jobs:
         # report.
         run: python -m pytest tests/ api/tests/ -v -rs
 
+  # Runs in the product's base for the same reason as geper-tests -- see the
+  # note above that job.
   kim_pipeline-tests:
     name: kim_pipeline/ pytest
     runs-on: ubuntu-latest
+    container: python:3.12-slim-bookworm
     defaults:
       run:
         working-directory: kim_pipeline
     steps:
+      - name: Install git
+        working-directory: /
+        run: apt-get update && apt-get install -y --no-install-recommends git
+
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: kim_pipeline/requirements.txt
-
-      - name: Install system binaries (samtools, bcftools)
-        run: sudo apt-get update && sudo apt-get install -y samtools bcftools
+      # IDENTICAL IN geper-tests.
+      - name: Install the SHIPPED htslib stack (versions read from the Dockerfile)
+        working-directory: .
+        run: |
+          PINS=$(tr -d '\r' < Dockerfile | grep -oE '(^| )(samtools|bcftools|tabix|libhts3)=[^ ]+' | tr -d ' ' | sort -u)
+          echo "Dockerfile pins:"; echo "$PINS"
+          N=$(printf '%s\n' "$PINS" | grep -c . || true)
+          NAMES=$(printf '%s\n' "$PINS" | cut -d= -f1 | sort -u | grep -c . || true)
+          if [ "$N" -ne 4 ] || [ "$NAMES" -ne 4 ]; then
+            echo "::error::Expected exactly ONE pinned version each for samtools, bcftools, tabix and libhts3 in the Dockerfile; found $N pin(s) over $NAMES name(s). CI installs what the Dockerfile pins, so it cannot proceed without that line."
+            exit 1
+          fi
+          apt-get update
+          apt-get install -y --no-install-recommends $PINS
+          # What apt ACTUALLY installed, not what was asked for.
+          for p in $PINS; do
+            name=${p%%=*}; want=${p#*=}
+            got=$(dpkg-query -W -f='${Version}' "$name")
+            if [ "$got" != "$want" ]; then
+              echo "::error::$name: installed $got, the Dockerfile pins $want"
+              exit 1
+            fi
+            echo "$name $got == Dockerfile pin"
+          done
+          samtools --version | head -2
 
       - name: Install shared package (subprocess-reachable import resolution)
         working-directory: .

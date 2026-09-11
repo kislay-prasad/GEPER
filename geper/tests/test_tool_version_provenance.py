@@ -261,6 +261,46 @@ class TestOrchestratorCapture(unittest.TestCase):
         self.assertEqual(ast.unparse(calls[0].args[0]), "parser.header_lines")
 
 
+class TestGeperReaderOnAKimStampedVcf(unittest.TestCase):
+    """
+    god's acceptance for the Kim half: a downstream parser still reads the
+    stamped file unchanged. Kim's own suite proves it for `bcftools view`;
+    this proves it for GEPER's own VCFParser -- the reader this pipeline
+    actually uses -- and that the stamps reach the capture THROUGH it.
+    """
+
+    _BODY = (
+        '##INFO=<ID=DP,Number=1,Type=Integer,Description="Total read depth">\n'
+        "##contig=<ID=1,length=249250621>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+        "1\t100\trs1\tA\tG\t50\tPASS\tDP=30\tGT:AD\t0/1:15,15\n"
+        "1\t200\t.\tC\tT,A\t60\tPASS\tDP=41\tGT:AD\t1/2:1,20,20\n"
+    )
+
+    def _parse(self, header_lines):
+        from pipeline.vcf_parser import VCFParser
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "in.vcf")
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write("\n".join(header_lines) + "\n" + self._BODY)
+            parser = VCFParser(path)
+            variants = [v.to_dict() for v in parser.parse()]
+            return parser, variants
+
+    def test_records_are_unchanged_by_the_stamp(self):
+        _, plain = self._parse(_KIM_HEADER)
+        _, stamped = self._parse(_KIM_STAMPED_HEADER)
+        self.assertTrue(plain)
+        self.assertEqual(stamped, plain)
+
+    def test_the_stamps_reach_the_capture_through_the_real_reader(self):
+        parser, _ = self._parse(_KIM_STAMPED_HEADER)
+        stamps = parse_vcf_tool_stamps(parser.header_lines)
+        self.assertEqual(stamps["samtools"], ["1.16.1+htslib-1.16"])
+        self.assertEqual(stamps["aligner"], ["bwa 0.7.17-r1188"])
+
+
 # --- EVERY RENDERED SURFACE THAT CARRIES PROVENANCE: JSON, Markdown, full PDF.
 # (The short PDF carries no provenance section; compare_reports.py consumes
 # the list but renders no report.) Denominator: 3 surfaces.

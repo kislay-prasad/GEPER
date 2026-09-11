@@ -456,7 +456,39 @@ RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire
 # what is already true in place, which is the only kind of pin that is safe to
 # add to a clinical image without re-validating it.
 #
-# *** THE COST, STATED SO NOBODY IS SURPRISED BY IT LATER: A PIN NOBODY
+# ── AND THE PART THAT IS NOT YET TRUE: THIS PINNED LINE HAS NEVER BEEN
+#    RESOLVED BY A BUILD. Measured 2026-09-11 across all 24 images on the
+#    build host: NOT ONE CONTAINS A PINNED apt LINE. Every image here was
+#    built from a Dockerfile whose genomics packages were unversioned, so no
+#    apt anywhere has ever been asked for these five exact versions together.
+#
+#    WHAT THAT MEANS IF YOU ARE THE ONE BUILDING THIS: you are the first, and
+#    a failure will be AMBIGUOUS. "Version '1.16.1-1' for 'samtools' was not
+#    found" is the designed failure described below, but at a first build it is
+#    indistinguishable from a typo in this line or from the flaky network that
+#    produced the original tool trim (see c010ce0). Resolve that ambiguity with
+#    `apt-cache policy <pkg>` in a throwaway bookworm container BEFORE
+#    concluding the pin is wrong.
+#
+#    WHAT THIS NOTE DOES NOT SAY: it does not say the pin is WRONG. Two
+#    independent reads on 2026-09-10 -- `dpkg -l` inside the shipped image and
+#    `apt-cache policy` in a clean bookworm container -- agreed these are
+#    bookworm's current candidates. UNVALIDATED IS NOT THE SAME CLAIM AS
+#    INCORRECT, and the evidence points the other way.
+#
+#    WHY IT IS WRITTEN HERE AND NOT ONLY IN THE COMMIT MESSAGE: it WAS in the
+#    commit message (7f8158c, "DEMONSTRATED WITHOUT BUILDING THE PROJECT"), and
+#    that is the wrong home for it -- `git bisect` and a plain checkout both
+#    discard exactly the prose that makes this honest, and the file is what
+#    travels. This repository already set the standard it was failing here:
+#    VALIDATION_STUDY_DESIGN.md:934 -- "silence is not an option; 'not
+#    validated' is a finding to state."
+#
+#    NOTE ALSO THAT NOTHING AUTOMATED WILL EVER TELL YOU: CI builds no image at
+#    all (.github/workflows/ holds one file, pytest.yml, and it does not
+#    mention docker). A Dockerfile revision is the one change this project's CI
+#    cannot evaluate.
+## *** THE COST, STATED SO NOBODY IS SURPRISED BY IT LATER: A PIN NOBODY
 # REVISITS IS A VERSION NOBODY UPGRADES. Bookworm WILL move under this line --
 # a security update to samtools or bcftools will make `apt-get install` fail
 # with "Version '1.16.1-1' for 'samtools' was not found", and the build stops

@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 from database.blast_client import BLASTClient
 from utils.auto_install import PackageCheckStatus
-from utils.exceptions import ExternalAPIError
+from utils.exceptions import PipelineError
 
 
 def _construct_remote_with_biopython(status):
@@ -50,7 +50,7 @@ class RemoteConstructionUnderAbsentBiopython(unittest.TestCase):
     def test_absent_raises_at_construction(self):
         client, raised, calls = _construct_remote_with_biopython(PackageCheckStatus.ABSENT)
         self.assertIsNone(client, "construction must not complete when Biopython is confirmed ABSENT")
-        self.assertIsInstance(raised, ExternalAPIError)
+        self.assertIsInstance(raised, PipelineError)
 
     def test_absent_message_names_the_package_and_the_failed_attempt(self):
         _, raised, _ = _construct_remote_with_biopython(PackageCheckStatus.ABSENT)

@@ -80,6 +80,41 @@ def _submodel_count(model_obj) -> Optional[int]:
     return None
 
 
+def verdict(model_obj) -> Tuple[bool, str]:
+    """
+    Whether this model's WEIGHTS WERE MATERIALISED, and the evidence for it.
+
+    *** THIS USED TO BE `results.append((name, True, evidence))`. *** The `True`
+    was a literal meaning "no exception was raised", and the evidence beside it was
+    printed, listed in the summary, and never consulted -- `failed` was computed
+    from `ok` alone. So `params=0.0M`, `submodels=0`, and the bare string
+    `constructed` (which is the TOTAL ABSENCE of evidence) all reported PASS.
+
+    That mattered here more than anywhere else in the repository: this script is
+    what `scripts/build_bridge_ready.sh` runs under `--network none`, and its exit
+    code is the only thing between "the image built" and "the image works with no
+    network". An acceptance test that cannot come back red has accepted nothing.
+
+    `_submodel_count`'s own docstring already said what the evidence was for --
+    "it distinguishes 'the object exists' from 'the weights were materialised'".
+    It was written for exactly this and then not used to decide anything.
+
+    A model with NO evidence available is NOT PROVEN rather than passed. For the
+    four models actually shipped this cannot fire: three are torch modules and
+    report a parameter count, and MMSplice sets `self.model` to its list of five
+    Keras submodels, which `_submodel_count` counts. If a future model can be
+    materialised but not counted, the honest fix is to teach this function what
+    ITS evidence looks like -- not to let an absence read as a pass.
+    """
+    params = _param_count(model_obj)
+    if params is not None:
+        return params > 0, f"params={params / 1e6:.1f}M"
+    submodels = _submodel_count(model_obj)
+    if submodels is not None:
+        return submodels > 0, f"submodels={submodels}"
+    return False, "constructed -- NO EVIDENCE THE WEIGHTS WERE MATERIALISED"
+
+
 def _load_esm2():
     from geper.models.esm2 import ESM2Model
 
@@ -150,14 +185,9 @@ def main() -> int:
             model = factory()
             model.load()
             elapsed = time.time() - started
-            params = _param_count(model)
-            if params is not None:
-                evidence = f"params={params / 1e6:.1f}M"
-            else:
-                submodels = _submodel_count(model)
-                evidence = f"submodels={submodels}" if submodels is not None else "constructed"
-            print(f"{name}: LOADED in {elapsed:.1f}s  {evidence}")
-            results.append((name, True, evidence))
+            ok, evidence = verdict(model)
+            print(f"{name}: {'LOADED' if ok else 'NOT PROVEN'} in {elapsed:.1f}s  {evidence}")
+            results.append((name, ok, evidence))
         except Exception as exc:  # noqa: BLE001 -- every load failure is a result
             elapsed = time.time() - started
             print(f"{name}: FAILED after {elapsed:.1f}s")

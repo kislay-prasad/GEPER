@@ -295,6 +295,7 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
         "Criteria Unknown",
         "ClinVar",
         "gnomAD",
+        "AI Models Used",
         "Exploratory Tier*",
         "Exploratory Score*",
     ]
@@ -345,6 +346,24 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
         if disclaimer is None and item.get("disclaimer"):
             disclaimer = item["disclaimer"]
 
+        # HUMAN-DECISION-kim-s-TWO-AI-MODELS-ARE-LIVE...-ruled-(C), 2026-09-11:
+        # DNABERT-2/ESM-2 fire independently per variant (see
+        # orchestration/shared.py's ai_models_used comment) -- this cell
+        # states what actually ran for THIS row, not whether the AI stream
+        # was available for the run as a whole. "ai_models_used" absent
+        # entirely (the per-variant error-record shape, no AI scoring was
+        # ever attempted) reads as "Not attempted"; present but empty
+        # (AI stream ran, but neither model had usable input for this
+        # variant) reads as "None" -- the two are different facts and must
+        # not collapse into the same cell text.
+        ai_models_field = item.get("ai_models_used")
+        if ai_models_field is None:
+            ai_models_cell = "Not attempted"
+        elif ai_models_field:
+            ai_models_cell = ", ".join(ai_models_field)
+        else:
+            ai_models_cell = "None"
+
         cls_style = _CLASS_STYLES.get(classification, "")
         cls_cell = f'<td style="{cls_style}">{classification}</td>'
 
@@ -358,6 +377,7 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
             f"<td>{criteria_unknown}</td>"
             f"<td>{clinvar_cell}</td>"
             f"<td>{gnomad_cell}</td>"
+            f"<td>{ai_models_cell}</td>"
             f"<td>{final_tier}</td>"
             f"<td>{composite}</td>"
             f"</tr>"

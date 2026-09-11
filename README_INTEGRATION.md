@@ -1,4 +1,4 @@
-# Bij AI Integrated Pipeline — Kim (FASTQ Engine) + Current Bij AI (VCF Interpretation Engine)
+# Bij AI Integrated Pipeline — sequencing-analysis component (Kim) + variant-interpretation component (GEPER)
 
 This is **not a repository merge**. It is a bridge between two independent,
 unmodified-in-purpose projects:
@@ -14,7 +14,7 @@ Kim Pipeline                         (kim_pipeline/)
 filtered_variants.vcf
   │
   ▼
-Current Bij AI                        (geper/)
+Variant-interpretation component (GEPER)   (geper/)
   Annotation → AI Models → Databases → Interpretation Engine → Clinical Report
 ```
 
@@ -26,7 +26,7 @@ actionable before mandatory qualified human review and final sign-off (see
 
 ```
 geper_integrated/
-├── geper/            Project A — current Bij AI. UNCHANGED. Remains the sole,
+├── geper/            Project A — the Bij AI variant-interpretation component (GEPER). UNCHANGED. Remains the sole,
 │                     authoritative implementation for Annotation, AI Models
 │                     (HyenaDNA, RNA-FM, ESM2, AlphaMissense, Evo 2,
 │                     MMSplice), ClinVar, dbSNP, gnomAD, ClinGen, UniProt,
@@ -51,7 +51,7 @@ geper_integrated/
     ├── combined_pipeline.py   Core orchestration: runs Kim's own main.py in
     │                          one subprocess, reads the resulting VCF path
     │                          from Kim's own checkpoint.json, then runs
-    │                          Bij AI's own main.py --vcf in a second subprocess.
+    │                          GEPER's own main.py --vcf in a second subprocess.
     ├── run_combined.py        CLI entry point for the full FASTQ → Report workflow.
     └── tests/test_bridge.py   Regression tests for the bridge itself.
 ```
@@ -59,7 +59,7 @@ geper_integrated/
 ## Why subprocess isolation (and not in-process imports)?
 
 Both projects define top-level modules with the same names (`pipeline`, etc.),
-and Bij AI requires a separate, heavier dependency environment (PyTorch,
+and GEPER requires a separate, heavier dependency environment (PyTorch,
 Evo 2, HyenaDNA, etc. — pinned to torch 2.7.1 in Kislay's setup) from Kim's
 alignment/variant-calling toolchain (bwa, samtools, freebayes, bcftools).
 Importing both into one Python process would require renaming or merging
@@ -70,7 +70,7 @@ project's own, unmodified CLI entry point in its own subprocess:
 - requires zero renaming, shimming, or module surgery,
 - lets each project keep its own Python environment (`--kim-python`,
   `--geper-python` flags select interpreters independently),
-- and means "run Kim standalone" / "run Bij AI standalone" are the *same*
+- and means "run Kim standalone" / "run GEPER standalone" are the *same*
   commands a user already runs — the bridge doesn't add a special-case path
   for either project, it just calls them.
 
@@ -97,7 +97,7 @@ python main.py analyze --r1 R1.fastq.gz --ref GRCh38.fasta \
 # -> ./work/sample01/filtered_variants.vcf, Kim's own annotation/report skipped
 ```
 
-### 3. Run Bij AI directly against an existing VCF (unchanged)
+### 3. Run the variant-interpretation component (GEPER) directly against an existing VCF (unchanged)
 ```bash
 cd geper
 python main.py --vcf existing.vcf --output-dir ./geper_output
@@ -115,7 +115,7 @@ python bridge/run_combined.py \
 ```
 Output:
 - `./work/kim/sample01/filtered_variants.vcf` (Kim)
-- `./work/geper/geper_results.json`, `./work/geper/geper_report.md` (Bij AI)
+- `./work/geper/geper_results.json`, `./work/geper/geper_report.md` (GEPER)
 
 If `--kim-python` / `--geper-python` are omitted, the interpreter currently
 running the bridge is used for both.
@@ -141,7 +141,7 @@ python bridge/run_combined.py \
 
 | Area | Status |
 |---|---|
-| Bij AI annotation / AI models / databases / ACMG / report generation | **Unchanged** |
+| GEPER annotation / AI models / databases / ACMG / report generation | **Unchanged** |
 | Kim FASTQ validation / QC / alignment / variant calling | **Unchanged** |
 | Kim's own annotation / ACMG / AI / ancestry / reporting stages | **Unchanged**, simply not invoked in the combined workflow |
 | Kim `PipelineRunner.run()` | **+2 optional params**: `mode` (default `"full"`), `stop_after` (default `None`) |

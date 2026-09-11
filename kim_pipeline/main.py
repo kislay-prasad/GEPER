@@ -293,6 +293,30 @@ def cmd_vcf(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
+    # ── Preflight: VCF vs GFF3 genome build ─────────────────────────────────
+    # `cmd_vcf` was an unimplemented site of the ruling `runner.py` already
+    # applies for the FASTQ->Report path (`check_vcf_gff3_build_consistency`,
+    # pipeline/utils/genome_build.py) -- not a separate decision. From this
+    # point on, `AnnotationStage` uses the configured GFF3's transcript
+    # model to build every HGVS c. position (see Stage 2 below); a VCF/GFF3
+    # build disagreement here produces a confidently wrong, well-formed
+    # coordinate with no missing value and no error, exactly as it does on
+    # the FASTQ path this check already guards. Deliberately not wrapped in
+    # a try/except beyond the one immediately below -- swallowing it would
+    # reinstate the silence this check exists to end.
+    _gff_for_build_check = (cfg.get("annotation", {}) or {}).get("refseq_gff") or (
+        cfg.get("rna_analysis", {}) or {}
+    ).get("refseq_gff")
+    if _gff_for_build_check:
+        from pipeline.config_validator import ConfigValidationError
+        from pipeline.utils.genome_build import check_vcf_gff3_build_consistency
+
+        try:
+            check_vcf_gff3_build_consistency(str(vcf_path), _gff_for_build_check)
+        except ConfigValidationError as exc:
+            print(f"\nConfig validation failed:\n{exc}", file=sys.stderr)
+            return 2
+
     stages_completed: list = []
     stages_skipped: list = []
     current_vcf = str(vcf_path)

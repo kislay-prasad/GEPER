@@ -55,11 +55,14 @@ acmg_thresholds:
   pm2_af_max: 0.0001
   pp3_cadd_phred: 20.0
   pp3_revel: 0.5
-  pp3_spliceai: 0.2
   pp3_alphamissense: 0.564
   bp4_cadd_phred: 10.0
   bp4_revel: 0.15
-  bp4_spliceai: 0.1
+  # pp3_spliceai / bp4_spliceai were REMOVED 2026-09-11. They were DEAD: the
+  # SpliceAI input is closed (licence: CC BY-NC 4.0 models, GPL-3.0 code) and
+  # PP3/BP4 no longer read either key, so they governed nothing. Do not re-add
+  # them without re-opening the input -- see
+  # tests/test_spliceai_dead_threshold_keys_removed.py.
 
 # ── Evidence aggregation weights ─────────────────────────────────────────────
 evidence_engine:

@@ -33,7 +33,10 @@ or `tensorflow`.
 Usage:
     python verify_environment.py
     python verify_environment.py --json          # machine-readable
-    python verify_environment.py --strict         # exit 1 on any FAIL
+
+Exit status: 1 if any check FAILs, else 0 (warnings alone exit 0). This is
+the default; `--strict`, which used to be required for it, is deprecated and
+has no effect.
 
 This script is READ-ONLY: it never installs, upgrades, or downgrades
 anything. `utils/auto_install.py` (used by the pipeline itself) is the
@@ -815,7 +818,22 @@ def print_human(report: Report) -> None:
 
 
 def main() -> int:
-    strict = "--strict" in sys.argv
+    """Exit 1 when the verdict is FAIL, 0 otherwise (PASS, or WARN/SKIP only).
+
+    By default -- not only under --strict. Until 2026-09-12 this returned 0
+    on `overall: FAIL` unless --strict was passed, so anything gating on the
+    exit code was told a failing environment was fine. Human: "a check whose
+    failure exits success is a check nothing can act on."
+
+    --strict is RETIRED: still accepted, so existing commands keep working,
+    but it changes nothing (FAIL already exits 1) and says so on stderr. A
+    caller that deliberately wants the report without the gate must now say
+    so itself (e.g. `|| true`), where a reader can see it.
+    """
+    if "--strict" in sys.argv:
+        sys.stderr.write(
+            "verify_environment.py: --strict is deprecated and has no effect: a FAIL verdict now exits 1 by default.\n"
+        )
     as_json = "--json" in sys.argv
 
     report = run_all()
@@ -825,9 +843,7 @@ def main() -> int:
     else:
         print_human(report)
 
-    if strict and report.has_failures():
-        return 1
-    return 0
+    return 1 if report.has_failures() else 0
 
 
 if __name__ == "__main__":

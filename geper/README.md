@@ -1118,8 +1118,13 @@ Run this before `python main.py ...` (or at the top of a Colab cell):
 ```bash
 python verify_environment.py          # human-readable report
 python verify_environment.py --json   # machine-readable
-python verify_environment.py --strict # exit 1 if anything required is missing
 ```
+
+Exit status: **1 if any check FAILs**, 0 otherwise (warnings alone exit 0),
+so `python verify_environment.py && python main.py ...` refuses to start a
+run on a failing environment. This is the default since 2026-09-12; before
+that it exited 0 on FAIL unless `--strict` was passed. `--strict` is now
+deprecated and has no effect (it prints a notice).
 
 It checks, independently and without ever installing/upgrading
 anything itself: Python version, torch/torchvision/transformers/

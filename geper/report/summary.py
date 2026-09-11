@@ -2867,7 +2867,9 @@ def generate_pdf(
     parsed_qc_metrics = _parse_qc_metrics(_document_qc_metrics(document))
     sample_id = _derive_sample_id(document)
     resolved_run_id = _derive_run_id(document, run_id)
-    assembly = document.get("assembly")
+    # Display only: `assembly_note` (card #15) says why an all-mitochondrial
+    # run has no build, and fills both build slots in its place.
+    assembly = document.get("assembly") or document.get("assembly_note")
     header_label = patient["patient_name"] if not patient["deidentified"] else sample_id
 
     styles = _build_stylesheet()

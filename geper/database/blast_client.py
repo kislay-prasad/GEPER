@@ -20,7 +20,12 @@ Supports three modes:
     binary AND a usable database are both present on this machine
     (either passed explicitly via `local_db_path`, or discovered via
     the `GEPER_BLAST_DATABASE` / `GEPER_BLAST_LOCAL_DB` / `BLASTDB`
-    environment variables), and falls back to "remote" otherwise. This
+    environment variables), and falls back to "remote" otherwise --
+    but only when NO local BLAST was configured: since 2026-09-11, if a
+    local database or a reference FASTA IS configured and cannot be
+    used (no `blastn`, no database files, nothing could be built),
+    construction refuses instead of sending sequence off-site (see the
+    local-intent refusal in `__init__`). This
     never requires the caller to know ahead of time whether the
     deployment has local BLAST+ provisioned -- it just uses the fast
     path when available. If neither a usable local database nor a
@@ -190,9 +195,11 @@ def ensure_local_blast_db(
     Ensure a local BLAST database exists for `fasta_path`, building one
     with `makeblastdb` if it doesn't already exist, and returning the
     resulting database path/prefix -- or None if no database could be
-    obtained (missing FASTA, missing `makeblastdb`, or a build failure),
-    in which case callers should fall back to remote BLAST rather than
-    crash.
+    obtained (missing FASTA, missing `makeblastdb`, or a build failure).
+    It never raises. What a None means is the caller's decision: since
+    2026-09-11 `BLASTClient` in mode "auto" REFUSES rather than falling
+    back to remote, because a configured FASTA is a request for local
+    BLAST (see its local-intent refusal).
 
     Never rebuilds an existing database: if `_has_local_db_files`
     already finds database files at the target path, this is a
@@ -392,9 +399,10 @@ class BLASTClient:
         # below, not just on some later run. Best-effort: any failure
         # here (missing FASTA, missing makeblastdb, a build error) is
         # logged and this simply leaves `self.local_db_path` as it was
-        # -- it never raises, so a broken auto-build attempt degrades
-        # to remote/skip exactly like "no local database configured"
-        # would.
+        # -- it never raises. Since 2026-09-11 a broken auto-build no
+        # longer degrades "auto" to remote: the local-intent refusal
+        # below stops construction instead (a FASTA is a request for
+        # LOCAL BLAST). Explicit mode="remote" still proceeds.
         if self.reference_fasta and not disabled:
             built_db_path = ensure_local_blast_db(self.reference_fasta, self.local_db_path)
             if built_db_path:
@@ -417,7 +425,22 @@ class BLASTClient:
         # search, as before). The message names the SOURCE, not the path --
         # the round-28 rule for this file (see `_search_local`): what's
         # raised names the failure, never the local filesystem path.
-        if not disabled and mode == "auto" and self.local_db_path and shutil.which("blastn") is None:
+        #
+        # Extended 2026-09-11 (god, same ruling): "AN OPERATOR WHO EXPRESSED
+        # LOCAL-BLAST INTENT MUST NEVER BE SILENTLY SENT REMOTE." Two more
+        # paths fell through to remote the same way and are refused too:
+        # a configured database whose files are not there (blastn present --
+        # e.g. a volume that failed to mount), and a reference FASTA that
+        # asked for a database to be BUILT when none could be (makeblastdb
+        # absent, or the build failed).
+        if not disabled and mode == "auto" and (self.local_db_path or self.reference_fasta):
+            fasta_source = (
+                "the reference_fasta argument (--blast-reference-fasta)"
+                if reference_fasta
+                else "GEPER_BLAST_REFERENCE_FASTA"
+            )
+            # Named from the configuration inputs, not from the post-build
+            # path: a database auto-built from the FASTA is the FASTA's.
             if local_db_path:
                 local_db_source = "the local_db_path argument (--blast-db)"
             elif CONFIG.api.BLAST_LOCAL_DB_PATH:
@@ -425,16 +448,41 @@ class BLASTClient:
                     (var for var in ("GEPER_BLAST_DATABASE", "GEPER_BLAST_LOCAL_DB") if os.environ.get(var)),
                     "GEPER_BLAST_DATABASE / GEPER_BLAST_LOCAL_DB",
                 )
-            else:
+            elif os.environ.get("BLASTDB"):
                 local_db_source = "BLASTDB"
-            raise PipelineError(
-                f"Local BLAST is configured (via {local_db_source}) but the "
-                "`blastn` binary is not on PATH, so local BLAST cannot run. Refusing rather than "
-                "falling back to remote NCBI BLAST, which would send sequence off-site -- a "
-                "decision nobody made for this deployment. Install BLAST+ so `blastn` is on PATH, "
-                f"or unset {local_db_source} and set GEPER_BLAST_MODE=remote to choose remote BLAST "
-                "explicitly."
+            else:
+                local_db_source = fasta_source
+            makeblastdb_absent = shutil.which("makeblastdb") is None
+            why_not_built = (
+                "because the `makeblastdb` binary is not on PATH" if makeblastdb_absent else "(see the log for why)"
             )
+            problem = None
+            if self.local_db_path and shutil.which("blastn") is None:
+                problem = (
+                    f"Local BLAST is configured (via {local_db_source}) but the `blastn` binary is not "
+                    "on PATH, so local BLAST cannot run.",
+                    "Install BLAST+ so `blastn` is on PATH",
+                )
+            elif self.local_db_path and not _has_local_db_files(self.local_db_path):
+                built = f", and none could be built from {fasta_source} {why_not_built}" if self.reference_fasta else ""
+                problem = (
+                    f"Local BLAST is configured (via {local_db_source}) but no BLAST database files were "
+                    f"found at the configured location{built}.",
+                    "Make the database available at the configured location (check that its volume is mounted)",
+                )
+            elif not self.local_db_path:
+                problem = (
+                    f"A local BLAST database was requested via {fasta_source}, but none could be built "
+                    f"{why_not_built}.",
+                    "Install BLAST+ so `makeblastdb` is on PATH" if makeblastdb_absent else "Fix the database build",
+                )
+            if problem is not None:
+                what, remedy = problem
+                raise PipelineError(
+                    f"{what} Refusing rather than falling back to remote NCBI BLAST, which would send "
+                    "sequence off-site -- a decision nobody made for this deployment. "
+                    f"{remedy}, or set GEPER_BLAST_MODE=remote to choose remote BLAST explicitly."
+                )
 
         if mode == "auto" and not disabled:
             mode = self._resolve_auto_mode(self.local_db_path)
@@ -508,12 +556,13 @@ class BLASTClient:
             # and disk caches before `_search_remote`, so a run that
             # could have replayed entirely from cache also stops here
             # when Biopython is ABSENT. That is the ruling as given.
-            # Same exception type and wording family as
-            # `_search_remote`'s ABSENT branch -- only WHEN it fires
-            # changed.
+            # Same wording family as `_search_remote`'s ABSENT branch, but
+            # PipelineError, not ExternalAPIError (changed 2026-09-11, god):
+            # main.py catches only PipelineError for a clean one-line abort,
+            # so ExternalAPIError reached the operator as a raw traceback.
             biopython = check_pip_package_availability("biopython", import_name="Bio")
             if biopython is PackageCheckStatus.ABSENT:
-                raise ExternalAPIError(
+                raise PipelineError(
                     "Remote BLAST requires Biopython, and automatic "
                     "installation ('pip install biopython') did not succeed "
                     "in this environment -- check network access to "

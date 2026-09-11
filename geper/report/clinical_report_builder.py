@@ -973,8 +973,17 @@ def _sequence_context(ir: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]
     return {
         "context_models_used": ir.get("ai_context_models", []),
         "blast": {
-            "hit_count": blast.get("hit_count", 0),
+            # No default: a count that was never recorded stays None, and the
+            # renderers say so instead of printing a 0 nobody measured
+            # (ruling #18, 2026-09-11: print the number only when recorded).
+            "hit_count": blast.get("hit_count"),
             "error": blast.get("error"),
+            # Carried because every not-run path (no sequence context,
+            # BLAST disabled, no usable backend) reports `hit_count: 0`
+            # WITH `skipped: True` -- dropping `skipped` is what turned a
+            # search that never ran into "0 homology hit(s)".
+            "skipped": bool(blast.get("skipped")),
+            "reason": blast.get("reason"),
         },
         # Ensembl is used internally for sequence-context retrieval
         # (transcript/region lookups feeding the DNA/RNA models above)

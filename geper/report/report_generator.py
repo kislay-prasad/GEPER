@@ -1122,9 +1122,16 @@ class ReportGenerator:
             lines.append("- **gnomAD (South Asian, SAS):** lookup unavailable for this variant.")
         if ipf.get("sas_shown"):
             lines.extend(_render_1000_genomes_sas_markdown(ipf))
-        threshold_pct = f"{ipf.get('common_af_threshold', 0.01):.0%}"
+        # Ruling #18 (2026-09-11): the number only when recorded; `:g` so a
+        # recorded 0.5% is not rounded to a "0%"/"1%" the pipeline never used.
+        recorded_threshold = ipf.get("common_af_threshold")
+        threshold_text = (
+            f"the {recorded_threshold * 100:g}% threshold"
+            if recorded_threshold is not None
+            else "the pipeline's configured threshold"
+        )
         if ipf.get("common_in_indian_population"):
-            lines.append(f"- **⚠ Common in Indian populations** (at or above the {threshold_pct} threshold).")
+            lines.append(f"- **⚠ Common in Indian populations** (at or above {threshold_text}).")
         lines.append("")
 
         clin = clinical_report["clinical_evidence"]
@@ -1169,8 +1176,14 @@ class ReportGenerator:
             lines.append(
                 f"- **BLAST:** _lookup failed ({blast_error}) -- not evidence of no homology, see Annotation Detail below._"
             )
+        elif seq["blast"].get("skipped"):
+            lines.append(
+                f"- **BLAST:** _not run for this variant ({seq['blast'].get('reason') or 'no reason recorded'}) -- not evidence of no homology._"
+            )
+        elif seq["blast"].get("hit_count") is None:
+            lines.append("- **BLAST:** _hit count not recorded -- not evidence of no homology._")
         else:
-            lines.append(f"- **BLAST:** {seq['blast'].get('hit_count', 0)} homology hit(s)")
+            lines.append(f"- **BLAST:** {seq['blast']['hit_count']} homology hit(s)")
         lines.append(f"- *{seq.get('ensembl_note')}*")
         lines.append("")
 

@@ -834,13 +834,28 @@ class ConflictResolutionEngine:
         # there is no comparable directional signal here to check for
         # agreement or disagreement against. Reported honestly as
         # not-evaluable rather than skipped silently or invented.
-        hits = (blast_result or {}).get("hit_count", 0)
+        # Ruling #18 (2026-09-11): a count only when one was recorded. Every
+        # not-run BLAST path reports `hit_count: 0` WITH `skipped: True`, so
+        # the 0 is not a result there -- it used to be printed as one.
+        blast = blast_result or {}
+        hits = blast.get("hit_count")
+        if blast.get("skipped"):
+            blast_statement = (
+                f"BLAST not run for this variant ({blast.get('reason') or 'no reason recorded'}) "
+                "-- not evidence of no homology."
+            )
+        elif hits is None:
+            blast_statement = "BLAST hit count not recorded -- not evidence of no homology."
+        else:
+            blast_statement = (
+                f"{hits} homology hit(s) returned (no pathogenic/benign direction associated with this result)."
+            )
         return ConflictItem(
             conflict_type="BLAST / Ensembl consistency check",
             category="Sequence",
             evidence_a={
                 "source": "BLAST",
-                "statement": f"{hits} homology hit(s) returned (no pathogenic/benign direction associated with this result).",
+                "statement": blast_statement,
             },
             evidence_b={
                 "source": "Ensembl",

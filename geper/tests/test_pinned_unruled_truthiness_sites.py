@@ -123,7 +123,30 @@ class TestSite1_PP4OnAnEmptyDiseaseList(unittest.TestCase):
     COUNT THE RULING WAS MADE ON: 0 of the 5,268 gene symbols in the
     real HPO `genes_to_phenotype.txt` release (332,599 rows) produce an
     empty list, so nothing routed through the LOCAL dataset changes
-    output today. The live API fallback CAN reach it
+    output today.
+
+    WHICH RELEASE? NOBODY CAN SAY, AND THAT IS THE POINT (recorded
+    2026-09-11 after trying to re-derive this count and finding it
+    cannot be re-derived). `genes_to_phenotype.txt` IS NOT IN THIS
+    REPOSITORY. It is an auto-fetched cache --
+    `pipeline/hpo/bootstrap.py::genes_to_phenotype_cache_path()`, under
+    the model cache -- downloaded from purl.obolibrary.org and replaced
+    silently once `_is_fresh` decides it has aged past
+    `CONFIG.hpo.AUTO_FETCH_TTL_HOURS`. It is absent from a fresh
+    checkout, and it is a different file on every machine depending on
+    when that machine last fetched.
+    THE COUNT ABOVE NAMES A ROW TOTAL AND NO VERSION, DATE OR CHECKSUM,
+    so this file cannot tell you which release it was true of, and no
+    attempt is made here to guess one or to attribute one to whoever
+    measured it. That is not an omission being confessed -- it is the
+    load-bearing fact: THE NUMBER READS AS A MEASURED PROPERTY OF HPO
+    AND IS A MEASURED PROPERTY OF ONE UNIDENTIFIED SNAPSHOT OF HPO.
+    An HPO release that curates one gene against zero diseases moves
+    this count, changes what PP4 does on that gene, and nothing here
+    would say so -- which is the same shape as the card this class came
+    from (a count of zero resting on something nobody pinned), one
+    level down: THERE THE UNPINNED THING WAS CODE, HERE IT IS DATA, AND
+    DATA IS NOT EVEN IDENTIFIED. The live API fallback CAN reach it
     (`provider.py:273` builds phenotype associations with no disease_id
     at all, so `distinct_disease_ids` comes only from a separate
     `diseases` payload that may be empty). That path remains UNMEASURED

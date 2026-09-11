@@ -66,7 +66,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from pipeline.orchestration.runner import PipelineRunner
-from pipeline.reporting.component_identity import COMPONENT_NAME
+from pipeline.reporting.component_identity import COMPONENT_NAME, VERSION
 from shared.process_control import request_termination_async
 from api.run_store import RunStore
 
@@ -207,7 +207,9 @@ app = FastAPI(
         "classification requiring qualified human review and final sign-off before any clinical "
         "use, and does not independently provide final clinical interpretation."
     ),
-    version="8.0.0",
+    # Kim's single version source (component_identity.VERSION); also what
+    # /health returns via app.version.
+    version=VERSION,
     contact={"name": "Geper Team"},
     license_info={"name": "Proprietary"},
     openapi_tags=[

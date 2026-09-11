@@ -15,7 +15,15 @@ dependencies.
 """
 
 COMPONENT_NAME = "Bij AI sequencing-analysis component"
-PIPELINE_VERSION = f"{COMPONENT_NAME} v8"
+
+# Kim's version -- the ONLY place the number is written (human-approved
+# 2026-09-11: "make 8 Kim's single version source"). A plain string literal on
+# purpose: setuptools reads it statically for the package metadata
+# (pyproject.toml [tool.setuptools.dynamic]) without importing anything.
+# Every other surface derives from it: the label below (reports, CLI), the
+# API's OpenAPI version and /health, and pipeline.__version__.
+VERSION = "8.0.0"
+PIPELINE_VERSION = f"{COMPONENT_NAME} v{VERSION.split('.')[0]}"
 
 # Ratified wording (2026-09-11, Option B): what this tree is, said on every
 # report (HTML via stage.py, PDF via pdf_report.py) and, verbatim, in

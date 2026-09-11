@@ -9,7 +9,10 @@ build-backend = "setuptools.build_meta"
 # which also carried version 12.0.0 against the root's 1.0.0, so any
 # resolution decided by a version number went the same way, silently.
 name = "kim-pipeline"
-version = "12.0.0"
+# Read from Kim's single version source at build time -- see
+# [tool.setuptools.dynamic] below. 12.0.0 was typed here in the first
+# commit (cb79edc) with no basis; nothing ever read it.
+dynamic = ["version"]
 description = "Bij AI sequencing-analysis component v8 — Sequencing analysis from FASTQ: QC, alignment and variant calling, with ACMG classification of the variants called here."
 readme = "docs/INSTALL.md"
 requires-python = ">=3.10"
@@ -77,6 +80,10 @@ where = ["."]
 # pipeline) and untangling them is separate, carded work -- see
 # CONTRIBUTING.md, "Why not just pytest at the repo root".
 include = ["pipeline*", "api*"]
+
+[tool.setuptools.dynamic]
+# Static read (setuptools parses the literal; nothing is imported).
+version = { attr = "pipeline.reporting.component_identity.VERSION" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -317,30 +317,43 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
         else:
             reason = item.get("gene_unavailable_reason") or "Unknown reason"
             gene_cell = f"<em>Gene annotation unavailable<br/>Reason: {reason}</em>"
-        classification = item.get("classification", "Uncertain_Significance")
         acmg_score = item.get("score", "")
         criteria_met = ", ".join(item.get("criteria_met") or []) or "—"
         # FIX (Issue 6): surface criteria that could not be evaluated
         # (Unknown / Insufficient Data) distinctly from "not met".
         criteria_unknown = ", ".join(item.get("criteria_unknown") or []) or "—"
-        # FIX (Issue 7): ClinVar/gnomAD cells always carry a reason when
-        # the value itself is unavailable, rather than a bare blank/dash.
-        clinvar_reason = item.get("clinvar_unavailable_reason")
-        clinvar_cell = clinvar_reason or "Found"
-        gnomad_reason = item.get("gnomad_unavailable_reason")
-        if gnomad_reason:
-            gnomad_cell = gnomad_reason
+        # FIX: a variant whose per-variant classification raised (shared.py's
+        # per-variant handler appends {..., "error": ...} with no
+        # classification/clinvar_unavailable_reason/gnomad_unavailable_reason
+        # keys, by construction) must render as failed, not as a genuine
+        # Uncertain_Significance/Found/Found row -- the same
+        # never-render-a-fabricated-default principle Issue 7 already applies
+        # to `gene` two fields above, extended to the two fields it missed.
+        error = item.get("error")
+        if error:
+            classification = "Classification failed"
+            clinvar_cell = f"<em>Classification failed<br/>Reason: {error}</em>"
+            gnomad_cell = f"<em>Classification failed<br/>Reason: {error}</em>"
         else:
-            gnomad_af = item.get("gnomad_af")
-            gnomad_af_popmax = item.get("gnomad_af_popmax")
-            if gnomad_af is not None:
-                gnomad_cell = f"AF: {gnomad_af:.2e}"
-                if gnomad_af_popmax is not None:
-                    gnomad_cell += f" (popmax: {gnomad_af_popmax:.2e})"
+            classification = item.get("classification", "Uncertain_Significance")
+            # FIX (Issue 7): ClinVar/gnomAD cells always carry a reason when
+            # the value itself is unavailable, rather than a bare blank/dash.
+            clinvar_reason = item.get("clinvar_unavailable_reason")
+            clinvar_cell = clinvar_reason or "Found"
+            gnomad_reason = item.get("gnomad_unavailable_reason")
+            if gnomad_reason:
+                gnomad_cell = gnomad_reason
             else:
-                # "found" status without a numeric AF is unexpected but
-                # must never render a bare blank cell (Issue 7 principle).
-                gnomad_cell = "Found (frequency not available)"
+                gnomad_af = item.get("gnomad_af")
+                gnomad_af_popmax = item.get("gnomad_af_popmax")
+                if gnomad_af is not None:
+                    gnomad_cell = f"AF: {gnomad_af:.2e}"
+                    if gnomad_af_popmax is not None:
+                        gnomad_cell += f" (popmax: {gnomad_af_popmax:.2e})"
+                else:
+                    # "found" status without a numeric AF is unexpected but
+                    # must never render a bare blank cell (Issue 7 principle).
+                    gnomad_cell = "Found (frequency not available)"
         final_tier = item.get("final_tier", "—")
         composite = item.get("composite_score", "—")
         if disclaimer is None and item.get("disclaimer"):

@@ -1936,6 +1936,21 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         Paragraph(f"Finding {idx}: {esc(locus_with_hgvs)}", styles["SectionHeading"]),
     ]
 
+    # Per-variant stage errors (wording approved by the human 2026-09-11,
+    # card HUMAN-TEXT-the-dbSNP-stage-error-sentence-on-both-PDFs; drafted
+    # by angela in 9765c41). Mirrors report/report_generator.py's
+    # Markdown "### Stage Warnings / Errors" section, which already
+    # renders this same `variant_result["errors"]` list -- this PDF had
+    # never rendered it, so the two renderers disagreed about whether a
+    # stage failure is visible. Same text as Markdown, not a new
+    # clinician-facing rewrite. Pinned by tests/test_stage_errors_on_both_pdfs.py.
+    stage_errors = variant_result.get("errors") or []
+    if stage_errors:
+        flow.append(Paragraph("Stage Warnings / Errors:", styles["StatusError"]))
+        for err in stage_errors:
+            flow.append(Paragraph(f"• {esc(err)}", styles["StatusError"]))
+        flow.append(Spacer(1, 2 * mm))
+
     # Within-sample read support (NABL 112A s.7.8.5(b)(iii)). Read from
     # `variant_result["variant"]` directly -- the same way this function
     # already reads the locus above and the mitochondrial chromosome

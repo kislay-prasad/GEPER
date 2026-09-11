@@ -216,6 +216,17 @@ def _build_short_stylesheet() -> Dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#9a6a00"),
             fontName="Helvetica-Bold",
         ),
+        # Per-variant stage errors (approved 2026-09-11, see _build_variant_block).
+        # Same hex as the full report's StatusError style (summary.py) --
+        # a stage failure should read the same colour on both PDFs.
+        "StatusError": ParagraphStyle(
+            "GeperShortStatusError",
+            parent=base["BodyText"],
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#a11d1d"),
+            fontName="Helvetica-Bold",
+        ),
         "Footnote": ParagraphStyle(
             "GeperShortFootnote", parent=base["BodyText"], fontSize=7, leading=9, textColor=colors.grey
         ),
@@ -550,6 +561,22 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
         Paragraph(heading, styles["VariantHeading"]),
         strip,
     ]
+
+    # Per-variant stage errors, directly under the result strip (wording
+    # approved by the human 2026-09-11; drafted by angela in 9765c41). Same
+    # shape as report/summary.py::_build_variant_section's identical
+    # addition; see that function's comment for why. Pinned by
+    # tests/test_stage_errors_on_both_pdfs.py.
+    # The marker is the WORD "Warning:", not the "⚠" first approved: no font
+    # this PDF uses (Helvetica family, no TTF registered) has U+26A0, so
+    # ReportLab drew its fallback black square. Re-ruled by the human
+    # 2026-09-11 -- plain text, no embedded font. Any non-Latin-1 marker
+    # added here must pass tests/test_pdf_glyph_coverage.py.
+    stage_errors = variant_result.get("errors") or []
+    if stage_errors:
+        flow.append(Spacer(1, 1 * mm))
+        for err in stage_errors:
+            flow.append(Paragraph(f"Warning: {esc(err)}", styles["StatusError"]))
 
     # Round 14, B2: per-finding, not report-level -- see
     # report/report_generator.py's identical placement/reasoning. Uses

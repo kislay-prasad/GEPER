@@ -1469,7 +1469,7 @@ _QC_METRICS_NOT_APPLICABLE_REASON = (
 _VALID_QC_STATUSES = {_StageStatus.NOT_RUN.value, _StageStatus.ERROR.value, _StageStatus.FOUND.value}
 
 
-def _parse_one_qc_metric(key: str, entry: Any) -> Dict[str, Any]:
+def _parse_one_qc_metric(key: str, entry: Any, unrecognized_keys: tuple = ()) -> Dict[str, Any]:
     """
     Validates one `qc_metrics[key]` entry against the required
     `{"status", "value", "reason"}` shape. This is the single choke
@@ -1483,8 +1483,31 @@ def _parse_one_qc_metric(key: str, entry: Any) -> Dict[str, Any]:
     regression structurally impossible here, not merely avoided by
     convention: there is no code path from an untrusted input to
     `_qc_status` that skips this validation.
+
+    `unrecognized_keys`: keys the caller's raw `qc_metrics` dict carried
+    that are none of `_QC_METRIC_ORDER` (2026-09-11 ruling,
+    PHASE8-bij-interpret, option B). When THIS key is absent (`entry is
+    None`) and the caller's submission was non-empty but used a name
+    GEPER doesn't recognize -- e.g. an external submitter's
+    `{"depth": 50}` -- "not reported by the upstream pipeline" would be
+    a FALSE SENTENCE: something WAS reported, just not under a
+    recognized name. Say so honestly instead. Safety net beneath option
+    A's boundary validation (geper/api/submission_worker.py::
+    _qc_metrics_validated), which rejects an unrecognized key outright
+    for any caller routed through that boundary -- this covers any
+    OTHER caller that reaches this function directly.
     """
     if entry is None:
+        if unrecognized_keys:
+            return {
+                "status": _StageStatus.NOT_RUN.value,
+                "value": None,
+                "reason": (
+                    f"qc_metrics was submitted but '{key}' was reported but not recognised -- "
+                    f"the submission used unrecognized key(s) {list(unrecognized_keys)!r} instead "
+                    f"of one of {list(_QC_METRIC_ORDER)!r}."
+                ),
+            }
         return {
             "status": _StageStatus.NOT_RUN.value,
             "value": None,
@@ -1580,4 +1603,7 @@ def _parse_qc_metrics(qc_metrics: Optional[Union[Dict[str, Any], str]]) -> Dict[
         logger.warning(f"Could not parse qc_metrics ({exc}); rendering the not-applicable default instead.")
         return not_applicable
 
-    return {key: _parse_one_qc_metric(key, raw.get(key)) for key in _QC_METRIC_ORDER}
+    unrecognized_keys = tuple(k for k in raw if k not in _QC_METRIC_ORDER)
+    return {
+        key: _parse_one_qc_metric(key, raw.get(key), unrecognized_keys=unrecognized_keys) for key in _QC_METRIC_ORDER
+    }

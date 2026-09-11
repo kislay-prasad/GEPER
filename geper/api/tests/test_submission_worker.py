@@ -235,7 +235,19 @@ class TestInterpretationWorker:
         CONVERTS hpo_terms to the real comma-separated "HP:#######"
         format geper/main.py:175-189 wants (2026-09-08 ruling: convert,
         don't degrade) rather than passing the JSON blob through
-        unconverted."""
+        unconverted.
+
+        2026-09-11 CORRECTION (PHASE8-bij-interpret, option A): this
+        test used to submit qc_metrics={"depth": 50} and assert that
+        exact raw dict landed in the sidecar unconverted. "depth" is not
+        one of _QC_METRIC_ORDER -- writing it through unconverted is
+        the precise defect that made `_parse_qc_metrics` render a false
+        "not reported" about a value that WAS reported (see
+        test_process_queued_submission_qc_metrics_unrecognized_key_fails_loudly
+        below). Fixed to use a RECOGNIZED key and assert on the
+        CONVERTED {"status": "found", "value": ..., "reason": None}
+        shape _qc_metrics_validated now produces -- the corrected
+        contract, not the old, silently-wrong one."""
         sub = store.create_submission(
             org_id="default",
             submission_key="key-7",
@@ -244,7 +256,7 @@ class TestInterpretationWorker:
             sample_ref="sample-1",
             consent_ref="consent-1",
             hpo_terms={"terms": ["HP:0001234", "HP:0002011"]},
-            qc_metrics={"depth": 50},
+            qc_metrics={"mean_coverage_depth": 45.2},
         )
 
         with patch("api.submission_worker.spawn_tracked") as mock_spawn:
@@ -276,11 +288,48 @@ class TestInterpretationWorker:
         assert call_args[hpo_idx + 1] == "HP:0001234,HP:0002011"
 
         # The qc-metrics-json argument must be a real file containing the
-        # submitted dict, not the dict serialized inline.
+        # CONVERTED shape _parse_qc_metrics requires, not the submitted
+        # dict serialized inline.
         qc_idx = call_args.index("--qc-metrics-json")
         qc_path = call_args[qc_idx + 1]
         assert os.path.isfile(qc_path)
-        assert json.loads(Path(qc_path).read_text()) == {"depth": 50}
+        assert json.loads(Path(qc_path).read_text()) == {
+            "mean_coverage_depth": {"status": "found", "value": 45.2, "reason": None}
+        }
+
+    def test_process_queued_submission_qc_metrics_unrecognized_key_fails_loudly(self, worker, store, output_root):
+        """CONVERT, DO NOT DEGRADE (2026-09-11 ruling, PHASE8-bij-interpret
+        option A -- same class of fix as hpo_terms, 2026-09-08): the
+        platform's own tests (test_interpretations_api.py:78, and this
+        file's own test above until this correction) use {"depth": 50}
+        as "a normal qc_metrics submission". Written through
+        unconverted, that shape reached `_parse_qc_metrics` as a silent
+        `.get()` miss and rendered a FALSE "not reported by the
+        upstream pipeline" sentence about a value that WAS reported. A
+        submission with QC data GEPER can't recognize is a precondition
+        failure, not a degraded run -- must fail loudly (status=failed,
+        a clear error naming the bad key) exactly like a malformed
+        hpo_terms submission does. No subprocess is ever spawned."""
+        sub = store.create_submission(
+            org_id="default",
+            submission_key="key-10",
+            vcf_path="/path/to/vcf",
+            assembly="hg38",
+            sample_ref="sample-1",
+            consent_ref="consent-1",
+            qc_metrics={"depth": 50},
+        )
+
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
+            result = worker.process_queued_submission(sub)
+
+        assert result is True
+        mock_spawn.assert_not_called()
+
+        updated = store.get_submission(sub.id)
+        assert updated.status == "failed"
+        assert "qc_metrics" in updated.error_message
+        assert "depth" in updated.error_message
 
     def test_process_queued_submission_hpo_terms_conversion_failure_raises(self, worker, store, output_root):
         """CONVERT, DO NOT DEGRADE (2026-09-08 ruling): if hpo_terms can't

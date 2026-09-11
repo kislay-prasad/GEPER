@@ -10,6 +10,7 @@ from clinical.models.exception import (
     ExceptionStatus,
     ExceptionEventAction,
     ResolutionAction,
+    REASON_CODE_TO_CATEGORY,
     REASON_CODE_TO_OWNER,
 )
 
@@ -89,6 +90,15 @@ class TestExceptionReasonCodes:
     def test_bij_ai_error_other_exists(self):
         """Bij AI error (other) reason code exists."""
         assert ExceptionReasonCode.BIJ_AI_ERROR_OTHER.value == "bij_ai_error_other"
+
+    def test_clinical_record_write_failed_exists(self):
+        """The pipeline ran but its result could not be recorded as clinical
+        records (2026-09-12, D0). Not a Bij AI error -- reusing
+        bij_ai_error_other would send the lab looking at the engine."""
+        code = ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED
+        assert code.value == "clinical_record_write_failed"
+        assert REASON_CODE_TO_OWNER[code] == "lab_operator"
+        assert REASON_CODE_TO_CATEGORY[code] == ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE
 
 
 class TestExceptionStatus:

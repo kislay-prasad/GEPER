@@ -297,6 +297,11 @@ class SubmissionStore:
 
     def get_queued_submissions(self, limit: int = 10) -> list[Submission]:
         """Get submissions with status='queued' for worker to process."""
+        return self.get_submissions_with_status("queued", limit)
+
+    def get_submissions_with_status(self, status: str, limit: int = 10) -> list[Submission]:
+        """Oldest first. The worker also reads 'interrupted' rows at startup,
+        to reconcile any whose clinical record was written before it died."""
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 """
@@ -305,11 +310,11 @@ class SubmissionStore:
                        error_message, hpo_terms, qc_metrics, created_at, updated_at,
                        sample_id
                 FROM submissions
-                WHERE status = 'queued'
+                WHERE status = ?
                 ORDER BY created_at ASC
                 LIMIT ?
                 """,
-                (limit,),
+                (status, limit),
             )
             rows = cursor.fetchall()
 

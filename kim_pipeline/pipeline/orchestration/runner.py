@@ -1106,9 +1106,11 @@ def _build_cli_parser():
 
     from pipeline.reporting.component_identity import PIPELINE_VERSION
 
+    # ASCII "->", not U+2192: this help must print on a default Windows
+    # (cp1252) console, which cannot encode the arrow (human ruling 2026-09-11).
     p = argparse.ArgumentParser(
-        description=f"{PIPELINE_VERSION}: FASTQ → QC → Alignment → Variant Calling "
-        "→ Annotation → Report",
+        description=f"{PIPELINE_VERSION}: FASTQ -> QC -> Alignment -> Variant Calling "
+        "-> Annotation -> Report",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--r1", required=True, metavar="FASTQ", help="R1 FASTQ path (plain or .gz)")

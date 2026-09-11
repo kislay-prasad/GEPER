@@ -231,7 +231,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             mode=getattr(args, "mode", "full"),
             stop_after=getattr(args, "stop_after", None),
         )
-        print(f"\n✓ Pipeline complete in {result.total_elapsed_seconds:.1f}s")
+        print(f"\n[OK] Pipeline complete in {result.total_elapsed_seconds:.1f}s")
         if result.stopped_after:
             print(f"  Stopped after: {result.stopped_after} (mode={args.mode})")
             print(f"  Filtered VCF : {result.variant_calling.get('filtered_vcf_path')}")
@@ -481,7 +481,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
         computational_score=comp_score,
     )
 
-    print(f"\n{'─' * 55}")
+    print(f"\n{'-' * 55}")
     print(f"  Variant   : {args.chrom}:{args.pos} {args.ref}>{args.alt}")
     if args.gene:
         print(f"  Gene      : {args.gene}")
@@ -489,7 +489,7 @@ def cmd_classify(args: argparse.Namespace) -> int:
     print(f"  ACMG score: {acmg_result.score:.4f}")
     print(f"  Criteria  : {', '.join(acmg_result.criteria_met) or 'none'}")
     print(f"  Evidence  : {ev_result.final_tier} (composite={ev_result.composite_score:.4f})")
-    print(f"{'─' * 55}")
+    print(f"{'-' * 55}")
 
     if args.output_dir:
         out = Path(args.output_dir)
@@ -583,10 +583,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     try:
         validate_config(cfg)
-        print(f"✓ Config is valid: {args.config or 'config/default.yaml'}")
+        print(f"[OK] Config is valid: {args.config or 'config/default.yaml'}")
         return 0
     except ConfigValidationError as exc:
-        print(f"✗ Config validation failed:\n{exc}", file=sys.stderr)
+        print(f"[FAIL] Config validation failed:\n{exc}", file=sys.stderr)
         return 2
 
 
@@ -662,7 +662,11 @@ def _build_parser() -> argparse.ArgumentParser:
         )
 
     # ── analyze ──────────────────────────────────────────────────────────────
-    p_analyze = sub.add_parser("analyze", help="Full FASTQ → Report pipeline")
+    # Every string this CLI prints stays inside cp1252 (a default Windows
+    # console): "->" not U+2192, "[OK]"/"[FAIL]" not check/ballot marks, "-"
+    # rules not box-drawing -- human ruling 2026-09-11, pinned by
+    # tests/test_cli_cp1252_console.py. The em dash (in cp1252) is fine.
+    p_analyze = sub.add_parser("analyze", help="Full FASTQ -> Report pipeline")
     _common(p_analyze)
     p_analyze.add_argument("--r1", required=True, metavar="FASTQ", help="Read 1 FASTQ (required)")
     p_analyze.add_argument("--r2", metavar="FASTQ", help="Read 2 FASTQ (paired-end)")

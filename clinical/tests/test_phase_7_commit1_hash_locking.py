@@ -470,7 +470,19 @@ class TestVerifyReportIntegrityDetectsTampering:
 
 
 class TestLineageColumn:
-    """interpretations.parent_interpretation_id: column only, no methods in this commit."""
+    """interpretations.parent_interpretation_id: column only, no methods in this commit.
+
+    This is the class that actually exercises `fk_interp_parent`, the
+    composite FK on this column (confirmed 2026-09-11 by dropping the
+    constraint and re-running: `test_rejects_a_cross_org_parent`/
+    `test_rejects_an_unknown_parent` below both went red instantly,
+    since raw SQL here bypasses `create_reanalysis()` entirely). See
+    `test_phase_7_commit3_reanalysis.py::
+    TestCreateReanalysisRejectsAnInvalidParentViaItsOwnPrecheck` for
+    the sibling tests that go through `create_reanalysis()` itself --
+    those two test the DAO's own pre-check, not this constraint; the
+    same mutation left them green.
+    """
 
     def test_defaults_to_null(self, conn, interp_a):
         with conn.cursor() as cur:

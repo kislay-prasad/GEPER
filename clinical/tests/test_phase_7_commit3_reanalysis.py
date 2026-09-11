@@ -222,20 +222,6 @@ class TestCreateReanalysisBasics:
         with pytest.raises(NotFoundError):
             dao.create_reanalysis(session_a, uuid.uuid4(), parent_id, {"model_version": "v2"})
 
-    def test_unknown_parent_rejected(self, dao, conn, session_a):
-        vcf_id, sample_id = _make_vcf(dao, conn, session_a)
-
-        with pytest.raises(NotFoundError):
-            dao.create_reanalysis(session_a, vcf_id, uuid.uuid4(), {"model_version": "v2"})
-
-    def test_cross_org_parent_rejected(self, dao, conn, session_a, session_b):
-        vcf_a, sample_a = _make_vcf(dao, conn, session_a)
-        vcf_b, sample_b = _make_vcf(dao, conn, session_b, patient_suffix="2")
-        parent_b = _make_interpretation(dao, session_b, vcf_b, sample_b)
-
-        with pytest.raises(NotFoundError):
-            dao.create_reanalysis(session_a, vcf_a, parent_b, {"model_version": "v2"})
-
     def test_parent_from_a_different_vcf_rejected(self, dao, conn, session_a):
         vcf_1, sample_1 = _make_vcf(dao, conn, session_a, patient_suffix="1")
         vcf_2, sample_2 = _make_vcf(dao, conn, session_a, patient_suffix="2")
@@ -245,6 +231,53 @@ class TestCreateReanalysisBasics:
         # not silently accepted (would otherwise mislabel a re-analysis's VCF).
         with pytest.raises(ValueError):
             dao.create_reanalysis(session_a, vcf_2, parent_on_vcf_1, {"model_version": "v2"})
+
+
+class TestCreateReanalysisRejectsAnInvalidParentViaItsOwnPrecheck:
+    """
+    Re-homed and renamed from `TestCreateReanalysisBasics` (2026-09-11).
+    These two used to be named/placed as if they tested the schema's
+    composite FK (`fk_interp_parent` on `interpretations
+    (org_id, parent_interpretation_id)`) -- they do not, and mutation
+    proved it rather than a re-read: with that constraint DROPPED from
+    `clinical/schema.sql`, both tests below still passed unchanged. The
+    reason is exact -- `create_reanalysis()` (`clinical/data_access.py`)
+    runs its own org-scoped `SELECT ... FROM interpretations WHERE
+    org_id = %s AND id = %s` and raises `NotFoundError` in Python BEFORE
+    the INSERT is ever constructed, so the FK never gets a chance to
+    fire for either an unknown or a cross-org parent.
+
+    This is not a weak test -- the DAO's own pre-check is real,
+    correct, and worth exactly this coverage. The defect was the class
+    name and the test names claiming a different layer than the one
+    actually exercised.
+
+    The composite FK constraint itself IS covered, and covered
+    correctly: `test_phase_7_commit1_hash_locking.py::TestLineageColumn
+    ::test_rejects_a_cross_org_parent`/`::test_rejects_an_unknown_parent`
+    bypass `create_reanalysis()` entirely (raw SQL via that file's own
+    `_make_interpretation` helper), so nothing stands between them and
+    the FK -- the same FK-drop mutation sent both of those red
+    instantly. One class red, one green, same mutation, same
+    constraint -- that contrast is what makes this a finding rather
+    than a suspicion. If the FK should ALSO be exercised through
+    `create_reanalysis()` itself, that is a new test, not a rewrite of
+    these two -- not added here, left for a separate card.
+    """
+
+    def test_dao_precheck_rejects_unknown_parent(self, dao, conn, session_a):
+        vcf_id, sample_id = _make_vcf(dao, conn, session_a)
+
+        with pytest.raises(NotFoundError):
+            dao.create_reanalysis(session_a, vcf_id, uuid.uuid4(), {"model_version": "v2"})
+
+    def test_dao_precheck_rejects_cross_org_parent(self, dao, conn, session_a, session_b):
+        vcf_a, sample_a = _make_vcf(dao, conn, session_a)
+        vcf_b, sample_b = _make_vcf(dao, conn, session_b, patient_suffix="2")
+        parent_b = _make_interpretation(dao, session_b, vcf_b, sample_b)
+
+        with pytest.raises(NotFoundError):
+            dao.create_reanalysis(session_a, vcf_a, parent_b, {"model_version": "v2"})
 
 
 class TestPredecessorStateNotGating:

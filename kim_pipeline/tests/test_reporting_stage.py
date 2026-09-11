@@ -170,7 +170,9 @@ class TestIssue3ClinicalReportOverhaul:
         html = Path(result.html_path).read_text()
         assert "report-footer" in html
         assert "GRCh38 (test)" in html
-        assert "Bij AI v8" in html
+        # Was "Bij AI v8" -- the whole-product name, superseded 2026-09-11
+        # (Option B): the version names the component, as the scope line does.
+        assert "Bij AI sequencing-analysis component v8" in html
         assert "Generated:" in html
 
     def test_signature_block_not_rendered(self, tmp_path):

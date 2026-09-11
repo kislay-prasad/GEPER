@@ -28,7 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pipeline.annotation.stage import AnnotationStage, CONSEQUENCE_NOT_DETERMINED
 from pipeline.reporting.clinical_sections import consequence_display_label
 from pipeline.reporting.pdf_report import render_clinical_pdf
-from pipeline.reporting.stage import _annotation_summary_to_html, _variants_to_html_table
+from pipeline.reporting.stage import (
+    PIPELINE_VERSION,
+    _annotation_summary_to_html,
+    _variants_to_html_table,
+)
 
 
 # ─── 1-3: the fallback rule itself ──────────────────────────────────────────────
@@ -128,7 +132,7 @@ class TestPdfRenderSiteUsesTheLabel:
             interpretation=interpretation,
             merged_variants=merged,
             reference_genome="GRCh38",
-            pipeline_version="Bij AI v8",
+            pipeline_version=PIPELINE_VERSION,
         )
 
     def test_sentinel_absent_and_label_present_in_rendered_pdf(self, tmp_path):

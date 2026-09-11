@@ -45,6 +45,7 @@ from pipeline.reporting.clinical_sections import (
     clinical_interpretation,
     merge_variants_with_acmg,
     consequence_display_label,
+    SCOPE_LINE,
 )
 from pipeline.reporting import pdf_report as _pdf_report_mod
 
@@ -52,7 +53,7 @@ logger = logging.getLogger("geper.pipeline.reporting.stage")
 
 # Single source of truth for the pipeline version string, shared by the
 # JSON payload, HTML report, and PDF report so they can never disagree.
-PIPELINE_VERSION = "Bij AI v8"
+PIPELINE_VERSION = "Bij AI sequencing-analysis component v8"
 
 # Shared ACMG classification -> style mapping. HTML uses the CSS-string
 # values directly; pipeline/reporting/pdf_report.py uses the same keys
@@ -167,7 +168,7 @@ _HTML_TEMPLATE = """\
 
 <div class="report-header">
   <h1>{pipeline_version} — Clinical Genomic Report</h1>
-  <div class="meta">Sequencing analysis from FASTQ — produced by the Kim pipeline: QC, alignment and variant calling, with ACMG classification of the variants called here.</div>
+  <div class="meta">{scope_line}</div>
   <div class="meta">Generated: {generated_at}<br/>Report Rendered: {report_rendered}<br/>Reference genome: {reference_genome}</div>
 </div>
 
@@ -784,6 +785,7 @@ class ReportingStage:
             generated_at=generated_at_str,
             report_rendered=report_rendered_str,
             pipeline_version=PIPELINE_VERSION,
+            scope_line=SCOPE_LINE,
             reference_genome=reference_genome,
             patient_name=patient_meta["name"],
             patient_dob=patient_meta["dob"],

@@ -22,6 +22,19 @@ from typing import Any, Dict, List, Optional
 from pipeline.annotation.stage import CONSEQUENCE_NOT_DETERMINED
 
 
+# ─── What this report is ───────────────────────────────────────────────────────
+
+# Ratified wording (2026-09-11, Option B): names THIS tree as a component of
+# Bij AI rather than as the whole product. One constant, rendered by both the
+# HTML report (stage.py) and the ReportLab PDF (pdf_report.py), so the two
+# cannot drift. Clinician-facing text -- change only with human sign-off.
+SCOPE_LINE = (
+    "Sequencing analysis from FASTQ — produced by the Bij AI sequencing-analysis "
+    "component (Kim): QC, alignment and variant calling, with ACMG classification "
+    "of the variants called here."
+)
+
+
 # ─── Patient metadata ───────────────────────────────────────────────────────────
 
 _DEIDENTIFIED_LABEL = "De-identified / Research Sample"

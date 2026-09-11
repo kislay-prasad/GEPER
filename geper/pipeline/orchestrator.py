@@ -77,11 +77,20 @@ from pipeline.models.status import build_ai_model_status, rollup_run_status
 from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
 from pipeline.provenance import (
+    NOT_READ_MARKER,
+    TOOL_SOURCE_ALIGNER,
+    TOOL_SOURCE_BCFTOOLS,
+    TOOL_SOURCE_CALLER,
+    TOOL_SOURCE_HTSLIB,
+    TOOL_SOURCE_SAMTOOLS,
+    TOOL_SOURCE_TABIX,
     RetrievalMode,
     RunProvenanceCollector,
     VersionStatus,
     capture_blast_local_tool_versions,
     capture_ensembl_release,
+    capture_tool_version,
+    parse_vcf_tool_stamps,
     finalize_model_checkpoint_provenance,
     get_geper_code_version,
     get_model_checkpoint_identifiers,
@@ -534,6 +543,110 @@ class GeperPipeline:
 
         self._capture_bootstrapped_datasets_provenance()
 
+    def _capture_tool_provenance(self, vcf_header_lines: List[str]) -> None:
+        """
+        Records the versions of the tools that produced this report (the
+        human's ruling, 2026-09-11), each MEASURED where it ran -- see
+        `pipeline/provenance.py`'s tool-version block for why tabix is read
+        from its binary while the VCF's creating software and bcftools are read from
+        the input VCF's own header, and why samtools cannot be recorded here.
+        Never a pinned or default value: anything unreadable is recorded as
+        UNKNOWN with the reason. Never raises.
+        """
+        try:
+            measured: Dict[str, Dict[str, Optional[str]]] = {}
+            uses = [
+                ("AlphaMissense lookups", CONFIG.alphamissense.TABIX_BINARY),
+                ("gnomAD local lookups", CONFIG.gnomad.TABIX_BINARY),
+            ]
+            for _, binary in uses:
+                if binary not in measured:
+                    measured[binary] = capture_tool_version(binary)
+            versions = {b: r["version"] for b, r in measured.items() if r["version"]}
+            if not versions:
+                self.provenance.record(
+                    TOOL_SOURCE_TABIX,
+                    VersionStatus.UNKNOWN,
+                    notes="tabix version could not be read at run time: "
+                    + "; ".join(f"`{b}`: {r['error']}" for b, r in measured.items()),
+                )
+            else:
+                if len(set(versions.values())) == 1 and len(versions) == len(measured):
+                    version = next(iter(versions.values()))
+                else:
+                    version = "; ".join(
+                        f"{use}: {measured[binary]['version'] or 'could not be read (' + str(measured[binary]['error']) + ')'}"
+                        for use, binary in uses
+                    )
+                self.provenance.record(
+                    TOOL_SOURCE_TABIX,
+                    VersionStatus.VERSION_KNOWN,
+                    version=version,
+                    notes="Read from `<binary> --version` at the start of this run, from the binary this run "
+                    "invokes -- not copied from the image's package pin.",
+                )
+        except Exception as exc:  # noqa: BLE001 -- provenance capture must never break a run
+            logger.warning(f"tabix tool-version provenance capture failed: {exc}")
+
+        try:
+            stamps = parse_vcf_tool_stamps(vcf_header_lines)
+            declared = (
+                (TOOL_SOURCE_CALLER, "caller", "creating software (no `##source=` line)"),
+                (TOOL_SOURCE_BCFTOOLS, "bcftools", "bcftools version (no `##bcftools_*Version=` line)"),
+                (TOOL_SOURCE_HTSLIB, "htslib", "htslib version (no `+htslib-` in a `##bcftools_*Version=` line)"),
+            )
+            for source, key, what in declared:
+                if stamps[key]:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.VERSION_KNOWN,
+                        version="; ".join(stamps[key]),
+                        notes="Read from the input VCF's own header, written by that tool when it produced "
+                        "the file. Not measured by this pipeline, which did not run it.",
+                    )
+                else:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.UNKNOWN,
+                        notes=f"The input VCF declares no {what}; what produced this file is not recorded in it.",
+                    )
+            # samtools and the aligner run upstream on the alignment, which
+            # this pipeline never receives; Kim stamps both into its VCF
+            # (`##samtoolsVersion=`, `##alignerVersion=`), or writes
+            # "NOT READ: <why>" when it could not measure one -- a marker
+            # carried through as a marker, never shown as a version.
+            upstream = (
+                (TOOL_SOURCE_SAMTOOLS, "samtools", "samtools version"),
+                (TOOL_SOURCE_ALIGNER, "aligner", "aligner version"),
+            )
+            for source, key, what in upstream:
+                read = [v for v in stamps[key] if not v.startswith(NOT_READ_MARKER)]
+                not_read = [v for v in stamps[key] if v.startswith(NOT_READ_MARKER)]
+                if read:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.VERSION_KNOWN,
+                        version="; ".join(read),
+                        notes="Read from the input VCF's own header, stamped at run time by the pipeline that "
+                        "ran it." + (f" Also declared: {'; '.join(not_read)}" if not_read else ""),
+                    )
+                elif not_read:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.UNKNOWN,
+                        notes=f"The pipeline that produced the input VCF could not read the {what}: "
+                        + "; ".join(not_read),
+                    )
+                else:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.UNKNOWN,
+                        notes=f"Not recorded. It runs upstream on the alignment (BAM), which this pipeline "
+                        f"does not receive, and the input VCF declares no {what}.",
+                    )
+        except Exception as exc:  # noqa: BLE001 -- provenance capture must never break a run
+            logger.warning(f"VCF-declared tool-version provenance capture failed: {exc}")
+
     def _capture_blast_retrieval_provenance(self) -> None:
         """
         Records WHERE this run's BLAST evidence came from -- the network,
@@ -727,6 +840,9 @@ class GeperPipeline:
             variants: List[Variant] = list(variant_iter)
         except VCFParsingError as exc:
             raise PipelineError(f"Fatal error parsing input VCF: {exc}") from exc
+
+        # Tool versions that produced this report -- needs the parsed header.
+        self._capture_tool_provenance(parser.header_lines)
 
         if not variants:
             raise PipelineError(f"'{vcf_path}' contained no usable variant records.")

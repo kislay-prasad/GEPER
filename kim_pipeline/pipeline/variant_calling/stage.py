@@ -23,6 +23,7 @@ from shared.process_control import spawn_tracked, kill_process_tree_now
 
 from . import freebayes_runner
 from .filtering import FilterThresholds, apply_pass_filter
+from .tool_versions import stamp_tool_versions
 
 logger = logging.getLogger("geper.pipeline.variant_calling.stage")
 
@@ -201,6 +202,15 @@ class VariantCallingStage:
         vcf_for_filtering = normalised_vcf_path if _norm_performed else raw_vcf_path
 
         filter_summary = apply_pass_filter(vcf_for_filtering, filtered_vcf_path, thresholds)
+
+        # Versions of the tools that produced this VCF, into its own header
+        # (the human's ruling, 2026-09-11) -- see tool_versions.py. A failure
+        # to stamp leaves the file untouched and unstamped, which GEPER then
+        # reports as "not declared"; it does not fail the run.
+        try:
+            stamp_tool_versions(filtered_vcf_path, bam_path)
+        except Exception as _stamp_exc:  # noqa: BLE001
+            logger.warning("[%s] tool-version stamp not written (%s)", sample_id, _stamp_exc)
 
         result = VariantCallingResult(
             sample_id=sample_id,

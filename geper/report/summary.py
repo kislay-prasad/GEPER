@@ -1146,6 +1146,11 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
         retrieval = record.get("retrieval")
         if retrieval:
             detail_bits.append(f"retrieval: {esc(RETRIEVAL_MODE_LABELS.get(retrieval, retrieval))}")
+        # The reason, as the Markdown already prints it: without it an
+        # UNKNOWN row is a label with no explanation -- e.g. samtools'
+        # "not recorded, and why" (2026-09-11).
+        if record.get("notes"):
+            detail_bits.append(esc(record["notes"]))
         flow.append(Paragraph("• " + "; ".join(detail_bits), styles["BulletText"]))
     return flow
 

@@ -312,6 +312,12 @@ image: **~36 s to load all four from the seed, against ~47 minutes and
 a live network without it.** That ratio is the reason this procedure
 is written down rather than reconstructed later.
 
+**Before rebuilding this image, read
+`docs/BRIDGE_READY_REQUIREMENTS.md`** -- seven conditions a future
+`bridge-ready` Dockerfile must satisfy, each with the evidence that it
+bites and what a violating build looks like. Two of them are not about
+symlinks and bite first, and one of them the shipped image violates.
+
 **How the image actually consumes it** -- read from `docker history`,
 not from the `Dockerfile.bridge-ready*` variants, **none of which built
 this image**. The seed was copied into a running container and

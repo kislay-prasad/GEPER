@@ -2,7 +2,7 @@
 """
 main.py
 ────────
-Bij AI v8 — unified command-line interface.
+Bij AI sequencing-analysis component v8 — unified command-line interface.
 
 Subcommands
 ───────────
@@ -630,12 +630,17 @@ def cmd_test(args: argparse.Namespace) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    # The same constant the reports print (pipeline/reporting/stage.py
+    # re-exports it), so the CLI and the reports cannot name this component
+    # differently. Import-free module: --version/--help need nothing else.
+    from pipeline.reporting.component_identity import COMPONENT_NAME, PIPELINE_VERSION
+
     parser = argparse.ArgumentParser(
         prog="geper",
-        description="Bij AI v8 — Genomic Evidence Pipeline with Evidence-based Risk assessment",
+        description=f"{PIPELINE_VERSION} — Genomic Evidence Pipeline with Evidence-based Risk assessment",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", action="version", version="Bij AI v8.0.0")
+    parser.add_argument("--version", action="version", version=PIPELINE_VERSION)
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
@@ -702,7 +707,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "ACMG/ancestry/reporting stages. 'vcf_only': stop after "
             "Variant Calling and emit filtered_variants.vcf only — use this "
             "when Kim is the FASTQ-to-VCF engine in front of another "
-            "interpretation pipeline (e.g. Bij AI)."
+            "interpretation pipeline (e.g. the Bij AI variant-interpretation "
+            "component (GEPER))."
         ),
     )
     p_analyze.add_argument(
@@ -745,7 +751,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_clf.set_defaults(func=cmd_classify)
 
     # ── serve ─────────────────────────────────────────────────────────────────
-    p_serve = sub.add_parser("serve", help="Start the Bij AI FastAPI REST server")
+    p_serve = sub.add_parser("serve", help=f"Start the {COMPONENT_NAME} FastAPI REST server")
     _common(p_serve)
     p_serve.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_serve.add_argument("--port", default=8000, type=int, help="Bind port (default: 8000)")
@@ -773,7 +779,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_env.set_defaults(func=cmd_verify_environment)
 
     # ── test ─────────────────────────────────────────────────────────────────
-    p_test = sub.add_parser("test", help="Run the Bij AI test suite")
+    p_test = sub.add_parser("test", help=f"Run the {COMPONENT_NAME} test suite")
     _common(p_test)
     p_test.add_argument("-k", metavar="EXPR", help="pytest -k filter expression")
     p_test.add_argument("--cov", action="store_true", help="Run with coverage report")

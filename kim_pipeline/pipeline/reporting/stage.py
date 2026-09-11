@@ -52,8 +52,10 @@ from pipeline.reporting import pdf_report as _pdf_report_mod
 logger = logging.getLogger("geper.pipeline.reporting.stage")
 
 # Single source of truth for the pipeline version string, shared by the
-# JSON payload, HTML report, and PDF report so they can never disagree.
-PIPELINE_VERSION = "Bij AI sequencing-analysis component v8"
+# JSON payload, HTML report, and PDF report so they can never disagree --
+# and by main.py's --version/help, which is why it is defined in the
+# import-free pipeline/reporting/component_identity.py and re-exported here.
+from pipeline.reporting.component_identity import PIPELINE_VERSION  # noqa: E402
 
 # Shared ACMG classification -> style mapping. HTML uses the CSS-string
 # values directly; pipeline/reporting/pdf_report.py uses the same keys

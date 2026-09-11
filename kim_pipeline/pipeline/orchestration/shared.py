@@ -146,6 +146,7 @@ def run_acmg_evidence_batch(
         variant — a single bad variant never aborts the whole batch).
     """
     from pipeline.acmg.classifier import AcmgClassifier, VariantEvidence
+    from pipeline.annotation.stage import consequence_classes_disagree
     from pipeline.clingen.lookup import ClinGenDosageLookup
     from pipeline.clinvar.lookup import ClinVarLookup
     from pipeline.constraint.lookup import GnomadConstraintLookup
@@ -519,11 +520,29 @@ def run_acmg_evidence_batch(
                 ai_score=ai_score,
             )
 
+            # T3-F3 (finding: andy), ruled (b) REPORT CAVEAT, 2026-09-11:
+            # "a disagreement isn't an inability to evaluate ... Disclose it
+            # and let the reviewer weigh it." `consequence` (kim's own
+            # derivation) is the only term the ACMG gates above read; VEP's
+            # most-severe CSQ term may be keyed to a different transcript.
+            # Recorded here for the report to disclose -- deliberately
+            # computed AFTER classification and fed into nothing, so it can
+            # never change the call. None = nothing to disclose: the classes
+            # agree, or there was no VEP term to compare against.
+            kim_term = variant.get("consequence", "")
+            vep_term = variant.get("vep_consequence", "")
+            consequence_disagreement = (
+                {"kim_consequence": kim_term, "vep_consequence": vep_term}
+                if consequence_classes_disagree(kim_term, vep_term)
+                else None
+            )
+
             acmg_batch.append(
                 {
                     **acmg_res.to_dict(),
                     **ev_res.to_dict(),
                     "ai_models_used": ai_models_used,
+                    "consequence_disagreement": consequence_disagreement,
                     **_availability_fields(
                         gene=gene,
                         gene_unavailable_reason=gene_unavailable_reason,

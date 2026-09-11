@@ -269,6 +269,41 @@ def _dict_to_html_table(data: Dict[str, Any], title: Optional[str] = None) -> st
     return f"<table><tr><th>Field</th><th>Value</th></tr>{rows}</table>"
 
 
+def _consequence_disagreement_caveat(acmg_results: List[Dict]) -> str:
+    """Disclose, beneath the ACMG table, every variant whose two protein-
+    consequence derivations disagree (orchestration/shared.py's
+    `consequence_disagreement`). T3-F3, ruled (b) REPORT CAVEAT,
+    2026-09-11: "Disclose it and let the reviewer weigh it." Not a table
+    column: a caveat qualifies the row rather than being a value of it.
+    Returns "" when no variant disagrees -- silence here means "compared and
+    agreed" or "nothing to compare", never "not checked" (a record without
+    the field never reached the comparison and is skipped). Values are
+    escaped: vep_consequence comes straight from the input VCF's CSQ field."""
+    from html import escape
+
+    items = []
+    for item in acmg_results:
+        disagreement = item.get("consequence_disagreement") if isinstance(item, dict) else None
+        if not disagreement:
+            continue
+        variant_str = f"{item.get('chrom', '')}:{item.get('pos', '')} {item.get('ref', '')}>{item.get('alt', '')}"
+        items.append(
+            f"<li><strong>{escape(variant_str)}</strong>: kim_pipeline's own transcript derivation gives "
+            f"<code>{escape(str(disagreement.get('kim_consequence', '')))}</code>; VEP's most-severe "
+            f"consequence gives <code>{escape(str(disagreement.get('vep_consequence', '')))}</code>.</li>"
+        )
+    if not items:
+        return ""
+    return (
+        '<div class="consequence-disagreement" style="font-size:0.85em;margin-top:8px;">'
+        "<p><strong>Protein consequence: two derivations disagree</strong> for the variant(s) below. "
+        "The ACMG criteria were evaluated on kim_pipeline's own derivation and were not withheld; "
+        "the two derivations may be keyed to different transcripts (e.g. alternative splicing). "
+        "The reviewer should weigh this disagreement when assessing the classification.</p>"
+        f"<ul>{''.join(items)}</ul></div>"
+    )
+
+
 def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
     """Render ACMG classification results as a styled HTML table.
 
@@ -413,7 +448,7 @@ def _acmg_to_html_table(acmg_results: Optional[List[Dict]]) -> str:
         f"</p>"
     )
 
-    return table_html + footnote
+    return table_html + footnote + _consequence_disagreement_caveat(acmg_results)
 
 
 def _annotation_summary_to_html(ann_d: Dict) -> str:

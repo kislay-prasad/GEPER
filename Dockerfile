@@ -387,8 +387,7 @@ LABEL org.opencontainers.image.title="GEPER" \
 #   tabix                    -- AlphaMissense catalogue lookups
 #                                (models/alphamissense.py; required per
 #                                geper/requirements.txt's own comment)
-#   minimap2                 -- Kim's optional alternate aligner
-#   git, git-lfs              -- HyenaDNA's actual pretrained-checkpoint
+#   git, git-lfs             -- HyenaDNA's actual pretrained-checkpoint
 #                                download is a `git lfs install && git
 #                                clone` against a HuggingFace repo
 #                                (models/hyenadna.py::_load_hyenadna_checkpoint)
@@ -397,28 +396,7 @@ LABEL org.opencontainers.image.title="GEPER" \
 #                                a build-time one (the source-only clone
 #                                above doesn't need it; the checkpoint
 #                                download does).
-#   r-base-core                -- SPiP (CONFIG.splicing.ENABLE_SPIP
-#                                defaults true) shells out to `Rscript`
-#                                (pipeline/models/spip_plugin.py); its
-#                                three CRAN packages (foreach, doParallel,
-#                                randomForest) still auto-install via
-#                                `install.packages()` on first use --
-#                                NOT pre-installed here (would need R's
-#                                own build toolchain for randomForest's
-#                                compiled code, a meaningfully bigger
-#                                addition to this Dockerfile for a plugin
-#                                that degrades gracefully without it) --
-#                                see DOCKER.md's "what's baked in vs.
-#                                still a first-run cost" table.
-#   ncbi-blast+                -- local BLAST+ (blastn/makeblastdb/
-#                                blastdbcmd), GEPER's preferred production
-#                                backend (README.md section 20). NOT in
-#                                this task's literal required-tool list --
-#                                included anyway since GEPER degrades
-#                                gracefully to remote BLAST or skips
-#                                entirely without it, so it costs one apt
-#                                line to close a real production gap.
-#   libcurl4, libssl3, zlib1g,
+#   libcurl4,libssl3, zlib1g,
 #   libbz2-1.0, liblzma5,
 #   libncurses6               -- runtime shared libraries the
 #                                builder-compiled freebayes binary (and
@@ -433,6 +411,60 @@ LABEL org.opencontainers.image.title="GEPER" \
 #                                first thing to check.
 #   ca-certificates            -- every provider lookup in this pipeline
 #                                is HTTPS (ClinVar, gnomAD, ClinGen, ...)
+#
+# ── REMOVED 2026-09-11, ON THE HUMAN'S RULING ("DROP THEM"): minimap2,
+#    r-base-core, ncbi-blast+. Surface area the shipped product's DEFAULT
+#    configuration does not reach, two of them with licence exposure that is
+#    with counsel. READ WHAT THIS REMOVAL DOES AND DOES NOT DEMONSTRATE
+#    BEFORE YOU CITE A GREEN BUILD AS EVIDENCE ABOUT IT.
+#
+#    WHAT DOES NOT ESTABLISH IT: A BUILD THAT SUCCEEDS AFTER THIS CHANGE.
+#    Package installation is fail-fast and nothing in the image build runs
+#    the pipeline, so a green build proves only that the build gets further.
+#    It says NOTHING about whether any code path needed these binaries, and
+#    nothing that has never been exercised on this hardware has been
+#    exercised by it. A GREEN BUILD AFTER A REMOVAL READS AS "NOTHING NEEDED
+#    THEM". IT IS NOT THAT.
+#
+#    WHAT DOES ESTABLISH IT, AS FAR AS IT GOES: a caller census, 2026-09-11,
+#    over all 577 tracked .py files (577 parsed by `ast`, 0 refused), both
+#    pipeline trees (geper/ and kim_pipeline/), for every string literal
+#    naming minimap2, Rscript, blastn, makeblastdb, blastdbcmd, blastp,
+#    tblastn or blastx. Every production call site found, and what it does
+#    when the binary is absent:
+#      minimap2 -- kim_pipeline alignment. config/default.yaml ships
+#        `aligner: "auto"`, which picks bwa first (bwa is installed above),
+#        so the DEFAULT path never reaches minimap2. `aligner: minimap2` set
+#        explicitly now fails LOUDLY: FastqPipelineError "aligner='minimap2'
+#        requested but minimap2 is not installed" (alignment/stage.py).
+#      ncbi-blast+ -- two callers. kim_pipeline blast stage: `enabled:
+#        false` and `db_path: ""` by default, so not reached. geper
+#        database/blast_client.py: "local" mode needs BOTH a configured
+#        GEPER_BLAST_LOCAL_DB (default "") AND `blastn` on PATH; otherwise
+#        it returns "remote". DEFAULT: already "remote", unchanged. BUT A
+#        SITE THAT SETS GEPER_BLAST_LOCAL_DB WILL NOW BE MOVED FROM LOCAL TO
+#        REMOTE BLAST, and that branch logs nothing -- that is a behaviour
+#        change for any deployment configured for local BLAST, not a no-op.
+#      r-base-core -- ONE caller, and IT IS REACHED BY DEFAULT: SPiP
+#        (pipeline/models/spip_plugin.py) is gated by ENABLE_SPIP, which
+#        DEFAULTS TO TRUE (geper/config.py, GEPER_ENABLE_SPIP), and needs
+#        `Rscript`. Without R, SPiP is unavailable in every default run. Its
+#        absence is ANNOUNCED, not silent: is_available() is False and the
+#        orchestrator lists it with the reason "no 'Rscript' executable
+#        found in this environment". THIS REMOVAL THEREFORE CHANGES WHAT THE
+#        DEFAULT CONFIGURATION PRODUCES: SPiP no longer runs.
+#
+#    The 143 tracked non-Python files were swept too (prose -- .md/.txt/
+#    .rst/.html -- excluded): 8 name one of these binaries, and none adds a
+#    caller. They are this file, a CI comment, two config comments, the dev
+#    installer kim_pipeline/install_dependencies.sh, and SPiP's own three
+#    vendored R scripts -- which are what `Rscript` runs, so they go dark
+#    with it.
+#
+#    WHAT THE CENSUS CANNOT SEE: a binary name built at runtime rather than
+#    written as a literal; the operator's own commands inside a container;
+#    a deployment's own configuration. It establishes where the CODE reaches
+#    these tools. It does not establish that no USER does.
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
 # ── VERSIONS PINNED 2026-09-10. READ THIS BEFORE CHANGING OR REMOVING THEM. ──
 # WHY: nothing here was pinned, so the genomics stack was whatever bookworm
@@ -460,7 +492,10 @@ RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire
 #    RESOLVED BY A BUILD. Measured 2026-09-11 across all 24 images on the
 #    build host: NOT ONE CONTAINS A PINNED apt LINE. Every image here was
 #    built from a Dockerfile whose genomics packages were unversioned, so no
-#    apt anywhere has ever been asked for these five exact versions together.
+#    apt anywhere has ever been asked for these exact versions together.
+#    (There were five; minimap2 was the fifth and was removed 2026-09-11 --
+#    see the REMOVED block above. The four that remain have still never
+#    been resolved by a build, so the removal does not change this note.)
 #
 #    WHAT THAT MEANS IF YOU ARE THE ONE BUILDING THIS: you are the first, and
 #    a failure will be AMBIGUOUS. "Version '1.16.1-1' for 'samtools' was not
@@ -500,13 +535,13 @@ RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire
 # shared libraries, not tools whose OUTPUT this pipeline reads. Leaving them
 # free lets apt apply security updates. If that distinction ever stops being
 # true, pin them too.
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa=0.7.17-7+b2 samtools=1.16.1-1 bcftools=1.16-1 tabix=1.16+ds-3 minimap2=2.24+dfsg-3+b1 libtabixpp0 libseqlib2 \
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends bwa=0.7.17-7+b2 samtools=1.16.1-1 bcftools=1.16-1 tabix=1.16+ds-3 libtabixpp0 libseqlib2 \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
     && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends libcurl4 libssl3 zlib1g libbz2-1.0 liblzma5 libncurses6 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
-    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends git git-lfs r-base-core ncbi-blast+ \
+    && apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true install -y --no-install-recommends git git-lfs \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/*
 

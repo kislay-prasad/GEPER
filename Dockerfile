@@ -477,6 +477,28 @@ LABEL org.opencontainers.image.title="GEPER" \
 #    written as a literal; the operator's own commands inside a container;
 #    a deployment's own configuration. It establishes where the CODE reaches
 #    these tools. It does not establish that no USER does.
+#
+#    BUILT 2026-09-11, authorised by the human: geper:vic-trim-htslib-d2fc3ee,
+#    from this file at d2fc3ee. Exit 0, 10:56Z-11:05Z. WHAT THAT BUILD SHOWED,
+#    AND ONLY THAT:
+#      - The RUNTIME stage ran fresh, every step. The three packages are not
+#        installed (dpkg-query) and none of minimap2, R, Rscript, blastn,
+#        makeblastdb, blastdbcmd, blastp is on PATH -- the same `command -v`
+#        loop in the pre-trim image geper:kelly-master-d249a20 finds all 7,
+#        so the absence is real, not a blind probe.
+#      - GEPER's own verify_environment.py in the new image differs from the
+#        pre-trim image in exactly one row: BLAST+ goes from PASS to WARN
+#        ("remote NCBI BLAST is used instead"). Its one FAIL -- transformers
+#        4.56.2 against geper/requirements.txt's >=5.12.1 -- is IDENTICAL in
+#        the pre-trim image: pre-existing, not caused by this removal.
+#      - SPiP reports `is_available: False`, "disabled via
+#        CONFIG.splicing.ENABLE_SPIP" (pre-trim image: True).
+#    WHAT IT DID NOT SHOW: THE BUILDER STAGE CAME ENTIRELY FROM CACHE -- the
+#    freebayes binary, the venv and the builder's apt layer were not rebuilt
+#    by this build. And NOTHING RAN THE PIPELINE: no FASTQ was aligned, no
+#    VCF annotated, no report rendered in this image. So the build still
+#    proves only that the build gets further; that nothing in the code needs
+#    these binaries rests on the census above, and on nothing else.
 RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire::Queue-Mode=access -o Acquire::ForceIPv4=true update \
 # ── VERSIONS PINNED 2026-09-10. READ THIS BEFORE CHANGING OR REMOVING THEM. ──
 # WHY: nothing here was pinned, so the genomics stack was whatever bookworm
@@ -508,6 +530,17 @@ RUN apt-get -o Acquire::Retries=15 -o Acquire::http::Pipeline-Depth=0 -o Acquire
 #    (There were five; minimap2 was the fifth and was removed 2026-09-11 --
 #    see the REMOVED block above. The four that remain have still never
 #    been resolved by a build, so the removal does not change this note.)
+#
+#    ── SUPERSEDED 2026-09-11 BY A BUILD. The paragraph above was true when
+#    written and is kept so the record reads in order. geper:vic-trim-htslib-
+#    d2fc3ee (authorised by the human) RESOLVED THIS LINE: the runtime layer
+#    built fresh, not from cache, and `dpkg-query` INSIDE THE BUILT IMAGE
+#    reports exactly the pinned versions for all five -- bwa 0.7.17-7+b2,
+#    samtools 1.16.1-1, bcftools 1.16-1, tabix 1.16+ds-3, libhts3 1.16+ds-3.
+#    Installed equals pinned; no difference. `samtools --version` and
+#    `bcftools --version` both report "Using htslib 1.16", and freebayes
+#    links libhts.so.3 from that package. The rest of this note -- the
+#    designed failure when bookworm moves -- still stands.
 #
 #    WHAT THAT MEANS IF YOU ARE THE ONE BUILDING THIS: you are the first, and
 #    a failure will be AMBIGUOUS. "Version '1.16.1-1' for 'samtools' was not

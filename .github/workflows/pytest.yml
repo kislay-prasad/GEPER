@@ -92,9 +92,10 @@ jobs:
   #      built there with no compiler present. A future sdist-only dependency
   #      WITH C code will fail this job at install. That is correct: it would
   #      fail the product image the same way.
-  #    - The htslib pins have been RESOLVED (apt-get install -s, 2026-09-11) but
-  #      no image carrying them has been built. If this job fails at the pinned
-  #      install, read the Dockerfile's pin note before touching either file.
+  #    - The htslib pins were RESOLVED by apt-get install -s, then by a real
+  #      build (2026-09-11, geper:vic-trim-htslib-d2fc3ee: dpkg-query inside
+  #      the image equals the pins). If this job fails at the pinned install,
+  #      read the Dockerfile's pin note before touching either file.
   geper-tests:
     name: geper/ pytest
     runs-on: ubuntu-latest

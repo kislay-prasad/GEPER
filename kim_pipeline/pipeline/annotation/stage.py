@@ -386,6 +386,11 @@ class AnnotatedVariant:
     gq: Optional[int] = None
     ab: Optional[float] = None
     phase_set: Optional[str] = None
+    # DEFECT-zygosity-collapses-absent-and-malformed: True when the GT token
+    # this `zygosity` was computed from could not actually be validated as a
+    # real genotype (empty/non-numeric) -- `zygosity` itself is still a
+    # best-effort category, not a discovered fact, when this is True.
+    zygosity_malformed: bool = False
     hemizygous: bool = False
     # Raw INFO
     info: str = ""
@@ -926,6 +931,7 @@ def _iter_vcf(vcf_path: str, skipped: Optional[List[Dict]] = None):
                         var.ab = zy_result.ab
                         var.phase_set = zy_result.phase_set
                         var.hemizygous = zy_result.zygosity == "hemizygous"
+                        var.zygosity_malformed = zy_result.malformed
                     except Exception as exc:
                         logger.warning(
                             "ZygosityExtractor failed for %s:%s: %s — falling back",

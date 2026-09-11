@@ -526,6 +526,20 @@ def _variants_to_html_table(
             v.get("gene_name")
             or f"<em>Gene annotation unavailable<br/>Reason: {gene_unavailable_reason}</em>"
         )
+        # DEFECT-zygosity-collapses-absent-and-malformed: a malformed GT
+        # token (empty/non-numeric) still produces a best-effort zygosity
+        # category -- do not render it as a plain confident value, and do
+        # not blank the cell either (a blank cell reads as "nothing found",
+        # the same fabricated-absence defect this floor has been removing
+        # all day). Say the category, that it is unreliable, and why --
+        # the cause is the GT column in this same row.
+        zygosity_val = v.get("zygosity", "")
+        zygosity_cell = (
+            f"{zygosity_val} <strong>(unreliable: GT field unparseable, "
+            "do not trust this category -- see GT column)</strong>"
+            if v.get("zygosity_malformed")
+            else zygosity_val
+        )
         cells = [
             v.get("chrom", ""),
             v.get("pos", ""),
@@ -536,7 +550,7 @@ def _variants_to_html_table(
             v.get("transcript_id") or "",
             v.get("hgvs", ""),
             consequence_display_label(v.get("consequence")),
-            v.get("zygosity", ""),
+            zygosity_cell,
             v.get("gt", ""),
             v.get("dp", ""),
             v.get("ad", ""),

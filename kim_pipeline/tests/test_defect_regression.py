@@ -15,7 +15,7 @@ D6  – PGx subset allele exclusion (deterministic diplotype)
 D7  – BP7 fires from synonymous_or_intronic
 D8  – BP1 wired to ClinVar reputable-source benign
 D9  – Duplicate @staticmethod removed from EvidenceAggregator
-D10 – Version synchronised across pyproject.toml and pipeline.__init__
+D10 – Version: one source (component_identity.VERSION), read by every surface
 D11 – PS1/PM5 mutual exclusion
 D12 – BLAST results attached to annotation output
 D13 – VEP HGVSc/HGVSp propagated into AnnotatedVariant
@@ -291,38 +291,142 @@ class TestDuplicateStaticmethod:
 
 
 class TestVersionSync:
-    """Defect 10: All version strings must be synchronised to 12.0.0."""
+    """Defect 10, REPLACED 2026-09-11 (human-approved: "make 8 Kim's single
+    version source"). The old class asserted five hand-typed "12.0.0"
+    literals agreed with EACH OTHER -- pyproject.toml and pipeline/__init__.py
+    -- while the API said 8.0.0 and every report and --version said v8, and
+    nothing in the code read the 12.0.0 values at all. Agreement between
+    copies is not a source.
 
-    def test_pyproject_version(self):
+    Now there is one: pipeline/reporting/component_identity.py::VERSION
+    ("8.0.0"), with the label PIPELINE_VERSION ("... v8") derived from it.
+    Each test below reads a real surface and compares it to that module;
+    the last one scans the consumer files so a hand-typed number anywhere
+    fails even if every surface test still happens to agree.
+    """
+
+    def _identity(self):
+        from pipeline.reporting import component_identity
+
+        return component_identity
+
+    def test_single_source_and_its_two_renderings(self):
+        ci = self._identity()
+        assert ci.VERSION == "8.0.0"
+        assert ci.PIPELINE_VERSION == f"{ci.COMPONENT_NAME} v{ci.VERSION.split('.')[0]}"
+
+    def test_api_openapi_and_health_read_the_source(self):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from api.main import app
+
+        ci = self._identity()
+        assert app.openapi()["info"]["version"] == ci.VERSION
+        assert TestClient(app).get("/health").json()["version"] == ci.VERSION
+
+    def test_report_json_pipeline_reads_the_source(self, tmp_path):
+        import json
+        from pathlib import Path
+
+        from tests.test_reporting_stage import TestIssue3ClinicalReportOverhaul
+
+        result = TestIssue3ClinicalReportOverhaul()._run(tmp_path)
+        payload = json.loads(Path(result.json_path).read_text())
+        assert payload["pipeline"] == self._identity().PIPELINE_VERSION
+
+    def test_cli_version_reads_the_source(self):
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        kim_root = Path(__file__).resolve().parents[1]
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        out = subprocess.run(
+            [sys.executable, str(kim_root / "main.py"), "--version"],
+            cwd=str(kim_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        ).stdout.strip()
+        assert out == self._identity().PIPELINE_VERSION
+
+    def test_package_metadata_reads_the_source(self):
+        # setuptools' own expansion of pyproject.toml -- the value a build
+        # would stamp into the wheel -- and proof the version is dynamic
+        # (read from the module), not a literal.
+        import os
         import tomllib
-        import pathlib
+        from pathlib import Path
 
-        p = pathlib.Path(__file__).parent.parent / "pyproject.toml"
-        if not p.exists():
-            pytest.skip("pyproject.toml not found")
-        with open(p, "rb") as f:
-            data = tomllib.load(f)
-        assert data["project"]["version"] == "12.0.0"
+        from setuptools.config.pyprojecttoml import read_configuration
 
-    def test_pipeline_package_version(self):
+        kim_root = Path(__file__).resolve().parents[1]
+        raw = tomllib.loads((kim_root / "pyproject.toml").read_text(encoding="utf-8"))
+        assert "version" not in raw["project"]
+        assert "version" in raw["project"]["dynamic"]
+        assert raw["tool"]["setuptools"]["dynamic"]["version"] == {
+            "attr": "pipeline.reporting.component_identity.VERSION"
+        }
+        cwd = os.getcwd()
+        try:
+            os.chdir(kim_root)
+            expanded = read_configuration(kim_root / "pyproject.toml", expand=True)
+        finally:
+            os.chdir(cwd)
+        assert expanded["project"]["version"] == self._identity().VERSION
+        # The description is static text; it must carry the same label.
+        assert raw["project"]["description"].startswith(self._identity().PIPELINE_VERSION + " ")
+
+    def test_package_init_constants_read_the_source(self):
         import pipeline
 
-        assert pipeline.__version__ == "12.0.0"
+        ci = self._identity()
+        assert pipeline.__version__ == ci.VERSION
+        assert pipeline.PIPELINE_VERSION == ci.PIPELINE_VERSION
+        # Removed, not re-pointed: nothing ever read them, and no checkpoint
+        # or report stores a format version (resume compares only
+        # checkpoint["reference_versions"]). A name that promises a format
+        # check that does not exist is worse than no name.
+        assert not hasattr(pipeline, "CHECKPOINT_VERSION")
+        assert not hasattr(pipeline, "REPORT_VERSION")
 
-    def test_checkpoint_version(self):
-        import pipeline
+    def test_no_hand_typed_version_anywhere_in_the_consumers(self):
+        import re
+        from pathlib import Path
 
-        assert pipeline.CHECKPOINT_VERSION == "12.0.0"
-
-    def test_report_version(self):
-        import pipeline
-
-        assert pipeline.REPORT_VERSION == "12.0.0"
-
-    def test_pipeline_version(self):
-        import pipeline
-
-        assert pipeline.PIPELINE_VERSION == "12.0.0"
+        kim_root = Path(__file__).resolve().parents[1]
+        label = self._identity().PIPELINE_VERSION
+        consumers = (
+            "api/main.py",
+            "pyproject.toml",
+            "pipeline/__init__.py",
+            "main.py",
+            "pipeline/reporting/stage.py",
+            "pipeline/reporting/pdf_report.py",
+            "pipeline/orchestration/runner.py",
+            "serve_api.py",
+        )
+        assignment = re.compile(r"""(?i)\b(__version__|[a-z_]*version)\s*[=:]\s*["']\s*v?\d""")
+        vnumber = re.compile(r"""(?<![/\w.])v\d+(?:\.\d+)*\b(?!/)""")
+        allowed = {'python_version = "3.10"'}  # mypy's target interpreter, not Kim's version
+        hits = []
+        for rel in consumers:
+            for lineno, line in enumerate(
+                (kim_root / rel).read_text(encoding="utf-8").splitlines(), 1
+            ):
+                if line.strip() in allowed:
+                    continue
+                for pat in (assignment, vnumber):
+                    m = pat.search(line)
+                    # A line may carry the version only as the rendered label
+                    # itself; any other number is hand-typed.
+                    if m and label not in line:
+                        hits.append(f"{rel}:{lineno}: {line.strip()[:100]}")
+                        break
+        assert hits == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

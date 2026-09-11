@@ -1305,16 +1305,23 @@ TOOL_SOURCE_CALLER = "Software that created the input VCF (its ##source)"
 TOOL_SOURCE_BCFTOOLS = "bcftools (declared in the input VCF)"
 TOOL_SOURCE_HTSLIB = "htslib used by bcftools (declared in the input VCF)"
 TOOL_SOURCE_SAMTOOLS = "samtools"
+# Kim reads this from the BAM's own @PG header (the aligner writes it as it
+# runs), so it names whichever aligner actually produced the alignment.
+TOOL_SOURCE_ALIGNER = "Aligner (declared in the input VCF)"
 KNOWN_SOURCES = KNOWN_SOURCES + (
     TOOL_SOURCE_TABIX,
     TOOL_SOURCE_CALLER,
     TOOL_SOURCE_BCFTOOLS,
     TOOL_SOURCE_HTSLIB,
     TOOL_SOURCE_SAMTOOLS,
+    TOOL_SOURCE_ALIGNER,
 )
 
 _BCFTOOLS_STAMP = re.compile(r"^##bcftools_\w+Version=([^+\s]+)(?:\+htslib-(\S+))?")
-_SAMTOOLS_STAMP = re.compile(r"^##samtools\w*Version=(\S+)")
+# Written by kim_pipeline/pipeline/variant_calling/tool_versions.py. A value
+# beginning "NOT READ" is that pipeline's honest marker, not a version.
+_KIM_STAMPS = {"##samtoolsVersion=": "samtools", "##alignerVersion=": "aligner"}
+NOT_READ_MARKER = "NOT READ"
 
 
 def parse_vcf_tool_stamps(header_lines: List[str]) -> Dict[str, List[str]]:
@@ -1325,7 +1332,7 @@ def parse_vcf_tool_stamps(header_lines: List[str]) -> Dict[str, List[str]]:
     list means the header declares nothing, which callers must render as
     such rather than fill in.
     """
-    found: Dict[str, List[str]] = {"caller": [], "bcftools": [], "htslib": [], "samtools": []}
+    found: Dict[str, List[str]] = {"caller": [], "bcftools": [], "htslib": [], "samtools": [], "aligner": []}
 
     def _add(key: str, value: Optional[str]) -> None:
         if value and value not in found[key]:
@@ -1340,9 +1347,9 @@ def parse_vcf_tool_stamps(header_lines: List[str]) -> Dict[str, List[str]]:
             _add("bcftools", m.group(1))
             _add("htslib", m.group(2))
             continue
-        m = _SAMTOOLS_STAMP.match(line)
-        if m:
-            _add("samtools", m.group(1))
+        for prefix, key in _KIM_STAMPS.items():
+            if line.startswith(prefix):
+                _add(key, line[len(prefix) :].strip())
     return found
 
 

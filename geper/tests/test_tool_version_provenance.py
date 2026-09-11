@@ -45,6 +45,7 @@ from pipeline.provenance import (
     TOOL_SOURCE_BCFTOOLS,
     TOOL_SOURCE_CALLER,
     TOOL_SOURCE_HTSLIB,
+    TOOL_SOURCE_ALIGNER,
     TOOL_SOURCE_SAMTOOLS,
     TOOL_SOURCE_TABIX,
     RunProvenanceCollector,
@@ -62,6 +63,15 @@ _KIM_HEADER = [
     "##bcftools_viewCommand=view -f PASS -O v -o x.pass.vcf x.soft.vcf",
 ]
 _BARE_HEADER = ["##fileformat=VCFv4.2", "##reference=GRCh38"]
+# What kim_pipeline/pipeline/variant_calling/tool_versions.py adds before #CHROM.
+_KIM_STAMPED_HEADER = _KIM_HEADER + [
+    "##samtoolsVersion=1.16.1+htslib-1.16",
+    "##alignerVersion=bwa 0.7.17-r1188",
+]
+_KIM_NOT_READ_HEADER = _KIM_HEADER + [
+    "##samtoolsVersion=NOT READ: samtools not found on PATH",
+    "##alignerVersion=NOT READ: no aligner @PG line (bwa, bwa-mem2, minimap2) in the BAM header",
+]
 _OTHER_BCFTOOLS_HEADER = [
     "##fileformat=VCFv4.2",
     "##source=freeBayes v1.3.10",
@@ -111,6 +121,7 @@ class TestRegistered(unittest.TestCase):
             TOOL_SOURCE_BCFTOOLS,
             TOOL_SOURCE_HTSLIB,
             TOOL_SOURCE_SAMTOOLS,
+            TOOL_SOURCE_ALIGNER,
         ):
             self.assertIn(source, KNOWN_SOURCES)
 
@@ -135,7 +146,12 @@ class TestVcfStamps(unittest.TestCase):
 
     def test_bare_header_yields_nothing_not_a_default(self):
         stamps = parse_vcf_tool_stamps(_BARE_HEADER)
-        self.assertEqual(stamps, {"caller": [], "bcftools": [], "htslib": [], "samtools": []})
+        self.assertEqual(stamps, {"caller": [], "bcftools": [], "htslib": [], "samtools": [], "aligner": []})
+
+    def test_kim_stamped_samtools_and_aligner_are_read_whole(self):
+        stamps = parse_vcf_tool_stamps(_KIM_STAMPED_HEADER)
+        self.assertEqual(stamps["samtools"], ["1.16.1+htslib-1.16"])
+        self.assertEqual(stamps["aligner"], ["bwa 0.7.17-r1188"])
 
 
 class TestCaptureToolVersion(unittest.TestCase):
@@ -207,6 +223,22 @@ class TestOrchestratorCapture(unittest.TestCase):
         self.assertIsNone(rec["version"])
         self.assertIn("does not receive", rec["notes"])
 
+    def test_kim_stamped_samtools_and_aligner_are_recorded(self):
+        missing = os.path.join(tempfile.gettempdir(), "no-such-tabix-binary-xyz")
+        recs = _captured(_KIM_STAMPED_HEADER, missing, missing)
+        self.assertEqual(recs[TOOL_SOURCE_SAMTOOLS]["status"], "version_known")
+        self.assertEqual(recs[TOOL_SOURCE_SAMTOOLS]["version"], "1.16.1+htslib-1.16")
+        self.assertEqual(recs[TOOL_SOURCE_ALIGNER]["version"], "bwa 0.7.17-r1188")
+
+    def test_kims_not_read_marker_stays_a_marker_never_a_version(self):
+        missing = os.path.join(tempfile.gettempdir(), "no-such-tabix-binary-xyz")
+        recs = _captured(_KIM_NOT_READ_HEADER, missing, missing)
+        for source in (TOOL_SOURCE_SAMTOOLS, TOOL_SOURCE_ALIGNER):
+            self.assertEqual(recs[source]["status"], "unknown", source)
+            self.assertIsNone(recs[source]["version"], source)
+            self.assertIn("could not read", recs[source]["notes"], source)
+        self.assertIn("samtools not found on PATH", recs[TOOL_SOURCE_SAMTOOLS]["notes"])
+
     def test_run_wires_the_capture_to_the_parsed_header(self):
         # Structural, and stated as such: constructing a real GeperPipeline
         # loads model registries. This asserts that `run()` itself calls the
@@ -268,7 +300,9 @@ class TestEverySurface(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         stub = _stub_binary(self.tmp.name, "tabix", "tabix (htslib) 9.99-stub")
-        self.collector = _collector(_KIM_HEADER, stub, stub)
+        # samtools READ, aligner NOT READ: every surface must show a real
+        # version AND an honest marker.
+        self.collector = _collector(_KIM_STAMPED_HEADER[:-1] + [_KIM_NOT_READ_HEADER[-1]], stub, stub)
         self.provenance = self.collector.to_list()
 
     def _assert_carries_tools(self, text):
@@ -280,7 +314,9 @@ class TestEverySurface(unittest.TestCase):
             TOOL_SOURCE_BCFTOOLS,
             TOOL_SOURCE_HTSLIB,
             TOOL_SOURCE_SAMTOOLS,
-            "does not receive",
+            "1.16.1+htslib-1.16",
+            TOOL_SOURCE_ALIGNER,
+            "could not read the aligner version",
         ):
             self.assertIn(needle, text)
 

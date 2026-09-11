@@ -77,6 +77,8 @@ from pipeline.models.status import build_ai_model_status, rollup_run_status
 from pipeline.prioritization_engine import rank_batch
 from pipeline.protein_translator import ProteinTranslator
 from pipeline.provenance import (
+    NOT_READ_MARKER,
+    TOOL_SOURCE_ALIGNER,
     TOOL_SOURCE_BCFTOOLS,
     TOOL_SOURCE_CALLER,
     TOOL_SOURCE_HTSLIB,
@@ -608,20 +610,40 @@ class GeperPipeline:
                         VersionStatus.UNKNOWN,
                         notes=f"The input VCF declares no {what}; what produced this file is not recorded in it.",
                     )
-            if stamps["samtools"]:
-                self.provenance.record(
-                    TOOL_SOURCE_SAMTOOLS,
-                    VersionStatus.VERSION_KNOWN,
-                    version="; ".join(stamps["samtools"]),
-                    notes="Read from the input VCF's own header.",
-                )
-            else:
-                self.provenance.record(
-                    TOOL_SOURCE_SAMTOOLS,
-                    VersionStatus.UNKNOWN,
-                    notes="Not recorded. samtools runs upstream on the alignment (BAM), which this pipeline "
-                    "does not receive, and the input VCF declares no samtools version.",
-                )
+            # samtools and the aligner run upstream on the alignment, which
+            # this pipeline never receives; Kim stamps both into its VCF
+            # (`##samtoolsVersion=`, `##alignerVersion=`), or writes
+            # "NOT READ: <why>" when it could not measure one -- a marker
+            # carried through as a marker, never shown as a version.
+            upstream = (
+                (TOOL_SOURCE_SAMTOOLS, "samtools", "samtools version"),
+                (TOOL_SOURCE_ALIGNER, "aligner", "aligner version"),
+            )
+            for source, key, what in upstream:
+                read = [v for v in stamps[key] if not v.startswith(NOT_READ_MARKER)]
+                not_read = [v for v in stamps[key] if v.startswith(NOT_READ_MARKER)]
+                if read:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.VERSION_KNOWN,
+                        version="; ".join(read),
+                        notes="Read from the input VCF's own header, stamped at run time by the pipeline that "
+                        "ran it." + (f" Also declared: {'; '.join(not_read)}" if not_read else ""),
+                    )
+                elif not_read:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.UNKNOWN,
+                        notes=f"The pipeline that produced the input VCF could not read the {what}: "
+                        + "; ".join(not_read),
+                    )
+                else:
+                    self.provenance.record(
+                        source,
+                        VersionStatus.UNKNOWN,
+                        notes=f"Not recorded. It runs upstream on the alignment (BAM), which this pipeline "
+                        f"does not receive, and the input VCF declares no {what}.",
+                    )
         except Exception as exc:  # noqa: BLE001 -- provenance capture must never break a run
             logger.warning(f"VCF-declared tool-version provenance capture failed: {exc}")
 

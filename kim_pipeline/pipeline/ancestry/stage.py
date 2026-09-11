@@ -182,6 +182,18 @@ def _confidence_level(markers_called: int) -> str:
 
 # ─── Report generators ────────────────────────────────────────────────────────
 
+# Ratified 2026-09-11 (card REG-the-ANCESTRY-INFERENCE-REPORT-carries-the-same-
+# superseded-research-use-only-claim); replaces "For research use only.", the
+# superseded whole-product positioning. Written for THIS artefact, which infers
+# ancestry and classifies nothing -- the classifier disclaimers do not fit it.
+# Clinician-facing text: change only with human sign-off.
+ANCESTRY_SCOPE_STATEMENT = (
+    "This inference does not classify or interpret any variant, does not contribute to or "
+    "feed any variant classification produced elsewhere in this pipeline, and does not by "
+    "itself constitute clinical advice; always validate results with certified diagnostic "
+    "tools and qualified clinical professionals."
+)
+
 
 def _write_json_report(result: AncestryResult, output_dir: str) -> str:
     path = os.path.join(output_dir, "ancestry_report.json")
@@ -230,7 +242,7 @@ def _write_html_report(result: AncestryResult, output_dir: str) -> str:
   <p style="color:#777;font-size:0.85em;margin-top:2em">
     Populations: AFR=African, AMR=Admixed American, EAS=East Asian, EUR=European, SAS=South Asian.<br>
     Based on {result.markers_evaluated} ancestry-informative markers (1000 Genomes superpopulations, GRCh38).
-    For research use only.
+    {ANCESTRY_SCOPE_STATEMENT}
   </p>
 </body>
 </html>"""

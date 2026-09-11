@@ -24,7 +24,22 @@ psutil>=5.9.0              # Cross-platform process-tree termination for DELETE
                             # on both POSIX and Windows without hand-rolled
                             # Windows Job Objects.
 
-# ── AI models (optional — pip install -e ".[ai]") ────────────────────────────
+# ── AI models (optional here — pip install -e ".[ai]") ───────────────────────
+# HUMAN-DECISION-kim-s-TWO-AI-MODELS-ARE-LIVE...-ruled-(C), 2026-09-11: "the
+# behaviour is probably intended; the documentation calling them optional is
+# the error." Optional is accurate for a standalone `pip install -r
+# requirements.txt` of THIS file alone -- torch/transformers stay absent and
+# pipeline/orchestration/shared.py's AiEngine construction raises, so
+# DNABERT-2/ESM-2 scoring is skipped (see that file's own comment). It is
+# NOT accurate for the root repo's Dockerfile, which installs this file into
+# the SAME venv as geper/requirements.txt (Dockerfile:242-243), and geper's
+# requirements pull torch/transformers unconditionally -- so in any image
+# built from that Dockerfile, the import this section's absence is meant to
+# gate never fails, and DNABERT-2/ESM-2 score every variant that has the
+# sequence data they need, with zero config flag to opt out. The report
+# discloses which of the two actually contributed per variant (see
+# reporting/stage.py's "AI Models Used" column) precisely because this
+# section being commented out does not mean they are off.
 # torch>=2.2.0
 # transformers>=4.40.0
 # numpy>=1.26.0

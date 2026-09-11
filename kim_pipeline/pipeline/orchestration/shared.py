@@ -453,6 +453,17 @@ def run_acmg_evidence_batch(
 
             # ── AI scoring (per-variant, failure-isolated) ──────────────
             ai_score = None
+            # HUMAN-DECISION-kim-s-TWO-AI-MODELS-ARE-LIVE...-ruled-(C), 2026-09-11:
+            # "the report should disclose which models contributed, because a
+            # score whose inputs vary silently is not reproducible from the
+            # report." DNABERT-2 and ESM-2 fire independently per variant
+            # (DNABERT-2 needs ref/alt sequence; ESM-2 needs wildtype/mutant
+            # amino acids) -- a run-level "AI available" flag would still
+            # hide a variant where only one of the two, or neither, actually
+            # produced a score. Built from the same ref_seq/alt_seq/wt_aa/
+            # mt_aa checks below, not a static list, so it reflects THIS
+            # variant's actual call, not the engine's availability.
+            ai_models_used: list[str] = []
             if _ai_engine is not None:
                 try:
                     ai_dna_score = None
@@ -470,6 +481,8 @@ def run_acmg_evidence_batch(
                             alt_v,
                         )
                         ai_dna_score = _ai_engine.score_dna(ref_seq, alt_seq)
+                        if ai_dna_score is not None:
+                            ai_models_used.append("DNABERT-2")
                     if wt_aa and mt_aa:
                         logger.info(
                             "[PIPELINE:VARIANT] %s:%s %s>%s -> calling AI:ESM-2",
@@ -479,10 +492,13 @@ def run_acmg_evidence_batch(
                             alt_v,
                         )
                         ai_protein_score = _ai_engine.score_protein(wt_aa, mt_aa)
+                        if ai_protein_score is not None:
+                            ai_models_used.append("ESM-2")
                     ai_score = _ai_engine.combined_score(ai_dna_score, ai_protein_score)
                 except Exception as _ai_exc:
                     logger.debug("AI scoring failed for variant %s:%s: %s", chrom, pos_v, _ai_exc)
                     ai_score = None
+                    ai_models_used = []
 
             comp_score = EvidenceAggregator.compute_computational_score(
                 cadd_phred=variant.get("cadd_phred"),
@@ -507,6 +523,7 @@ def run_acmg_evidence_batch(
                 {
                     **acmg_res.to_dict(),
                     **ev_res.to_dict(),
+                    "ai_models_used": ai_models_used,
                     **_availability_fields(
                         gene=gene,
                         gene_unavailable_reason=gene_unavailable_reason,

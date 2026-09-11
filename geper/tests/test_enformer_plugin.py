@@ -235,10 +235,63 @@ class TestEnformerLoadImpl(unittest.TestCase):
         self.assertEqual(str(ctx.exception), "Enformer model unavailable")
         self.assertNotIn("huggingface.co", str(ctx.exception))
 
-    def test_missing_package_raises_clear_error(self):
-        with self.assertRaises(RuntimeError) as ctx:
-            self.instance._load_impl()
-        self.assertIn("enformer-pytorch", str(ctx.exception))
+    def test_load_impl_under_not_checked_says_it_was_never_looked_for(self):
+        """NOT_CHECKED: the package is NOT confirmed missing.
+
+        *** REPLACES `test_missing_package_raises_clear_error`, WHICH
+        NEVER EXERCISED THE MISSING-PACKAGE PATH. *** It left
+        `check_pip_package_availability` real and asserted only
+        `"enformer-pytorch" in message`. Under pytest auto-install is
+        disabled, so the real call returns NOT_CHECKED, not ABSENT --
+        and the NOT_CHECKED message happens to contain the package name
+        too, so the assertion passed while the test's name, and the
+        defect it guards, were about ABSENT. Measured 2026-09-10: with
+        the package genuinely installed the error becomes
+        `ModuleNotFoundError: No module named 'enformer_pytorch'` --
+        UNDERSCORE -- and that assertion would be FALSE.
+
+        *** "enformer-pytorch" IS A SUBSTRING OF **BOTH** MESSAGES, SO
+        IT CANNOT DISTINGUISH THE TWO STATES. THAT IS THE WHOLE DEFECT.
+        These two tests assert on what SEPARATES the states, and each
+        also asserts the other state's claim is ABSENT from the text --
+        which is the NOT_CHECKED-vs-ABSENT conflation `335e15a` exists
+        to eliminate, arriving here in the same commit's own subject
+        area. ***
+        """
+        with mock.patch(
+            "pipeline.models.enformer_plugin.check_pip_package_availability",
+            return_value=PackageCheckStatus.NOT_CHECKED,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.instance._load_impl()
+        message = str(ctx.exception)
+        self.assertIn("not checked", message)
+        self.assertIn("never looked for", message)
+        # MUST NOT claim an installation was tried: nothing was.
+        self.assertNotIn("did not succeed", message)
+        self.assertNotIn("Automatic installation", message)
+        # Named, but deliberately NOT the discriminator -- see docstring.
+        self.assertIn("enformer-pytorch", message)
+
+    def test_load_impl_under_absent_says_the_installation_failed(self):
+        """ABSENT: an install WAS attempted and it failed.
+
+        The symmetric half. Its message must not fall back on the
+        "never looked for" language, which would understate a real,
+        failed attempt.
+        """
+        with mock.patch(
+            "pipeline.models.enformer_plugin.check_pip_package_availability",
+            return_value=PackageCheckStatus.ABSENT,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.instance._load_impl()
+        message = str(ctx.exception)
+        self.assertIn("did not succeed", message)
+        # MUST NOT say it was never looked for: it was.
+        self.assertNotIn("not checked", message)
+        self.assertNotIn("never looked for", message)
+        self.assertIn("enformer-pytorch", message)
 
     @unittest.skipUnless(_HAS_ENFORMER_PYTORCH, _ENFORMER_SKIP_REASON)
     def test_full_load_via_public_api_wraps_in_model_load_error_on_failure(self):

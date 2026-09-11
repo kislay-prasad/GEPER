@@ -559,6 +559,33 @@ which, do not assume either").
   already loaded, which remains NOT BENCHMARKED (see §5's NEEDS
   BENCHMARKS TO KNOW).
 
+  **Bytes, not just time (added 2026-09-11, derived, not measured —
+  no download performed for this addition):** the table above times the
+  fetch but never sizes it. The bytes and their provenance already exist
+  in-repo, in DOCKER.md, and are cross-referenced here rather than
+  re-measured:
+
+  | Model    | Bytes                                    | Pin |
+  |----------|-------------------------------------------|-----|
+  | RNA-FM   | 1.19 GB (`RNA-FM_pretrained.pth`)          | **unpinned** — no revision in either fetch path (DOCKER.md:564) |
+  | ESM2     | 2,609,506,392 bytes (~2.61 GB) safetensors blob | revision-pinned, `_ESM2_REVISION` (DOCKER.md:363–370) |
+  | HyenaDNA | 316 MB (incl. `.git/lfs`)                  | revision-pinned per model; loader refuses an unpinned checkpoint (DOCKER.md:565) |
+  | MMSplice | 0 bytes at runtime                         | ships inside the pip package's site-packages already in the image, not fetched (DOCKER.md:571–575) |
+
+  **Total first-run download, these four: ~4.12 GB** (1.19 + 0.316 +
+  2.61; MMSplice contributes nothing).
+
+  Two caveats the table above is worse without: **RNA-FM's 1.19 GB is
+  "what is on disk today," not a guaranteed constant** — it is the one
+  model of the four pinned by nothing, sourced from two different hosts
+  (an HF mirror, then an academic endpoint) rather than a fixed revision
+  (DOCKER.md:585–590 names hashing a fresh fetch against the current
+  file as what would settle byte-reproducibility; not attempted here).
+  And **MMSplice's zero is not an oversight** — it is the same fact
+  that produces its ~1× ratio above: there is nothing to acquire on
+  first run because the weights are already in the image's
+  site-packages, not the cache.
+
 ### kim_pipeline/
 - **No read/file-size/variant-count limit** anywhere in
   runner.py/bwa_runner.py/minimap2_runner.py/freebayes_runner.py.

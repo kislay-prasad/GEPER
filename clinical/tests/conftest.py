@@ -47,6 +47,13 @@ address families and each burns the full timeout. `localhost` is what this
 repository's own documentation and CI both use, so the DOCUMENTED
 configuration is the slow one: roughly three hours of identical, useless
 errors.
+
+─── and the disposable-database guard, added 2026-09-12 ───
+
+Every database fixture here runs DROP SCHEMA public CASCADE against the
+DSN. A set DSN therefore also needs CLINICAL_TEST_DB_DISPOSABLE=1, checked
+before the reachability probe opens anything -- see
+clinical/tests/db_guard.py for why it is an opt-in and not a blocklist.
 """
 
 from __future__ import annotations
@@ -172,6 +179,9 @@ def _unreachable_message(host: str, port: str, dbname: str, exc: BaseException) 
             f"    docker start {SHARED_CONTAINER}",
             "A container's RUNNING STATE does not survive a reboot, and nothing in the",
             "repository records it. Starting it is safe; do not stop, remove or clean it.",
+            "BUT THIS SUITE DROPS THE SCHEMA OF WHATEVER IT RUNS AGAINST: if that container",
+            "is shared, running here erases it. Use a disposable container of your own",
+            "(see clinical/tests/db_guard.py).",
             "",
         ]
     else:
@@ -215,6 +225,13 @@ def _clinical_database_is_reachable() -> None:
     dsn = os.getenv(DSN_ENV)
     if not dsn:
         return  # the skip path above is correct and already honest
+
+    # FIRST, before any connection: every database fixture in this package
+    # drops the schema of the database the DSN names. A DSN alone is not
+    # consent to that -- see clinical/tests/db_guard.py.
+    from clinical.tests.db_guard import exit_unless_disposable
+
+    exit_unless_disposable(dsn)
 
     try:
         import psycopg

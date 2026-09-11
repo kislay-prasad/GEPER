@@ -84,7 +84,7 @@ benchmark_blast.py for before/after timing.
 "remote" mode depends on Biopython (listed in requirements.txt), which
 -- like RNA-FM's `rna-fm` -- may not actually be installed in a
 given Colab/runtime session even though it's declared as a dependency.
-`ensure_pip_package_available` auto-installs it the first time it's
+`check_pip_package_availability` auto-installs it the first time it's
 actually needed (see utils/auto_install.py), so BLAST works without a
 manual `pip install biopython` step, the same way the model wrappers do.
 """
@@ -101,7 +101,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from config import CONFIG
-from utils.auto_install import PackageCheckStatus, check_pip_package_availability, ensure_pip_package_available
+from utils.auto_install import PackageCheckStatus, check_pip_package_availability
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 
@@ -449,40 +449,43 @@ class BLASTClient:
         self.requested_mode = requested_mode
 
         if self.mode == "remote" and not disabled:
-            # CORRECTED 2026-09-11. This comment read, and was false
-            # of the code beneath it:
+            # Fail fast at construction when Biopython is confirmed
+            # ABSENT -- an install was attempted and did not succeed --
+            # rather than discovering it on the first variant that
+            # reaches the BLAST stage. Ruled 2026-09-11 (card DEFECT-
+            # blast_client-457-..., option C): "NOT_CHECKED is an honest
+            # unknown and shouldn't kill a run; ABSENT is a confirmed
+            # missing prerequisite and should." So NOT_CHECKED (never
+            # looked -- auto-install disabled under pytest) constructs,
+            # exactly as the `auto` branch above treats it as unknown
+            # rather than ruled out.
             #
-            #     "Fail fast / auto-install here, at construction,
-            #      rather than silently discovering it's missing on the
-            #      first variant that reaches the BLAST stage -- same
-            #      'surface setup problems immediately' philosophy as
-            #      the startup model validation in the orchestrator."
+            # History: until 2026-09-11 this line called
+            # `ensure_pip_package_available` and discarded the result,
+            # under a comment promising fail-fast; construction
+            # succeeded under ABSENT and NOT_CHECKED alike. The
+            # auto-install attempt is kept: `check_pip_package_
+            # availability` is what performs it, so on a box that can
+            # reach PyPI this still installs Biopython here.
             #
-            # WHAT THIS LINE ACTUALLY DOES: it ATTEMPTS the install and
-            # DISCARDS THE RESULT. There is no `if`, no assignment and
-            # no raise, so construction proceeds whatever comes back.
-            # Measured 2026-09-11 by constructing BLASTClient(mode=
-            # "remote") with Biopython reported each way: ABSENT ->
-            # construction succeeded, mode still "remote"; NOT_CHECKED
-            # -> construction succeeded, mode still "remote". So the
-            # missing package IS discovered "on the first variant that
-            # reaches the BLAST stage" -- the exact outcome the old
-            # comment said this line existed to prevent.
-            #
-            # The auto-install attempt itself is real and is the reason
-            # the call stays: on a box where pip can reach PyPI this
-            # installs Biopython at construction. It is only the
-            # FAIL-FAST half of the old claim that was untrue.
-            #
-            # WHETHER IT SHOULD FAIL FAST IS AN OPEN QUESTION WITH THE
-            # HUMAN, deliberately not answered here: raising at
-            # construction changes WHEN a remote-BLAST run dies, which
-            # is deployment-visible behaviour, not a cleanup. Note that
-            # :415 in this same file already draws the distinction that
-            # decision turns on -- "we looked and it is not there"
-            # (ABSENT) versus "we never looked" (NOT_CHECKED) -- and
-            # only the first is a confirmed setup problem.
-            ensure_pip_package_available("biopython", import_name="Bio")
+            # Consequence worth knowing: `search()` consults the memo
+            # and disk caches before `_search_remote`, so a run that
+            # could have replayed entirely from cache also stops here
+            # when Biopython is ABSENT. That is the ruling as given.
+            # Same exception type and wording family as
+            # `_search_remote`'s ABSENT branch -- only WHEN it fires
+            # changed.
+            biopython = check_pip_package_availability("biopython", import_name="Bio")
+            if biopython is PackageCheckStatus.ABSENT:
+                raise ExternalAPIError(
+                    "Remote BLAST requires Biopython, and automatic "
+                    "installation ('pip install biopython') did not succeed "
+                    "in this environment -- check network access to "
+                    "pypi.org, or install it yourself with "
+                    "`pip install biopython`. Raised at BLASTClient "
+                    "construction so the run stops before any variant "
+                    "is processed."
+                )
 
         # Memoizes search() results by exact (mode, program, database,
         # max_hits, sequence) for this process's lifetime.

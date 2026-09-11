@@ -351,6 +351,47 @@ class TestGenerateShortPdf(unittest.TestCase):
             self.assertNotIn("Mean Coverage Depth", text)
             self.assertNotIn("Very Strong", text)  # criteria-table strength column
 
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_references_appear_when_run_used_that_source(self):
+        # AM-04/#10 ruling: a sign-off document must show what the
+        # classification rests on. `references` is read straight off
+        # `candidate_interpretation` -- the same list
+        # `report/clinical_report_builder.py::_references()` already
+        # gates on `evidence_sources` -- never a static catalogue this
+        # module invents on its own.
+        alphamissense_ref = (
+            "AlphaMissense -- Cheng et al. 2023, Science (DOI: 10.1126/science.adg7492); "
+            "Copyright (2023) DeepMind Technologies Limited, available under CC-BY-4.0."
+        )
+        clinical = _clinical()
+        clinical["references"] = [alphamissense_ref]
+        doc = {**_document(1)}
+        doc["variants"][0]["candidate_interpretation"] = clinical
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            generate_short_pdf(doc, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertIn("References:", text)
+        self.assertIn("AlphaMissense", text)
+
+    @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
+    def test_references_absent_when_run_never_used_that_source(self):
+        # Same renderer, same document shape, only the upstream-computed
+        # `references` list differs (here: empty, as a run that never
+        # queried AlphaMissense would produce) -- proving this is a
+        # dynamic read of that field, not a fixed bibliography the
+        # short PDF prints regardless of what the run actually did.
+        clinical = _clinical()
+        clinical["references"] = []
+        doc = {**_document(1)}
+        doc["variants"][0]["candidate_interpretation"] = clinical
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "short.pdf")
+            generate_short_pdf(doc, out)
+            text = "\n".join(p.extract_text() for p in PdfReader(out).pages)
+        self.assertIn("References: No evidence sources contributed", text)
+        self.assertNotIn("AlphaMissense", text)
+
 
 @unittest.skipUnless(_PYPDF_AVAILABLE, "pypdf not installed in this environment")
 class TestShortIsGenuinelyShort(unittest.TestCase):

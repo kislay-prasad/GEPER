@@ -131,6 +131,20 @@ CONTAINER="bridge-ready-seed-$$"
 # relative symlinks are reproduced as symlinks. `-a` is what preserves them
 # and their mtimes; a plain `cp -r` would dereference them and silently
 # inflate the image by the size of every duplicated blob.
+# THE TWO VALUES BELOW ARE ASSERTED, NOT PRINTED. They were echoed until
+# 2026-09-11, and an echo cannot fail: with refs/main absent and zero symlinks
+# this step printed "refs/main: " and "symlinks in image: 0" and EXITED 0 --
+# measured directly. `set -e` does not fire on a failing `cat` inside a command
+# substitution that is an argument to a successful `echo`, and the step's exit
+# status is the status of its LAST command, which was that echo. The one
+# condition this script exists to prevent was the one it could not report.
+#
+# The count is compared to the HOST-MEASURED $SYMLINK_COUNT, not to a second
+# literal 5: a literal here would be derived from the same place as the check
+# above it, and a comparison whose two sides cannot disagree is not a check.
+# It arrives as a POSITIONAL PARAMETER -- `sh -c SCRIPT sh ARG` executes only
+# SCRIPT and binds the rest as $0 and $1. Getting that wrong is what truncated
+# geper:bridge-ready's recorded CMD to its first 82 characters.
 docker run --name "$CONTAINER" \
   -v "$SEED_MOUNT":/seed:ro \
   --entrypoint sh "$ENV_TAG" \
@@ -138,8 +152,18 @@ docker run --name "$CONTAINER" \
       mkdir -p /app/model_cache_seed
       cp -a /seed/. /app/model_cache_seed/
       D=/app/model_cache_seed/models--facebook--esm2_t33_650M_UR50D
+      if [ ! -f "$D/refs/main" ]; then
+        echo "FATAL: refs/main is absent from the image after the copy." >&2
+        exit 1
+      fi
       echo "refs/main: $(cat "$D/refs/main")"
-      echo "symlinks in image: $(find /app/model_cache_seed -type l | wc -l)"'
+      N=$(find /app/model_cache_seed -type l | wc -l)
+      echo "symlinks in image: $N (host measured $1 in the seed)"
+      if [ "$N" -ne "$1" ]; then
+        echo "FATAL: the copy did not preserve the symlinks: $1 in the seed, $N in the image." >&2
+        echo "       An image that lost them looks complete and will not load offline." >&2
+        exit 1
+      fi' sh "$SYMLINK_COUNT"
 
 docker commit "$CONTAINER" "$TAG" >/dev/null
 docker rm "$CONTAINER" >/dev/null

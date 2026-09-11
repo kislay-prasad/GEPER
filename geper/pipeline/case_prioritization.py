@@ -17,8 +17,21 @@ completely different shape: PP4 is one binary ACMG/AMP criterion
 gated by a strict overlap-fraction threshold AND a distinct-disease-
 count cap (`CONFIG.hpo.PP4_*`), evaluated independently per variant,
 and its triggered/not_triggered/not_evaluated verdict feeds directly
-into ACMG classification via the standard Richards et al. point-based
-combining rules.
+into ACMG classification via `ACMGRuleEngine._combine`'s Tavtigian et
+al. 2018 Bayesian-calibrated point system (PMID 29300386).
+
+That attribution is load-bearing and was wrong here until 2026-09-11:
+this docstring said "the standard Richards et al. point-based combining
+rules". Richards et al. 2015 has no point system at all -- it is a
+categorical lookup table -- so the sentence credited a point scheme to
+the paper that does not have one. `acmg_rules.py` says so in three
+places (:87, :786, :3730) and the same false sentence was corrected in
+its own class docstring on 2026-08-28 (57352b7); this copy, in another
+file, was not swept and survived two more weeks. If you are editing
+this paragraph, the two schemes disagree on real inputs -- 1 very
+strong + 1 moderate is net 10, which is Pathogenic under Tavtigian and
+Likely Pathogenic under Richards' table -- so the name is not a
+stylistic choice.
 
 The score this module computes is none of that:
   - Continuous (0-100), not binary triggered/not_triggered.

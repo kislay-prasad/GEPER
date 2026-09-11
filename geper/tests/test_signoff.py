@@ -281,6 +281,25 @@ _MISMATCH_CHECKPOINTS = {
     }
 }
 
+_MISMATCH_CHECKPOINTS_WITH_OBSERVED_HASH = {
+    "esm2": {
+        "identifier": "facebook/esm2_t33_650M_UR50D@main",
+        "status": "used",
+        "reason": "",
+        "resolved_version": "main",
+        "loaded_artifact": {
+            "requested_path": "/cache/esm2/model.safetensors",
+            "resolved_path": "/cache/esm2/blobs/deadbeef00000000000000000000000000000000000000000000000000000000",
+            "served_revision": "main",
+            "cache_declared_sha256": "deadbeef00000000000000000000000000000000000000000000000000000000",
+            "observed_sha256": "c0ffee0000000000000000000000000000000000000000000000000000000000",
+            "hash_verification": "mismatch",
+            "version_status": "unknown",
+            "note": "MISMATCH: bytes do not match the cache's declared sha256 -- corrupted or substituted model cache",
+        },
+    }
+}
+
 _VERIFIED_CHECKPOINTS = {
     "esm2": {
         "identifier": "facebook/esm2_t33_650M_UR50D@main",
@@ -311,6 +330,24 @@ class TestApproveModelHashMismatch(unittest.TestCase):
             self.assertIn("deadbeef", message)  # the expected sha256
             self.assertIn("MISMATCH", message)
             self.assertIn("re-run", message)
+            self.assertIn(
+                "not present in this record",
+                message,
+                "a record without observed_sha256 (pre-change, or MISMATCH some other way) must say so, not print None",
+            )
+
+    def test_mismatch_names_the_observed_hash_when_the_record_has_one(self):
+        # THE CARD: a refusal that names only the expected hash is half a
+        # message -- the reader cannot tell what was actually loaded.
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = _write_run_with_model_checkpoints(tmp, _MISMATCH_CHECKPOINTS_WITH_OBSERVED_HASH)
+            with self.assertRaises(SignoffError) as ctx:
+                s.approve(output_dir, "Dr. Rajesh Sharma", "MCI-12345", "AIIMS Delhi")
+            message = str(ctx.exception)
+            self.assertIn("esm2", message)
+            self.assertIn("deadbeef", message)  # the expected sha256
+            self.assertIn("c0ffee", message)  # the observed sha256
+            self.assertIn("MISMATCH", message)
 
     def test_mismatch_leaves_nothing_on_disk_changed(self):
         # A block that half-writes is worse than no block -- the check must

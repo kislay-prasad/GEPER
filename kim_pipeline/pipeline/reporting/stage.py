@@ -168,7 +168,7 @@ _HTML_TEMPLATE = """\
 <div class="report-header">
   <h1>{pipeline_version} — Clinical Genomic Report</h1>
   <div class="meta">Sequencing analysis from FASTQ — produced by the Kim pipeline: QC, alignment and variant calling, with ACMG classification of the variants called here.</div>
-  <div class="meta">Generated: {generated_at}<br/>Reference genome: {reference_genome}</div>
+  <div class="meta">Generated: {generated_at}<br/>Report Rendered: {report_rendered}<br/>Reference genome: {reference_genome}</div>
 </div>
 
 <div class="section">
@@ -242,7 +242,7 @@ _HTML_TEMPLATE = """\
 <footer class="report-footer">
   <p>{lab_disclaimer}</p>
   <p>Reference genome: {reference_genome} &nbsp;|&nbsp; Pipeline: {pipeline_version} &nbsp;|&nbsp;
-  Generated: {generated_at}</p>
+  Generated: {generated_at} &nbsp;|&nbsp; Report Rendered: {report_rendered}</p>
 </footer>
 
 </body>
@@ -596,6 +596,7 @@ class ReportingStage:
         ancestry_result: Any = None,
         reference_versions: Optional[Dict] = None,  # FIX 14
         patient_metadata: Optional[Dict] = None,  # Issue 3: optional patient metadata JSON
+        analysis_started_at: Optional[str] = None,  # DEFECT-kim-reporting-stage-658
     ) -> ReportResult:
         """Generate the report and write files to *output_dir*.
 
@@ -635,9 +636,16 @@ class ReportingStage:
             ]
 
         # ── JSON report ──────────────────────────────────────────────────────
+        # `generated_at` is the persisted analysis start time (set once, in
+        # `PipelineRunner.run()`, and carried unchanged across a checkpoint
+        # resume) -- NOT `datetime.now()`. A resumed run stamping the resume
+        # moment here would answer a question nobody asked
+        # (DEFECT-kim-reporting-stage-658). A checkpoint written before this
+        # field existed has no value to read; "Not available" says so rather
+        # than fabricating one.
         report_payload = {
             "sample_id": sample_id,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": analysis_started_at or "Not available",
             "pipeline": PIPELINE_VERSION,
             "reference_versions": reference_versions or {},  # FIX 14
             "qc_summary": qc_d,
@@ -655,7 +663,21 @@ class ReportingStage:
 
         # ── HTML report ──────────────────────────────────────────────────────
         html_path = str(out / "report.html")
-        generated_at_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        # Two different facts, not alternatives (same shape as the GEPER PDF
+        # fix, #17/#20): "Generated" is the persisted analysis start time,
+        # and "Report Rendered" is separately the moment THIS HTML/PDF file
+        # was produced, which can be long after the analysis on a resumed
+        # run. Never fabricate the former from `datetime.now()`.
+        if analysis_started_at:
+            try:
+                generated_at_str = datetime.fromisoformat(analysis_started_at).strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+            except ValueError:
+                generated_at_str = str(analysis_started_at)
+        else:
+            generated_at_str = "Not available"
+        report_rendered_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         reference_genome = (reference_versions or {}).get("reference_genome") or (
             (reference_versions or {}).get("reference") or "Not specified"
         )
@@ -678,6 +700,7 @@ class ReportingStage:
         html_content = _HTML_TEMPLATE.format(
             sample_id=sample_id,
             generated_at=generated_at_str,
+            report_rendered=report_rendered_str,
             pipeline_version=PIPELINE_VERSION,
             reference_genome=reference_genome,
             patient_name=patient_meta["name"],

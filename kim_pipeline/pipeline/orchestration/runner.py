@@ -45,6 +45,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,19 @@ def _load_checkpoint(work_dir: Path) -> dict[str, Any]:
 
 def _save_checkpoint(work_dir: Path, data: dict[str, Any]) -> None:
     _checkpoint_path(work_dir).write_text(json.dumps(data, indent=2))
+
+
+def _ensure_analysis_started_at(checkpoint: dict[str, Any]) -> str:
+    """Set `checkpoint["analysis_started_at"]` once, on the FIRST run of
+    this sample, and return it. A resume must keep the ORIGINAL start
+    time from the loaded checkpoint, not overwrite it with the resume
+    moment -- the reporting stage's "Generated" field reads this value,
+    and stamping resume time there answers a question nobody asked
+    (DEFECT-kim-reporting-stage-658).
+    """
+    if "analysis_started_at" not in checkpoint:
+        checkpoint["analysis_started_at"] = datetime.now(timezone.utc).isoformat()
+    return checkpoint["analysis_started_at"]
 
 
 def _collect_reference_versions(cfg: dict, reference_fasta: str) -> dict[str, str]:
@@ -393,6 +407,12 @@ class PipelineRunner:
 
         checkpoint = _load_checkpoint(work_dir) if self._resume else {}
         completed_stages = set(checkpoint.get("completed_stages", []))
+
+        # Saved immediately (not deferred to the next stage's own
+        # _save_checkpoint call) so a crash before stage 1 completes
+        # doesn't lose it -- see _ensure_analysis_started_at's docstring.
+        _ensure_analysis_started_at(checkpoint)
+        _save_checkpoint(work_dir, checkpoint)
 
         logger.info(
             "=== PipelineRunner START [%s] resume=%s completed=%s ===",
@@ -1026,6 +1046,7 @@ class PipelineRunner:
                     acmg_results=acmg_results,
                     ancestry_result=ancestry_result,
                     reference_versions=result.reference_versions,  # FIX 14
+                    analysis_started_at=checkpoint.get("analysis_started_at"),
                 )
                 result.report = report_result.to_dict()
                 completed_stages.add("reporting")

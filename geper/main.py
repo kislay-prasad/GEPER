@@ -30,6 +30,7 @@ import argparse  # noqa: E402 -- after the version guard, deliberately
 import os  # noqa: E402
 from datetime import datetime  # noqa: E402
 
+from component_identity import COMPONENT_NAME, SHORT_NAME  # noqa: E402
 from config import CONFIG  # noqa: E402
 from pipeline.hpo.utils import build_phenotype_result  # noqa: E402
 from pipeline.orchestrator import GeperPipeline  # noqa: E402
@@ -41,7 +42,7 @@ logger = get_logger(__name__)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bij AI - Genetic Evaluation & Prediction Engine")
+    parser = argparse.ArgumentParser(description=f"{COMPONENT_NAME} - Genetic Evaluation & Prediction Engine")
     parser.add_argument("--vcf", required=True, help="Path to the input VCF file (.vcf or .vcf.gz)")
     parser.add_argument(
         "--output-dir",
@@ -134,7 +135,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Disable resume-from-checkpoint. By default, if geper_results.json "
-            "already exists in --output-dir, Bij AI skips variants already "
+            f"already exists in --output-dir, {SHORT_NAME} skips variants already "
             "recorded there and continues from where a previous (e.g. "
             "disconnected Colab) run left off."
         ),
@@ -160,11 +161,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help=(
             "Path to a JSON file describing this run's upstream sequencing/alignment QC metrics "
             "(mean_coverage_depth, bases_at_20x, q30_score), for the clinical PDF's Sequencing "
-            "Quality Control Metrics table. Bij AI's own VCF-only pipeline cannot compute these "
+            f"Quality Control Metrics table. {SHORT_NAME}'s own VCF-only pipeline cannot compute these "
             "itself -- this flag exists for callers like bridge/combined_pipeline.py that ran "
             "kim_pipeline's real alignment/QC stages first. Optional -- if omitted (the default "
             "for a bare `--vcf` invocation), the table renders each metric 'Not applicable' "
-            "rather than a placeholder value, since Bij AI genuinely never touched any upstream "
+            f"rather than a placeholder value, since {SHORT_NAME} genuinely never touched any upstream "
             "FASTQ/BAM in that case. See report/summary.py::_parse_qc_metrics for the required "
             'per-metric {"status": "found"|"not_run"|"error", "value": float|null, '
             '"reason": str|null} shape; a missing/corrupt file or a bare number where that '
@@ -261,7 +262,7 @@ def main() -> int:
 
         pipeline.run(args.vcf, max_variants=args.max_variants, resume=not args.no_resume)
     except PipelineError as exc:
-        logger.error(f"Bij AI pipeline aborted: {exc}")
+        logger.error(f"{SHORT_NAME} pipeline aborted: {exc}")
         return 1
     except KeyboardInterrupt:
         logger.warning("Interrupted by user.")

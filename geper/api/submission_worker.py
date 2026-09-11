@@ -1,7 +1,7 @@
 """
 geper/api/submission_worker.py
 ──────────────────────────────
-Background worker for Bij AI interpretation submissions.
+Background worker for GEPER interpretation submissions.
 
 Polls submissions with status='queued', invokes geper/main.py via spawn_tracked
 (so interpretations are killable), handles timeouts, and updates submission status.
@@ -39,6 +39,7 @@ import time
 import uuid
 from pathlib import Path
 
+from component_identity import SHORT_NAME
 from pipeline.hpo.utils import is_well_formed_hpo_id
 from report.clinical_report_builder import _QC_METRIC_ORDER
 from shared.process_control import spawn_tracked, kill_process_tree_now
@@ -154,7 +155,7 @@ def _qc_metrics_validated(qc_metrics) -> dict:
 
 
 class InterpretationWorker:
-    """Poll and process Bij AI interpretation submissions."""
+    """Poll and process GEPER interpretation submissions."""
 
     def __init__(self, store: SubmissionStore, data_access=None):
         self.store = store
@@ -356,7 +357,7 @@ class InterpretationWorker:
             # is files under --output-dir plus this exit code. stderr is
             # still surfaced in the error message for diagnosis, as before.
             if proc.returncode != 0:
-                error_msg = f"Bij AI returned exit code {proc.returncode}"
+                error_msg = f"{SHORT_NAME} returned exit code {proc.returncode}"
                 if stderr:
                     error_msg += f": {stderr[:500]}"
                 logger.error(f"[{submission.id}] {error_msg}")
@@ -384,7 +385,7 @@ class InterpretationWorker:
             # than crashing on open() below.
             results_path = os.path.join(output_dir, "geper_results.json")
             if not os.path.isfile(results_path):
-                error_msg = f"Bij AI exited 0 but did not write {results_path}"
+                error_msg = f"{SHORT_NAME} exited 0 but did not write {results_path}"
                 logger.error(f"[{submission.id}] {error_msg}")
                 self.store.update_status(
                     submission.id,
@@ -448,7 +449,7 @@ class InterpretationWorker:
             # branch above instead, with a less specific message. This
             # branch still covers spawn_tracked/subprocess machinery
             # itself being unavailable.
-            error_msg = f"Bij AI CLI not found: {e}"
+            error_msg = f"{SHORT_NAME} CLI not found: {e}"
             logger.error(f"[{submission.id}] {error_msg}")
             self.store.update_status(
                 submission.id,

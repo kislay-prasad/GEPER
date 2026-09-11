@@ -2,7 +2,7 @@
 """
 serve_api.py
 ─────────────
-Launch the Bij AI structures API server.
+Launch the Bij AI variant-interpretation component (GEPER) structures API server.
 
 Usage:
     python serve_api.py
@@ -51,7 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     (`build_parser().parse_args([]).host`) without importing uvicorn or
     binding a port -- see the loopback-default fix this function was
     extracted for."""
-    parser = argparse.ArgumentParser(description="Bij AI structures API server")
+    from component_identity import COMPONENT_NAME
+
+    parser = argparse.ArgumentParser(description=f"{COMPONENT_NAME} structures API server")
     # Default flipped from 0.0.0.0 to 127.0.0.1 (loopback-only) -- same fix
     # and same reason as kim_pipeline/serve_api.py's own default flip: this
     # script is launched with no --host override by anyone following a
@@ -106,7 +108,9 @@ def main() -> None:
 
     _warn_if_bind_all_without_auth(args.host)
 
-    print(f"Starting Bij AI Structures API on http://{args.host}:{args.port}")
+    from component_identity import COMPONENT_NAME
+
+    print(f"Starting the {COMPONENT_NAME} Structures API on http://{args.host}:{args.port}")
     print(f"Swagger UI: http://{args.host}:{args.port}/docs")
     print(f"OpenAPI JSON: http://{args.host}:{args.port}/openapi.json")
 

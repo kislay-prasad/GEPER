@@ -1,7 +1,7 @@
 """
 geper/api/submission_store.py
 ────────────────────────────
-SQLite-backed store for Bij AI interpretation submissions.
+SQLite-backed store for GEPER interpretation submissions.
 
 Enforces idempotency via UNIQUE(org_id, submission_key) constraint.
 Marks submissions interrupted at startup if worker crashed mid-execution.
@@ -64,7 +64,7 @@ class Submission:
 
 
 class SubmissionStore:
-    """SQLite-backed store for Bij AI interpretation submissions.
+    """SQLite-backed store for GEPER interpretation submissions.
 
     Design properties:
     - Idempotency: UNIQUE(org_id, submission_key) enforced at database level

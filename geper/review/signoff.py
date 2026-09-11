@@ -144,6 +144,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, cast
 
+from component_identity import SHORT_NAME
 from pipeline.provenance import HashVerification, VersionStatus
 from report.clinical_report_builder import candidate_interpretation_of
 from report.models import compute_content_hash, verify_content_hash
@@ -196,7 +197,7 @@ def _require_results(output_dir: str) -> str:
     results_path = _results_path(output_dir)
     if not os.path.exists(results_path):
         raise SignoffError(
-            f"No '{RESULTS_FILENAME}' found in '{output_dir}'. This directory must be a Bij AI "
+            f"No '{RESULTS_FILENAME}' found in '{output_dir}'. This directory must be a {SHORT_NAME} "
             f"--output-dir from a completed run (python main.py --vcf ... --output-dir '{output_dir}') "
             f"before it can be reviewed."
         )

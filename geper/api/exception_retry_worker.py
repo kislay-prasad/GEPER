@@ -7,7 +7,7 @@ Background worker for retrying transient submission failures.
 Polls clinical database for exceptions with next_retry_at <= now and:
 - Re-attempts failed submissions via exponential backoff
 - Escalates to manual review after 6 failed attempts (15 minutes total)
-- Re-queues associated submissions for reinterpretation by Bij AI
+- Re-queues associated submissions for reinterpretation by GEPER
 
 This worker runs independently of the submission_worker. Submission failures
 trigger exceptions in the clinical database; this worker manages their retry

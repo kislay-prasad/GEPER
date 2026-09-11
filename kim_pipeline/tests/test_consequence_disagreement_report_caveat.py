@@ -14,8 +14,9 @@ pin the three halves of the ruling:
 
   1. DISCLOSED -- the per-variant record carries the disagreement, and the
      report renders it, naming the variant and both terms.
-undefined
-     VEP disagrees. A caveat that changed the call would be option (c).
+  2. NOT GATED -- the is_lof / is_missense gates the classifier is handed
+     follow kim's term whatever VEP says. A caveat that changed the call
+     would be option (c).
   3. NOT A FALSE ALARM -- same-class terms (stop_gained vs
      frameshift_variant) and a missing VEP term produce no caveat.
 

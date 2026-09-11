@@ -2072,6 +2072,28 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
             flow.append(Spacer(1, 1 * mm))
             flow.append(cb_table)
 
+    # Priority Score: computed by `report/clinical_report_builder.py` and
+    # rendered by the Markdown report as its section 4, but never by this
+    # one -- so a clinician reading only the PDF never saw this variant's
+    # triage priority, while the same run's Markdown listed it.
+    priority = clinical.get("priority") or {}
+    if priority.get("pending"):
+        flow.append(
+            Paragraph("<b>Priority:</b> Priority scoring did not complete for this variant.", styles["BodyText"])
+        )
+    elif priority:
+        rank_text = f" (rank {priority['rank']} in this run)" if priority.get("rank") is not None else ""
+        prio_score = priority.get("score")
+        prio_score_text = f"{prio_score:.1f}" if isinstance(prio_score, (int, float)) else str(prio_score)
+        flow.append(
+            Paragraph(
+                f"<b>Priority:</b> {esc(priority.get('category'))} -- score {prio_score_text}{rank_text}",
+                styles["BodyText"],
+            )
+        )
+        if priority.get("explanation"):
+            flow.extend(Paragraph(f"• {esc(reason)}", styles["BulletText"]) for reason in priority["explanation"])
+
     triggered = acmg.get("triggered_criteria") or []
     if triggered:
         rows = [
@@ -2215,7 +2237,318 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Paragraph("<b>Conflicting Evidence:</b>", styles["BodyText"]))
         flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in conflicting)
 
+    # Structured conflict-resolution detail (Phase 6) -- same underlying
+    # `conflict_resolution` dict the Markdown report renders as a table plus
+    # a per-conflict resolution/rationale/confidence-impact/priority-impact
+    # block in its section 6, additive to the free-text bullets just above.
+    conflict_res = clinical.get("conflict_resolution") or {}
+    real_conflicts = [
+        c for c in (conflict_res.get("conflicts") or []) if c.get("severity") in ("Minor", "Moderate", "Major")
+    ]
+    if real_conflicts:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(
+            Paragraph(
+                f"<b>Conflict Resolution</b> (score {esc(str(conflict_res.get('score')))}, "
+                f"{esc(conflict_res.get('severity'))}):",
+                styles["BodyText"],
+            )
+        )
+        for c in real_conflicts:
+            flow.append(
+                Paragraph(
+                    f"• {esc(c.get('conflict_type'))} -- Resolution: {esc(c.get('resolution'))}; "
+                    f"Rationale: {esc(c.get('resolution_rationale'))}; "
+                    f"Confidence impact: {esc(c.get('confidence_impact'))}; "
+                    f"Priority impact: {esc(c.get('priority_impact'))}",
+                    styles["BulletText"],
+                )
+            )
+
+    # AI Consensus: per-model AlphaMissense/MMSplice votes, rendered by the
+    # Markdown report as its section 7 but never by this one -- the
+    # AlphaMissense "not clinically validated" caveat is attached to its
+    # own bullet here exactly as the Markdown renderer attaches it, since a
+    # PDF reader must see the same caveat next to the same score a
+    # Markdown reader sees.
+    ai_consensus = clinical.get("ai_consensus") or {}
+    votes = ai_consensus.get("classifying_models") or []
+    model_errors = ai_consensus.get("model_errors") or []
+    if votes or model_errors:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>AI Consensus:</b>", styles["BodyText"]))
+        for v in votes:
+            source = v.get("source")
+            line = f"{esc(source)}: {esc(v.get('prediction'))} (score={esc(str(v.get('score')))})"
+            if source == "AlphaMissense":
+                line += (
+                    " -- not clinically validated; not approved for clinical use. This is a raw model "
+                    "score, not a validated clinical pathogenicity measure."
+                )
+            flow.append(Paragraph(f"• {line}", styles["BulletText"]))
+        for err in model_errors:
+            flow.append(
+                Paragraph(
+                    f"• {esc(err.get('source'))}: lookup failed ({esc(err.get('error'))}) -- not evidence "
+                    "of no effect, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        context_models = ai_consensus.get("context_models_used") or []
+        flow.append(
+            Paragraph(
+                "<i>Sequence-context models used (routing/embedding only, no direct pathogenicity verdict): "
+                f"{esc(', '.join(context_models) if context_models else 'none')}.</i>",
+                styles["Footnote"],
+            )
+        )
+
+    # Protein Knowledge (UniProt/InterPro), Markdown section 8 -- never
+    # previously rendered here.
+    protein_knowledge = clinical.get("protein_knowledge") or {}
+    if protein_knowledge:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Protein Knowledge:</b>", styles["BodyText"]))
+        if protein_knowledge.get("uniprot_available"):
+            u = protein_knowledge["uniprot"]
+            flow.append(
+                Paragraph(
+                    f"• UniProt: {esc(u.get('protein_name')) or 'n/a'} ({esc(u.get('accession')) or 'n/a'}, "
+                    f"{'reviewed' if u.get('reviewed') else 'unreviewed'})",
+                    styles["BulletText"],
+                )
+            )
+        elif protein_knowledge.get("uniprot_error"):
+            flow.append(
+                Paragraph(
+                    f"• UniProt: lookup failed (external service issue: {esc(protein_knowledge['uniprot_error'])}) "
+                    "-- not evidence of a missing entry, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        elif protein_knowledge.get("uniprot_reason"):
+            flow.append(Paragraph(f"• UniProt: {esc(protein_knowledge['uniprot_reason'])}", styles["BulletText"]))
+        else:
+            flow.append(Paragraph("• UniProt: no entry resolved.", styles["BulletText"]))
+        if protein_knowledge.get("interpro_available"):
+            domains = protein_knowledge["interpro"].get("affected_domains")
+            position = protein_knowledge["interpro"].get("protein_position")
+            if domains:
+                names = ", ".join(d.get("name") or d.get("member_accession") or "unnamed" for d in domains)
+                flow.append(
+                    Paragraph(
+                        f"• InterPro/Pfam: residue {position} (transcript-verified) overlaps {len(domains)} "
+                        f"domain(s): {esc(names)}",
+                        styles["BulletText"],
+                    )
+                )
+            elif domains is None:
+                flow.append(
+                    Paragraph(
+                        "• InterPro/Pfam: annotation available, but this variant's residue position could "
+                        "not be determined from the transcript structure -- domain overlap was not checked.",
+                        styles["BulletText"],
+                    )
+                )
+            else:
+                flow.append(
+                    Paragraph(
+                        f"• InterPro/Pfam: annotation available; no domain overlap at residue {position} "
+                        "(transcript-verified).",
+                        styles["BulletText"],
+                    )
+                )
+        elif protein_knowledge.get("interpro_error"):
+            flow.append(
+                Paragraph(
+                    "• InterPro/Pfam: lookup failed (external service issue: "
+                    f"{esc(protein_knowledge['interpro_error'])}) -- not evidence of an absent domain, see "
+                    "Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        elif protein_knowledge.get("interpro_reason"):
+            flow.append(
+                Paragraph(f"• InterPro/Pfam: {esc(protein_knowledge['interpro_reason'])}", styles["BulletText"])
+            )
+        else:
+            flow.append(Paragraph("• InterPro/Pfam: no annotation available.", styles["BulletText"]))
+
+    # Structural Knowledge (AlphaFold DB), Markdown section 9 -- never
+    # previously rendered here.
+    structural_knowledge = clinical.get("structural_knowledge") or {}
+    if structural_knowledge:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Structural Knowledge:</b>", styles["BodyText"]))
+        if structural_knowledge.get("available"):
+            band_label = (
+                f"at residue {structural_knowledge.get('protein_position')} (transcript-verified)"
+                if structural_knowledge.get("confidence_band_is_residue_specific")
+                else "whole-protein mean ("
+                f"{esc(structural_knowledge.get('mapping_unavailable_reason')) or 'variant residue position unknown'})"
+            )
+            flow.append(
+                Paragraph(
+                    f"• AlphaFold DB: confidence band '{esc(structural_knowledge.get('confidence_band')) or 'n/a'}' "
+                    f"{band_label} (model {esc(structural_knowledge.get('model_version')) or 'n/a'})",
+                    styles["BulletText"],
+                )
+            )
+            if structural_knowledge.get("pdb_url"):
+                flow.append(
+                    Paragraph(f"&nbsp;&nbsp;- Structure: {esc(structural_knowledge['pdb_url'])}", styles["BulletText"])
+                )
+        elif structural_knowledge.get("error") is not None:
+            flow.append(
+                Paragraph(
+                    f"AlphaFold DB lookup failed (external service issue: {esc(structural_knowledge['error'])}) "
+                    "-- not evidence of an unresolved structure, see Annotation Detail below.",
+                    styles["Footnote"],
+                )
+            )
+        elif structural_knowledge.get("reason"):
+            flow.append(Paragraph(esc(structural_knowledge["reason"]), styles["Footnote"]))
+        else:
+            flow.append(Paragraph("No AlphaFold DB structure resolved for this protein.", styles["Footnote"]))
+
+    # Population Evidence (main gnomAD/dbSNP result), Markdown section 10.
+    # `summary.py:1890`'s own comment referred to "the Population Evidence
+    # section further down", which no function ever built -- this is that
+    # section. Distinct from the Indian Population Frequency block below,
+    # which carries the South Asian subpopulation figures only.
+    population_evidence = clinical.get("population_evidence") or {}
+    if population_evidence:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Population Evidence:</b>", styles["BodyText"]))
+        g = population_evidence.get("gnomad") or {}
+        if g.get("skip_reason"):
+            flow.append(Paragraph(f"• gnomAD: {esc(g['skip_reason'])}", styles["BulletText"]))
+        elif g.get("error") is not None:
+            flow.append(
+                Paragraph(
+                    f"• gnomAD: lookup failed (external service issue: {esc(g['error'])}) -- not evidence "
+                    "of an absent variant, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        elif g.get("queried"):
+            flow.append(
+                Paragraph(
+                    "• gnomAD: "
+                    + (
+                        f"found, AF={esc(str(g.get('global_af')))}"
+                        if g.get("found")
+                        else "variant not found (absent from gnomAD)"
+                    ),
+                    styles["BulletText"],
+                )
+            )
+        else:
+            flow.append(Paragraph("• gnomAD: lookup unavailable for this variant.", styles["BulletText"]))
+        d = population_evidence.get("dbsnp") or {}
+        if d.get("skip_reason"):
+            flow.append(Paragraph(f"• dbSNP: {esc(d['skip_reason'])}", styles["BulletText"]))
+        elif d.get("error") is not None:
+            flow.append(
+                Paragraph(
+                    f"• dbSNP: lookup failed (external service issue: {esc(d['error'])}) -- not evidence "
+                    "of no dbSNP record, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        elif d.get("queried"):
+            flow.append(
+                Paragraph(
+                    "• dbSNP: " + (f"catalogued as {esc(d.get('rsid'))}" if d.get("found") else "not found"),
+                    styles["BulletText"],
+                )
+            )
+        else:
+            flow.append(Paragraph("• dbSNP: lookup unavailable for this variant.", styles["BulletText"]))
+
     flow.extend(_build_indian_population_frequency_flowables(clinical, styles))
+
+    # Clinical Evidence (ClinVar/ClinGen), Markdown section 12 -- never
+    # previously rendered here.
+    clinical_evidence = clinical.get("clinical_evidence") or {}
+    if clinical_evidence:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Clinical Evidence:</b>", styles["BodyText"]))
+        if clinical_evidence.get("clinvar_available"):
+            cv = clinical_evidence["clinvar"]
+            flow.append(
+                Paragraph(
+                    f"• ClinVar: {esc(cv.get('clinical_significance')) or 'n/a'} "
+                    f"({esc(cv.get('review_status')) or 'n/a'})",
+                    styles["BulletText"],
+                )
+            )
+        elif clinical_evidence.get("clinvar_error"):
+            flow.append(
+                Paragraph(
+                    f"• ClinVar: lookup failed (external service issue: {esc(clinical_evidence['clinvar_error'])}) "
+                    "-- not evidence of an absent record, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        elif clinical_evidence.get("clinvar_co_located_count"):
+            flow.append(
+                Paragraph(
+                    "• ClinVar: no record found for this exact variant "
+                    f"({clinical_evidence['clinvar_co_located_count']} other variant(s) catalogued at this "
+                    "genomic position, but none match this allele -- see Annotation Detail below).",
+                    styles["BulletText"],
+                )
+            )
+        else:
+            flow.append(Paragraph("• ClinVar: no record found.", styles["BulletText"]))
+        if clinical_evidence.get("clingen_available"):
+            cg = clinical_evidence["clingen"]
+            flow.append(
+                Paragraph(
+                    f"• ClinGen: {esc(cg.get('gene_symbol')) or 'n/a'} -- gene-disease validity: "
+                    f"{esc(cg.get('clinical_validity_summary')) or 'n/a'}",
+                    styles["BulletText"],
+                )
+            )
+        elif clinical_evidence.get("clingen_error"):
+            flow.append(
+                Paragraph(
+                    f"• ClinGen: lookup failed (external service issue: {esc(clinical_evidence['clingen_error'])}) "
+                    "-- not evidence of an absent curation, see Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        else:
+            flow.append(Paragraph("• ClinGen: no curation found for this gene.", styles["BulletText"]))
+
+    # Sequence Context (BLAST homology + context-model routing), Markdown
+    # section 13 -- never previously rendered here.
+    sequence_context = clinical.get("sequence_context") or {}
+    if sequence_context:
+        flow.append(Spacer(1, 2 * mm))
+        flow.append(Paragraph("<b>Sequence Context:</b>", styles["BodyText"]))
+        seq_context_models = sequence_context.get("context_models_used") or []
+        flow.append(
+            Paragraph(
+                f"• Context models used: {esc(', '.join(seq_context_models) if seq_context_models else 'none')}",
+                styles["BulletText"],
+            )
+        )
+        blast = sequence_context.get("blast") or {}
+        blast_error = blast.get("error")
+        if blast_error is not None:
+            flow.append(
+                Paragraph(
+                    f"• BLAST: lookup failed ({esc(blast_error)}) -- not evidence of no homology, see "
+                    "Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        else:
+            flow.append(Paragraph(f"• BLAST: {blast.get('hit_count', 0)} homology hit(s)", styles["BulletText"]))
+        if sequence_context.get("ensembl_note"):
+            flow.append(Paragraph(esc(sequence_context["ensembl_note"]), styles["Footnote"]))
 
     # Recommendations: computed per finding by
     # `report/clinical_report_builder.py` and rendered by the Markdown
@@ -2256,6 +2589,106 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         flow.append(Spacer(1, 2 * mm))
         flow.append(Paragraph("<b>References:</b>", styles["BodyText"]))
         flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in references)
+
+    # Evidence Sources: the short list of provider names that actually
+    # contributed to this finding's interpretation -- computed for the
+    # Markdown report's section 17, but never rendered here.
+    evidence_sources = clinical.get("evidence_sources") or []
+    flow.append(Spacer(1, 2 * mm))
+    flow.append(
+        Paragraph(
+            f"<b>Evidence Sources:</b> {esc(', '.join(evidence_sources)) if evidence_sources else 'none'}",
+            styles["BodyText"],
+        )
+    )
+
+    flow.extend(_build_explainability_flowables(clinical.get("explainability"), styles))
+
+    return flow
+
+
+def _build_explainability_flowables(
+    explainability: Optional[Dict[str, Any]], styles: Dict[str, ParagraphStyle]
+) -> List[Any]:
+    """
+    Renders the Phase 7 explainability trace -- the same `explainability`
+    dict `report/report_generator.py::_render_explainability` renders as
+    the Markdown report's section 17, previously never rendered in this
+    PDF at all.
+    """
+    flow: List[Any] = [Spacer(1, 2 * mm), Paragraph("<b>Explainability:</b>", styles["BodyText"])]
+    if not explainability:
+        flow.append(Paragraph("Explainability trace unavailable for this variant.", styles["Footnote"]))
+        return flow
+
+    flow.append(Paragraph(f"Decision summary: {esc(explainability['decision_summary'])}", styles["BulletText"]))
+
+    reasoning_chain = explainability.get("reasoning_chain") or []
+    if reasoning_chain:
+        flow.append(Paragraph("Reasoning chain:", styles["BulletText"]))
+        flow.extend(Paragraph(f"&nbsp;&nbsp;- {esc(step)}", styles["BulletText"]) for step in reasoning_chain)
+
+    contributed = explainability.get("evidence_contributed") or []
+    flow.append(
+        Paragraph(
+            f"Evidence sources that contributed: {esc(', '.join(contributed)) if contributed else 'none'}",
+            styles["BulletText"],
+        )
+    )
+    not_contributed = explainability.get("evidence_not_contributed") or []
+    if not_contributed:
+        flow.append(Paragraph("Evidence sources that did not contribute:", styles["BulletText"]))
+        flow.extend(
+            Paragraph(f"&nbsp;&nbsp;- {esc(e['source'])}: {esc(e['reason'])}", styles["BulletText"])
+            for e in not_contributed
+        )
+
+    influential = explainability.get("ai_models_influential") or []
+    flow.append(
+        Paragraph(
+            "AI models that influenced the decision: "
+            + (
+                esc(", ".join(f"{v.get('source')} ({v.get('prediction')})" for v in influential))
+                if influential
+                else "none"
+            ),
+            styles["BulletText"],
+        )
+    )
+    contextual = explainability.get("ai_models_contextual_only") or []
+    flow.append(
+        Paragraph(
+            f"AI models used for context only (no verdict): {esc(', '.join(contextual)) if contextual else 'none'}",
+            styles["BulletText"],
+        )
+    )
+
+    conflicts = explainability.get("conflicts_detected") or []
+    flow.append(Paragraph(f"Conflicts detected: {len(conflicts)}", styles["BulletText"]))
+    flow.extend(
+        Paragraph(f"&nbsp;&nbsp;- {esc(c['conflict_type'])} ({esc(c['severity'])})", styles["BulletText"])
+        for c in conflicts
+    )
+    flow.append(
+        Paragraph(
+            "How conflicts were resolved: " + esc(explainability.get("conflicts_resolved", "No conflicts to resolve.")),
+            styles["BulletText"],
+        )
+    )
+
+    uncertainties = explainability.get("remaining_uncertainties") or []
+    if uncertainties:
+        flow.append(Paragraph("Remaining uncertainties:", styles["BulletText"]))
+        flow.extend(Paragraph(f"&nbsp;&nbsp;- {esc(u)}", styles["BulletText"]) for u in uncertainties)
+    else:
+        flow.append(Paragraph("Remaining uncertainties: none identified.", styles["BulletText"]))
+
+    flow.append(
+        Paragraph(f"Confidence rationale: {esc(explainability.get('confidence_rationale', ''))}", styles["BulletText"])
+    )
+    flow.append(
+        Paragraph(f"Priority rationale: {esc(explainability.get('priority_rationale', ''))}", styles["BulletText"])
+    )
 
     return flow
 

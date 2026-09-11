@@ -449,11 +449,39 @@ class BLASTClient:
         self.requested_mode = requested_mode
 
         if self.mode == "remote" and not disabled:
-            # Fail fast / auto-install here, at construction, rather
-            # than silently discovering it's missing on the first
-            # variant that reaches the BLAST stage -- same "surface
-            # setup problems immediately" philosophy as the startup
-            # model validation in the orchestrator.
+            # CORRECTED 2026-09-11. This comment read, and was false
+            # of the code beneath it:
+            #
+            #     "Fail fast / auto-install here, at construction,
+            #      rather than silently discovering it's missing on the
+            #      first variant that reaches the BLAST stage -- same
+            #      'surface setup problems immediately' philosophy as
+            #      the startup model validation in the orchestrator."
+            #
+            # WHAT THIS LINE ACTUALLY DOES: it ATTEMPTS the install and
+            # DISCARDS THE RESULT. There is no `if`, no assignment and
+            # no raise, so construction proceeds whatever comes back.
+            # Measured 2026-09-11 by constructing BLASTClient(mode=
+            # "remote") with Biopython reported each way: ABSENT ->
+            # construction succeeded, mode still "remote"; NOT_CHECKED
+            # -> construction succeeded, mode still "remote". So the
+            # missing package IS discovered "on the first variant that
+            # reaches the BLAST stage" -- the exact outcome the old
+            # comment said this line existed to prevent.
+            #
+            # The auto-install attempt itself is real and is the reason
+            # the call stays: on a box where pip can reach PyPI this
+            # installs Biopython at construction. It is only the
+            # FAIL-FAST half of the old claim that was untrue.
+            #
+            # WHETHER IT SHOULD FAIL FAST IS AN OPEN QUESTION WITH THE
+            # HUMAN, deliberately not answered here: raising at
+            # construction changes WHEN a remote-BLAST run dies, which
+            # is deployment-visible behaviour, not a cleanup. Note that
+            # :415 in this same file already draws the distinction that
+            # decision turns on -- "we looked and it is not there"
+            # (ABSENT) versus "we never looked" (NOT_CHECKED) -- and
+            # only the first is a confirmed setup problem.
             ensure_pip_package_available("biopython", import_name="Bio")
 
         # Memoizes search() results by exact (mode, program, database,

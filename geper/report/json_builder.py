@@ -556,6 +556,24 @@ def build_variant_result(
         # Defaults to None exactly like `orphanet_result` above, so any
         # existing caller that doesn't pass this kwarg still gets a
         # fully backward-compatible result dict.
+        #
+        # DEFECT-a-field-present-by-in-place-mutation-rather-than-
+        # assignment-is-invisible-to-the-grep-everyone-runs, instance 4:
+        # by the time `normalization_result` reaches this function, it
+        # may already carry an `hgvs_c` key that `_run_normalization_stage`
+        # (the function that PRODUCES this dict) never wrote --
+        # `pipeline/orchestrator.py::run()::_process_variant::_attach_hgvs_c`
+        # mutates `normalization_result["hgvs_c"]` in place, called AFTER
+        # `_run_normalization_stage` returns but BEFORE `build_variant_result`
+        # (this function) is called. Unlike instances 2/3, this is
+        # PRE-BUILD, not post-build -- the field is already present and
+        # correct by the time it is emitted here, so the hazard is not
+        # "the document changes after you think it is finished"; it is
+        # that a reader tracing `_run_normalization_stage` alone (the
+        # natural place to look for how this dict is built) would not
+        # know a separate function adds `hgvs_c` to it afterward. This
+        # comment covers only this one instance; the mutation-vs-
+        # assignment class as a whole has no census.
         "normalization": normalization_result if normalization_result is not None else {"skipped": True},
         # New, additive keys (standalone SpliceFormer/SpliceBERT
         # splice-prediction plugins for BP7 -- see pipeline/acmg_rules.py::

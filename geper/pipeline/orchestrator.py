@@ -39,7 +39,7 @@ from database.clinvar_client import ClinVarClient
 from database.dbsnp_client import DbSNPClient
 from models import MODEL_REGISTRY as _BASE_MODEL_REGISTRY
 from models.alphamissense import catalogue_cache_path as alphamissense_catalogue_cache_path
-from pipeline.assembly_validator import validate_assembly
+from pipeline.assembly_validator import mito_only_exemption_reason, validate_assembly
 from pipeline.acmg_rules import (
     mtdna_alphamissense_skip_result,
     mtdna_ensemble_skip_result,
@@ -735,12 +735,23 @@ class GeperPipeline:
         # Runs before any variant is processed / any reference sequence
         # is fetched, using the header lines the parser already
         # collected while reading up to `variants`.
+        # The record chromosomes are passed for the all-mitochondrial exception
+        # (card #15): the header alone cannot prove a run is ALL mito.
+        record_chroms = [v.chrom for v in variants]
         try:
-            resolved_assembly = validate_assembly(parser.header_lines, self._cli_assembly)
+            resolved_assembly = validate_assembly(parser.header_lines, self._cli_assembly, record_chroms=record_chroms)
         except AssemblyMismatchError as exc:
             raise PipelineError(str(exc)) from exc
         if resolved_assembly and not self._cli_assembly:
             self.sequence_context_gen.assembly = resolved_assembly
+        # Set ONLY when the exception actually fired -- `validate_assembly`
+        # returns None on the no-build path for no other reason now -- so the
+        # report can say the build check was skipped, and why.
+        assembly_note = (
+            mito_only_exemption_reason(parser.header_lines, record_chroms)
+            if resolved_assembly is None and not self._cli_assembly
+            else None
+        )
 
         # --- Ensembl batch prefetch (Phase 2 performance pass) -------------
         # Best-effort: warms the sequence-context generator's region
@@ -819,6 +830,7 @@ class GeperPipeline:
         result_builder = JSONResultBuilder(
             input_vcf_path=vcf_path,
             assembly=self.sequence_context_gen.assembly,
+            assembly_note=assembly_note,
             vcf_samples=parser.samples,
             provenance_collector=self.provenance,
             code_version=self.geper_code_version,
@@ -863,6 +875,7 @@ class GeperPipeline:
                 result_builder = JSONResultBuilder(
                     input_vcf_path=vcf_path,
                     assembly=self.sequence_context_gen.assembly,
+                    assembly_note=assembly_note,
                     vcf_samples=parser.samples,
                     provenance_collector=self.provenance,
                     code_version=self.geper_code_version,

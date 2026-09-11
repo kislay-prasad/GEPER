@@ -26,6 +26,7 @@ class JSONResultBuilder:
         self,
         input_vcf_path: str,
         assembly: str = None,
+        assembly_note: Optional[str] = None,
         vcf_samples: List[str] = None,
         provenance_collector: Any = None,
         code_version: str = None,
@@ -44,6 +45,13 @@ class JSONResultBuilder:
         # specified" rather than a fabricated default downstream (see
         # `report/summary.py`), never guessed as "GRCh38".
         self.assembly = assembly
+        # Why there is no build, when there legitimately is none (card #15,
+        # the all-mitochondrial exception -- see
+        # pipeline/assembly_validator.py::MITO_ONLY_NOTE). Kept SEPARATE from
+        # `assembly` on purpose: `assembly` is a build token that Ensembl
+        # lookups and the LIMS export consume, and a sentence there would
+        # break them. The renderers show this in the build's place.
+        self.assembly_note = assembly_note
         # The VCF's own genotype sample column names (`VCFParser.samples`,
         # from its header line), if any -- also previously computed but
         # never surfaced. Used by `report/summary.py` to derive a real
@@ -231,6 +239,7 @@ class JSONResultBuilder:
             # cwd at build time -- the only place that cwd is still known.
             "input_vcf_absolute_path": os.path.abspath(self.input_vcf_path),
             "assembly": self.assembly,
+            "assembly_note": self.assembly_note,
             "vcf_samples": self.vcf_samples,
             "variant_count": len(self.variant_results),
             "variants": self.variant_results,

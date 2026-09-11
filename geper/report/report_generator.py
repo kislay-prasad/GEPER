@@ -281,7 +281,13 @@ class ReportGenerator:
         # in one format and withheld it in another. Same wording and
         # same "Not specified" fallback as the PDF, so the two cannot
         # drift into saying different things.
-        lines.append(f"**Genome reference build:** {json_document.get('assembly') or 'Not specified'}")
+        # `assembly_note` fills the slot only when a run legitimately has no
+        # build (card #15, all-mitochondrial) -- it says the check was skipped
+        # and why, where "Not specified" would say nothing.
+        lines.append(
+            "**Genome reference build:** "
+            f"{json_document.get('assembly') or json_document.get('assembly_note') or 'Not specified'}"
+        )
         lines.append(f"**Variants analyzed:** {json_document.get('variant_count')}")
         consent_line = _render_consent_line(json_document)
         if consent_line:

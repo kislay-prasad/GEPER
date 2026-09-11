@@ -229,7 +229,7 @@ class TestFlowableBuilders(unittest.TestCase):
     def test_identity_block_shows_deidentified_label_by_default(self):
         from report.summary import _parse_patient_meta
 
-        table = _build_identity_block(_parse_patient_meta(None), "S1", "R1", "GRCh38", 3, _STYLES)
+        table = _build_identity_block(_parse_patient_meta(None), "S1", "R1", "GRCh38", 3, None, _STYLES)
         text = " ".join(cell.text for row in table._cellvalues for cell in row)
         self.assertIn("De-identified", text)
         self.assertIn("S1", text)
@@ -243,7 +243,7 @@ class TestFlowableBuilders(unittest.TestCase):
             "physician": "Dr Who",
             "deidentified": False,
         }
-        table = _build_identity_block(patient, "S1", "R1", "GRCh38", 3, _STYLES)
+        table = _build_identity_block(patient, "S1", "R1", "GRCh38", 3, None, _STYLES)
         text = " ".join(cell.text for row in table._cellvalues for cell in row)
         self.assertIn("Test Patient", text)
         self.assertIn("Date of Birth", text)

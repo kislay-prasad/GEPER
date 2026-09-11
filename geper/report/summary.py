@@ -101,7 +101,7 @@ from report.clinical_report_builder import (
 )
 from report.pdf_escape import esc
 from utils.logger import get_logger
-from utils.timezone_utils import format_ist
+from utils.timezone_utils import format_ist, format_ist_from_iso
 
 logger = get_logger(__name__)
 
@@ -483,10 +483,18 @@ def _derive_run_id(document: Dict[str, Any], run_id: Optional[str]) -> str:
     rather than a new one each time). A real LIMS/hospital deployment
     should supply its own authoritative run/accession ID via
     `generate_pdf(run_id=...)` instead of relying on this fallback.
+
+    A missing `generated_at` returns a fixed marker rather than falling
+    back to `datetime.now()`: the same document re-rendered twice with
+    no persisted timestamp must get the same Run ID both times, not a
+    new one each render -- the same fabrication family as the "Report
+    Generated" field (#17/#20).
     """
     if run_id:
         return run_id
-    generated_at = document.get("generated_at") or datetime.now(timezone.utc).isoformat()
+    generated_at = document.get("generated_at")
+    if not generated_at:
+        return "BIJ-RUN-UNAVAILABLE"
     compact = "".join(ch for ch in generated_at if ch.isalnum())
     return f"BIJ-RUN-{compact[:14]}"
 
@@ -973,7 +981,12 @@ def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphSt
 
 
 def _build_patient_header_table(
-    patient: Dict[str, Any], sample_id: str, run_id: str, assembly: Optional[str], styles: Dict[str, ParagraphStyle]
+    patient: Dict[str, Any],
+    sample_id: str,
+    run_id: str,
+    assembly: Optional[str],
+    generated_at: Optional[str],
+    styles: Dict[str, ParagraphStyle],
 ) -> Table:
     lbl, val = styles["TableLabel"], styles["TableValue"]
     rows: List[List[Paragraph]] = []
@@ -995,12 +1008,16 @@ def _build_patient_header_table(
     rows.append([Paragraph("Sample ID", lbl), Paragraph(esc(sample_id), val)])
     rows.append([Paragraph("Run ID", lbl), Paragraph(esc(run_id), val)])
     rows.append([Paragraph("Genome Reference Build", lbl), Paragraph(assembly or "Not specified", val)])
-    # Displayed in IST (report is for Indian hospitals) -- the
-    # underlying timestamp is still generated in UTC
-    # (`datetime.now(timezone.utc)`) and only converted for this
-    # human-facing label; nothing stored/logged changes. See
-    # `utils/timezone_utils.py`.
-    rows.append([Paragraph("Report Generated", lbl), Paragraph(format_ist(datetime.now(timezone.utc)), val)])
+    # Two different facts, not alternatives (#17): the document's own
+    # persisted `generated_at` (when this analysis was actually run --
+    # falls back to the same "Not available" marker Markdown already
+    # uses via `format_ist_from_iso`, never to `datetime.now()`), and
+    # separately the moment THIS PDF FILE was rendered, which can be
+    # long after the analysis if the PDF is re-printed from saved JSON.
+    # Displayed in IST (report is for Indian hospitals); stored/logged
+    # timestamps stay UTC. See `utils/timezone_utils.py`.
+    rows.append([Paragraph("Report Generated", lbl), Paragraph(format_ist_from_iso(generated_at), val)])
+    rows.append([Paragraph("PDF Rendered", lbl), Paragraph(format_ist(datetime.now(timezone.utc)), val)])
 
     table = Table(rows, colWidths=[55 * mm, 110 * mm], hAlign="LEFT")
     table.setStyle(
@@ -2452,7 +2469,9 @@ def generate_pdf(
     story.extend(_build_clinician_summary_flowables(document, variants, sample_id, resolved_run_id, assembly, styles))
     story.extend(
         [
-            _build_patient_header_table(patient, sample_id, resolved_run_id, assembly, styles),
+            _build_patient_header_table(
+                patient, sample_id, resolved_run_id, assembly, document.get("generated_at"), styles
+            ),
             Spacer(1, 6 * mm),
             _Bookmark("bm_qc", "Sequencing Quality Control Metrics"),
             Paragraph("Sequencing Quality Control Metrics", styles["SectionHeading"]),

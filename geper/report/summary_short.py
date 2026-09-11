@@ -93,7 +93,7 @@ from report.summary import (
     _resolve_logo_path,
 )
 from utils.logger import get_logger
-from utils.timezone_utils import format_ist
+from utils.timezone_utils import format_ist, format_ist_from_iso
 
 logger = get_logger(__name__)
 
@@ -376,6 +376,7 @@ def _build_identity_block(
     run_id: str,
     assembly: Optional[str],
     variant_count: int,
+    generated_at: Optional[str],
     styles: Dict[str, ParagraphStyle],
 ) -> Table:
     """
@@ -412,9 +413,15 @@ def _build_identity_block(
     pairs.append(("Run ID", run_id))
     pairs.append(("Reference Build", assembly or "Not specified"))
     pairs.append(("Variants Reported", str(variant_count)))
-    # IST for the same reason the full report uses it (Indian
-    # hospitals); the underlying timestamp is still UTC.
-    pairs.append(("Report Generated", format_ist(datetime.now(timezone.utc))))
+    # Two different facts, not alternatives (#17): the document's own
+    # persisted `generated_at` (falls back to the same "Not available"
+    # marker Markdown already uses, never to `datetime.now()`), and
+    # separately the moment THIS PDF FILE was rendered, under its own
+    # honest label -- see `report/summary.py::_build_patient_header_table`
+    # for the full reasoning, mirrored here. IST for the same reason the
+    # full report uses it (Indian hospitals); underlying timestamps stay UTC.
+    pairs.append(("Report Generated", format_ist_from_iso(generated_at)))
+    pairs.append(("PDF Rendered", format_ist(datetime.now(timezone.utc))))
 
     rows: List[List[Any]] = []
     for i in range(0, len(pairs), 2):
@@ -744,7 +751,11 @@ def generate_short_pdf(
     # its logo to the title's height.
     story.append(Paragraph(SCOPE_LINE, styles["Footnote"]))
     story.append(Spacer(1, 3 * mm))
-    story.append(_build_identity_block(patient, sample_id, resolved_run_id, assembly, len(variants), styles))
+    story.append(
+        _build_identity_block(
+            patient, sample_id, resolved_run_id, assembly, len(variants), document.get("generated_at"), styles
+        )
+    )
     story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph("Result", styles["SectionHeading"]))

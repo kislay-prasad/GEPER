@@ -98,6 +98,11 @@ from report.clinical_report_builder import (
     # degrade identically -- the `_variant_hgvs_or_locus` pattern above,
     # applied to the tri-state this field carries.
     variant_allele_fraction_text,
+    DATA_ATTRIBUTION_HEADING,
+    EVIDENCE_SOURCES_USED_HEADING,
+    NO_EVIDENCE_SOURCES_TEXT,
+    reference_blocks,
+    report_revision_banners,
 )
 from report.pdf_escape import esc
 from utils.logger import get_logger
@@ -2612,15 +2617,22 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
     # `clinical["references"]` (see `report/clinical_report_builder.py
     # ::_references`) was already computed for the Markdown report's own
     # "References" section, but this PDF path never rendered it -- found
-    # while adding HPO/Orphanet citations (2026-08-08). `_references()`
-    # now always returns at least the unconditional Orphanet entry, so
-    # this list is never empty in practice, but the `if` guard is kept
-    # for defensive symmetry with every other optional section here.
-    references = clinical.get("references") or []
-    if references:
-        flow.append(Spacer(1, 2 * mm))
-        flow.append(Paragraph("<b>References:</b>", styles["BodyText"]))
-        flow.extend(Paragraph(f"• {item}", styles["BulletText"]) for item in references)
+    # while adding HPO/Orphanet citations (2026-08-08).
+    #
+    # Ruling (A), 2026-09-11: rendered as TWO labelled blocks -- what this run
+    # used (gated on evidence_sources), then the fixed licence notices -- where
+    # a single "References:" list used to mix both. Both are always shown now:
+    # attribution is unconditional, and an empty evidence block says so.
+    evidence_refs, attribution = reference_blocks(clinical)
+    flow.append(Spacer(1, 2 * mm))
+    flow.append(Paragraph(f"<b>{EVIDENCE_SOURCES_USED_HEADING}:</b>", styles["BodyText"]))
+    if evidence_refs:
+        flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in evidence_refs)
+    else:
+        flow.append(Paragraph(esc(NO_EVIDENCE_SOURCES_TEXT), styles["BulletText"]))
+    flow.append(Spacer(1, 2 * mm))
+    flow.append(Paragraph(f"<b>{DATA_ATTRIBUTION_HEADING}:</b>", styles["BodyText"]))
+    flow.extend(Paragraph(f"• {esc(item)}", styles["BulletText"]) for item in attribution)
 
     # Evidence Sources: the short list of provider names that actually
     # contributed to this finding's interpretation -- computed for the
@@ -2907,6 +2919,12 @@ def generate_pdf(
     # for why it is that constant and not a copy of it.
     story.append(Paragraph(DOCUMENT_POSITIONING_STATEMENT, styles["PositioningBanner"]))
     story.append(Spacer(1, 4 * mm))
+    # Revision traceability (amended / superseded / re-analysis), page 1,
+    # above every finding -- same block, same wording, as the Markdown and
+    # short PDF. Reasons/ids are caller-supplied text, hence esc().
+    for banner in report_revision_banners(document):
+        story.append(Paragraph(esc(banner), styles["PositioningBanner"]))
+        story.append(Spacer(1, 4 * mm))
     # Report-header-level methodology disclosure (C0, report review
     # round 2): stated once, up front, before any classification is
     # shown, so a reviewer never has to infer which combining system

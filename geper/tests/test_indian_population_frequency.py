@@ -297,7 +297,12 @@ class TestMarkdownRendering(unittest.TestCase):
         self.assertIn("### 13. Sequence Context", md)
         self.assertIn("### 14. Recommendations", md)
         self.assertIn("### 15. Limitations", md)
-        self.assertIn("### 16. References", md)
+        # Was "### 16. References" -- REPLACED by ruling (A) on the
+        # references-list card (2026-09-11): section 16 is now the gated
+        # "Evidence sources used in this run", followed by a separate,
+        # unnumbered "Data attribution" block for the fixed licence notices.
+        self.assertIn("### 16. Evidence sources used in this run", md)
+        self.assertIn("### Data attribution", md)
         self.assertIn("### 17. Evidence Sources", md)
 
     def test_1000g_not_found_renders_plainly(self):

@@ -62,6 +62,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from component_identity import COMPONENT_NAME, SHORT_NAME
+
 # --- version-compatibility ground truth ------------------------------------
 # Kept in exactly one place (here) and mirrored by the short summary in
 # requirements.txt's header comment / README.md's "Compatibility matrix"
@@ -159,7 +161,7 @@ def check_python() -> CheckResult:
     return CheckResult(
         "Python",
         "FAIL",
-        f"Python {platform.python_version()} detected; Bij AI requires "
+        f"Python {platform.python_version()} detected; {SHORT_NAME} requires "
         f"{lo[0]}.{lo[1]} <= python < {hi[0]}.{hi[1]} (evo2's own published "
         f"metadata is the binding constraint; torch/transformers/rna-fm "
         f"all separately accept a wider range).",
@@ -186,7 +188,7 @@ def check_torch() -> CheckResult:
     else:
         status = "WARN"
         detail = (
-            f"torch {torch.__version__} detected; Bij AI is pinned/tested against "
+            f"torch {torch.__version__} detected; {SHORT_NAME} is pinned/tested against "
             f"exactly {EXPECTED['torch']} because Evo2's flash-attn dependency is "
             f"compiled from source against a specific torch+CUDA ABI. A different "
             f"torch version may still work for HyenaDNA/RNA-FM/ESM2/"
@@ -217,7 +219,7 @@ def check_torchvision() -> CheckResult:
     return CheckResult(
         "torchvision",
         "WARN",
-        f"torchvision {torchvision.__version__} detected; Bij AI pins "
+        f"torchvision {torchvision.__version__} detected; {SHORT_NAME} pins "
         f"{EXPECTED['torchvision']} (PyTorch's own compatibility matrix pairing "
         f"for torch {EXPECTED['torch']}). A mismatched torch/torchvision pair is "
         f"the single most common cause of a cryptic 'undefined symbol' import "
@@ -245,7 +247,7 @@ def check_torchaudio() -> CheckResult:
         return CheckResult(
             "torchaudio",
             "WARN",
-            "torchaudio is not installed. Bij AI itself never imports it, but leaving "
+            f"torchaudio is not installed. {SHORT_NAME} itself never imports it, but leaving "
             "it absent/unpinned in a shared environment (e.g. Colab, which ships its "
             "own pre-installed torchaudio build) is exactly how a mismatched version "
             "gets pulled in later and crashes an unrelated import "
@@ -259,7 +261,7 @@ def check_torchaudio() -> CheckResult:
     return CheckResult(
         "torchaudio",
         "FAIL",
-        f"torchaudio {torchaudio.__version__} detected; Bij AI pins "
+        f"torchaudio {torchaudio.__version__} detected; {SHORT_NAME} pins "
         f"{EXPECTED['torchaudio']} (PyTorch's own compatibility matrix pairing for "
         f"torch {EXPECTED['torch']}). A mismatched torch/torchaudio pair fails with "
         f"`OSError: undefined symbol: torch_library_impl` the moment torchaudio is "
@@ -285,7 +287,7 @@ def check_transformers() -> CheckResult:
     return CheckResult(
         "transformers",
         "FAIL",
-        f"transformers {transformers.__version__} detected; Bij AI pins "
+        f"transformers {transformers.__version__} detected; {SHORT_NAME} pins "
         f"{EXPECTED['transformers']} -- the version the shipped image runs "
         f"(see requirements.txt for why).",
         fix=f"pip install transformers=={EXPECTED['transformers']}",
@@ -307,7 +309,7 @@ def check_accelerate() -> CheckResult:
     return CheckResult(
         "accelerate",
         "WARN",
-        f"accelerate {accelerate.__version__} detected; Bij AI requires "
+        f"accelerate {accelerate.__version__} detected; {SHORT_NAME} requires "
         f">={EXPECTED['accelerate_min']},<{EXPECTED['accelerate_max_exclusive']}.",
         fix=f"pip install 'accelerate>={EXPECTED['accelerate_min']},<{EXPECTED['accelerate_max_exclusive']}'",
     )
@@ -329,7 +331,7 @@ def check_tensorflow() -> CheckResult:
     return CheckResult(
         "tensorflow",
         "WARN",
-        f"tensorflow {tf.__version__} detected; Bij AI requires "
+        f"tensorflow {tf.__version__} detected; {SHORT_NAME} requires "
         f">={EXPECTED['tensorflow_min']},<{EXPECTED['tensorflow_max_exclusive']}.",
         fix=f"pip install 'tensorflow>={EXPECTED['tensorflow_min']},<{EXPECTED['tensorflow_max_exclusive']}'",
     )
@@ -558,7 +560,7 @@ def check_tabix() -> CheckResult:
         "WARN",
         "No 'tabix' binary on PATH. AlphaMissense and any locally-indexed "
         "gnomAD catalogue lookups are unavailable and will be skipped gracefully "
-        "until this is installed (Bij AI auto-installs it via apt-get on Debian/"
+        f"until this is installed ({SHORT_NAME} auto-installs it via apt-get on Debian/"
         "Ubuntu the first time it's needed).",
         fix="apt-get install tabix  (or: conda install -c bioconda htslib)",
     )
@@ -793,7 +795,7 @@ def run_all() -> Report:
 
 def print_human(report: Report) -> None:
     print("=" * 78)
-    print("Bij AI Environment Verification")
+    print(f"{COMPONENT_NAME} Environment Verification")
     print("=" * 78)
     for r in report.results:
         icon = _STATUS_ICON.get(r.status, "?")

@@ -1,7 +1,7 @@
 """
 api/main.py
 ────────────
-Bij AI structural-annotation FastAPI application.
+Bij AI variant-interpretation component (GEPER) structural-annotation FastAPI application.
 
 Endpoints
 ---------
@@ -70,6 +70,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from component_identity import COMPONENT_NAME, SHORT_NAME
 from pipeline.alphafold.lookup import AlphaFoldLookup
 
 from .submission_store import SubmissionStore
@@ -156,7 +157,9 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
         )
 
 
-app = FastAPI(title="Bij AI Structures API")
+# Scoped 2026-09-12: this app serves only GEPER (AlphaFold structure lookups,
+# and VCF submissions that api/submission_worker.py runs through geper/main.py).
+app = FastAPI(title=f"{COMPONENT_NAME} Structures API")
 
 # CORS — restrict origins in production via GEPER_CORS_ORIGINS env var
 _cors_origins = (_CORS_ORIGINS_ENV or "*").split(",")
@@ -400,7 +403,7 @@ def get_structure_annotation(
     response_model=InterpretationSubmissionResponse,
     status_code=202,
     tags=["interpretations"],
-    summary="Submit a VCF for Bij AI interpretation",
+    summary=f"Submit a VCF for interpretation by the {COMPONENT_NAME}",
 )
 def post_interpretation(
     req: InterpretationSubmissionRequest,
@@ -408,7 +411,7 @@ def post_interpretation(
     _auth: None = Depends(_require_api_key),
 ) -> InterpretationSubmissionResponse:
     """
-    Submit a VCF for Bij AI interpretation.
+    Submit a VCF for interpretation by the Bij AI variant-interpretation component (GEPER).
 
     Returns:
     - 202 if new submission created (queued)
@@ -447,7 +450,7 @@ def post_interpretation(
     "/interpretations/{submission_id}",
     response_model=InterpretationStatusResponse,
     tags=["interpretations"],
-    summary="Get Bij AI interpretation status",
+    summary=f"Get {SHORT_NAME} interpretation status",
 )
 def get_interpretation_status(
     submission_id: str,

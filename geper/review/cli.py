@@ -36,6 +36,7 @@ import argparse
 import sys
 from typing import Any, Dict, List, Optional
 
+from component_identity import COMPONENT_NAME, SHORT_NAME
 from review.signoff import approve as _approve
 from review.signoff import list_pending as _list_pending
 from review.signoff import override as _override
@@ -49,7 +50,7 @@ logger = get_logger(__name__)
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="geper-signoff",
-        description="Bij AI clinician review workflow -- approve a run, override a classification, list runs awaiting review, or withdraw a standing sign-off.",
+        description=f"Clinician review workflow for {COMPONENT_NAME} runs -- approve a run, override a classification, list runs awaiting review, or withdraw a standing sign-off.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -60,7 +61,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     approve_parser.add_argument(
         "--output-dir",
         required=True,
-        help="An existing Bij AI --output-dir (must already contain geper_results.json from a completed run).",
+        help=f"An existing {SHORT_NAME} --output-dir (must already contain geper_results.json from a completed run).",
     )
     approve_parser.add_argument("--clinician-name", required=True, help='e.g. "Dr. Rajesh Sharma".')
     approve_parser.add_argument("--reg-number", required=True, help='Medical registration number, e.g. "MCI-12345".')
@@ -68,9 +69,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     override_parser = subparsers.add_parser(
         "override",
-        help="Layer a clinician's classification override on top of one variant's Bij AI-derived result (never replaces it), and regenerate all three report formats.",
+        help=f"Layer a clinician's classification override on top of one variant's {SHORT_NAME}-derived result (never replaces it), and regenerate all three report formats.",
     )
-    override_parser.add_argument("--output-dir", required=True, help="An existing Bij AI --output-dir.")
+    override_parser.add_argument("--output-dir", required=True, help=f"An existing {SHORT_NAME} --output-dir.")
     override_parser.add_argument(
         "--variant",
         required=True,
@@ -83,7 +84,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     list_parser = subparsers.add_parser(
-        "list-pending", help="Recursively scan a directory tree for Bij AI runs and their DRAFT/REVIEWED review status."
+        "list-pending",
+        help=f"Recursively scan a directory tree for {SHORT_NAME} runs and their DRAFT/REVIEWED review status.",
     )
     list_parser.add_argument(
         "--search-root", required=True, help="Directory to recursively search for geper_results.json files."
@@ -96,7 +98,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "withdraw",
         help="Retract a standing sign-off: removes the signed manifest and resets review_status to DRAFT if it was REVIEWED, then regenerates all three report formats.",
     )
-    withdraw_parser.add_argument("--output-dir", required=True, help="An existing Bij AI --output-dir.")
+    withdraw_parser.add_argument("--output-dir", required=True, help=f"An existing {SHORT_NAME} --output-dir.")
     withdraw_parser.add_argument("--reason", required=True, help="Free-text reason the sign-off is being withdrawn.")
     withdraw_parser.add_argument(
         "--actor", required=True, help="Identifies who is withdrawing the sign-off, e.g. an email address."

@@ -35,11 +35,9 @@ def _base_cfg() -> dict:
             "pm2_af_max": 0.0001,
             "pp3_cadd_phred": 20.0,
             "pp3_revel": 0.5,
-            "pp3_spliceai": 0.2,
             "pp3_alphamissense": 0.564,
             "bp4_cadd_phred": 10.0,
             "bp4_revel": 0.15,
-            "bp4_spliceai": 0.1,
         },
         "evidence_engine": {
             "weight_acmg": 0.45,

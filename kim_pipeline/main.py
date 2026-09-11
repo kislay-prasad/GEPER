@@ -184,7 +184,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     from pipeline.fastq.errors import FastqPipelineError
     from pipeline.config_validator import ConfigValidationError
 
-    # ── Fix #5: wire --cadd/--revel/--spliceai CLI overrides into acmg_thresholds ──
+    # ── Fix #5: wire --cadd/--revel CLI overrides into acmg_thresholds ──
+    # (--spliceai was the third until 2026-09-11; see the note below.)
     score_overrides = {}
     if getattr(args, "cadd", None) is not None:
         score_overrides["pp3_cadd_phred"] = args.cadd
@@ -192,14 +193,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if getattr(args, "revel", None) is not None:
         score_overrides["pp3_revel"] = args.revel
         score_overrides["bp4_revel"] = args.revel
-    if getattr(args, "spliceai", None) is not None:
-        # THRESHOLD override only -- not a score. Kept deliberately: with the
-        # SpliceAI input closed no spliceai_score is ever populated, so these
-        # thresholds are unreachable dead config, exactly like the
-        # pp3_spliceai/bp4_spliceai keys still allowlisted in api/main.py.
-        # Removing either is a separate, user-visible decision.
-        score_overrides["pp3_spliceai"] = args.spliceai
-        score_overrides["bp4_spliceai"] = args.spliceai
+    # `analyze --spliceai` was REMOVED 2026-09-11, with the two thresholds it
+    # wrote (pp3_spliceai / bp4_spliceai). They were dead -- the SpliceAI input
+    # is closed and PP3/BP4 read neither key -- so the flag set a number that
+    # governed nothing. The "separate, user-visible decision" this comment used
+    # to defer was ruled: remove them.
     if score_overrides:
         cfg.setdefault("acmg_thresholds", {}).update(score_overrides)
         logger.info("ACMG threshold overrides from CLI: %s", score_overrides)
@@ -669,12 +667,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_analyze.add_argument(
         "--revel", type=float, metavar="0-1", help="Override ACMG PP3/BP4 REVEL score threshold"
-    )
-    p_analyze.add_argument(
-        "--spliceai",
-        type=float,
-        metavar="0-1",
-        help="Override ACMG PP3/BP4 SpliceAI score threshold (unreachable: SpliceAI input closed)",
     )
     p_analyze.add_argument(
         "--mode",

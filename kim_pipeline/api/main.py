@@ -517,11 +517,11 @@ _CONFIG_ALLOWLIST: Dict[str, Any] = {
         "pm2_af_max": True,
         "pp3_cadd_phred": True,
         "pp3_revel": True,
-        "pp3_spliceai": True,
         "pp3_alphamissense": True,
         "bp4_cadd_phred": True,
         "bp4_revel": True,
-        "bp4_spliceai": True,
+        # pp3_spliceai / bp4_spliceai removed 2026-09-11: dead thresholds,
+        # see config/default.yaml.
     },
     "evidence_engine": {
         "weight_acmg": True,

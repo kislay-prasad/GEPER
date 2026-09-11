@@ -463,6 +463,21 @@ which, do not assume either").
   `kelly-pp3-bp4-invariance-vs-single-predictor-incompatibility`, both
   waiting) and referred out to the unfilled clinical-expert role, not
   overlooked or newly discovered here.
+  **ADDED 2026-09-11 -- "both threshold defaults" above was true and
+  incomplete.** `ff9e5ae` removed the classifier's **in-code** defaults
+  (`classifier.py`'s `_t` dict), the two vote branches and the validator
+  ranges. It did **not** touch three other surfaces, which kept both keys
+  alive as dead config: `config/default.yaml` still set
+  `pp3_spliceai: 0.2` / `bp4_spliceai: 0.1`, `api/main.py`'s
+  `_CONFIG_ALLOWLIST` still returned both from `GET /config`, and
+  `analyze --spliceai` still wrote both. A reader of "both threshold
+  defaults" would reasonably include the file named `default.yaml`. All
+  three were removed on branch `ryan-spliceai-dead-keys`; the evidence is
+  `kim_pipeline/tests/test_spliceai_dead_threshold_keys_removed.py`, which
+  also proves the keys governed no verdict **before** they were removed.
+  The two `spliceai_score` dataclass fields are **not** removed and must
+  not be: `orchestration/shared.py::synonymous_or_intronic` reads the
+  field and deliberately distinguishes ABSENT from CONFIRMED-LOW.
 - **My finding**: CROSS_TREE_DIVERGENCES.md itself already states this one
   is "unresolved by design, referred to clinical expert review" on both
   sides — I found nothing in either engine's code that changes that

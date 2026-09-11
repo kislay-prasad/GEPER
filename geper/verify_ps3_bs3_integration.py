@@ -1,3 +1,25 @@
+# *** THE VERDICT BELOW IS UNDATED. ***
+#
+# WHAT THIS IS, in its own words: Live-network verification script for the PS3/BS3 functional-evidence
+#
+# NOTHING RE-RUNS THIS FILE. Measured 2026-09-11 across the 17 files matching
+# geper/verify_*.py, geper/benchmark_*.py and dry_run_harness.py: ZERO are
+# referenced in .github/workflows, and pytest does not collect any of them,
+# because they are not named test_*. So whatever this script printed, it
+# printed on the day somebody ran it by hand -- AND WHICH DAY THAT WAS IS
+# RECORDED NOWHERE. `git log` on this file gives the date it was EDITED,
+# which is a different fact and must not be quoted as if it were this one.
+#
+# WHY THE NOTE RATHER THAN A FIX: the file is not broken. Its stubs are
+# honest -- it fakes everything EXCEPT the thing it verifies, and it
+# propagates its exit code -- and all 59 stub targets across these harnesses
+# were still defined when this was written, so they can all still be applied.
+# The risk is CITATION: 'verify' is in the filename, which invites someone to
+# quote this file's green as evidence. That is the `docker history` shape --
+# something that reads as a record and is not one.
+#
+# IF YOU ARE ABOUT TO CITE THIS FILE: run it, and say when you ran it.
+#
 """
 Live-network verification script for the PS3/BS3 functional-evidence
 integration (`pipeline/functional_evidence/`, `pipeline/acmg_rules.py::
@@ -66,15 +88,23 @@ def main() -> int:
     ps3_records = [r for r in fe_result.get("records", []) if r.get("call") == "PS3"]
     results.append(_check("a real PS3-Met record was returned", bool(ps3_records)))
     if ps3_records:
-        results.append(_check(
-            "expert panel is the ENIGMA BRCA1/BRCA2 VCEP",
-            ps3_records[0].get("expert_panel") == "ENIGMA BRCA1 and BRCA2 VCEP",
-            detail=str(ps3_records[0].get("expert_panel")),
-        ))
+        results.append(
+            _check(
+                "expert panel is the ENIGMA BRCA1/BRCA2 VCEP",
+                ps3_records[0].get("expert_panel") == "ENIGMA BRCA1 and BRCA2 VCEP",
+                detail=str(ps3_records[0].get("expert_panel")),
+            )
+        )
     ps3 = ACMGRuleEngine._ps3(fe_result)
     bs3 = ACMGRuleEngine._bs3(fe_result)
-    results.append(_check("ACMGRuleEngine._ps3 triggers at strong strength", ps3.status == "triggered" and ps3.strength == "strong"))
-    results.append(_check("ACMGRuleEngine._bs3 stays not_evaluated (no conflicting call)", bs3.status == "not_evaluated"))
+    results.append(
+        _check(
+            "ACMGRuleEngine._ps3 triggers at strong strength", ps3.status == "triggered" and ps3.strength == "strong"
+        )
+    )
+    results.append(
+        _check("ACMGRuleEngine._bs3 stays not_evaluated (no conflicting call)", bs3.status == "not_evaluated")
+    )
 
     print()
     print("=" * 70)
@@ -89,28 +119,43 @@ def main() -> int:
     bs3_records = [r for r in fe_result2.get("records", []) if r.get("call") == "BS3"]
     results.append(_check("a real BS3-relevant ('normal') record was returned", bool(bs3_records)))
     if bs3_records:
-        results.append(_check(
-            "raw score matches the known real value",
-            abs((bs3_records[0].get("raw_score") or 0) - (-0.0153221623501722)) < 1e-6,
-            detail=str(bs3_records[0].get("raw_score")),
-        ))
+        results.append(
+            _check(
+                "raw score matches the known real value",
+                abs((bs3_records[0].get("raw_score") or 0) - (-0.0153221623501722)) < 1e-6,
+                detail=str(bs3_records[0].get("raw_score")),
+            )
+        )
     ps3_2 = ACMGRuleEngine._ps3(fe_result2)
     bs3_2 = ACMGRuleEngine._bs3(fe_result2)
-    results.append(_check("ACMGRuleEngine._bs3 triggers at moderate strength", bs3_2.status == "triggered" and bs3_2.strength == "moderate"))
-    results.append(_check("ACMGRuleEngine._ps3 stays not_evaluated (no conflicting call)", ps3_2.status == "not_evaluated"))
+    results.append(
+        _check(
+            "ACMGRuleEngine._bs3 triggers at moderate strength",
+            bs3_2.status == "triggered" and bs3_2.strength == "moderate",
+        )
+    )
+    results.append(
+        _check("ACMGRuleEngine._ps3 stays not_evaluated (no conflicting call)", ps3_2.status == "not_evaluated")
+    )
 
     print()
     print("=" * 70)
     print("PART 3: CFTR -- known, honestly-reported coverage gap")
     print("=" * 70)
     fe_cftr = lookup.query_variant(
-        "CFTR", hgvs_g="NC_000007.14:g.117559592G>A", hgvs_c="NM_000492.4:c.1521_1523delCTT",
+        "CFTR",
+        hgvs_g="NC_000007.14:g.117559592G>A",
+        hgvs_c="NM_000492.4:c.1521_1523delCTT",
     )
     results.append(_check("CFTR query returns found=False", fe_cftr.get("found") is False))
     ps3_cftr = ACMGRuleEngine._ps3(fe_cftr)
     bs3_cftr = ACMGRuleEngine._bs3(fe_cftr)
-    results.append(_check("ACMGRuleEngine._ps3 reports not_evaluated (no fabricated call)", ps3_cftr.status == "not_evaluated"))
-    results.append(_check("ACMGRuleEngine._bs3 reports not_evaluated (no fabricated call)", bs3_cftr.status == "not_evaluated"))
+    results.append(
+        _check("ACMGRuleEngine._ps3 reports not_evaluated (no fabricated call)", ps3_cftr.status == "not_evaluated")
+    )
+    results.append(
+        _check("ACMGRuleEngine._bs3 reports not_evaluated (no fabricated call)", bs3_cftr.status == "not_evaluated")
+    )
 
     print()
     print("=" * 70)

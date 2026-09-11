@@ -1245,7 +1245,7 @@ def _resolved_version(name: str, status: str) -> Optional[str]:
 # disabled/never queried this run still appears in the provenance
 # output as NOT_CONSULTED, rather than being silently absent -- the
 # structural distinction point 6 of this module's task required.
-KNOWN_SOURCES = (
+KNOWN_SOURCES: tuple[str, ...] = (
     "ClinVar",
     "dbSNP",
     "gnomAD",
@@ -1276,6 +1276,99 @@ KNOWN_SOURCES = (
     "Functional evidence (MaveDB)",
     "MANE Select (NCBI)",
 )
+
+# ---------------------------------------------------------------------------
+# Tool versions (2026-09-11, the human's ruling: "Reports not recording which
+# htslib version produced them is the same gap as the model-hash -- the thing
+# that determines the output isn't captured alongside the output.")
+#
+# Each is MEASURED where the tool actually ran, never copied from the image's
+# package pin:
+#   - tabix/htslib is the one of these this pipeline RUNS (AlphaMissense and
+#     local-gnomAD lookups): its own `--version`, read at run time.
+#   - the software that created the VCF (Kim: freeBayes), bcftools and the
+#     htslib bcftools used ran UPSTREAM,
+#     in whatever produced the input VCF. Those tools write their own version
+#     into the VCF header as they produce it (`##source=freeBayes v1.3.10`,
+#     `##bcftools_viewVersion=1.16+htslib-1.16`), so the header is read.
+#     Probing a local `bcftools --version` instead would record a binary that
+#     did not produce this report -- and would be wrong for a supplied VCF.
+#   - samtools runs on the alignment, which this pipeline never receives, and
+#     writes nothing into a VCF. Recorded as not recorded, with the reason.
+# See `pipeline/orchestrator.py::GeperPipeline._capture_tool_provenance`.
+# ---------------------------------------------------------------------------
+TOOL_SOURCE_TABIX = "tabix / htslib (run by this pipeline)"
+# `##source` names the software that CREATED the file (VCF spec) -- a variant
+# caller for Kim's output (freeBayes), but a curation label for a hand-made
+# VCF (a fixture here says "GEPER_manual_curation_v1"). So not "variant caller".
+TOOL_SOURCE_CALLER = "Software that created the input VCF (its ##source)"
+TOOL_SOURCE_BCFTOOLS = "bcftools (declared in the input VCF)"
+TOOL_SOURCE_HTSLIB = "htslib used by bcftools (declared in the input VCF)"
+TOOL_SOURCE_SAMTOOLS = "samtools"
+KNOWN_SOURCES = KNOWN_SOURCES + (
+    TOOL_SOURCE_TABIX,
+    TOOL_SOURCE_CALLER,
+    TOOL_SOURCE_BCFTOOLS,
+    TOOL_SOURCE_HTSLIB,
+    TOOL_SOURCE_SAMTOOLS,
+)
+
+_BCFTOOLS_STAMP = re.compile(r"^##bcftools_\w+Version=([^+\s]+)(?:\+htslib-(\S+))?")
+_SAMTOOLS_STAMP = re.compile(r"^##samtools\w*Version=(\S+)")
+
+
+def parse_vcf_tool_stamps(header_lines: List[str]) -> Dict[str, List[str]]:
+    """
+    The tool versions an input VCF declares about itself, in order of first
+    appearance, duplicates removed -- EVERY distinct value, never one chosen
+    among several: a VCF touched by two bcftools versions says so. An empty
+    list means the header declares nothing, which callers must render as
+    such rather than fill in.
+    """
+    found: Dict[str, List[str]] = {"caller": [], "bcftools": [], "htslib": [], "samtools": []}
+
+    def _add(key: str, value: Optional[str]) -> None:
+        if value and value not in found[key]:
+            found[key].append(value)
+
+    for line in header_lines:
+        if line.startswith("##source="):
+            _add("caller", line[len("##source=") :].strip())
+            continue
+        m = _BCFTOOLS_STAMP.match(line)
+        if m:
+            _add("bcftools", m.group(1))
+            _add("htslib", m.group(2))
+            continue
+        m = _SAMTOOLS_STAMP.match(line)
+        if m:
+            _add("samtools", m.group(1))
+    return found
+
+
+def capture_tool_version(binary: str, timeout_secs: float = 10.0) -> Dict[str, Optional[str]]:
+    """
+    `binary --version`'s first non-empty output line, read from the binary
+    itself. `{"version": None, "error": ...}` when it cannot be run or says
+    nothing -- never a guessed or pinned value. Never raises: a provenance
+    capture must not break a run.
+    """
+    try:
+        proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=timeout_secs)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"version": None, "error": str(exc) or type(exc).__name__}
+    first = next(
+        (ln.strip() for stream in (proc.stdout, proc.stderr) for ln in (stream or "").splitlines() if ln.strip()),
+        None,
+    )
+    # Exit status first: a binary that rejects `--version` prints its USAGE
+    # and exits non-zero, and that text must not be recorded as a version.
+    if proc.returncode != 0:
+        return {"version": None, "error": f"`{binary} --version` exited {proc.returncode}: {first or 'no output'}"}
+    if first is None:
+        return {"version": None, "error": f"`{binary} --version` printed nothing"}
+    return {"version": first, "error": None}
+
 
 # Evidence-source short names, exactly as recorded in a variant's
 # `clinical_report["evidence_sources"]` (see

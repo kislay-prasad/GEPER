@@ -78,6 +78,8 @@ class TestReportIntegration(unittest.TestCase):
         self.assertNotIn("2026-07-31T01:43:00+00:00", markdown)
 
     def test_pdf_header_uses_ist_label(self):
+        """Two rows now, in order: the persisted `generated_at` under "Report Generated",
+        then the render moment under its own "PDF Rendered" label (#17) -- both in IST."""
         from report import summary as summary_module
 
         styles = summary_module._build_stylesheet()
@@ -86,13 +88,18 @@ class TestReportIntegration(unittest.TestCase):
             "SAMPLE01",
             "RUN01",
             "GRCh38",
+            "2026-07-31T01:43:00+00:00",
             styles,
         )
-        # Last row is "Report Generated" -- its value cell must carry the IST label.
-        label_cell, value_cell = table._cellvalues[-1]
-        self.assertEqual(label_cell.text, "Report Generated")
-        self.assertIn("IST", value_cell.text)
-        self.assertNotIn("UTC", value_cell.text)
+        report_generated_label, report_generated_value = table._cellvalues[-2]
+        self.assertEqual(report_generated_label.text, "Report Generated")
+        self.assertIn("2026-07-31 07:13 IST", report_generated_value.text)
+        self.assertNotIn("UTC", report_generated_value.text)
+
+        pdf_rendered_label, pdf_rendered_value = table._cellvalues[-1]
+        self.assertEqual(pdf_rendered_label.text, "PDF Rendered")
+        self.assertIn("IST", pdf_rendered_value.text)
+        self.assertNotIn("UTC", pdf_rendered_value.text)
 
 
 if __name__ == "__main__":

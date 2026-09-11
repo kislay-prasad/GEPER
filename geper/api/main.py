@@ -63,8 +63,9 @@ import enum
 import logging
 import os
 import sys
+import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -80,26 +81,68 @@ logger = logging.getLogger("geper.structures_api")
 # start control -- see that module's GAP 2 / FIX #3 for the original) ────────
 
 
-def _load_api_keys() -> Optional[Set[str]]:
-    """Load valid API keys from GEPER_API_KEYS env var.
+def _parse_api_keys(raw: str) -> Optional[Dict[str, uuid.UUID]]:
+    """Parse GEPER_API_KEYS: comma-separated `key:org_uuid` entries.
 
-    Returns None if not set (dev mode — allow all requests).
+    2026-09-12 (D0, "build the link"): every key is bound to ONE clinical
+    organisation, and a submission belongs to the organisation of the key
+    that made it. Before this the value was a bare key list and every
+    submission was filed under the literal string "default" -- which is not
+    an organisation, and which the worker's exception path then crashed
+    parsing as a UUID. The organisation is deliberately NOT a request field:
+    any key holder could then write into any tenant.
+
+    Returns None when nothing is configured (dev mode). Raises ValueError on
+    any malformed entry -- a bare key (the old format), an empty key, an
+    organisation that is not a UUID, or one key bound to two organisations
+    -- rather than dropping the entry or binding it to nothing. The message
+    never contains a key.
     """
-    raw = os.getenv("GEPER_API_KEYS", "")
-    if not raw:
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    if not entries:
         return None
-    keys = {k.strip() for k in raw.split(",") if k.strip()}
-    return keys if keys else None
+    keys: Dict[str, uuid.UUID] = {}
+    for position, entry in enumerate(entries, start=1):
+        key, sep, org = entry.partition(":")
+        key, org = key.strip(), org.strip()
+        if not sep or not key or not org:
+            raise ValueError(f"GEPER_API_KEYS entry {position} is not in the form key:org_uuid")
+        try:
+            org_id = uuid.UUID(org)
+        except ValueError:
+            raise ValueError(f"GEPER_API_KEYS entry {position}: the organisation is not a UUID") from None
+        if key in keys and keys[key] != org_id:
+            raise ValueError(f"GEPER_API_KEYS entry {position}: this key is already bound to another organisation")
+        keys[key] = org_id
+    return keys
 
 
-_API_KEYS: Optional[Set[str]] = _load_api_keys()
+def _load_api_keys() -> Optional[Dict[str, uuid.UUID]]:
+    """Load GEPER_API_KEYS; refuse to start on a malformed value.
+
+    Returns None if not set (dev mode -- the structures endpoint allows all
+    requests; submissions are refused, since there is no organisation to own
+    them).
+    """
+    try:
+        return _parse_api_keys(os.getenv("GEPER_API_KEYS", ""))
+    except ValueError as exc:
+        sys.stderr.write(
+            f"ERROR: refusing to start -- {exc}. Each GEPER_API_KEYS entry must be "
+            "key:org_uuid, binding the key to the clinical organisation its submissions "
+            "belong to.\n"
+        )
+        sys.exit(1)
+
+
+_API_KEYS: Optional[Dict[str, uuid.UUID]] = _load_api_keys()
 _CORS_ORIGINS_ENV: Optional[str] = os.getenv("GEPER_CORS_ORIGINS")  # None if unset; "*" applied later
 _DEV_INSECURE: bool = os.getenv("GEPER_DEV_INSECURE", "") == "1"
 
 if _API_KEYS is None:
     logger.warning(
         "GEPER_API_KEYS is not set — running in dev mode with no authentication. "
-        "Set GEPER_API_KEYS=key1,key2 before deploying to production."
+        "Set GEPER_API_KEYS=key1:org_uuid1,key2:org_uuid2 before deploying to production."
     )
 
 
@@ -156,6 +199,35 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
         )
 
 
+async def _require_organisation(x_api_key: str = Header(default="")) -> uuid.UUID:
+    """FastAPI dependency for the /interpretations endpoints: the clinical
+    organisation the presented key is bound to.
+
+    Unlike `_require_api_key`, dev mode does NOT pass: with no keys
+    configured there is no organisation, and a submission must belong to
+    one (it becomes an org-scoped clinical record). The old code filed such
+    submissions under the string "default".
+    """
+    if _API_KEYS is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Interpretation submissions need an API key bound to a clinical organisation "
+                "(GEPER_API_KEYS=key:org_uuid); none are configured, so there is no organisation "
+                "to own this submission."
+            ),
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    org_id = _API_KEYS.get(x_api_key) if x_api_key else None
+    if org_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing API key. Provide a valid key in the X-Api-Key header.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    return org_id
+
+
 app = FastAPI(title="Bij AI Structures API")
 
 # CORS — restrict origins in production via GEPER_CORS_ORIGINS env var
@@ -206,6 +278,12 @@ class InterpretationSubmissionRequest(BaseModel):
     assembly: str
     sample_ref: str
     consent_ref: str
+    # The clinical order and sample this run interprets (2026-09-12, D0).
+    # Required: the worker writes the result as a clinical interpretation of
+    # this sample, and a run it cannot attribute to one is not run. The
+    # organisation is NOT here -- it comes from the API key.
+    order_id: uuid.UUID
+    sample_id: uuid.UUID
     hpo_terms: Optional[Dict[str, Any]] = None
     qc_metrics: Optional[Dict[str, Any]] = None
 
@@ -405,7 +483,7 @@ def get_structure_annotation(
 def post_interpretation(
     req: InterpretationSubmissionRequest,
     store: SubmissionStore = Depends(get_submission_store),
-    _auth: None = Depends(_require_api_key),
+    org_id: uuid.UUID = Depends(_require_organisation),
 ) -> InterpretationSubmissionResponse:
     """
     Submit a VCF for Bij AI interpretation.
@@ -417,7 +495,9 @@ def post_interpretation(
     Client should not branch on status code — both responses include id and status.
     """
     submission = store.create_submission(
-        org_id="default",
+        org_id=str(org_id),
+        order_id=str(req.order_id),
+        sample_id=str(req.sample_id),
         submission_key=req.submission_key,
         vcf_path=req.vcf_path,
         assembly=req.assembly,
@@ -452,11 +532,15 @@ def post_interpretation(
 def get_interpretation_status(
     submission_id: str,
     store: SubmissionStore = Depends(get_submission_store),
-    _auth: None = Depends(_require_api_key),
+    org_id: uuid.UUID = Depends(_require_organisation),
 ) -> InterpretationStatusResponse:
-    """Get status of an interpretation submission."""
+    """Get status of an interpretation submission.
+
+    Org-scoped: another organisation's submission answers 404, the same as
+    an id that does not exist, so a key cannot probe other tenants' ids.
+    """
     submission = store.get_submission(submission_id)
-    if not submission:
+    if not submission or submission.org_id != str(org_id):
         raise HTTPException(status_code=404, detail="Submission not found")
 
     return InterpretationStatusResponse(

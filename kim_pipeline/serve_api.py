@@ -2,7 +2,7 @@
 """
 serve_api.py
 ─────────────
-Launch the GEPER FastAPI server.
+Launch the Bij AI sequencing-analysis component FastAPI server.
 
 Usage:
     python serve_api.py
@@ -37,7 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     (`build_parser().parse_args([]).host`) without importing uvicorn or
     binding a port -- see the loopback-default fix this function was
     extracted for."""
-    parser = argparse.ArgumentParser(description="Bij AI genomics pipeline API server")
+    from pipeline.reporting.component_identity import COMPONENT_NAME
+
+    parser = argparse.ArgumentParser(description=f"{COMPONENT_NAME} API server")
     # Default flipped from 0.0.0.0 to 127.0.0.1 (loopback-only): the
     # documented "Development (keyless local)" recipe in
     # kim_pipeline/docs/INSTALL.md runs this with no --host override, and
@@ -107,7 +109,9 @@ def main() -> None:
 
     _warn_if_bind_all_without_auth(args.host)
 
-    print(f"Starting Bij AI API on http://{args.host}:{args.port}")
+    from pipeline.reporting.component_identity import COMPONENT_NAME
+
+    print(f"Starting the {COMPONENT_NAME} API on http://{args.host}:{args.port}")
     print(f"Swagger UI: http://{args.host}:{args.port}/docs")
     print(f"OpenAPI JSON: http://{args.host}:{args.port}/openapi.json")
 

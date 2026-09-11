@@ -1,4 +1,4 @@
-# Bij AI v8 — Installation Guide
+# Bij AI sequencing-analysis component v8 — Installation Guide
 
 ## System Requirements
 
@@ -60,7 +60,7 @@ Set in `config/production.yaml`:
 clinvar:
   tsv_gz_path: "/data/clinvar/variant_summary.txt.gz"
 ```
-Without this file, Bij AI falls back to live NCBI Entrez REST queries (requires internet, rate-limited to 3 req/s without API key).
+Without this file, the sequencing-analysis component falls back to live NCBI Entrez REST queries (requires internet, rate-limited to 3 req/s without API key).
 
 ### gnomAD (local — optional)
 ```bash
@@ -72,7 +72,7 @@ for CHR in {1..22} X Y; do
        -O /data/gnomad/gnomad.genomes.v4.1.sites.chr${CHR}.vcf.bgz.tbi
 done
 ```
-Without this, Bij AI uses the gnomAD GraphQL API (live, requires internet).
+Without this, the sequencing-analysis component uses the gnomAD GraphQL API (live, requires internet).
 
 ### OMIM (retired 2026-08-20)
 **OMIM has been removed from kim_pipeline effective 2026-08-20 due to licensing restrictions.** OMIM's terms state: "This resource is intended for purely research purposes" and "Commercial use of the resource would require licensing." GEPER's ratified positioning as a commercial product is what conflicts with OMIM's "purely research purposes" terms, independent of whether it interprets, prioritises, or performs any diagnostic function.
@@ -107,7 +107,7 @@ vim config/production.yaml
 
 ## PDF Report Generation
 
-Bij AI tries WeasyPrint first, then wkhtmltopdf:
+The sequencing-analysis component tries WeasyPrint first, then wkhtmltopdf:
 
 ```bash
 # Option 1: WeasyPrint (recommended)

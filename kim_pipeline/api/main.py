@@ -1,7 +1,7 @@
 """
 api/main.py
 ────────────
-GEPER production FastAPI application.
+Bij AI sequencing-analysis component (Kim) production FastAPI application.
 
 Endpoints
 ---------
@@ -66,6 +66,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from pipeline.orchestration.runner import PipelineRunner
+from pipeline.reporting.component_identity import COMPONENT_NAME
 from shared.process_control import request_termination_async
 from api.run_store import RunStore
 
@@ -194,9 +195,13 @@ async def _require_api_key(x_api_key: str = Header(default="")) -> None:
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 
 app = FastAPI(
-    title="Bij AI Genomics Pipeline API",
+    # Scoped 2026-09-11: this app imports only Kim's PipelineRunner and
+    # serves only FASTQ/FASTA upload and Kim pipeline runs. The DISCLAIMER
+    # sentence below names the PRODUCT (ratified intended-use text) and is
+    # deliberately left as it is.
+    title=f"{COMPONENT_NAME} API",
     description=(
-        "Production API for the Bij AI clinical genomics pipeline. "
+        f"Production API for the {COMPONENT_NAME} (Kim). "
         "Accepts FASTQ inputs and returns annotated variant reports. "
         "DISCLAIMER: Bij AI assists qualified clinicians and pathologists; it produces a draft "
         "classification requiring qualified human review and final sign-off before any clinical "

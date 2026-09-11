@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pipeline.reporting.clinical_sections import SCOPE_LINE, consequence_display_label
+from pipeline.reporting.component_identity import PIPELINE_VERSION
 
 logger = logging.getLogger("geper.pipeline.reporting.pdf_report")
 
@@ -70,7 +71,7 @@ def render_clinical_pdf(
     merged_variants: List[Dict[str, Any]],
     ancestry_summary: Optional[str] = None,
     reference_genome: str = "N/A",
-    pipeline_version: str = "Bij AI",
+    pipeline_version: str = PIPELINE_VERSION,
     generated_at: Optional[str] = None,
     lab_disclaimer: Optional[str] = None,
     codon_resolution_disclaimer: Optional[str] = None,

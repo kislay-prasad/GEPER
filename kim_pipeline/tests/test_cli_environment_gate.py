@@ -58,7 +58,9 @@ def test_startup_validation_raises_dependency_error_when_tools_missing(monkeypat
         geper_main._print_startup_validation(args, cfg={})
 
     out = capsys.readouterr().out
-    assert "Bij AI Environment Validation" in out
+    # Was "Bij AI Environment Validation" -- scoped to the component 2026-09-11
+    # (the check covers only this component's environment).
+    assert "Bij AI sequencing-analysis component Environment Validation" in out
 
 
 def test_startup_validation_passes_when_tools_present_and_files_exist(monkeypatch, tmp_path):
@@ -163,7 +165,9 @@ def test_cmd_verify_environment_returns_zero_on_pass(monkeypatch, capsys):
     rc = geper_main.cmd_verify_environment(args)
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Bij AI Environment Verification" in out
+    # Was "Bij AI Environment Verification" -- scoped to the component 2026-09-11
+    # (the check covers only this component's environment).
+    assert "Bij AI sequencing-analysis component Environment Verification" in out
 
 
 def test_cmd_verify_environment_returns_one_on_fail(monkeypatch, capsys):

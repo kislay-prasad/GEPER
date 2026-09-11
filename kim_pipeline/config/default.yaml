@@ -1,5 +1,5 @@
 # kim_pipeline/config/default.yaml
-# Bij AI v8 default configuration.
+# Bij AI sequencing-analysis component v8 default configuration.
 # Copy to config/production.yaml and fill in your paths.
 
 # ── Clinical databases ────────────────────────────────────────────────────────

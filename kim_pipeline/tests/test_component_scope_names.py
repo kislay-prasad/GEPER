@@ -123,4 +123,6 @@ class TestSourceOfTheShippedPipeline:
             for line in p.read_text(encoding="utf-8").splitlines()
             if marker in line
         ]
-        assert hits == ["clinical_sections.py"], hits
+        # Moved 2026-09-11 into the import-free component_identity.py so
+        # main.py --help can print it; clinical_sections.py re-exports it.
+        assert hits == ["component_identity.py"], hits

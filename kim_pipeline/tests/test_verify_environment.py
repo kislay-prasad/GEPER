@@ -196,7 +196,9 @@ def test_render_includes_banner_and_overall_status(monkeypatch):
 
     report = ve.run_environment_checks()
     text = report.render()
-    assert "Bij AI Environment Verification" in text
+    # Was "Bij AI Environment Verification" -- scoped to the component 2026-09-11
+    # (the check covers only this component's environment).
+    assert "Bij AI sequencing-analysis component Environment Verification" in text
     assert "Overall: PASS" in text
 
 

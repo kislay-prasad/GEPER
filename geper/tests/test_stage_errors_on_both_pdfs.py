@@ -2,7 +2,12 @@
 Card HUMAN-TEXT-the-dbSNP-stage-error-sentence-on-both-PDFs (angela's draft
 9765c41, wording APPROVED by the human 2026-09-11: "Approved both. They name
 the stage, the failure, and nothing more -- the correct scope for a stage
-error.").
+error."). Short-PDF marker RE-RULED the same day: the approved "⚠" was
+measured drawing a black square (no font these PDFs use has U+26A0), so the
+human replaced it with the word "Warning:" -- "a black square reads as a
+rendering fault and invites distrust of the whole document, and embedding a
+font is not worth the licence obligation." See tests/test_pdf_glyph_coverage.py
+for the sweep that followed.
 
 Before: a per-variant stage failure (`variant_result["errors"]`, e.g.
 "dbSNP stage failed: Connection timed out" -- orchestrator.py writes
@@ -14,7 +19,7 @@ variant.
 Pinned, verbatim, as approved:
   * full PDF, directly under the "Finding N" heading: "Stage Warnings /
     Errors:" then one "• <message>" line per error;
-  * short PDF, directly under the result strip: "⚠ <message>".
+  * short PDF, directly under the result strip: "Warning: <message>".
 The message is whatever the failing stage recorded -- the same text the
 Markdown prints. NEGATIVE CONTROL: a variant with no stage error renders
 neither line.
@@ -23,20 +28,12 @@ Checked twice over: at the flowable level (for "directly under", and for
 the exact approved strings) and in real PDFs read back with pypdf (for
 what a reader actually sees).
 
-TWO EXTRACTION FACTS, measured 2026-09-11, that shape the rendered checks:
+EXTRACTION FACT, measured 2026-09-11, that shapes the rendered check:
   * "•": ReportLab writes the bullet as byte 0x7F under its own font
     encoding, which pypdf extracts as "\\x7f". It is the same glyph every
     other bullet in this PDF is drawn with ("• UniProt: ..." extracts the
     same way), so the rendered check compares against that sibling bullet
     rather than hard-coding pypdf's quirk.
-  * "⚠" (U+26A0): NOT DRAWN AS APPROVED. No font this report uses
-    (Helvetica family) or ReportLab ships (Vera*) has the glyph, so
-    ReportLab substitutes its fallback -- a black square, extracted as
-    "■". The flowable carries the approved "⚠ ..." text verbatim; the
-    rendered PDF shows "■ ...". Recorded below as an expectedFailure so
-    this is visible rather than silently green, and so the day a font with
-    the glyph is wired in, the unexpected success forces the marker off.
-    Fixing it is a font-asset or wording decision, not this change's.
 """
 
 import os
@@ -53,7 +50,7 @@ from tests.test_disclaimer_consistency import _document
 STAGE_ERROR = "dbSNP stage failed: Connection timed out"
 FULL_HEADING = "Stage Warnings / Errors:"
 FULL_LINE = f"• {STAGE_ERROR}"
-SHORT_LINE = f"⚠ {STAGE_ERROR}"
+SHORT_LINE = f"Warning: {STAGE_ERROR}"
 
 
 def _doc_with_error_on_first_variant():
@@ -107,7 +104,7 @@ class TestShortPdfFlowables(unittest.TestCase):
         texts = [
             t for t in (_plain(f) for f in _build_variant_block(1, variant_result, _build_short_stylesheet())) if t
         ]
-        self.assertFalse([t for t in texts if "⚠" in t or "stage failed" in t], texts)
+        self.assertFalse([t for t in texts if "Warning:" in t or "stage failed" in t], texts)
 
 
 class TestRenderedPdfs(unittest.TestCase):
@@ -125,16 +122,8 @@ class TestRenderedPdfs(unittest.TestCase):
     def test_short_pdf_shows_warning_line_for_finding_1_only(self):
         lines = _pdf_lines(generate_short_pdf, _doc_with_error_on_first_variant())
         hits = [line for line in lines if STAGE_ERROR in line]
-        self.assertEqual(len(hits), 1, hits)
-        # The message, as its own line with a one-character marker before it.
-        self.assertEqual(hits[0][1:], f" {STAGE_ERROR}")
-
-    @unittest.expectedFailure
-    def test_short_pdf_draws_the_approved_warning_glyph(self):
-        # KNOWN GAP (module docstring): U+26A0 has no glyph in any font this
-        # PDF uses, so it is drawn as the fallback black square.
-        lines = _pdf_lines(generate_short_pdf, _doc_with_error_on_first_variant())
-        self.assertIn(SHORT_LINE, lines)
+        # Exactly the ruled line, as its own line, once (Finding 2 has no error).
+        self.assertEqual(hits, [SHORT_LINE])
 
     def test_no_stage_error_anywhere_renders_neither_line_on_either_pdf(self):
         for render in (generate_pdf, generate_short_pdf):
@@ -142,7 +131,6 @@ class TestRenderedPdfs(unittest.TestCase):
                 text = "\n".join(_pdf_lines(render, _document(2)))
                 self.assertNotIn("Stage Warnings / Errors", text)
                 self.assertNotIn("stage failed", text)
-                self.assertNotIn("⚠", text)
 
 
 class TestSameMessageAsMarkdown(unittest.TestCase):

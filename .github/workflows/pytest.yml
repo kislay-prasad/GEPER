@@ -100,11 +100,31 @@ jobs:
     name: geper/ pytest
     runs-on: ubuntu-latest
     container: python:3.12-slim-bookworm
+    # The clinical-link tests in api/tests (the worker writing a pipeline run
+    # into clinical records) need a real PostgreSQL. This job runs INSIDE a
+    # container, so the service is reached by its service name, `postgres`,
+    # not localhost -- a DSN naming localhost here would point at the job
+    # container itself, where nothing listens.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres_ci_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: geper
     env:
       GEPER_DEV_INSECURE: "1"
+      CLINICAL_TEST_DSN: postgresql://postgres:postgres_ci_password@postgres:5432/postgres
+      # Throwaway service, so disposable (clinical/tests/db_guard.py).
+      CLINICAL_TEST_DB_DISPOSABLE: "1"
+      # Fail, not skip, if the database is missing (api/tests/conftest.py).
+      CLINICAL_REQUIRE_DB: "1"
     steps:
       # git first, so actions/checkout makes a real clone rather than falling
       # back to a tarball without .git. `/` because the job's working-directory
@@ -342,6 +362,10 @@ jobs:
     env:
       CLINICAL_REQUIRE_DB: "1"
       CLINICAL_TEST_DSN: postgresql://postgres:postgres_ci_password@localhost:5432/postgres
+      # The service above exists only for this job, so it is disposable. The
+      # suite drops its schema before every test and refuses to without this
+      # statement -- see clinical/tests/db_guard.py.
+      CLINICAL_TEST_DB_DISPOSABLE: "1"
     defaults:
       run:
         working-directory: clinical

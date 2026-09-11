@@ -108,6 +108,10 @@ class ExceptionReasonCode(str, enum.Enum):
     # Submission failures (lab_operator owns)
     BIJ_AI_TIMEOUT = "bij_ai_timeout"
     BIJ_AI_ERROR_OTHER = "bij_ai_error_other"
+    # The pipeline run succeeded but its result could not be written as
+    # clinical records (2026-09-12, D0). Not a Bij AI error: reporting it as
+    # bij_ai_error_other would send the lab looking at the engine.
+    CLINICAL_RECORD_WRITE_FAILED = "clinical_record_write_failed"
 
 
 # Reason code to owner mapping (immutable after creation)
@@ -141,6 +145,7 @@ REASON_CODE_TO_OWNER = {
     # Submission failures (lab_operator)
     ExceptionReasonCode.BIJ_AI_TIMEOUT: "lab_operator",
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: "lab_operator",
+    ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: "lab_operator",
 }
 
 # Reason code to category mapping (immutable after creation)
@@ -181,6 +186,10 @@ REASON_CODE_TO_CATEGORY = {
     # Submission failures
     ExceptionReasonCode.BIJ_AI_TIMEOUT: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: ExceptionCategory.INTERPRETATION_FAILURE,
+    # Transient: nothing was recorded, so a later attempt (a re-run and a
+    # fresh record) is safe -- the worker's idempotency lookup makes a
+    # retry that finds an earlier record adopt it instead of duplicating.
+    ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
 }
 
 

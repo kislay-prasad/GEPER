@@ -44,6 +44,7 @@ class Submission:
         qc_metrics: Optional[dict] = None,
         created_at: Optional[str] = None,
         updated_at: Optional[str] = None,
+        sample_id: Optional[str] = None,
     ):
         self.id = id
         self.org_id = org_id
@@ -54,6 +55,10 @@ class Submission:
         self.consent_ref = consent_ref
         self.status = status
         self.order_id = order_id
+        # The clinical samples.sample_id this submission interprets (a UUID
+        # string). Distinct from sample_ref, the submitter's own free-text
+        # reference, which is kept as before.
+        self.sample_id = sample_id
         self.interpretation_id = interpretation_id
         self.run_document_ref = run_document_ref
         self.error_message = error_message
@@ -113,6 +118,14 @@ class SubmissionStore:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_org_submission ON submissions(org_id, submission_key)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON submissions(status)")
+            # 2026-09-12: sample_id (the clinical sample a submission
+            # interprets). CREATE TABLE IF NOT EXISTS does not add a column
+            # to a store file created before it existed, so add it in place;
+            # rows written before then keep NULL and are refused by the
+            # worker as not linked to a clinical record.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
+            if "sample_id" not in columns:
+                conn.execute("ALTER TABLE submissions ADD COLUMN sample_id TEXT")
             conn.commit()
 
     def _reconcile_interrupted(self) -> None:
@@ -152,6 +165,7 @@ class SubmissionStore:
         order_id: Optional[str] = None,
         hpo_terms: Optional[dict] = None,
         qc_metrics: Optional[dict] = None,
+        sample_id: Optional[str] = None,
     ) -> Submission:
         """Create a new submission or return existing if submission_key is known.
 
@@ -170,7 +184,7 @@ class SubmissionStore:
             # Check if submission_key already exists
             cursor = conn.execute(
                 """
-                SELECT id, order_id, status, interpretation_id, error_message
+                SELECT id, order_id, status, interpretation_id, error_message, sample_id
                 FROM submissions
                 WHERE org_id = ? AND submission_key = ?
                 """,
@@ -178,7 +192,7 @@ class SubmissionStore:
             )
             existing = cursor.fetchone()
             if existing:
-                existing_id, existing_order_id, status, interp_id, error_msg = existing
+                existing_id, existing_order_id, status, interp_id, error_msg, existing_sample_id = existing
                 return Submission(
                     id=existing_id,
                     org_id=org_id,
@@ -189,6 +203,7 @@ class SubmissionStore:
                     consent_ref=consent_ref,
                     status=status,
                     order_id=existing_order_id,
+                    sample_id=existing_sample_id,
                     interpretation_id=interp_id,
                     error_message=error_msg,
                     hpo_terms=hpo_terms,
@@ -200,9 +215,10 @@ class SubmissionStore:
                 """
                 INSERT INTO submissions (
                     id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
-                    consent_ref, status, hpo_terms, qc_metrics, created_at, updated_at
+                    consent_ref, status, hpo_terms, qc_metrics, created_at, updated_at,
+                    sample_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     submission_id,
@@ -218,6 +234,7 @@ class SubmissionStore:
                     json.dumps(qc_metrics or {}),
                     now,
                     now,
+                    sample_id,
                 ),
             )
             conn.commit()
@@ -232,6 +249,7 @@ class SubmissionStore:
             consent_ref=consent_ref,
             status="queued",
             order_id=order_id,
+            sample_id=sample_id,
             hpo_terms=hpo_terms,
             qc_metrics=qc_metrics,
             created_at=now,
@@ -245,7 +263,8 @@ class SubmissionStore:
                 """
                 SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
                        consent_ref, status, interpretation_id, run_document_ref,
-                       error_message, hpo_terms, qc_metrics, created_at, updated_at
+                       error_message, hpo_terms, qc_metrics, created_at, updated_at,
+                       sample_id
                 FROM submissions
                 WHERE id = ?
                 """,
@@ -273,22 +292,29 @@ class SubmissionStore:
             qc_metrics=json.loads(row[13]) if row[13] else {},
             created_at=row[14],
             updated_at=row[15],
+            sample_id=row[16],
         )
 
     def get_queued_submissions(self, limit: int = 10) -> list[Submission]:
         """Get submissions with status='queued' for worker to process."""
+        return self.get_submissions_with_status("queued", limit)
+
+    def get_submissions_with_status(self, status: str, limit: int = 10) -> list[Submission]:
+        """Oldest first. The worker also reads 'interrupted' rows at startup,
+        to reconcile any whose clinical record was written before it died."""
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cursor = conn.execute(
                 """
                 SELECT id, org_id, order_id, submission_key, vcf_path, assembly, sample_ref,
                        consent_ref, status, interpretation_id, run_document_ref,
-                       error_message, hpo_terms, qc_metrics, created_at, updated_at
+                       error_message, hpo_terms, qc_metrics, created_at, updated_at,
+                       sample_id
                 FROM submissions
-                WHERE status = 'queued'
+                WHERE status = ?
                 ORDER BY created_at ASC
                 LIMIT ?
                 """,
-                (limit,),
+                (status, limit),
             )
             rows = cursor.fetchall()
 
@@ -312,6 +338,7 @@ class SubmissionStore:
                     qc_metrics=json.loads(row[13]) if row[13] else {},
                     created_at=row[14],
                     updated_at=row[15],
+                    sample_id=row[16],
                 )
             )
         return submissions

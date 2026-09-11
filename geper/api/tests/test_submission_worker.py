@@ -21,12 +21,14 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from api.submission_store import SubmissionStore
 from api.submission_worker import InterpretationWorker
+from clinical.data_access import RecordedPipelineResult, interpretation_submission_key
 
 
 @pytest.fixture
@@ -51,11 +53,79 @@ def output_root():
         yield tmpdir
 
 
+ORG = "aaaaaaaa-0000-4000-8000-000000000001"
+ORDER = "0d0d0d0d-0000-4000-8000-000000000003"
+SAMPLE = "5a5a5a5a-0000-4000-8000-000000000004"
+PATIENT = uuid.UUID("9a9a9a9a-0000-4000-8000-000000000005")
+
+
+class FakeClinical:
+    """
+    Stand-in for clinical.data_access.DataAccess in THIS file only, which
+    tests the worker's own handling of the engine's exit code and files
+    (see the module docstring). Every precondition passes and nothing is
+    recorded yet. The clinical link itself -- preconditions, the
+    idempotency lookup, the atomic record, reconciliation -- is tested
+    against a real PostgreSQL in test_worker_clinical_link.py, not here.
+    """
+
+    def __init__(self):
+        self.recorded = []
+        self.exceptions = []
+
+    def _create_system_session(self, org_id):
+        return SimpleNamespace(org_id=org_id, user_id=uuid.uuid4())
+
+    def get_order(self, session, order_id):
+        return {"order_id": order_id, "patient_id": PATIENT, "required_scope": "testing"}
+
+    def get_sample(self, session, sample_id):
+        return {"sample_id": sample_id, "order_id": uuid.UUID(ORDER)}
+
+    def validate_order_for_submission(self, *args, **kwargs):
+        return True, None
+
+    def find_interpretation_by_submission_key(self, session, submission_key):
+        for rec in self.recorded:
+            if rec.submission_key == submission_key:
+                return {"interpretation_id": rec.interpretation_id, "report_id": rec.report_id, "vcf_id": rec.vcf_id}
+        return None
+
+    def record_pipeline_result(self, session, sample_id, vcf_path, expected_vcf_hash, run_document):
+        rec = RecordedPipelineResult(
+            interpretation_id=uuid.uuid4(),
+            report_id=uuid.uuid4(),
+            vcf_id=uuid.uuid4(),
+            sequencing_run_id=uuid.uuid4(),
+            submission_key=interpretation_submission_key(expected_vcf_hash, sample_id),
+        )
+        self.recorded.append(rec)
+        return rec
+
+    def create_or_reopen_exception(self, session, order_id, category, reason_code, *rest):
+        self.exceptions.append(reason_code)
+        return uuid.uuid4()
+
+
 @pytest.fixture
-def worker(store, output_root, monkeypatch):
+def vcf_file(tmp_path):
+    """A real file: the worker hashes the VCF before running (the clinical
+    idempotency key), so a path to nothing is now a precondition failure."""
+    path = tmp_path / "input.vcf"
+    path.write_text("##fileformat=VCFv4.2\n##assembly=GRCh38\n#CHROM\tPOS\tID\tREF\tALT\n", encoding="utf-8")
+    return str(path)
+
+
+@pytest.fixture
+def clinical():
+    return FakeClinical()
+
+
+@pytest.fixture
+def worker(store, output_root, monkeypatch, clinical):
     """Create a test InterpretationWorker with an isolated output root."""
     monkeypatch.setenv("GEPER_SUBMISSION_OUTPUT_ROOT", output_root)
-    return InterpretationWorker(store)
+    return InterpretationWorker(store, clinical)
 
 
 def _write_results_file(output_root: str, submission_id: str) -> str:
@@ -72,13 +142,15 @@ def _write_results_file(output_root: str, submission_id: str) -> str:
 class TestInterpretationWorker:
     """Tests for InterpretationWorker."""
 
-    def test_process_queued_submission_success(self, worker, store, output_root):
+    def test_process_queued_submission_success(self, worker, store, output_root, vcf_file, clinical):
         """Worker processes queued submission and marks complete when
         geper/main.py exits 0 and writes geper_results.json."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-1",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -102,25 +174,24 @@ class TestInterpretationWorker:
         # Verify submission was marked complete
         updated = store.get_submission(sub.id)
         assert updated.status == "complete"
-        # interpretation_id: THE PLATFORM MINTS IT (2026-09-08 ruling,
-        # correcting the prior "left None" version of this test -- that
-        # was right while unresolved, and is now resolved the other way:
-        # a genuinely distinct id, not the response's own `id`/submission
-        # id, and not None). Asserted as a real, parseable UUID, and
-        # explicitly NOT equal to sub.id -- reusing sub.id was the
-        # ruling's own named alternative it rejected ("generate one
-        # rather than... borrowing the response id").
-        assert updated.interpretation_id is not None
-        assert uuid.UUID(updated.interpretation_id) is not None
+        # interpretation_id: the CLINICAL interpretation the run was
+        # recorded as (2026-09-12, D0 "build the link"), superseding the
+        # 2026-09-08 "mint a uuid4" ruling this test used to pin. That
+        # ruling's point -- a genuinely distinct id, never the response's
+        # own `id` -- still holds: the clinical id is not sub.id.
+        assert len(clinical.recorded) == 1
+        assert updated.interpretation_id == str(clinical.recorded[0].interpretation_id)
         assert updated.interpretation_id != sub.id
         assert updated.run_document_ref == results_path
 
-    def test_process_queued_submission_timeout(self, worker, store):
+    def test_process_queued_submission_timeout(self, worker, store, vcf_file):
         """Worker handles Bij AI CLI timeout."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-2",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -142,12 +213,14 @@ class TestInterpretationWorker:
         assert updated.status == "failed"
         assert "timed out" in updated.error_message.lower()
 
-    def test_process_queued_submission_nonzero_exit(self, worker, store):
+    def test_process_queued_submission_nonzero_exit(self, worker, store, vcf_file):
         """Worker handles nonzero exit code from Bij AI CLI."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-3",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -168,15 +241,17 @@ class TestInterpretationWorker:
         assert updated.status == "failed"
         assert "exit code 1" in updated.error_message
 
-    def test_process_queued_submission_exit_zero_but_no_results_file(self, worker, store):
+    def test_process_queued_submission_exit_zero_but_no_results_file(self, worker, store, vcf_file):
         """Worker marks failed if main.py exits 0 but geper_results.json
         was never written under --output-dir -- replaces the old
         run_complete=false test, which asserted a stdout flag
         geper/main.py has never produced (2026-09-08 finding)."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-4",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -198,7 +273,7 @@ class TestInterpretationWorker:
         assert "did not write" in updated.error_message
         assert "geper_results.json" in updated.error_message
 
-    def test_process_queued_submission_cli_not_found(self, worker, store):
+    def test_process_queued_submission_cli_not_found(self, worker, store, vcf_file):
         """Worker handles the subprocess machinery itself being
         unavailable (spawn_tracked raising FileNotFoundError). Note
         (2026-09-08): this no longer models 'main.py is missing at that
@@ -207,9 +282,11 @@ class TestInterpretationWorker:
         nonzero-exit test above); this test now covers spawn_tracked/
         subprocess itself failing to launch."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-6",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -227,7 +304,7 @@ class TestInterpretationWorker:
         assert updated.status == "failed"
         assert "not found" in updated.error_message.lower()
 
-    def test_process_queued_submission_with_hpo_terms_and_qc(self, worker, store, output_root):
+    def test_process_queued_submission_with_hpo_terms_and_qc(self, worker, store, output_root, vcf_file):
         """Worker includes optional metadata in CLI command, under the
         real flag names (2026-09-08: --qc-metrics-json, not
         --qc-metrics), writes qc_metrics to a sidecar file rather than
@@ -249,9 +326,11 @@ class TestInterpretationWorker:
         shape _qc_metrics_validated now produces -- the corrected
         contract, not the old, silently-wrong one."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-7",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -297,7 +376,9 @@ class TestInterpretationWorker:
             "mean_coverage_depth": {"status": "found", "value": 45.2, "reason": None}
         }
 
-    def test_process_queued_submission_qc_metrics_unrecognized_key_fails_loudly(self, worker, store, output_root):
+    def test_process_queued_submission_qc_metrics_unrecognized_key_fails_loudly(
+        self, worker, store, output_root, vcf_file
+    ):
         """CONVERT, DO NOT DEGRADE (2026-09-11 ruling, PHASE8-bij-interpret
         option A -- same class of fix as hpo_terms, 2026-09-08): the
         platform's own tests (test_interpretations_api.py:78, and this
@@ -311,9 +392,11 @@ class TestInterpretationWorker:
         a clear error naming the bad key) exactly like a malformed
         hpo_terms submission does. No subprocess is ever spawned."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-10",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -331,7 +414,7 @@ class TestInterpretationWorker:
         assert "qc_metrics" in updated.error_message
         assert "depth" in updated.error_message
 
-    def test_process_queued_submission_hpo_terms_conversion_failure_raises(self, worker, store, output_root):
+    def test_process_queued_submission_hpo_terms_conversion_failure_raises(self, worker, store, output_root, vcf_file):
         """CONVERT, DO NOT DEGRADE (2026-09-08 ruling): if hpo_terms can't
         be converted to main.py's comma-separated format, the submission
         must fail loudly (status=failed, a clear error, an exception via
@@ -341,9 +424,11 @@ class TestInterpretationWorker:
         quietly" defect this fix exists to close. No subprocess is ever
         spawned: this is a precondition failure, not a degraded run."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-9",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -361,12 +446,14 @@ class TestInterpretationWorker:
         assert "hpo_terms" in updated.error_message
         assert "not-an-hpo-id" in updated.error_message
 
-    def test_submission_status_transitions_on_process_queued_submission(self, worker, store, output_root):
+    def test_submission_status_transitions_on_process_queued_submission(self, worker, store, output_root, vcf_file):
         """Submission transitions queued → running → complete."""
         sub = store.create_submission(
-            org_id="default",
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
             submission_key="key-8",
-            vcf_path="/path/to/vcf",
+            vcf_path=vcf_file,
             assembly="hg38",
             sample_ref="sample-1",
             consent_ref="consent-1",
@@ -387,3 +474,109 @@ class TestInterpretationWorker:
         # Verify transition queued → running → complete
         updated = store.get_submission(sub.id)
         assert updated.status == "complete"
+
+
+def _ok_spawn():
+    mock_proc = MagicMock()
+    mock_proc.communicate.return_value = ("", "")
+    mock_proc.returncode = 0
+    return mock_proc
+
+
+class TestWorkerClinicalLinkUnit:
+    """The link's refusal paths, against the fake. The real-database
+    behaviour is in test_worker_clinical_link.py."""
+
+    def _submit(self, store, vcf_file, **overrides):
+        kwargs = dict(
+            org_id=ORG,
+            order_id=ORDER,
+            sample_id=SAMPLE,
+            submission_key="key-link",
+            vcf_path=vcf_file,
+            assembly="GRCh38",
+            sample_ref="s",
+            consent_ref="c",
+        )
+        kwargs.update(overrides)
+        return store.create_submission(**kwargs)
+
+    def test_no_clinical_store_means_no_run(self, store, output_root, monkeypatch, vcf_file):
+        """A run that cannot be recorded is not run (main() already refuses
+        to start without CLINICAL_DSN; this is the same rule per submission)."""
+        monkeypatch.setenv("GEPER_SUBMISSION_OUTPUT_ROOT", output_root)
+        worker = InterpretationWorker(store)
+        sub = self._submit(store, vcf_file)
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
+            assert worker.process_queued_submission(sub) is True
+        mock_spawn.assert_not_called()
+        updated = store.get_submission(sub.id)
+        assert updated.status == "failed"
+        assert "clinical" in updated.error_message.lower()
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"org_id": "default"},  # every submission before 2026-09-12
+            {"order_id": None},
+            {"sample_id": None},
+            {"sample_id": "not-a-uuid"},
+        ],
+    )
+    def test_unlinked_submission_is_refused_without_running(self, worker, store, clinical, vcf_file, overrides):
+        sub = self._submit(store, vcf_file, **overrides)
+        with patch("api.submission_worker.spawn_tracked") as mock_spawn:
+            assert worker.process_queued_submission(sub) is True
+        mock_spawn.assert_not_called()
+        updated = store.get_submission(sub.id)
+        assert updated.status == "failed"
+        assert "not linked" in updated.error_message
+        assert clinical.recorded == []
+
+    def test_already_recorded_run_is_reconciled_not_rerun(self, worker, store, clinical, output_root, vcf_file):
+        sub = self._submit(store, vcf_file)
+        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()) as mock_spawn:
+            _write_results_file(output_root, sub.id)
+            worker.process_queued_submission(sub)
+            store.update_status(sub.id, "queued")  # e.g. re-queued by the retry scheduler
+            worker.process_queued_submission(store.get_submission(sub.id))
+        assert mock_spawn.call_count == 1
+        assert len(clinical.recorded) == 1
+        updated = store.get_submission(sub.id)
+        assert updated.status == "complete"
+        assert updated.interpretation_id == str(clinical.recorded[0].interpretation_id)
+
+    def test_record_failure_fails_the_submission_with_its_own_reason_code(
+        self, worker, store, clinical, output_root, vcf_file, monkeypatch
+    ):
+        def boom(*args, **kwargs):
+            raise RuntimeError("database went away")
+
+        monkeypatch.setattr(clinical, "record_pipeline_result", boom)
+        sub = self._submit(store, vcf_file)
+        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()):
+            _write_results_file(output_root, sub.id)
+            worker.process_queued_submission(sub)
+        updated = store.get_submission(sub.id)
+        assert updated.status == "failed"
+        assert "could not be recorded" in updated.error_message
+        assert updated.interpretation_id is None
+        assert clinical.exceptions == ["clinical_record_write_failed"]
+
+    def test_clinical_link_file_names_the_records(self, worker, store, clinical, output_root, vcf_file):
+        sub = self._submit(store, vcf_file)
+        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()):
+            _write_results_file(output_root, sub.id)
+            worker.process_queued_submission(sub)
+        link = json.loads((Path(output_root) / sub.id / "clinical_link.json").read_text(encoding="utf-8"))
+        rec = clinical.recorded[0]
+        assert link == {
+            "submission_id": sub.id,
+            "org_id": ORG,
+            "order_id": ORDER,
+            "sample_id": SAMPLE,
+            "interpretation_id": str(rec.interpretation_id),
+            "report_id": str(rec.report_id),
+            "vcf_id": str(rec.vcf_id),
+            "submission_key": rec.submission_key,
+        }

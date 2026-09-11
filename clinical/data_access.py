@@ -163,6 +163,63 @@ class SessionExpired(AuthenticationError):
     """Session is terminated, past its absolute cap, or idle too long."""
 
 
+class VcfChangedError(ValueError):
+    """
+    record_pipeline_result: the VCF on disk no longer hashes to the value the
+    caller took before running the pipeline. The run analysed different bytes
+    from the ones that would be recorded against it, so nothing is recorded.
+    """
+
+
+class DuplicateInterpretationError(Exception):
+    """
+    record_pipeline_result: an interpretation with this submission key
+    (same VCF content, same sample) already exists in this organisation --
+    uk_interp_submission refused the insert. Not an error to the worker: it
+    means an earlier attempt (or a concurrent one) already recorded this run,
+    and the caller should look it up with find_interpretation_by_submission_key.
+    Nothing from this attempt is written.
+    """
+
+    def __init__(self, submission_key: str) -> None:
+        super().__init__(f"An interpretation with submission key {submission_key!r} already exists")
+        self.submission_key = submission_key
+
+
+def interpretation_submission_key(content_hash: str, platform_sample_id: Any) -> str:
+    """
+    interpretations.submission_key for an original (non-reanalysis)
+    interpretation: `<sha256 hex of the VCF bytes>|<sample id>`. ONE formula,
+    read by create_interpretation, derive_submission_key and
+    record_pipeline_result, so the key the worker looks up and the key the
+    row is written with cannot drift apart.
+    """
+    return f"{content_hash}|{platform_sample_id}"
+
+
+def _sha256_file(path: str) -> str:
+    hasher = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+@dataclass(frozen=True)
+class RecordedPipelineResult:
+    """What record_pipeline_result wrote. str() is the interpretation id, which
+    is what the audit row's resource_id records."""
+
+    interpretation_id: uuid.UUID
+    report_id: uuid.UUID
+    vcf_id: uuid.UUID
+    sequencing_run_id: uuid.UUID
+    submission_key: str
+
+    def __str__(self) -> str:
+        return str(self.interpretation_id)
+
+
 # ─── Injected collaborators ──────────────────────────────────────────────────
 
 
@@ -1797,7 +1854,7 @@ class DataAccess:
             )
 
         # Build submission_key from content_hash and platform_sample_id
-        submission_key = f"{content_hash}|{platform_sample_id}"
+        submission_key = interpretation_submission_key(content_hash, platform_sample_id)
 
         interpretation_id = uuid.uuid4()
         now = self._clock.now()
@@ -1988,6 +2045,214 @@ class DataAccess:
                 }
             )
         return results
+
+    # ── D0 (2026-09-12): a pipeline run becomes clinical records ──────────────
+
+    @auditable(
+        action="pipeline_result_recorded",
+        resource_type="interpretation",
+        requires_session=True,
+        auditable=True,
+        reason="one completed pipeline run recorded as clinical records (spec 10.1 step 7)",
+        details_builder=lambda params, result: {
+            "sample_id": str(params.get("sample_id")),
+            "vcf_path": params.get("vcf_path"),
+            "expected_vcf_hash": params.get("expected_vcf_hash"),
+            "vcf_id": str(result.vcf_id) if result else None,
+            "report_id": str(result.report_id) if result else None,
+        },
+    )
+    @transactional
+    def record_pipeline_result(
+        self,
+        session: Session,
+        sample_id: uuid.UUID,
+        vcf_path: str,
+        expected_vcf_hash: str,
+        run_document: dict[str, Any],
+    ) -> RecordedPipelineResult:
+        """
+        Record one completed pipeline run: a sequencing run for the sample,
+        the VCF it analysed, the interpretation (its run_document), and a
+        draft report on that interpretation -- ALL OR NOTHING.
+
+        WHY THIS DOES NOT CALL create_sequencing_run / create_vcf /
+        create_interpretation / create_report. Each of those is @auditable,
+        and @auditable commits when it returns. Called in a row they are four
+        commits, and a failure at the third or fourth left a VCF with no
+        interpretation, or an interpretation with no report, in the record --
+        a lineage the platform never produced a report for. So this method
+        performs the same inserts (same columns, same org scoping, same
+        retention inheritance, same submission-key formula) inside ONE
+        @transactional body, writes the same per-resource audit rows WITHOUT
+        committing, and commits once. The existing methods are unchanged.
+
+        VCF IDENTITY. `expected_vcf_hash` is the SHA-256 the caller took of
+        the VCF BEFORE running the pipeline. It is recomputed here from the
+        file on disk; if the two differ the run analysed different bytes from
+        the ones about to be recorded against it, and VcfChangedError is
+        raised before anything is written.
+
+        DUPLICATES. uk_interp_submission makes a second interpretation of the
+        same VCF content for the same sample impossible; that refusal
+        surfaces as DuplicateInterpretationError (nothing from this attempt
+        written) so a retrying worker can find the first one with
+        find_interpretation_by_submission_key instead of failing.
+
+        Refusals before any write: the sample is not in this organisation, or
+        its order/patient chain does not resolve (NotFoundError), or the VCF
+        changed (VcfChangedError). Any failure after the first write rolls
+        every row back; the outer @auditable still records the attempt as an
+        error.
+        """
+        # ── Refusals, before any write ────────────────────────────────────
+        chain = self._query_one(
+            "SELECT s.sample_id FROM samples s "
+            "JOIN orders o ON o.org_id = s.org_id AND o.order_id = s.order_id "
+            "JOIN patients p ON p.org_id = o.org_id AND p.patient_id = o.patient_id "
+            "WHERE s.org_id = %s AND s.sample_id = %s",
+            (session.org_id, sample_id),
+        )
+        if chain is None:
+            raise NotFoundError(f"Sample {sample_id} not found")
+
+        try:
+            content_hash = _sha256_file(vcf_path)
+        except OSError as e:
+            raise VcfChangedError(f"VCF {vcf_path} can no longer be read: {e}") from e
+        if content_hash != expected_vcf_hash:
+            raise VcfChangedError(
+                f"VCF {vcf_path} hashes to {content_hash}, not the {expected_vcf_hash} "
+                "it had when the pipeline ran; refusing to record a run against bytes it did not analyse."
+            )
+
+        submission_key = interpretation_submission_key(content_hash, sample_id)
+        actor_role = self._get_actor_role(session)
+        now = self._clock.now()
+
+        def audit(action: str, resource_type: str, resource_id: uuid.UUID, details: dict[str, Any]) -> None:
+            self._write_audit_entry(
+                action,
+                resource_type,
+                resource_id=str(resource_id),
+                outcome="success",
+                org_id=session.org_id,
+                user_id=session.user_id,
+                actor_role=actor_role,
+                details=details,
+            )
+
+        # ── Writes: one transaction ───────────────────────────────────────
+        try:
+            run_id = uuid.uuid4()
+            self._execute(
+                "INSERT INTO sequencing_runs (org_id, id, sample_id, created_at, created_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (session.org_id, run_id, sample_id, now, session.user_id),
+            )
+            audit("sequencing_run_created", "sequencing_run", run_id, {"sample_id": str(sample_id)})
+
+            # Ruling D2: resolved once, here at the VCF; inherited below.
+            retention_days = self._resolve_vcf_retention_days(session, run_id)
+
+            vcf_id = uuid.uuid4()
+            self._execute(
+                "INSERT INTO vcfs (org_id, id, sequencing_run_id, vcf_path, content_hash, "
+                "created_at, created_by, retention_days) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (session.org_id, vcf_id, run_id, vcf_path, content_hash, now, session.user_id, retention_days),
+            )
+            audit("vcf_created", "vcf", vcf_id, {"sequencing_run_id": str(run_id), "vcf_path": vcf_path})
+
+            interpretation_id = uuid.uuid4()
+            try:
+                self._execute(
+                    "INSERT INTO interpretations (org_id, id, vcf_id, run_document, submission_key, "
+                    "created_at, created_by, retention_days) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        session.org_id,
+                        interpretation_id,
+                        vcf_id,
+                        json.dumps(run_document),
+                        submission_key,
+                        now,
+                        session.user_id,
+                        retention_days,
+                    ),
+                )
+            except Exception as e:
+                if getattr(e, "sqlstate", None) == "23505":  # unique_violation: uk_interp_submission
+                    raise DuplicateInterpretationError(submission_key) from e
+                raise
+            audit(
+                "interpretation_created",
+                "interpretation",
+                interpretation_id,
+                {"vcf_id": str(vcf_id), "platform_sample_id": str(sample_id)},
+            )
+
+            report_id = uuid.uuid4()
+            self._execute(
+                "INSERT INTO reports (org_id, id, interpretation_id, created_at, created_by, retention_days) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (session.org_id, report_id, interpretation_id, now, session.user_id, retention_days),
+            )
+            audit("report_created", "report", report_id, {"interpretation_id": str(interpretation_id)})
+        except NotFoundError as e:
+            # @transactional COMMITS on NotFoundError (it is an "expected"
+            # refusal elsewhere). Here it can only arrive after the first
+            # insert, so re-raise as something that rolls back.
+            raise RuntimeError(f"Lineage vanished mid-record: {e}") from e
+
+        return RecordedPipelineResult(
+            interpretation_id=interpretation_id,
+            report_id=report_id,
+            vcf_id=vcf_id,
+            sequencing_run_id=run_id,
+            submission_key=submission_key,
+        )
+
+    @auditable(
+        action="interpretation_read",
+        resource_type="interpretation",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def find_interpretation_by_submission_key(self, session: Session, submission_key: str) -> Optional[dict[str, Any]]:
+        """
+        The interpretation this organisation already holds under
+        `submission_key` (see interpretation_submission_key), or None.
+
+        What a retrying or reconciling worker asks before running the
+        pipeline again: "was this run already recorded?". Returns the
+        interpretation, its VCF, and its ORIGINAL report -- the earliest
+        report on the interpretation that is not itself an amendment (an
+        amendment is a later report row on the same interpretation, and is
+        not what the run produced). report_id is None only for an
+        interpretation created without one (the pre-D0 two-call path).
+        """
+        row = self._query_one(
+            "SELECT id, vcf_id FROM interpretations WHERE org_id = %s AND submission_key = %s",
+            (session.org_id, submission_key),
+        )
+        if row is None:
+            return None
+        interpretation_id, vcf_id = row
+        report = self._query_one(
+            "SELECT r.id FROM reports r "
+            "WHERE r.org_id = %s AND r.interpretation_id = %s "
+            "AND NOT EXISTS (SELECT 1 FROM amendments a WHERE a.org_id = r.org_id AND a.amendment_report_id = r.id) "
+            "ORDER BY r.created_at, r.id LIMIT 1",
+            (session.org_id, interpretation_id),
+        )
+        return {
+            "interpretation_id": interpretation_id,
+            "report_id": report[0] if report else None,
+            "vcf_id": vcf_id,
+        }
 
     @auditable(
         action="retention_policy_set",
@@ -3256,7 +3521,7 @@ class DataAccess:
         Re-sequenced sample (different VCF) = different key (new interpretation).
         """
         vcf_hash = hashlib.sha256(vcf_content).hexdigest()
-        return f"{vcf_hash}|{sample_id}"
+        return interpretation_submission_key(vcf_hash, sample_id)
 
     # ── Phase 5d: Exception workflow ──
 

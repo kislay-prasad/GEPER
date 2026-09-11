@@ -264,3 +264,56 @@ class TestSubmissionStore:
 
         updated = store.get_submission(sub.id)
         assert updated.updated_at >= original_updated
+
+    def test_sample_id_round_trips(self, db_path):
+        """The clinical sample a submission interprets (2026-09-12, D0) is
+        stored and read back on every read path, including the idempotent
+        return of an existing row."""
+        store = SubmissionStore(db_path)
+        sub = store.create_submission(
+            org_id="aaaaaaaa-0000-4000-8000-000000000001",
+            submission_key="k",
+            vcf_path="/v",
+            assembly="hg38",
+            sample_ref="s",
+            consent_ref="c",
+            order_id="0d0d0d0d-0000-4000-8000-000000000003",
+            sample_id="5a5a5a5a-0000-4000-8000-000000000004",
+        )
+        assert sub.sample_id == "5a5a5a5a-0000-4000-8000-000000000004"
+        assert store.get_submission(sub.id).sample_id == sub.sample_id
+        assert store.get_queued_submissions()[0].sample_id == sub.sample_id
+        again = store.create_submission(
+            org_id=sub.org_id, submission_key="k", vcf_path="/v", assembly="hg38", sample_ref="s", consent_ref="c"
+        )
+        assert again.id == sub.id and again.sample_id == sub.sample_id
+
+    def test_store_file_from_before_sample_id_is_migrated_in_place(self, db_path):
+        """A store file written before the column existed gains it on open;
+        its old rows read back with sample_id None (the worker refuses those
+        as not linked to a clinical record) and nothing else changes."""
+        with closing(sqlite3.connect(db_path)) as conn, conn:
+            conn.execute(
+                """
+                CREATE TABLE submissions (
+                    id TEXT PRIMARY KEY, org_id TEXT NOT NULL, order_id TEXT,
+                    submission_key TEXT NOT NULL, vcf_path TEXT NOT NULL,
+                    assembly TEXT NOT NULL, sample_ref TEXT NOT NULL,
+                    consent_ref TEXT NOT NULL, status TEXT NOT NULL,
+                    interpretation_id TEXT, run_document_ref TEXT, error_message TEXT,
+                    hpo_terms TEXT, qc_metrics TEXT, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, UNIQUE(org_id, submission_key)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO submissions (id, org_id, submission_key, vcf_path, assembly, sample_ref, "
+                "consent_ref, status, created_at, updated_at) VALUES "
+                "('old-1', 'default', 'k-old', '/v', 'hg38', 's', 'c', 'complete', 't', 't')"
+            )
+            conn.commit()
+
+        store = SubmissionStore(db_path)
+        old = store.get_submission("old-1")
+        assert old.status == "complete"
+        assert old.sample_id is None

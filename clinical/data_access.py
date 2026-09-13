@@ -421,6 +421,7 @@ def auditable(
     auditable: bool = True,
     reason: str | None = None,
     details_builder: Any = None,
+    resource_id_param: str | None = None,
 ):
     """
     Decorator that wraps a DataAccess method to capture audit outcomes.
@@ -444,6 +445,35 @@ def auditable(
         result: return value of the method (None on failure).
 
     reason: explanation for non-auditable methods or special cases.
+
+    resource_id_param: name of the method PARAMETER that identifies the resource
+        this entry is about. Default None keeps the original behaviour -- the
+        audit row's resource_id comes from the method's RETURN VALUE, which is
+        right for the creators (create_report returns the report id) and only
+        for them.
+
+        THE DEFECT THIS PARAMETER EXISTS FOR (w120). A method declared `-> None`
+        returns no identifier ever, so `str(result) if result else "<none>"`
+        recorded '<none>' every time. _approve_report is one of those, and its
+        entry -- action='report_approved', resource_type='report' -- therefore
+        said a report had been approved without saying WHICH, for the single
+        event that makes a report releasable (spec 13.3). `-> bool`
+        verify_report_integrity was wrong in the direction that matters most: a
+        MATCH recorded the string 'True', and a MISMATCH -- the nonconformance
+        ISO 15189 7.5 wants findable -- recorded '<none>', because False is
+        falsy.
+
+        A method that cannot return an identifier must therefore say where its
+        identifier comes from. Enforced structurally by
+        clinical/tests/test_w120_audit_resource_id.py, whose
+        test_every_auditable_method_that_cannot_return_an_id_declares_where_its_id_comes_from
+        fails any auditable `-> None`/`-> bool` method that neither declares
+        this nor appears on that test's reasoned exemption list.
+
+        SUCCESS PATH ONLY. Denied and errored outcomes keep their existing
+        '<denied>'/'<error>' markers: what those rows should record is a
+        separate question, and widening it here would be a redesign rather
+        than a correction.
     """
 
     def decorator(func):
@@ -501,11 +531,16 @@ def auditable(
                 # For any provisioning method, try to extract org_id from parameters
                 elif not session and bound_params.get("org_id") and not write_org_id:
                     write_org_id = bound_params.get("org_id")
+                # Which value identifies the resource this entry is about: a
+                # declared parameter when the method cannot return one (see
+                # resource_id_param in the decorator's docstring), else the
+                # return value, unchanged, for every method that returns an id.
+                identifier = bound_params.get(resource_id_param) if resource_id_param else result
                 # Success: write audit entry
                 self._write_audit_entry(
                     action_name,
                     resource_type,
-                    resource_id=str(result) if result else "<none>",
+                    resource_id=str(identifier) if identifier else "<none>",
                     outcome="success",
                     org_id=write_org_id,
                     user_id=write_user_id,
@@ -997,6 +1032,7 @@ class DataAccess:
     @auditable(
         action="session_terminated",
         resource_type="session",
+        resource_id_param="target_session_id",
         requires_session=True,
         details_builder=lambda params, result: {"target_session_id": str(params.get("target_session_id"))},
     )
@@ -1208,6 +1244,7 @@ class DataAccess:
     @auditable(
         action="clinician_identity_set",
         resource_type="user",
+        resource_id_param="target_user_id",
         requires_session=True,
         auditable=True,
         reason="the identity a signed report prints is a clinical fact about who stands behind it (R10)",
@@ -1354,6 +1391,7 @@ class DataAccess:
     @auditable(
         action=lambda params, result: "user_disabled" if params.get("disabled") else "user_enabled",
         resource_type="user",
+        resource_id_param="target_user_id",
         requires_session=True,
         details_builder=lambda params, result: {"target_user_id": str(params.get("target_user_id"))},
     )
@@ -1624,6 +1662,7 @@ class DataAccess:
     @auditable(
         action="order_placed",
         resource_type="order",
+        resource_id_param="order_id",
         requires_session=True,
         details_builder=lambda params, result: {
             "order_id": str(params.get("order_id")),
@@ -1651,6 +1690,7 @@ class DataAccess:
     @auditable(
         action="order_cancelled",
         resource_type="order",
+        resource_id_param="order_id",
         requires_session=True,
         details_builder=lambda params, result: {
             "order_id": str(params.get("order_id")),
@@ -1742,6 +1782,7 @@ class DataAccess:
     @auditable(
         action="qc_recorded",
         resource_type="sample",
+        resource_id_param="sample_id",
         requires_session=True,
         details_builder=lambda params, result: {
             "sample_id": str(params.get("sample_id")),
@@ -1778,6 +1819,7 @@ class DataAccess:
     @auditable(
         action="consent_withdrawn",
         resource_type="consent",
+        resource_id_param="consent_id",
         requires_session=True,
         details_builder=lambda params, result: {
             "consent_id": str(params.get("consent_id")),
@@ -2507,6 +2549,7 @@ class DataAccess:
     @auditable(
         action="retention_policy_set",
         resource_type="retention_policy",
+        resource_id_param="artefact_class",
         requires_session=True,
         details_builder=lambda params, result: {
             "artefact_class": params.get("artefact_class"),
@@ -3934,6 +3977,7 @@ class DataAccess:
     @auditable(
         action="resolve_exception",
         resource_type="exception",
+        resource_id_param="exception_id",
         requires_session=True,
         auditable=True,
         reason="resolve work item; updates order state",
@@ -4822,6 +4866,7 @@ class DataAccess:
     @auditable(
         action="report_submitted_for_review",
         resource_type="report",
+        resource_id_param="report_id",
         requires_session=True,
         auditable=True,
         reason="report enters review (spec 13.1: draft -> under_review)",
@@ -5067,6 +5112,7 @@ class DataAccess:
         resource_type="report",
         requires_session=True,
         auditable=True,
+        resource_id_param="report_id",
         reason="approval is the one event that makes a report releasable (spec 13.3)",
     )
     @transactional
@@ -5137,6 +5183,7 @@ class DataAccess:
     @auditable(
         action="report_integrity_verified",
         resource_type="report",
+        resource_id_param="report_id",
         requires_session=True,
         auditable=True,
         reason="ISO 15189 7.5 nonconformance detection: a mismatch is audit-relevant on its own, not only on export",
@@ -5253,6 +5300,7 @@ class DataAccess:
     @auditable(
         action="require_release",
         resource_type="report",
+        resource_id_param="report_id",
         requires_session=True,
         auditable=True,
         reason="the release gate is the structural enforcement spec 13.4 depends on; its denials are audit-relevant",

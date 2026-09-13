@@ -63,7 +63,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         help=f"An existing {SHORT_NAME} --output-dir (must already contain geper_results.json from a completed run).",
     )
-    approve_parser.add_argument("--clinician-name", required=True, help='e.g. "Dr. Rajesh Sharma".')
+    # R10: these three are TYPED IN, with no user record behind them -- this
+    # CLI is the filesystem-only path and has no clinical database to read.
+    # The manifest records that (identity_source: "typed_in"), so an auditor
+    # can tell a typed identity from one taken from the signing account (see
+    # review/signoff.py::ClinicianIdentity). A deployment that HAS user
+    # records should call signoff.approve(identity=...) instead of this
+    # command, so the printed identity cannot contradict the record.
+    approve_parser.add_argument(
+        "--clinician-name",
+        required=True,
+        help='e.g. "Dr. Rajesh Sharma". Typed in: recorded in the manifest as identity_source "typed_in".',
+    )
     approve_parser.add_argument("--reg-number", required=True, help='Medical registration number, e.g. "MCI-12345".')
     approve_parser.add_argument("--hospital", required=True, help='Hospital/lab name, e.g. "AIIMS Delhi".')
 

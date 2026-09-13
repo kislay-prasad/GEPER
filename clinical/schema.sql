@@ -44,6 +44,37 @@ CREATE TABLE users (
     org_id                  UUID        NOT NULL REFERENCES organisations (org_id),
 
     email                   TEXT        NOT NULL,
+
+    -- ─── signing identity (R10, human ruling 2026-09-13) ────────────────────
+    --
+    -- A clinical report shows the signing clinician's NAME, REGISTRATION
+    -- NUMBER and HOSPITAL. Before these three columns the user record held an
+    -- email address and nothing else, so all three were typed in by hand at
+    -- sign-off time (geper/review/signoff.py::approve's --clinician-name /
+    -- --reg-number / --hospital) with nothing tying the printed identity to
+    -- the account that signed. A report could therefore show any identity at
+    -- all, including a colleague's, and the record could not contradict it.
+    --
+    -- NULLABLE, DELIBERATELY. Not every user signs reports: system accounts
+    -- (is_system_account) never do, and an Auditor or Administrator has no
+    -- registration number to record. Making these NOT NULL would force a
+    -- fabricated value onto every such account, which is the opposite of the
+    -- guarantee. The gate is at the point of USE instead --
+    -- data_access.py::get_signing_identity refuses an incomplete identity
+    -- rather than the schema refusing an incomplete row.
+    full_name               TEXT,
+    -- NO FORMAT CONSTRAINT, and this is a decision rather than an omission.
+    -- Indian registration numbers are issued per state medical council with
+    -- no single national format (NMC/SMC numbers vary in length, prefix and
+    -- punctuation), so any regex here would refuse valid registrations --
+    -- refusing a real clinician's real number is a worse failure than storing
+    -- one that is merely well-formed-looking. Non-empty and trimmed is
+    -- enforced by data_access.py::set_clinician_identity; correctness against
+    -- the issuing council is a verification step this platform does not
+    -- perform and does not claim to.
+    registration_number     TEXT,
+    hospital                TEXT,
+
     -- bcrypt. The column holds the full modular-crypt string (algorithm,
     -- cost, salt, digest), so the cost factor can be raised later and old
     -- hashes still verify.
@@ -100,6 +131,20 @@ CREATE TABLE users (
 );
 
 CREATE INDEX users_org_disabled ON users (org_id, disabled);
+
+-- One registration number, one clinician, within an organisation (R10). Two
+-- accounts claiming the same registration number would make the identity a
+-- report prints ambiguous about WHICH account signed, which is the whole
+-- property these columns exist to establish. PARTIAL: NULL is the ordinary
+-- state for every account that does not sign (see the column comments), and a
+-- plain UNIQUE would be satisfied by unlimited NULLs anyway -- the WHERE makes
+-- that explicit rather than incidental. Scoped to org_id, not global: the
+-- platform is multi-tenant and one clinician legitimately holding accounts in
+-- two organisations must not be blocked by the other tenant's row, which would
+-- also leak the existence of that row across the isolation boundary.
+CREATE UNIQUE INDEX users_org_registration_number_unique
+    ON users (org_id, registration_number)
+    WHERE registration_number IS NOT NULL;
 
 
 -- ─── totp_backup_codes ──────────────────────────────────────────────────────

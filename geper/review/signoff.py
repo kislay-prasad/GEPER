@@ -141,8 +141,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 
 from component_identity import SHORT_NAME
 from pipeline.provenance import HashVerification, VersionStatus
@@ -583,11 +584,184 @@ def _load_existing_patient_meta_raw(path: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# The signing clinician's identity (R10)
+# ---------------------------------------------------------------------------
+
+_IDENTITY_FIELDS = ("full_name", "registration_number", "hospital")
+
+
+@dataclass(frozen=True)
+class ClinicianIdentity:
+    """
+    The three values a signed report shows -- name, registration number,
+    hospital -- AS HELD BY THE USER RECORD OF THE ACCOUNT THAT SIGNED, rather
+    than as typed at sign-off time.
+
+    R10, human ruling 2026-09-13. Until this existed, `approve()` took all
+    three as free text and printed whatever it was given: the report could
+    name a clinician who never signed it, or a registration number belonging
+    to nobody, and no record anywhere could contradict the printed document.
+    That is the gap this class closes, on the rendering side; the storage side
+    is `clinical/schema.sql`'s users.full_name/registration_number/hospital
+    and `clinical/data_access.py::get_signing_identity`.
+
+    DELIBERATELY NOT AN IMPORT FROM `clinical`. This package is the
+    filesystem-only pipeline and renders reports in deployments that have no
+    clinical database at all (see this module's own "filesystem-only"
+    docstring); importing the data-access layer here would make the renderer
+    depend on Postgres to print a PDF. `from_user_record` takes the plain dict
+    `get_signing_identity` returns instead, so the two halves meet at a data
+    shape rather than at an import.
+
+    `user_id` is carried purely so the manifest can record WHICH account the
+    identity came from -- the audit question "who signed" wants an account,
+    not just a printed name. It is optional because the typed-in path (below)
+    has no account behind it, and saying so is more honest than inventing one.
+    """
+
+    full_name: str
+    registration_number: str
+    hospital: str
+    user_id: Optional[str] = None
+
+    @classmethod
+    def from_user_record(cls, record: Mapping[str, Any]) -> "ClinicianIdentity":
+        """
+        Build an identity from `clinical/data_access.py::get_signing_identity`'s
+        dict, REFUSING anything incomplete and naming every field that is
+        missing.
+
+        The check is repeated here rather than trusted from the database side
+        on purpose: this is the last point before the values reach a rendered
+        PDF, and it is reachable from callers that never went through
+        `get_signing_identity` at all (a test, a future second source of user
+        records, a deployment that reads its own directory service). A
+        guarantee that only holds when the caller remembered to use one
+        specific function is not a guarantee.
+
+        Whitespace-only counts as missing. `"  "` is not falsy, satisfies any
+        NOT NULL constraint, and renders as nothing -- a signature block with
+        a blank credential, which is precisely the document this ruling
+        exists to prevent.
+        """
+        missing = [field for field in _IDENTITY_FIELDS if not str(record.get(field) or "").strip()]
+        if missing:
+            raise SignoffError(
+                "Cannot sign a report with this user record: it is missing "
+                f"{', '.join(missing)}. A clinical report shows the signing clinician's name, "
+                "registration number and hospital (R10), so no report is produced with any of "
+                "them absent. Record them on the user account first."
+            )
+        user_id = record.get("user_id")
+        return cls(
+            full_name=str(record["full_name"]).strip(),
+            registration_number=str(record["registration_number"]).strip(),
+            hospital=str(record["hospital"]).strip(),
+            user_id=str(user_id) if user_id is not None else None,
+        )
+
+    def physician_string(self) -> str:
+        """
+        The one rendered form, e.g. "Dr. A. Sharma, Reg. No. 12345, ABC
+        Diagnostics" -- byte-identical to what `approve()` has always folded
+        into `patient_meta["physician"]`, so nothing downstream
+        (`report/summary.py`'s footer, the identity block, the LIMS export)
+        changes shape because the values now come from a record.
+        """
+        return f"{self.full_name}, Reg. No. {self.registration_number}, {self.hospital}"
+
+
+def _resolve_signing_identity(
+    clinician_name: Optional[str],
+    reg_number: Optional[str],
+    hospital: Optional[str],
+    identity: Optional[ClinicianIdentity],
+) -> Tuple[ClinicianIdentity, str]:
+    """
+    Decide which identity a sign-off prints, and return it with the source it
+    came from ("user_record" or "typed_in").
+
+    THE RULE, and it is the whole point of R10: a report must not be able to
+    show an identity that CONTRADICTS the user record. So when an `identity`
+    is supplied, any typed-in value that disagrees with it is refused -- not
+    silently overridden, and not silently preferred. Overriding would print
+    the right thing while leaving the caller believing it printed theirs;
+    preferring the typed value would reopen the exact gap this closes. A
+    refusal names the field that disagreed, because the disagreement is
+    either a caller bug or an attempt to sign as somebody else, and both need
+    to be seen.
+
+    Typed-in values that AGREE are accepted rather than rejected as
+    redundant: `review/cli.py` and every existing caller pass all three
+    positionally, and a caller that also resolves the account should not have
+    to choose between the two.
+
+    With no `identity`, all three typed values are required -- and, as of
+    R10, actually CHECKED. They were declared required by the CLI's argparse
+    and by nothing else, so a programmatic caller passing None for one of
+    them signed a report reading "Dr. X, Reg. No. None, AIIMS Delhi". A
+    missing registration number is refused here for the same reason
+    `from_user_record` refuses one: the report shows it, so there is no
+    report to produce without it.
+    """
+    if identity is not None:
+        supplied = {
+            "clinician_name": (clinician_name, identity.full_name),
+            "reg_number": (reg_number, identity.registration_number),
+            "hospital": (hospital, identity.hospital),
+        }
+        conflicts = [
+            f"{field} (given {given!r}, user record holds {held!r})"
+            for field, (given, held) in supplied.items()
+            if given is not None and given.strip() != held
+        ]
+        if conflicts:
+            raise SignoffError(
+                "Refusing to sign: the values supplied disagree with the signing user's own record -- "
+                + "; ".join(conflicts)
+                + ". A report must not show an identity that contradicts the user record (R10). "
+                "Correct the user record if it is wrong, or drop the supplied value to use the record's."
+            )
+        return identity, "user_record"
+
+    missing = [
+        field
+        for field, value in (
+            ("clinician_name", clinician_name),
+            ("reg_number", reg_number),
+            ("hospital", hospital),
+        )
+        if not (value or "").strip()
+    ]
+    if missing:
+        raise SignoffError(
+            f"Cannot sign a report: {', '.join(missing)} not supplied. A clinical report shows the "
+            "signing clinician's name, registration number and hospital (R10). Pass all three, or "
+            "pass identity=ClinicianIdentity.from_user_record(...) to take them from the signing "
+            "user's own record."
+        )
+    return (
+        ClinicianIdentity(
+            full_name=cast(str, clinician_name).strip(),
+            registration_number=cast(str, reg_number).strip(),
+            hospital=cast(str, hospital).strip(),
+        ),
+        "typed_in",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Command 1: approve
 # ---------------------------------------------------------------------------
 
 
-def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str) -> Dict[str, Any]:
+def approve(
+    output_dir: str,
+    clinician_name: Optional[str] = None,
+    reg_number: Optional[str] = None,
+    hospital: Optional[str] = None,
+    identity: Optional[ClinicianIdentity] = None,
+) -> Dict[str, Any]:
     """
     Moves the run in `output_dir` from DRAFT to REVIEWED: sets
     `review_status`/`reviewed_by`/`reviewed_at` on `geper_results.json`
@@ -629,19 +803,35 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
     overridden) content, exactly like re-approving after any other
     change to `geper_results.json`.
 
+    WHERE THE THREE IDENTITY VALUES COME FROM (R10, human-ruled
+    2026-09-13). Preferred: `identity=ClinicianIdentity.from_user_record(...)`
+    -- the name, registration number and hospital held by the account that
+    signed, so the printed identity cannot contradict the record. Still
+    supported: the three as free text, for the filesystem-only deployment
+    that has no user record to read (`review/cli.py`). Supplying BOTH is
+    allowed only while they agree; a disagreement is refused by
+    `_resolve_signing_identity` before anything is written. The typed-in path
+    now actually enforces that all three are present -- previously only
+    argparse required them, so a programmatic caller could sign a report
+    reading "Reg. No. None".
+
     Returns the manifest dict that was also written to
-    `geper_signoff_manifest.json`. Raises `SignoffError` if `output_dir`
+    `geper_signoff_manifest.json`. Raises `SignoffError` if the identity is
+    incomplete or contradicts the user record (checked FIRST, before the
+    directory is even read, so nothing is written), if `output_dir`
     has no `geper_results.json` (nothing to approve), OR if this run
     recorded a model-weight hash MISMATCH for any model (see
     `_check_no_model_hash_mismatch`, human-ruled 2026-09-10) -- checked
     immediately below, before any write, so a refusal here leaves the
     directory exactly as it was.
     """
+    signer, identity_source = _resolve_signing_identity(clinician_name, reg_number, hospital, identity)
+
     results_path = _require_results(output_dir)
     document = _load_document(results_path)
     _check_no_model_hash_mismatch(document)
 
-    physician = f"{clinician_name}, Reg. No. {reg_number}, {hospital}"
+    physician = signer.physician_string()
     patient_meta_path = _patient_meta_path(output_dir)
     patient_meta_raw = _load_existing_patient_meta_raw(patient_meta_path)
     patient_meta_raw["physician"] = physician
@@ -671,9 +861,18 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
         "short_pdf_sha256": _sha256_file(short_pdf_path),
         "results_json_sha256": _sha256_file(results_path),
         "content_hash": document.get("content_hash"),  # Phase 6: Clinical content hash
-        "clinician_name": clinician_name,
-        "reg_number": reg_number,
-        "hospital": hospital,
+        "clinician_name": signer.full_name,
+        "reg_number": signer.registration_number,
+        "hospital": signer.hospital,
+        # R10: WHERE the printed identity came from, recorded rather than
+        # inferred. "user_record" means it was read from the signing account
+        # and could not contradict it; "typed_in" means a human typed it at
+        # sign-off with no account behind it (the filesystem-only CLI path).
+        # An auditor reading an old manifest must be able to tell the two
+        # apart -- without this key every manifest looks equally attested,
+        # including the ones that are not.
+        "identity_source": identity_source,
+        "clinician_user_id": signer.user_id,
         "approved_at": approved_at,
         "variants": [_variant_manifest_entry(vr) for vr in document.get("variants", [])],
     }
@@ -685,7 +884,9 @@ def approve(output_dir: str, clinician_name: str, reg_number: str, hospital: str
         {
             "action": "approved",
             "output_dir": os.path.abspath(output_dir),
-            "clinician": clinician_name,
+            "clinician": signer.full_name,
+            "clinician_user_id": signer.user_id,
+            "identity_source": identity_source,
             "timestamp": approved_at,
         },
     )

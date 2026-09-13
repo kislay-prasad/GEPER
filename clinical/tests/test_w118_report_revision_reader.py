@@ -27,6 +27,14 @@ Human rulings of 2026-09-13, one class each:
 
 CROSS-ORG: every read here is org-scoped, and `test_cross_org_*` proves it by
 asking org B about org A's report rather than by inspecting SQL.
+
+WHERE THE BANNER TEXT IS ASSERTED: geper/tests/test_w118_banner_rulings.py
+::TestTheBannersTheClinicalReaderFeeds. It is not here because importing
+`report.clinical_report_builder` from this package pulls in
+`pipeline.acmg_rules -> pipeline.gnomad -> requests`, which the clinical CI
+job does not install and must not have to. The join between the two halves is
+clinical/report_revision_shape.py, pinned from both sides -- see
+TestTheShapeTheRendererConsumes at the bottom of this file.
 """
 
 from __future__ import annotations
@@ -39,6 +47,7 @@ import uuid
 
 import pytest
 
+from clinical import report_revision_shape as shape
 from clinical.data_access import (
     BcryptHasher,
     BrokenRevisionRecordError,
@@ -517,31 +526,71 @@ class TestR8SupersededAfterRetentionDeletedTheSuccessor:
         assert block["retained"] is True
 
 
-class TestBannersActuallyRender:
+class TestTheShapeTheRendererConsumes:
     """
-    The point of the whole commit: these facts reach the signed-off wording.
-    Imported here rather than in geper's suite because only this suite has the
-    database the facts come from.
+    THIS HALF OF THE RENDER PROOF.
+
+    The banner assertions themselves live in geper/tests/test_w118_banner_
+    rulings.py::TestTheBannersTheClinicalReaderFeeds, because importing the
+    renderer from here drags `pipeline.acmg_rules -> pipeline.gnomad ->
+    requests` into a job that installs only clinical/requirements.txt (CI run
+    34755731014). The clinical layer must not need the variant pipeline to run
+    its own tests.
+
+    What stays here is the half only a database can prove: that the reader's
+    OUTPUT has exactly the shape the renderer consumes, key for key, as
+    declared in clinical/report_revision_shape.py -- a module that imports
+    nothing and is therefore loadable from both jobs. Rename a key in the
+    reader and this fails; change the contract module and geper's fixtures
+    fail. Neither half can move alone.
     """
 
-    def test_a_superseded_original_renders_the_superseded_banner(self, dao, conn, session_a, released_original):
-        # sys.path, not importorskip: conftest turns every skip in this package
-        # into a failure under CLINICAL_REQUIRE_DB, and rightly -- a banner
-        # test that quietly declines to run is the coverage hole this whole
-        # card is about.
-        import sys
-        from pathlib import Path
+    def test_amends_has_exactly_the_contracted_keys(self, dao, conn, session_a, released_original):
+        amendment_report_id, _ = dao.create_amendment(session_a, released_original, "ClinVar reclassified BRCA1")
+        block = dao.get_report_revision(session_a, amendment_report_id)["amends"]
+        assert set(block) == set(shape.AMENDS_REQUIRED)
+        assert block["original_issued_basis"] in shape.DATE_BASES
 
-        geper_dir = str(Path(__file__).resolve().parents[2] / "geper")
-        if geper_dir not in sys.path:
-            sys.path.insert(0, geper_dir)
-        from report.clinical_report_builder import report_revision_banners
-
+    def test_superseded_by_carries_the_required_keys_and_exactly_one_alternative(
+        self, dao, conn, session_a, released_original
+    ):
         amendment_report_id, _ = dao.create_amendment(session_a, released_original, "ClinVar reclassified BRCA1")
         _approve(conn, amendment_report_id, session_a.user_id, at=_at(days=3))
+        block = dao.get_report_revision(session_a, released_original)["superseded_by"]
+        assert shape.SUPERSEDED_BY_REQUIRED <= set(block)
+        assert len(set(block) & shape.SUPERSEDED_BY_EXACTLY_ONE_OF) == 1
+        assert set(block) <= shape.SUPERSEDED_BY_REQUIRED | shape.SUPERSEDED_BY_EXACTLY_ONE_OF
+        assert block["amended_at_basis"] in shape.DATE_BASES
+
+    def test_the_count_form_also_matches_the_contract(self, dao, conn, session_a, released_original):
+        for i in range(2):
+            amendment_report_id, _ = dao.create_amendment(session_a, released_original, f"reason {i + 1}")
+            _approve(conn, amendment_report_id, session_a.user_id, at=_at(days=3 + i))
+        block = dao.get_report_revision(session_a, released_original)["superseded_by"]
+        assert set(block) == shape.SUPERSEDED_BY_REQUIRED | {"amendment_count"}
+
+    def test_reanalysis_of_has_exactly_the_contracted_keys(self, dao, conn, session_a, interp_a):
+        parent_interp, vcf_id = interp_a
+        child_interp = dao.create_reanalysis(session_a, vcf_id, parent_interp, {"variants": []})
+        report_id = dao.create_report(session_a, child_interp)
+        block = dao.get_report_revision(session_a, report_id)["reanalysis_of"]
+        assert set(block) == set(shape.REANALYSIS_OF_REQUIRED)
+
+    def test_reanalysed_since_items_have_exactly_the_contracted_keys(
+        self, dao, conn, session_a, interp_a, released_original
+    ):
+        parent_interp, _vcf = interp_a
+        _make_interpretation(dao, conn, session_a, parent_interpretation_id=parent_interp, created_at=_at(days=9))
+        since = dao.get_report_revision(session_a, released_original)["reanalysed_since"]
+        assert since and all(set(item) == set(shape.REANALYSED_SINCE_ITEM_REQUIRED) for item in since)
+
+    def test_no_top_level_key_the_renderer_has_never_heard_of(self, dao, conn, session_a, interp_a, released_original):
+        amendment_report_id, _ = dao.create_amendment(session_a, released_original, "ClinVar reclassified BRCA1")
+        _approve(conn, amendment_report_id, session_a.user_id, at=_at(days=3))
+        parent_interp, _vcf = interp_a
+        _make_interpretation(dao, conn, session_a, parent_interpretation_id=parent_interp, created_at=_at(days=9))
         revision = dao.get_report_revision(session_a, released_original)
-        banners = report_revision_banners({"report_revision": revision})
-        assert len(banners) == 1
-        assert "THIS REPORT HAS BEEN SUPERSEDED" in banners[0]
-        assert "An amended report was approved on" in banners[0]
-        assert "ClinVar reclassified BRCA1" in banners[0]
+        assert set(revision) <= shape.REVISION_KEYS
+        # Not vacuous: this fixture is deliberately in two states at once, so
+        # an empty dict would not satisfy it.
+        assert {"superseded_by", "reanalysed_since"} <= set(revision)

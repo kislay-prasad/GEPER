@@ -19,6 +19,15 @@ the page still fails here.
       a silent omission.
   R8  a superseded report stays superseded after retention deletes its
       successor, but the banner must not send the reader to obtain it.
+
+The last class, TestTheBannersTheClinicalReaderFeeds, is the RENDER PROOF for
+`clinical.data_access.DataAccess.get_report_revision`: the exact dicts that
+reader returns, rendered into the signed-off wording. It lives here rather
+than in the clinical suite because importing this module from there pulls in
+`pipeline.acmg_rules -> pipeline.gnomad -> requests`, which the clinical CI
+job does not install. The two halves are joined by
+clinical/report_revision_shape.py, which imports nothing and is pinned from
+both sides.
 """
 
 import unittest
@@ -27,6 +36,7 @@ from report.clinical_report_builder import normalize_report_revision, report_rev
 
 ORIGINAL_REPORT_ID = "0b6f1c9e-2a41-4d8e-9c55-1e7a3f0d2b11"
 AMENDMENT_REPORT_ID = "7d2e4a10-58c3-4f6b-a9e2-3c1d0b8f6e42"
+PARENT_INTERPRETATION_ID = "c4a9e7f2-1b3d-4e5f-8a6c-9d0e1f2a3b4c"
 
 _AMENDS = {
     "original_report_id": ORIGINAL_REPORT_ID,
@@ -203,6 +213,136 @@ class TestR8SuccessorNoLongerRetained(unittest.TestCase):
         )
         self.assertIn("NO LONGER RETAINED", text)
         self.assertNotIn("without first obtaining", text)
+
+
+def _load_revision_shape():
+    """
+    The contract module `clinical/report_revision_shape.py`, loaded BY PATH.
+
+    By path, not `import clinical.report_revision_shape`, so that loading it
+    can never run `clinical/__init__.py` or reach anything that wants psycopg
+    -- the geper job installs geper/requirements.txt and has no clinical
+    dependencies, exactly as the clinical job has no `requests`. The contract
+    module itself imports nothing at all, which is what makes this safe in
+    both directions.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "clinical" / "report_revision_shape.py"
+    spec = importlib.util.spec_from_file_location("_w118_revision_shape", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+SHAPE = _load_revision_shape()
+
+# The EXACT dicts `DataAccess.get_report_revision` returns, transcribed with
+# real values. Every one is checked against SHAPE before it is rendered, so a
+# key renamed on the clinical side (which fails clinical/tests/test_w118_
+# report_revision_reader.py::TestTheShapeTheRendererConsumes) cannot leave
+# this fixture quietly stale here.
+READER_AMENDS = {
+    "original_report_id": ORIGINAL_REPORT_ID,
+    "original_issued_at": "2026-08-01T09:00:00+00:00",
+    "original_issued_basis": "released",
+    "reason": "ClinVar reclassified the BRCA1 variant",
+    "amended_by": "Dr A. Rao (MCI-12345), Apollo Hospitals",
+    "amended_at": "2026-09-01T10:30:00+00:00",
+}
+READER_SUPERSEDED_BY_REASON = {
+    "amendment_report_id": AMENDMENT_REPORT_ID,
+    "amended_at": "2026-09-01T10:30:00+00:00",
+    "amended_at_basis": "approved",
+    "retained": True,
+    "reason": "ClinVar reclassified the BRCA1 variant",
+}
+READER_SUPERSEDED_BY_COUNT = {
+    "amendment_report_id": AMENDMENT_REPORT_ID,
+    "amended_at": "2026-09-01T10:30:00+00:00",
+    "amended_at_basis": "released",
+    "retained": True,
+    "amendment_count": 3,
+}
+READER_SUPERSEDED_BY_NOT_RETAINED = {
+    "amendment_report_id": AMENDMENT_REPORT_ID,
+    "amended_at": "2026-09-01T10:30:00+00:00",
+    "amended_at_basis": "released",
+    "retained": False,
+    "reason": "ClinVar reclassified the BRCA1 variant",
+}
+READER_REANALYSIS_OF = {
+    "parent_interpretation_id": PARENT_INTERPRETATION_ID,
+    "parent_interpreted_at": "2026-07-15T04:00:00+00:00",
+}
+READER_REANALYSED_SINCE = [
+    {"interpretation_id": "e1f2a3b4-c5d6-4e7f-8091-a2b3c4d5e6f7", "created_at": "2026-09-05T00:00:00+00:00"},
+]
+
+
+class TestTheBannersTheClinicalReaderFeeds(unittest.TestCase):
+    """
+    THE OTHER HALF OF THE RENDER PROOF (see clinical/tests/test_w118_report_
+    revision_reader.py::TestTheShapeTheRendererConsumes).
+
+    The clinical suite proves the reader EMITS this shape from a real
+    database; this proves the renderer TURNS this shape into the signed-off
+    wording. Splitting it this way is the layering, not a workaround: the
+    renderer must keep working for callers with no clinical database, and the
+    clinical layer must not need the variant pipeline to run its tests.
+    """
+
+    def test_the_fixtures_match_the_contract_the_reader_writes(self):
+        # Checked FIRST, and separately: if this drifts, every assertion
+        # below is rendering a shape the reader no longer produces, and would
+        # otherwise keep passing while the real pipe is broken.
+        self.assertEqual(set(READER_AMENDS), set(SHAPE.AMENDS_REQUIRED))
+        self.assertEqual(set(READER_REANALYSIS_OF), set(SHAPE.REANALYSIS_OF_REQUIRED))
+        for item in READER_REANALYSED_SINCE:
+            self.assertEqual(set(item), set(SHAPE.REANALYSED_SINCE_ITEM_REQUIRED))
+        for block in (
+            READER_SUPERSEDED_BY_REASON,
+            READER_SUPERSEDED_BY_COUNT,
+            READER_SUPERSEDED_BY_NOT_RETAINED,
+        ):
+            self.assertTrue(SHAPE.SUPERSEDED_BY_REQUIRED <= set(block))
+            self.assertEqual(len(set(block) & SHAPE.SUPERSEDED_BY_EXACTLY_ONE_OF), 1)
+            self.assertTrue(set(block) <= SHAPE.SUPERSEDED_BY_REQUIRED | SHAPE.SUPERSEDED_BY_EXACTLY_ONE_OF)
+        self.assertIn(READER_AMENDS["original_issued_basis"], SHAPE.DATE_BASES)
+
+    def test_a_superseded_original_renders_the_superseded_banner(self):
+        text = _one(superseded_by=READER_SUPERSEDED_BY_REASON)
+        self.assertIn("THIS REPORT HAS BEEN SUPERSEDED", text)
+        self.assertIn("An amended report was approved on 2026-09-01 16:00 IST", text)
+        self.assertIn("Reason for the amendment: ClinVar reclassified the BRCA1 variant.", text)
+
+    def test_an_amendment_renders_the_amended_banner(self):
+        text = _one(amends=READER_AMENDS)
+        self.assertIn("THIS IS AN AMENDED REPORT", text)
+        self.assertIn("originally issued on 2026-08-01", text)
+        self.assertIn("Amended by Dr A. Rao (MCI-12345), Apollo Hospitals on 2026-09-01 16:00 IST.", text)
+
+    def test_several_amendments_render_the_count_banner(self):
+        text = _one(superseded_by=READER_SUPERSEDED_BY_COUNT)
+        self.assertIn("It has been amended 3 times", text)
+        self.assertNotIn("Reason for the amendment", text)
+
+    def test_a_deleted_successor_renders_the_not_retained_banner(self):
+        text = _one(superseded_by=READER_SUPERSEDED_BY_NOT_RETAINED)
+        self.assertIn("NO LONGER RETAINED", text)
+        self.assertNotIn("without first obtaining", text)
+
+    def test_a_reanalysis_renders_both_re_analysis_banners(self):
+        banners = _banners(reanalysis_of=READER_REANALYSIS_OF, reanalysed_since=READER_REANALYSED_SINCE)
+        self.assertEqual(len(banners), 2)
+        self.assertIn("THIS REPORT IS BASED ON A RE-ANALYSIS", banners[0])
+        self.assertIn("re-analyses of the underlying VCF data exist since this report was issued", banners[1])
+
+    def test_an_empty_reader_result_renders_nothing(self):
+        # `get_report_revision` returns {} for a report in no revision state;
+        # that must render no banner, not a block of all-false wording.
+        self.assertEqual(_banners(), [])
 
 
 if __name__ == "__main__":

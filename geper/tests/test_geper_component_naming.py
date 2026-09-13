@@ -16,8 +16,11 @@ this file pins sites, not patterns:
       summaries, serve_api --help and its startup line (a stand-in uvicorn,
       no port opened), the sign-off CLI's help, and the verify_environment
       banner -- name the component;
-  (3) the 17 clinician-facing report-text sites are UNCHANGED, and no other
-      "Bij AI" appears in their files, until the human rules on that wording.
+  (3) the 17 clinician-facing report-text sites name GEPER -- the component
+      that produced the classification, not the product (human ruling
+      2026-09-12, each site listed with what it identifies and approved) --
+      byte for byte, and the only "Bij AI" left in their files is a
+      ratified product-name leave-site.
 
 Code-emitted strings come from geper/component_identity.py.
 """
@@ -35,29 +38,29 @@ from pathlib import Path
 
 _REPORT_TEXT_PINS = {
     "pipeline/conflict_resolution_engine.py": (
-        'conflict_type="Bij AI classification disagrees with an expert-panel/practice-guideline ClinVar classification",',
-        'evidence_b={"source": "Bij AI ACMG engine", "statement": f"classification: \'{acmg_classification}\'."},',
-        "\"This variant's Bij AI classification must be manually reviewed before clinical use. Bij AI's \"",
-        "\"raise that Bij AI's primary-evidence-based classification may be missing something ClinVar's \"",
-        '"record, which is why this is Bij AI\'s highest-severity reviewer flag."',
-        'conflict_type="Bij AI classification disagrees with a curated (non-expert-panel) ClinVar classification",',
-        'evidence_b={"source": "Bij AI ACMG engine", "statement": f"classification: \'{acmg_classification}\'."},',
-        "\"This variant's Bij AI classification should be manually reviewed before clinical use. Bij AI's \"",
-        '"meet the expert-panel/practice-guideline bar for Bij AI\'s highest-severity flag."',
-        'resolution="ACMG classification is unchanged by this conflict. Bij AI\'s ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",',
-        'clinical_sources.append("Bij AI ACMG engine")',
-        'resolution_rationale="Bij AI has no directional (pathogenic/benign) signal from either BLAST or Ensembl to compare against other evidence, so a genuine conflict cannot be detected here without fabricating one.",',
+        'conflict_type="GEPER classification disagrees with an expert-panel/practice-guideline ClinVar classification",',
+        'evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: \'{acmg_classification}\'."},',
+        "\"This variant's GEPER classification must be manually reviewed before clinical use. GEPER's \"",
+        "\"raise that GEPER's primary-evidence-based classification may be missing something ClinVar's \"",
+        '"record, which is why this is GEPER\'s highest-severity reviewer flag."',
+        'conflict_type="GEPER classification disagrees with a curated (non-expert-panel) ClinVar classification",',
+        'evidence_b={"source": "GEPER ACMG engine", "statement": f"classification: \'{acmg_classification}\'."},',
+        "\"This variant's GEPER classification should be manually reviewed before clinical use. GEPER's \"",
+        '"meet the expert-panel/practice-guideline bar for GEPER\'s highest-severity flag."',
+        'resolution="ACMG classification is unchanged by this conflict. GEPER\'s ACMG rule engine treats ClinVar as a cross-reference, not a direct classification input (see acmg_evaluation.clinvar_crossreference), so a pathogenic ClinVar assertion in a gene with weak ClinGen validity does not by itself alter the ACMG result -- but this combination warrants manual review before clinical use.",',
+        'clinical_sources.append("GEPER ACMG engine")',
+        'resolution_rationale="GEPER has no directional (pathogenic/benign) signal from either BLAST or Ensembl to compare against other evidence, so a genuine conflict cannot be detected here without fabricating one.",',
     ),
     "pipeline/acmg_rules.py": (
-        '"Bij AI does not implement that mtDNA-specific version, so PVS1 is not evaluated for this "',
-        'f"the 28 standard ACMG/AMP criteria, Bij AI never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} "',
-        '"Bij AI actually evaluated for this compartment -- it is not a complete, mtDNA-specification-"',
+        '"GEPER does not implement that mtDNA-specific version, so PVS1 is not evaluated for this "',
+        'f"the 28 standard ACMG/AMP criteria, GEPER never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} "',
+        '"GEPER actually evaluated for this compartment -- it is not a complete, mtDNA-specification-"',
     ),
     "pipeline/explainability_engine.py": (
-        "f\"Bij AI classified {locus}{gene_clause} as '{classification or 'not classified'}' \"",
+        "f\"GEPER classified {locus}{gene_clause} as '{classification or 'not classified'}' \"",
     ),
     "pipeline/prioritization_engine.py": (
-        '"✗ Review priority floored at Critical: Bij AI\'s classification disagrees with an "',
+        '"✗ Review priority floored at Critical: GEPER\'s classification disagrees with an "',
     ),
 }
 _PRODUCT_NAME_PINS = {
@@ -232,26 +235,29 @@ class TestSurfacesNameTheComponent(unittest.TestCase):
         self.assertEqual(_BARE.findall(buf.getvalue()), [])
 
 
-# ── (3) the 17 clinician-facing report-text sites: UNCHANGED until ruled ──────
+# ── (3) the 17 clinician-facing report-text sites name GEPER ──────────────────
 
 
-class TestReportTextSitesAwaitTheirRuling(unittest.TestCase):
-    """These strings reach clinical reports. Their wording goes to the human
-    first; until then they must stay exactly as they are -- no early edit,
-    and no new "Bij AI" slipped into these files."""
+class TestReportTextSitesNameGeper(unittest.TestCase):
+    """These strings reach clinical reports. Each identifies which component
+    produced the claim (GEPER's ACMG engine, conflict engine, rule set,
+    decision summary, priority floor), so each names GEPER -- ruled per site
+    by the human. Pinned byte for byte, with each pin's count matched (the
+    evidence_b source line legitimately appears twice)."""
 
-    def test_each_report_text_site_is_byte_unchanged(self):
+    def test_each_report_text_site_names_geper_byte_for_byte(self):
         for rel, pins in _REPORT_TEXT_PINS.items():
             stripped = [line.strip() for line in _lines(rel)]
-            for pin in pins:
+            for pin in set(pins):
                 with self.subTest(rel=rel, pin=pin[:60]):
-                    self.assertIn(pin, stripped)
+                    self.assertEqual(stripped.count(pin), pins.count(pin))
 
     def test_no_other_bij_ai_in_the_report_text_files(self):
+        # Only the ratified product-name leave-sites may still say "Bij AI".
         for rel in _REPORT_TEXT_PINS:
             found = {line.strip() for line in _lines(rel) if "Bij AI" in line}
             with self.subTest(rel=rel):
-                self.assertEqual(found, _pinned(rel))
+                self.assertEqual(found, set(_PRODUCT_NAME_PINS.get(rel, ())))
 
 
 if __name__ == "__main__":

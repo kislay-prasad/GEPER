@@ -58,6 +58,12 @@ SIGNATORY_REG = "MCI-12345"
 SIGNATORY_HOSPITAL = "ABC Diagnostics"
 HOSPITAL_B = "ABC Diagnostics"
 
+# w119 fix 2's CLI signatory, whose password is stored as a real bcrypt hash.
+# Its own registration number: users_org_registration_number_unique forbids
+# reusing SIGNATORY_REG inside one organisation.
+CLI_SIGNATORY_NAME = "Dr. C. Nair, MD"
+CLI_SIGNATORY_REG = "MCI-77777"
+
 
 class _PlainHasher:
     """The clinical layer's hasher protocol without bcrypt, which the geper
@@ -800,6 +806,412 @@ class TestLinkedOverrideAfterApprovalIsRefused:
 # ───────────────────────────────────────────────────────────────────────────
 # The CLI's credential handling
 # ───────────────────────────────────────────────────────────────────────────
+
+
+class TestLinkedWithdrawCannotLeaveTheRecordSayingApproved:
+    """
+    w119 FIX 1. `withdraw()` had no path to the clinical record in its
+    signature at all, so on a LINKED run it removed the manifest and reset
+    `review_status` to 'draft' while the CLINICAL REPORT still said
+    'approved'.
+
+    THE HUMAN'S RULING, which sets the bar for why this one is worse than the
+    divergence w117 closed: "a withdrawal is a deliberate safety act, so a
+    record that still says approved contradicts a clinician's explicit
+    decision rather than lagging a routine change."
+
+    THE CLINICAL SIDE OF A WITHDRAWAL IS A REFUSAL, NOT A WRITE, and that is
+    a reading of the clinical layer rather than a preference:
+    clinical/data_access.py has no unapprove/retract method;
+    reports.approver_id/approved_at/content_hash are write-once; and
+    enforce_content_immutability() in clinical/schema.sql REFUSES to move an
+    approved report's state anywhere but 'released'. reviewer_claims'
+    claim_type CHECK has no kind meaning "retracted" either. So the
+    divergence is closed by never creating it -- refuse before any file
+    change, exactly as override()-after-approval already does -- rather than
+    by a state transition the schema forbids. Giving the clinical layer a
+    real retraction is a schema and governance decision and is NOT taken
+    here.
+    """
+
+    @pytest.fixture
+    def approved(self, linked_run_dir, dao, creds):
+        s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        return linked_run_dir
+
+    def test_the_two_records_never_disagree_after_a_withdrawal_attempt(
+        self, approved, clinical, clinical_conn, monkeypatch
+    ):
+        """
+        THE DEFECT ITSELF, ASSERTED BEHAVIOURALLY AND THROUGH THE OLD
+        THREE-ARGUMENT CALL -- so this is red against the pre-fix code for a
+        reason that is nothing to do with a signature: before the fix this
+        call SUCCEEDED, leaving geper_results.json saying 'draft' while the
+        clinical report said 'approved'. After the fix the same call is
+        refused and both records stand.
+
+        The assertion is the invariant, not the mechanism: the files must
+        never end up retracted while the clinical record still says approved.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        try:
+            s.withdraw(approved, reason="Signed off in error.", actor="signatory@org-a.test")
+        except SignoffError:
+            pass  # refusing is one legitimate outcome; leaving a lie is not
+
+        file_status = _document(approved)["review_status"]
+        report_state = _report_row(clinical_conn, clinical["report_id"])[0]
+        assert not (file_status != "reviewed" and report_state == "approved"), (
+            f"the run's files now say {file_status!r} while its clinical report still says "
+            f"{report_state!r} -- a withdrawal is a deliberate safety act, and a record that "
+            "still says approved afterwards contradicts a clinician's explicit decision"
+        )
+
+    def test_it_is_refused_and_the_clinical_report_is_still_approved(
+        self, approved, clinical, clinical_conn, dao, creds
+    ):
+        """
+        THE DEFECT, AS A TEST. Before this fix `withdraw()` returned happily
+        here and the assertion that followed -- clinical report still
+        'approved' while the files say 'draft' -- was the contradiction.
+        """
+        with pytest.raises(SignoffError):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "approved"
+
+    def test_nothing_on_disk_changes(self, approved, dao, creds):
+        before = _directory_state(approved)
+        with pytest.raises(SignoffError):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        assert _directory_state(approved) == before, (
+            "the refusal must arrive BEFORE the manifest is removed, review_status is reset and "
+            "the three reports are regenerated -- a withdrawn sign-off standing in front of an "
+            "'approved' clinical record is the state this refusal exists to prevent"
+        )
+        assert _document(approved)["review_status"] == "reviewed"
+        assert os.path.exists(os.path.join(approved, s.MANIFEST_FILENAME))
+
+    def test_the_refusal_says_why_rather_than_inventing_a_transition(self, approved, dao, creds):
+        """
+        PINNED POSITIVELY, not merely by absence: the message must actually
+        SAY that an approval cannot be retracted and that the amendment path
+        is not yet available. An assertion that it lacks some wrong word
+        would pass against an empty string.
+        """
+        with pytest.raises(SignoffError) as exc:
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        assert "no way to retract an approval" in message
+        assert "AMENDMENT" in message
+        assert "NOT YET AVAILABLE" in message
+        assert "Nothing on disk has been changed." in message
+
+    def test_a_linked_withdraw_without_credentials_is_refused(self, approved, clinical, clinical_conn, dao):
+        """
+        Same rule as approve(): reading the clinical report's state is an
+        authenticated act, and "I could not look" must not read the same as
+        "there was nothing to look at".
+        """
+        before = _directory_state(approved)
+        with pytest.raises(SignoffError, match="authenticated person"):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_data_access=dao,
+            )
+        assert _directory_state(approved) == before
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "approved"
+
+    def test_a_linked_run_whose_report_is_not_approved_is_withdrawn_normally(
+        self, run_dir, clinical, clinical_conn, dao, creds, monkeypatch
+    ):
+        """
+        NOT A BLANKET BAN ON WITHDRAWING LINKED RUNS. Where the clinical
+        record carries no approval there is nothing to contradict, so the
+        file-side retraction leaves the two records agreeing and proceeds.
+
+        Reached here the way it is reached in practice: a directory signed
+        off before it was linked, which the link file is then added to.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        s.approve(run_dir, "Dr. Typed In", "MCI-55555", "Some Lab")
+        with open(os.path.join(run_dir, s.CLINICAL_LINK_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "org_id": str(clinical["org_id"]),
+                    "interpretation_id": str(clinical["interpretation_id"]),
+                    "report_id": str(clinical["report_id"]),
+                },
+                fh,
+            )
+
+        result = s.withdraw(
+            run_dir,
+            reason="Signed off in error.",
+            actor="signatory@org-a.test",
+            clinical_credentials=creds,
+            clinical_data_access=dao,
+        )
+        assert result["clinical_report_state"] == "draft"
+        assert _document(run_dir)["review_status"] == "draft"
+        assert not os.path.exists(os.path.join(run_dir, s.MANIFEST_FILENAME))
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "draft"
+
+    def test_the_cli_hands_withdraw_the_clinical_credentials(self, tmp_path, monkeypatch):
+        """
+        The CLI half of fix 1: `withdraw` now takes the same clinical flags
+        approve/override take, and main() actually forwards them. Captured at
+        the call rather than asserted on the parser, because a flag that
+        parses and is then dropped is the bug this guards.
+        """
+        import review.cli as cli
+
+        monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", "password")
+        captured = {}
+
+        def _fake_withdraw(**kwargs):
+            captured.update(kwargs)
+            return {"ok": True}
+
+        monkeypatch.setattr(cli, "_withdraw", _fake_withdraw)
+        assert (
+            cli.main(
+                [
+                    "withdraw",
+                    "--output-dir",
+                    str(tmp_path),
+                    "--reason",
+                    "Signed off in error.",
+                    "--actor",
+                    "signatory@org-a.test",
+                    "--clinical-email",
+                    "signatory@org-a.test",
+                ]
+            )
+            == 0
+        )
+        assert captured["clinical_credentials"] == s.ClinicalCredentials(
+            email="signatory@org-a.test", password="password", totp_code=None
+        )
+
+    def test_an_unlinked_withdraw_is_unchanged(self, run_dir, monkeypatch):
+        """
+        THE CONTROL. No clinical_link.json: no credentials, no CLINICAL_DSN,
+        no database, and the withdrawal behaves exactly as it did before
+        w119 -- including carrying no clinical key in its result, because
+        "there is no clinical record" and "there is one and we did not look"
+        must not read the same.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        s.approve(run_dir, "Dr. Typed In", "MCI-55555", "Some Lab")
+
+        result = s.withdraw(run_dir, reason="Signed off in error.", actor="dr@lab.test")
+
+        assert result["previous_review_status"] == "reviewed"
+        assert "clinical_report_state" not in result
+        assert _document(run_dir)["review_status"] == "draft"
+        assert not os.path.exists(os.path.join(run_dir, s.MANIFEST_FILENAME))
+        assert os.path.exists(os.path.join(run_dir, s.FULL_PDF_FILENAME))
+
+
+class TestTheRefusalsNameOnlyThingsAUserCanReach:
+    """
+    w119 FIX 3. The override-after-approval refusal used to name
+    `clinical.data_access::create_amendment`. NO COMMAND REACHES IT -- it is
+    a DataAccess method with no CLI subcommand and no HTTP route anywhere in
+    this repository.
+
+    THE HUMAN'S RULING: "A refusal naming a command a user can't reach is a
+    false claim in user-facing text, and worse than a stale docstring because
+    it arrives when someone is trying to act. Say the amendment path isn't yet
+    available rather than naming something that doesn't exist."
+
+    NOT A CANNOT-FAIL TEST. "the message does not contain create_amendment"
+    passes against an empty string, against a refusal that never fires and
+    against a message that says nothing useful. So the positive wording is
+    pinned too, and the message is taken from a refusal that actually
+    happened.
+    """
+
+    @pytest.fixture
+    def approved(self, linked_run_dir, dao, creds):
+        s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        return linked_run_dir
+
+    def test_the_override_refusal_does_not_name_an_unreachable_command(self, approved, clinical, dao, creds):
+        with pytest.raises(SignoffError) as exc:
+            s.override(
+                approved,
+                "17:43106534:C>A",
+                "Likely Pathogenic",
+                "Segregation data.",
+                "signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        # The message really is the refusal, and really is non-empty -- so the
+        # absence assertion below is about wording and not about nothing.
+        assert str(clinical["report_id"]) in message
+        assert "already 'approved'" in message
+        # POSITIVE: what it must say instead.
+        assert "AMENDMENT" in message
+        assert "NOT YET AVAILABLE" in message
+        assert "no command here that issues one" in message
+        # NEGATIVE: the false claim it used to make.
+        assert "create_amendment" not in message
+        assert "data_access::" not in message
+
+    def test_the_withdraw_refusal_names_no_unreachable_command_either(self, approved, dao, creds):
+        """The message added by fix 1 is held to the same rule, so the defect
+        is not reintroduced one function over."""
+        with pytest.raises(SignoffError) as exc:
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        assert "AMENDMENT" in message and "NOT YET AVAILABLE" in message
+        assert "create_amendment" not in message
+        assert "data_access::" not in message
+
+
+class TestTheCliDrivesARealClinicalConnection:
+    """
+    w119 FIX 2. Two things had never been executed by any test:
+
+      - `review/signoff.py::_connect_clinical_data_access()`, because every
+        existing test injects `clinical_data_access=dao`;
+      - `review/cli.py::main()` against a LINKED run at all -- only
+        `build_arg_parser` and `_clinical_credentials` were covered.
+
+    ONE test covers both: the CLI is driven with argv, nothing is injected,
+    and CLINICAL_DSN points at this suite's own disposable database, so the
+    real connect path builds the real DataAccess and the real login runs.
+
+    THE CLINICAL_DSN REFUSAL EXISTS IN CODE AND WAS UNTESTED -- it is NOT
+    missing, and the distinction matters because "untested" and "missing"
+    have different remediations. It is pinned below as an untested-but-present
+    path.
+
+    The password is a REAL bcrypt hash here, not the suite's _PlainHasher:
+    the CLI's own DataAccess is constructed with the production default
+    hasher, so a fixture user whose stored hash the default hasher cannot
+    verify would never get past login and the connect path would prove
+    nothing.
+
+    The connection this opens is not closed. That leak is ACCEPTED by the
+    human and is deliberately not fixed here.
+    """
+
+    @pytest.fixture
+    def bcrypt_signatory(self, clinical, clinical_conn, dao):
+        from clinical.data_access import BcryptHasher
+
+        bcrypt_dao = DataAccess(clinical_conn, clock=SystemClock(), password_hasher=BcryptHasher(rounds=4))
+        email = "cli-signatory@org-a.test"
+        user_id = bcrypt_dao.create_user(clinical["org_id"], email, "password")
+        for role in ("Interpreter", "Approver"):
+            dao.assign_role(clinical["admin"], user_id, role, basis="w119 CLI end-to-end fixture role grant")
+        # A registration number of its own: users_org_registration_number_unique
+        # means this account cannot reuse the other signatory's.
+        dao.set_clinician_identity(clinical["admin"], user_id, CLI_SIGNATORY_NAME, CLI_SIGNATORY_REG, HOSPITAL_B)
+        clinical_conn.commit()
+        return email
+
+    def test_cli_main_signs_a_linked_run_over_a_real_clinical_dsn(
+        self, linked_run_dir, clinical, clinical_conn, clinical_dsn, bcrypt_signatory, monkeypatch
+    ):
+        from review.cli import main as cli_main
+
+        monkeypatch.setenv("CLINICAL_DSN", clinical_dsn)
+        monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", "password")
+        # The CLI opens its OWN connection: this one must not be sitting on
+        # locks the CLI would then wait for.
+        clinical_conn.commit()
+
+        exit_code = cli_main(
+            [
+                "approve",
+                "--output-dir",
+                linked_run_dir,
+                "--clinical-email",
+                bcrypt_signatory,
+                "--reason",
+                "Sole signatory concurrence, via the CLI.",
+            ]
+        )
+
+        assert exit_code == 0, "the CLI's real connect path failed to sign a linked run"
+
+        # The clinical half really happened, through a connection this test
+        # never handed in.
+        state, approver_id, approved_at, content_hash = _report_row(clinical_conn, clinical["report_id"])
+        assert state == "approved"
+        assert approved_at is not None and content_hash is not None
+        claims = _claims(clinical_conn, clinical["report_id"])
+        assert len(claims) == 1 and claims[0][0] == "sole_signatory"
+        assert claims[0][4] == "Sole signatory concurrence, via the CLI."
+        assert approver_id == claims[0][3]
+
+        # ... and so did the file half, with the identity read from the
+        # signing account's record rather than from any flag (none was given).
+        document = _document(linked_run_dir)
+        assert document["review_status"] == "reviewed"
+        assert document["reviewed_by"] == f"{CLI_SIGNATORY_NAME}, Reg. No. {CLI_SIGNATORY_REG}, {HOSPITAL_B}"
+        with open(os.path.join(linked_run_dir, s.MANIFEST_FILENAME), "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        assert manifest["identity_source"] == "user_record"
+        assert manifest["clinical"]["approver_user_id"] == str(approver_id)
+
+    def test_the_unset_clinical_dsn_refusal_is_present_and_now_exercised(self, linked_run_dir, creds, monkeypatch):
+        """
+        UNTESTED-BUT-PRESENT, now tested. This refusal has always existed in
+        `_connect_clinical_data_access`; nothing had ever run it, because
+        every other test injects a DataAccess and never reaches the connect
+        path. It is not a missing check.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(SignoffError, match="CLINICAL_DSN"):
+            s.approve(
+                linked_run_dir,
+                clinical_credentials=creds,
+                clinical_reason="Sole signatory concurrence.",
+            )
+        assert _directory_state(linked_run_dir) == before
 
 
 class TestCliCredentials:

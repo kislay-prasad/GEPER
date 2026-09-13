@@ -226,6 +226,42 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # THE ONE CLINICAL DEPENDENCY THIS JOB REACHES THAT requirements.txt
+      # DOES NOT DECLARE (w119).
+      #
+      # api/tests/test_signoff_clinical_link.py's end-to-end test drives
+      # review/signoff.py::_connect_clinical_data_access() -- the REAL connect
+      # path -- so nothing is injected and the DataAccess it builds carries
+      # clinical/data_access.py's DEFAULT password hasher, BcryptHasher. That
+      # class imports bcrypt LAZILY, inside hash()/verify(), so the gap does
+      # not show at import time: it shows at the first login. Every OTHER
+      # clinical-link test in this directory injects a stand-in hasher, which
+      # is why BcryptHasher had never been constructed in this job and its
+      # absence had never been visible here.
+      #
+      # This is the same direction this job already went, not a new one: it
+      # already runs a PostgreSQL service, already sets CLINICAL_TEST_DSN and
+      # CLINICAL_REQUIRE_DB=1, and the comment on `services:` above says the
+      # clinical-link tests are meant to run here. Installing the auth
+      # dependency that layer needs is what that decision costs.
+      #
+      # bcrypt ONLY, and that is MEASURED rather than assumed. With bcrypt
+      # made unimportable, api/tests is 138 passed + 1 error, the error being
+      # exactly this test (ModuleNotFoundError at data_access.py:289, which is
+      # what CI reported). With pyotp AND cryptography both made unimportable
+      # and bcrypt present, api/tests is 139 passed -- because DataAccess
+      # defaults totp_verifier and secret_cipher to None rather than to
+      # PyOtpVerifier, so neither is reached. psycopg[binary] is already a
+      # declared geper requirement. Installing clinical/requirements.txt
+      # wholesale here would pull the clinical SERVICE's dependencies into
+      # this job for paths that do not run in it.
+      #
+      # UNPINNED, matching clinical/requirements.txt's own bcrypt line.
+      # Nothing in this repository pins bcrypt; pinning it only here would
+      # create a second, diverging answer to a question that has one.
+      - name: Install bcrypt (the real clinical login path in api/tests)
+        run: pip install bcrypt
+
       # Fails loudly if the CUDA stack came back -- the pins above drifting
       # from requirements.txt is the expected way for that to happen, and it
       # would otherwise show up as an intermittent out-of-disk error whose

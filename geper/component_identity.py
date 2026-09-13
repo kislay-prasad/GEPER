@@ -13,8 +13,10 @@ verify_environment) is built from these constants. Import-free on purpose:
 verify_environment.py is imported before the interpreter-version guard.
 
 Not used for clinician-facing report text: that wording is ruled separately
-(report/summary.py::SCOPE_LINE; the conflict/ACMG/explainability/priority
-report strings are awaiting their own ruling).
+(report/summary.py::SCOPE_LINE). The 17 conflict/ACMG/explainability/priority
+report strings were ruled per site (2026-09-12): each identifies which
+component produced the claim, so each names "GEPER" as literal text
+(pinned in tests/test_geper_component_naming.py).
 """
 
 COMPONENT_NAME = "Bij AI variant-interpretation component (GEPER)"

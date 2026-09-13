@@ -255,7 +255,7 @@ class TestARealConflictStillCounts(unittest.TestCase):
     """
 
     def test_one_clinical_conflict_charges_one_unit_in_both_engines(self):
-        real = [_item(conflict_type="Bij AI classification disagrees with a curated ClinVar classification")]
+        real = [_item(conflict_type="GEPER classification disagrees with a curated ClinVar classification")]
         self.assertAlmostEqual(ConfidenceEngine._conflict_penalty(real, _cfg_for("confidence"))[0], 0.15, places=6)
         self.assertAlmostEqual(PrioritizationEngine._conflict_penalty(real, _cfg_for("priority"))[0], 0.10, places=6)
 

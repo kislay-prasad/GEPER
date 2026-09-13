@@ -191,7 +191,7 @@ class PrioritizationEngine:
             # diluted by averaging against this engine's other factors.
             category = "Critical"
             reasons.append(
-                "✗ Review priority floored at Critical: Bij AI's classification disagrees with an "
+                "✗ Review priority floored at Critical: GEPER's classification disagrees with an "
                 "expert-panel/practice-guideline ClinVar record."
             )
 

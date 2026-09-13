@@ -196,7 +196,7 @@ class ExplainabilityEngine:
             f", conflict severity {conflict_severity}" if conflict_severity and conflict_severity != "None" else ""
         )
         return (
-            f"Bij AI classified {locus}{gene_clause} as '{classification or 'not classified'}' "
+            f"GEPER classified {locus}{gene_clause} as '{classification or 'not classified'}' "
             f"({conf_clause}; {pri_clause}{conflict_clause})."
         )
 

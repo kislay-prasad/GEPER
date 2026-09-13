@@ -150,7 +150,7 @@ class TestNotEvaluatedCategoryPartition(unittest.TestCase):
 
     def test_never_integrated_constant_matches_the_real_rule_set(self):
         # T4-F1: mtdna_interpretation_disclaimer() used to print the "9"
-        # in "Bij AI never evaluates 9 for any variant" as a hand-typed
+        # in "GEPER never evaluates 9 for any variant" as a hand-typed
         # literal, disconnected from the actual rule implementations --
         # the exact divergence shape round 16 already fixed once for this
         # function's middle clause. The disclaimer now derives the count
@@ -180,7 +180,7 @@ class TestNotEvaluatedCategoryPartition(unittest.TestCase):
         # the disclaimer string's count must equal the constant's length,
         # for both the data-driven path (not_evaluated_rules supplied)
         # and the gene-class-only fallback path (older callers).
-        expected = f"Bij AI never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} for any variant"
+        expected = f"GEPER never evaluates {len(_NEVER_INTEGRATED_ACMG_CODES)} for any variant"
         result = _evaluate(_NUCLEAR_VARIANT, _NUCLEAR_TRANSCRIPT_RESULT)
         data_driven_text = mtdna_interpretation_disclaimer(_NUCLEAR_TRANSCRIPT_RESULT, result["not_evaluated_criteria"])
         fallback_text = mtdna_interpretation_disclaimer(_NUCLEAR_TRANSCRIPT_RESULT)

@@ -165,8 +165,13 @@ class TestRenderClinicalPdf:
         out = str(tmp_path / "report.pdf")
         render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
         text = _flatten("".join(p.extract_text() for p in PdfReader(out).pages))
-        truncated = _flatten(RESEARCH_USE_DISCLAIMER[:150])  # "...machine-learning predict"
-        assert truncated.endswith("machine-learning predict"), "the 150-char cut point moved"
+        # The cut point is wherever character 150 of the CURRENT constant
+        # falls; it moved when W116 dropped "research " from the opening
+        # clause, nine characters earlier in the sentence, so the same 150
+        # characters now reach nine characters further in. Still mid-
+        # sentence, which is all this test needs it to be.
+        truncated = _flatten(RESEARCH_USE_DISCLAIMER[:150])  # "...predictors. Bij"
+        assert truncated.endswith("predictors. Bij"), "the 150-char cut point moved"
         assert not text.split(truncated)[1].startswith(" Reference genome"), (
             "the footer disclaimer is still cut off at 150 characters"
         )

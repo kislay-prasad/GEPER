@@ -218,11 +218,12 @@ def _set_report_state(conn, report_id, state):
     conn.commit()
 
 
-def _add_claim(dao, session, interp_id, actor_id):
+def _add_claim(dao, session, interp_id, report_id, actor_id):
     """One 'accept' claim -- the minimum that counts as review having happened."""
     return dao._record_accept(
         session,
         interpretation_id=interp_id,
+        report_id=report_id,
         actor_id=actor_id,
         reason="Independently re-derived the same classification.",
     )
@@ -244,7 +245,7 @@ class TestSubmitForReviewClaimsPrecondition:
         assert _report_state(conn, draft_report_a) == "draft", "a refused submission must not move the report"
 
     def test_one_claim_is_enough(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         dao.submit_for_review(interpreter_a, draft_report_a)
         assert _report_state(conn, draft_report_a) == "under_review"
 
@@ -252,19 +253,23 @@ class TestSubmitForReviewClaimsPrecondition:
         self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a
     ):
         """
-        A claim must be against THIS report's interpretation. Another
-        interpretation's review is not this report's review.
+        A claim must be against THIS report. Another interpretation's
+        review -- recorded against that interpretation's own report -- is not
+        this report's review.
         """
         other_interp = _make_interpretation(dao, conn, session_a)
-        _add_claim(dao, session_a, other_interp, session_a.user_id)
+        other_report = dao.create_report(session_a, other_interp)
+        _add_claim(dao, session_a, other_interp, other_report, session_a.user_id)
 
         with pytest.raises(ValueError, match="claim"):
             dao.submit_for_review(interpreter_a, draft_report_a)
         assert _report_state(conn, draft_report_a) == "draft"
 
-    def test_another_orgs_claims_do_not_count(self, dao, conn, session_b, interpreter_a, interp_b, draft_report_a):
+    def test_another_orgs_claims_do_not_count(
+        self, dao, conn, session_b, interpreter_a, interp_b, draft_report_a, draft_report_b
+    ):
         """Org B reviewing its own work does not let Org A's report through."""
-        _add_claim(dao, session_b, interp_b, session_b.user_id)
+        _add_claim(dao, session_b, interp_b, draft_report_b, session_b.user_id)
 
         with pytest.raises(ValueError, match="claim"):
             dao.submit_for_review(interpreter_a, draft_report_a)
@@ -277,6 +282,7 @@ class TestSubmitForReviewClaimsPrecondition:
         dao._record_disagreement(
             session_a,
             interpretation_id=interp_a,
+            report_id=draft_report_a,
             variant_key="17-43106534-C-A",
             actor_id=session_a.user_id,
             new_classification="Likely Benign",
@@ -290,7 +296,7 @@ class TestSubmitForReviewStatePrecondition:
     """Precondition 2: only a draft may be submitted, and the state is named on refusal."""
 
     def test_transitions_draft_to_under_review(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         assert _report_state(conn, draft_report_a) == "draft"
 
         dao.submit_for_review(interpreter_a, draft_report_a)
@@ -299,14 +305,14 @@ class TestSubmitForReviewStatePrecondition:
 
     @pytest.mark.parametrize("state", ["under_review", "returned"])
     def test_non_draft_states_refused(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a, state):
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         _set_report_state(conn, draft_report_a, state)
 
         with pytest.raises(ValueError, match=state):
             dao.submit_for_review(interpreter_a, draft_report_a)
 
     def test_refusal_names_the_actual_state(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         _set_report_state(conn, draft_report_a, "under_review")
 
         with pytest.raises(ValueError) as exc:
@@ -315,7 +321,7 @@ class TestSubmitForReviewStatePrecondition:
 
     def test_resubmission_refused(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
         """Once submitted, a report is no longer a draft and cannot be submitted again."""
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         dao.submit_for_review(interpreter_a, draft_report_a)
 
         with pytest.raises(ValueError):
@@ -328,14 +334,14 @@ class TestSubmitForReviewRolePrecondition:
 
     def test_requires_interpreter_role(self, dao, session_a, interp_a, draft_report_a):
         """An Administrator session holds no Interpreter role and is refused."""
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
 
         with pytest.raises(AuthorizationError, match="Interpreter"):
             dao.submit_for_review(session_a, draft_report_a)
 
     def test_approver_role_is_not_enough(self, dao, conn, session_a, approver_a, interp_a, draft_report_a):
         """Approving is a different action from submitting; the roles do not substitute."""
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
 
         with pytest.raises(AuthorizationError, match="Interpreter"):
             dao.submit_for_review(approver_a, draft_report_a)
@@ -354,14 +360,14 @@ class TestSubmitForReviewScoping:
         Org A's Interpreter cannot submit Org B's report, and gets the same
         answer as for an invented id -- it cannot learn the report exists.
         """
-        _add_claim(dao, session_b, interp_b, session_b.user_id)
+        _add_claim(dao, session_b, interp_b, draft_report_b, session_b.user_id)
 
         with pytest.raises(NotFoundError):
             dao.submit_for_review(interpreter_a, draft_report_b)
         assert _report_state(conn, draft_report_b) == "draft"
 
     def test_writes_audit_entry(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         dao.submit_for_review(interpreter_a, draft_report_a)
 
         with conn.cursor() as cur:
@@ -373,7 +379,7 @@ class TestSubmitForReviewScoping:
 
     def test_does_not_touch_approval_columns(self, dao, conn, session_a, interpreter_a, interp_a, draft_report_a):
         """Submission is not approval: approver_id, approved_at and content_hash stay NULL."""
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
         dao.submit_for_review(interpreter_a, draft_report_a)
 
         with conn.cursor() as cur:
@@ -388,7 +394,7 @@ class TestSubmitForReviewScoping:
         """The UPDATE touches one report, not every draft in the org."""
         other_interp = _make_interpretation(dao, conn, session_a)
         other_report = dao.create_report(session_a, other_interp)
-        _add_claim(dao, session_a, interp_a, session_a.user_id)
+        _add_claim(dao, session_a, interp_a, draft_report_a, session_a.user_id)
 
         dao.submit_for_review(interpreter_a, draft_report_a)
 

@@ -727,7 +727,11 @@ def _full_unit(dao, conn, session, suffix="1", dob=_ADULT_DOB):
     """
     chain = _full_chain(dao, conn, session, suffix=suffix, dob=dob)
     claim_id = dao._record_accept(
-        session, interpretation_id=chain["interp_id"], actor_id=session.user_id, reason="Concur."
+        session,
+        interpretation_id=chain["interp_id"],
+        report_id=chain["report_id"],
+        actor_id=session.user_id,
+        reason="Concur.",
     )
 
     released_at = NOW - timedelta(days=chain["retention_days"] + 1)

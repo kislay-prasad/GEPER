@@ -802,6 +802,236 @@ class TestLinkedOverrideAfterApprovalIsRefused:
 # ───────────────────────────────────────────────────────────────────────────
 
 
+class TestLinkedWithdrawCannotLeaveTheRecordSayingApproved:
+    """
+    w119 FIX 1. `withdraw()` had no path to the clinical record in its
+    signature at all, so on a LINKED run it removed the manifest and reset
+    `review_status` to 'draft' while the CLINICAL REPORT still said
+    'approved'.
+
+    THE HUMAN'S RULING, which sets the bar for why this one is worse than the
+    divergence w117 closed: "a withdrawal is a deliberate safety act, so a
+    record that still says approved contradicts a clinician's explicit
+    decision rather than lagging a routine change."
+
+    THE CLINICAL SIDE OF A WITHDRAWAL IS A REFUSAL, NOT A WRITE, and that is
+    a reading of the clinical layer rather than a preference:
+    clinical/data_access.py has no unapprove/retract method;
+    reports.approver_id/approved_at/content_hash are write-once; and
+    enforce_content_immutability() in clinical/schema.sql REFUSES to move an
+    approved report's state anywhere but 'released'. reviewer_claims'
+    claim_type CHECK has no kind meaning "retracted" either. So the
+    divergence is closed by never creating it -- refuse before any file
+    change, exactly as override()-after-approval already does -- rather than
+    by a state transition the schema forbids. Giving the clinical layer a
+    real retraction is a schema and governance decision and is NOT taken
+    here.
+    """
+
+    @pytest.fixture
+    def approved(self, linked_run_dir, dao, creds):
+        s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        return linked_run_dir
+
+    def test_the_two_records_never_disagree_after_a_withdrawal_attempt(
+        self, approved, clinical, clinical_conn, monkeypatch
+    ):
+        """
+        THE DEFECT ITSELF, ASSERTED BEHAVIOURALLY AND THROUGH THE OLD
+        THREE-ARGUMENT CALL -- so this is red against the pre-fix code for a
+        reason that is nothing to do with a signature: before the fix this
+        call SUCCEEDED, leaving geper_results.json saying 'draft' while the
+        clinical report said 'approved'. After the fix the same call is
+        refused and both records stand.
+
+        The assertion is the invariant, not the mechanism: the files must
+        never end up retracted while the clinical record still says approved.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        try:
+            s.withdraw(approved, reason="Signed off in error.", actor="signatory@org-a.test")
+        except SignoffError:
+            pass  # refusing is one legitimate outcome; leaving a lie is not
+
+        file_status = _document(approved)["review_status"]
+        report_state = _report_row(clinical_conn, clinical["report_id"])[0]
+        assert not (file_status != "reviewed" and report_state == "approved"), (
+            f"the run's files now say {file_status!r} while its clinical report still says "
+            f"{report_state!r} -- a withdrawal is a deliberate safety act, and a record that "
+            "still says approved afterwards contradicts a clinician's explicit decision"
+        )
+
+    def test_it_is_refused_and_the_clinical_report_is_still_approved(
+        self, approved, clinical, clinical_conn, dao, creds
+    ):
+        """
+        THE DEFECT, AS A TEST. Before this fix `withdraw()` returned happily
+        here and the assertion that followed -- clinical report still
+        'approved' while the files say 'draft' -- was the contradiction.
+        """
+        with pytest.raises(SignoffError):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "approved"
+
+    def test_nothing_on_disk_changes(self, approved, dao, creds):
+        before = _directory_state(approved)
+        with pytest.raises(SignoffError):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        assert _directory_state(approved) == before, (
+            "the refusal must arrive BEFORE the manifest is removed, review_status is reset and "
+            "the three reports are regenerated -- a withdrawn sign-off standing in front of an "
+            "'approved' clinical record is the state this refusal exists to prevent"
+        )
+        assert _document(approved)["review_status"] == "reviewed"
+        assert os.path.exists(os.path.join(approved, s.MANIFEST_FILENAME))
+
+    def test_the_refusal_says_why_rather_than_inventing_a_transition(self, approved, dao, creds):
+        """
+        PINNED POSITIVELY, not merely by absence: the message must actually
+        SAY that an approval cannot be retracted and that the amendment path
+        is not yet available. An assertion that it lacks some wrong word
+        would pass against an empty string.
+        """
+        with pytest.raises(SignoffError) as exc:
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        assert "no way to retract an approval" in message
+        assert "AMENDMENT" in message
+        assert "NOT YET AVAILABLE" in message
+        assert "Nothing on disk has been changed." in message
+
+    def test_a_linked_withdraw_without_credentials_is_refused(self, approved, clinical, clinical_conn, dao):
+        """
+        Same rule as approve(): reading the clinical report's state is an
+        authenticated act, and "I could not look" must not read the same as
+        "there was nothing to look at".
+        """
+        before = _directory_state(approved)
+        with pytest.raises(SignoffError, match="authenticated person"):
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_data_access=dao,
+            )
+        assert _directory_state(approved) == before
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "approved"
+
+    def test_a_linked_run_whose_report_is_not_approved_is_withdrawn_normally(
+        self, run_dir, clinical, clinical_conn, dao, creds, monkeypatch
+    ):
+        """
+        NOT A BLANKET BAN ON WITHDRAWING LINKED RUNS. Where the clinical
+        record carries no approval there is nothing to contradict, so the
+        file-side retraction leaves the two records agreeing and proceeds.
+
+        Reached here the way it is reached in practice: a directory signed
+        off before it was linked, which the link file is then added to.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        s.approve(run_dir, "Dr. Typed In", "MCI-55555", "Some Lab")
+        with open(os.path.join(run_dir, s.CLINICAL_LINK_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "org_id": str(clinical["org_id"]),
+                    "interpretation_id": str(clinical["interpretation_id"]),
+                    "report_id": str(clinical["report_id"]),
+                },
+                fh,
+            )
+
+        result = s.withdraw(
+            run_dir,
+            reason="Signed off in error.",
+            actor="signatory@org-a.test",
+            clinical_credentials=creds,
+            clinical_data_access=dao,
+        )
+        assert result["clinical_report_state"] == "draft"
+        assert _document(run_dir)["review_status"] == "draft"
+        assert not os.path.exists(os.path.join(run_dir, s.MANIFEST_FILENAME))
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "draft"
+
+    def test_the_cli_hands_withdraw_the_clinical_credentials(self, tmp_path, monkeypatch):
+        """
+        The CLI half of fix 1: `withdraw` now takes the same clinical flags
+        approve/override take, and main() actually forwards them. Captured at
+        the call rather than asserted on the parser, because a flag that
+        parses and is then dropped is the bug this guards.
+        """
+        import review.cli as cli
+
+        monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", "password")
+        captured = {}
+
+        def _fake_withdraw(**kwargs):
+            captured.update(kwargs)
+            return {"ok": True}
+
+        monkeypatch.setattr(cli, "_withdraw", _fake_withdraw)
+        assert (
+            cli.main(
+                [
+                    "withdraw",
+                    "--output-dir",
+                    str(tmp_path),
+                    "--reason",
+                    "Signed off in error.",
+                    "--actor",
+                    "signatory@org-a.test",
+                    "--clinical-email",
+                    "signatory@org-a.test",
+                ]
+            )
+            == 0
+        )
+        assert captured["clinical_credentials"] == s.ClinicalCredentials(
+            email="signatory@org-a.test", password="password", totp_code=None
+        )
+
+    def test_an_unlinked_withdraw_is_unchanged(self, run_dir, monkeypatch):
+        """
+        THE CONTROL. No clinical_link.json: no credentials, no CLINICAL_DSN,
+        no database, and the withdrawal behaves exactly as it did before
+        w119 -- including carrying no clinical key in its result, because
+        "there is no clinical record" and "there is one and we did not look"
+        must not read the same.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        s.approve(run_dir, "Dr. Typed In", "MCI-55555", "Some Lab")
+
+        result = s.withdraw(run_dir, reason="Signed off in error.", actor="dr@lab.test")
+
+        assert result["previous_review_status"] == "reviewed"
+        assert "clinical_report_state" not in result
+        assert _document(run_dir)["review_status"] == "draft"
+        assert not os.path.exists(os.path.join(run_dir, s.MANIFEST_FILENAME))
+        assert os.path.exists(os.path.join(run_dir, s.FULL_PDF_FILENAME))
+
+
 class TestCliCredentials:
     """
     THE PASSWORD IS NEVER AN ARGV ELEMENT. It is named indirectly, by the

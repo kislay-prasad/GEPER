@@ -228,6 +228,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     withdraw_parser.add_argument(
         "--actor", required=True, help="Identifies who is withdrawing the sign-off, e.g. an email address."
     )
+    # w119: a withdrawal on a LINKED run has to read the clinical report's
+    # state before it touches a file, and reading it is an authenticated act --
+    # so this subcommand takes the same clinical credentials approve/override
+    # do. Absent on an unlinked run, exactly as there.
+    _add_clinical_arguments(withdraw_parser)
 
     return parser
 
@@ -321,7 +326,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             rows = _list_pending(search_root=args.search_root, show_all=args.show_all)
             _print_pending_table(rows)
         elif args.command == "withdraw":
-            result = _withdraw(output_dir=args.output_dir, reason=args.reason, actor=args.actor)
+            result = _withdraw(
+                output_dir=args.output_dir,
+                reason=args.reason,
+                actor=args.actor,
+                clinical_credentials=_clinical_credentials(args),
+            )
             print(f"Withdrawn: {result}")
         else:  # pragma: no cover - argparse's `required=True` on the subparsers already prevents this
             parser.error(f"Unknown command '{args.command}'.")

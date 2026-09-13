@@ -92,6 +92,15 @@ database, no import of the clinical package. See the "clinical link"
 section below for the ruling, the claim-kind reasoning and why the
 clinical writes come before the file writes.
 
+`withdraw` joined that set in w119 (2026-09-13) and is the one member of
+it whose clinical side is a REFUSAL rather than a write: the clinical
+layer has no operation that retracts an approval, and its schema forbids
+walking an approved report's state back, so a withdrawal on a run whose
+clinical report is already `approved`/`released` is refused before any
+file changes instead of leaving the record saying `approved` behind a
+retracted sign-off. See `withdraw`'s docstring for the evidence and for
+the linked-but-not-yet-approved case, which withdraws normally.
+
 THE GATING RULE (spelled out, not left implicit, since the whole point
 of extracting `require_reviewed` was to give future callers one place
 to find it): any code path that hands a run's data to a CONSUMER --
@@ -1708,7 +1717,13 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
 # ---------------------------------------------------------------------------
 
 
-def withdraw(output_dir: str, reason: str, actor: str) -> Dict[str, Any]:
+def withdraw(
+    output_dir: str,
+    reason: str,
+    actor: str,
+    clinical_credentials: Optional[ClinicalCredentials] = None,
+    clinical_data_access: Any = None,
+) -> Dict[str, Any]:
     """
     Explicitly retracts a standing sign-off: removes
     `geper_signoff_manifest.json` (see `_withdraw_manifest`) and, if
@@ -1744,6 +1759,65 @@ def withdraw(output_dir: str, reason: str, actor: str) -> Dict[str, Any]:
     Raises `SignoffError` if `output_dir` has no `geper_results.json`,
     or no manifest currently exists (nothing to withdraw -- this run
     was never approved, or a prior withdrawal already removed it).
+
+    LINKED RUNS (w119, 2026-09-13). `approve()` and `override()` already
+    read `clinical_link.json` and keep the clinical record in step; this
+    function did not, and it has no path to the clinical record in its
+    signature at all. On a LINKED run that meant a withdrawal removed the
+    manifest and reset `review_status` to `draft` WHILE THE CLINICAL REPORT
+    -- what an inspector, a LIMS and the amendment machinery read -- still
+    said `approved`. The human's ruling on why that is worse than the
+    routine divergence w117 closed: a withdrawal is a DELIBERATE SAFETY
+    ACT, so a record that still says `approved` afterwards contradicts a
+    clinician's explicit decision rather than merely lagging a change.
+
+    THE CLINICAL LAYER HAS NO OPERATION THAT RETRACTS AN APPROVAL, AND THIS
+    FUNCTION DOES NOT INVENT ONE. Established by reading the layer, not
+    assumed:
+
+      - `clinical/data_access.py` has no unapprove/retract/rescind method.
+        Its only public verbs past approval are `_release_report` (forward)
+        and `create_amendment` (a NEW report beside the signed one).
+      - `reports.approver_id`/`approved_at`/`content_hash` are write-once:
+        `enforce_content_immutability()` (clinical/schema.sql) raises on any
+        attempt to change them once set.
+      - The same trigger refuses to WALK STATE BACK: `IF OLD.state IN
+        ('approved','released') AND NEW.state IS DISTINCT FROM OLD.state`
+        is an exception unless it is exactly `approved -> released`. So
+        `approved -> draft` is not merely unimplemented, it is FORBIDDEN AT
+        THE DATABASE, deliberately (that comment names walking an approved
+        report back as "effectively withdrawn from the record" and refuses
+        it).
+      - `reviewer_claims.claim_type` is a closed CHECK -- 'accept',
+        'disagree', 'variant_added', 'variant_not_relevant',
+        'sole_signatory'. None of them means "the sign-off is retracted",
+        and writing one that does not mean that is how w117's own
+        `sole_signatory` ruling says a record becomes false.
+
+    SO THE CLINICAL SIDE OF A WITHDRAWAL ON AN APPROVED REPORT IS A
+    REFUSAL, which is exactly the shape `override()` already uses for the
+    same collision (see `_record_clinical_disagreement`): refuse rather
+    than half-do it, before a single byte on disk changes. The divergence
+    is closed by never creating it -- the files keep saying `reviewed`, the
+    clinical record keeps saying `approved`, and the two still agree --
+    rather than by a state transition the schema does not support. Giving
+    the clinical layer a real retraction is a schema and governance
+    question and is NOT decided here.
+
+    A LINKED RUN WHOSE CLINICAL REPORT IS NOT YET APPROVED (`draft`,
+    `under_review`, `returned`) IS WITHDRAWN NORMALLY: there is no approval
+    on the clinical side to contradict, so the file-side retraction leaves
+    the two records agreeing. That case is reachable -- `approve()` stops
+    at `under_review` when the signatory lacks the Approver role, and a
+    link file can be added to a directory that was signed off before it
+    existed.
+
+    Credentials are REQUIRED on a linked run and IGNORED on an unlinked
+    one, same rule and same reason as `approve()`: reading the report's
+    state is an authenticated act, and "I could not look" must not read the
+    same as "there was nothing to look at". `clinical_data_access` is the
+    same test/caller injection point `approve()` takes; when it is None a
+    linked run connects using CLINICAL_DSN.
     """
     results_path = _require_results(output_dir)
     manifest_path = _manifest_path(output_dir)
@@ -1752,6 +1826,38 @@ def withdraw(output_dir: str, reason: str, actor: str) -> Dict[str, Any]:
             f"No '{MANIFEST_FILENAME}' found in '{output_dir}' -- nothing to withdraw (this run has "
             f"never been through approve(), or a prior withdrawal already removed it)."
         )
+
+    # LINKED: before any file change, exactly like approve(). See the
+    # docstring for why the clinical side of a withdrawal is a refusal and
+    # not a write.
+    link = read_clinical_link(output_dir)
+    clinical_state: Optional[str] = None
+    if link is not None:
+        _org_id, _interpretation_id, report_id = _link_ids(link)
+        dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
+        report = dao.get_report(session, report_id)
+        if report is None:
+            raise SignoffError(
+                f"This run's clinical report {report_id} was not found in organisation {_org_id}. "
+                "Refusing to withdraw the sign-off on the files of a run whose clinical record "
+                "cannot be reached -- that would leave the clinical record standing behind a "
+                "withdrawal nobody can see. Nothing on disk has been changed."
+            )
+        clinical_state = report.get("state")
+        if clinical_state in ("approved", "released"):
+            raise SignoffError(
+                f"Refusing to withdraw: this run's clinical report {report_id} is already "
+                f"'{clinical_state}', and the clinical record has no way to retract an approval. "
+                "An approved report's approver, approval time and content_hash are write-once and "
+                "its state cannot be walked back -- the database itself refuses it, because a "
+                "report walked back from 'approved' would be withdrawn from the record, which ISO "
+                "15189 does not permit. Withdrawing only the files would therefore leave the "
+                "clinical record saying 'approved' behind a retracted sign-off, which is the "
+                "contradiction this refusal exists to prevent. An approved report is corrected by "
+                "AMENDMENT -- a second report on the same interpretation, recording the change as a "
+                "new document -- and that path is NOT YET AVAILABLE from this tool; raise it with "
+                "the clinical platform's owners. Nothing on disk has been changed."
+            )
 
     document = _load_document(results_path)
     previous_status = document.get("review_status")
@@ -1778,6 +1884,11 @@ def withdraw(output_dir: str, reason: str, actor: str) -> Dict[str, Any]:
             "reason": reason,
             "actor": actor,
             "timestamp": timestamp,
+            # Only on a linked run, and omitted rather than None on an
+            # unlinked one -- same rule as approve()'s manifest: "there is no
+            # clinical record" and "there is one and we did not look" must not
+            # read the same in an audit log.
+            **({"clinical_report_state": clinical_state} if link is not None else {}),
         },
     )
     logger.info(f"Withdrew sign-off for '{output_dir}' (was {previous_status!r}).")
@@ -1787,4 +1898,5 @@ def withdraw(output_dir: str, reason: str, actor: str) -> Dict[str, Any]:
         "reason": reason,
         "actor": actor,
         "timestamp": timestamp,
+        **({"clinical_report_state": clinical_state} if link is not None else {}),
     }

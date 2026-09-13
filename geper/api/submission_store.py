@@ -18,7 +18,7 @@ import uuid
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 logger = logging.getLogger("geper.api.submission_store")
 
@@ -177,6 +177,51 @@ class SubmissionStore:
         Raises:
             sqlite3.IntegrityError: Should not happen (caught by constraint)
         """
+        submission, _replayed = self.create_or_replay_submission(
+            org_id=org_id,
+            submission_key=submission_key,
+            vcf_path=vcf_path,
+            assembly=assembly,
+            sample_ref=sample_ref,
+            consent_ref=consent_ref,
+            order_id=order_id,
+            hpo_terms=hpo_terms,
+            qc_metrics=qc_metrics,
+            sample_id=sample_id,
+        )
+        return submission
+
+    def create_or_replay_submission(
+        self,
+        org_id: str,
+        submission_key: str,
+        vcf_path: str,
+        assembly: str,
+        sample_ref: str,
+        consent_ref: str,
+        order_id: Optional[str] = None,
+        hpo_terms: Optional[dict] = None,
+        qc_metrics: Optional[dict] = None,
+        sample_id: Optional[str] = None,
+    ) -> Tuple[Submission, bool]:
+        """Same as `create_submission`, but also says WHICH of the two things
+        happened: `(submission, replayed)` where `replayed` is True when this
+        org's `submission_key` was already on file and the returned Submission
+        is the one that already existed.
+
+        Why this exists (2026-09-13): `create_submission` returns the same
+        object either way, so `POST /interpretations` could not tell a new
+        submission from a replay and answered 202 to both -- including the
+        branch whose own comment said "return 200". The distinction is decided
+        HERE, inside the same connection and transaction as the existence
+        check and the INSERT, so it cannot disagree with what was actually
+        written; recomputing it in the caller with a second SELECT would race
+        two identical POSTs against each other.
+
+        The idempotency key is UNIQUE(org_id, submission_key): another
+        organisation sending the same key is NOT a replay, gets its own row,
+        and so comes back `replayed=False`.
+        """
         submission_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
@@ -193,21 +238,24 @@ class SubmissionStore:
             existing = cursor.fetchone()
             if existing:
                 existing_id, existing_order_id, status, interp_id, error_msg, existing_sample_id = existing
-                return Submission(
-                    id=existing_id,
-                    org_id=org_id,
-                    submission_key=submission_key,
-                    vcf_path=vcf_path,
-                    assembly=assembly,
-                    sample_ref=sample_ref,
-                    consent_ref=consent_ref,
-                    status=status,
-                    order_id=existing_order_id,
-                    sample_id=existing_sample_id,
-                    interpretation_id=interp_id,
-                    error_message=error_msg,
-                    hpo_terms=hpo_terms,
-                    qc_metrics=qc_metrics,
+                return (
+                    Submission(
+                        id=existing_id,
+                        org_id=org_id,
+                        submission_key=submission_key,
+                        vcf_path=vcf_path,
+                        assembly=assembly,
+                        sample_ref=sample_ref,
+                        consent_ref=consent_ref,
+                        status=status,
+                        order_id=existing_order_id,
+                        sample_id=existing_sample_id,
+                        interpretation_id=interp_id,
+                        error_message=error_msg,
+                        hpo_terms=hpo_terms,
+                        qc_metrics=qc_metrics,
+                    ),
+                    True,
                 )
 
             # Insert new submission
@@ -239,21 +287,24 @@ class SubmissionStore:
             )
             conn.commit()
 
-        return Submission(
-            id=submission_id,
-            org_id=org_id,
-            submission_key=submission_key,
-            vcf_path=vcf_path,
-            assembly=assembly,
-            sample_ref=sample_ref,
-            consent_ref=consent_ref,
-            status="queued",
-            order_id=order_id,
-            sample_id=sample_id,
-            hpo_terms=hpo_terms,
-            qc_metrics=qc_metrics,
-            created_at=now,
-            updated_at=now,
+        return (
+            Submission(
+                id=submission_id,
+                org_id=org_id,
+                submission_key=submission_key,
+                vcf_path=vcf_path,
+                assembly=assembly,
+                sample_ref=sample_ref,
+                consent_ref=consent_ref,
+                status="queued",
+                order_id=order_id,
+                sample_id=sample_id,
+                hpo_terms=hpo_terms,
+                qc_metrics=qc_metrics,
+                created_at=now,
+                updated_at=now,
+            ),
+            False,
         )
 
     def get_submission(self, submission_id: str) -> Optional[Submission]:

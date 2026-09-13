@@ -67,7 +67,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -485,6 +485,7 @@ def get_structure_annotation(
 )
 def post_interpretation(
     req: InterpretationSubmissionRequest,
+    response: Response,
     store: SubmissionStore = Depends(get_submission_store),
     org_id: uuid.UUID = Depends(_require_organisation),
 ) -> InterpretationSubmissionResponse:
@@ -492,12 +493,30 @@ def post_interpretation(
     Submit a VCF for interpretation by the Bij AI variant-interpretation component (GEPER).
 
     Returns:
-    - 202 if new submission created (queued)
-    - 200 if existing complete submission (idempotency)
+    - 202 when this request CREATED the submission (queued for the worker)
+    - 200 when this request REPLAYED one: this organisation's `submission_key`
+      was already on file, and the body is the submission that already exists
 
-    Client should not branch on status code — both responses include id and status.
+    Fixed 2026-09-13 (wave 117). Both branches used to answer 202 -- the
+    "existing complete submission" branch below set no status code of its own,
+    so the route's `status_code=202` stood -- and this docstring told clients
+    "should not branch on status code", which conceded the distinction had
+    been collapsed rather than intending it. 202 Accepted means "I have taken
+    this and not yet acted on it"; answering it to a submission that is
+    already complete states something false about what the server just did.
+    A client that retries after a timeout can now learn whether its first
+    attempt landed, without a second GET.
+
+    The body shape is unchanged: both branches return the same
+    `InterpretationSubmissionResponse`, and `status` remains the field that
+    says where the run has got to. A client that reads only the body behaves
+    exactly as before.
+
+    Not a replay: another organisation sending the same `submission_key`. The
+    idempotency key is UNIQUE(org_id, submission_key), so that request creates
+    its own submission and gets its own 202.
     """
-    submission = store.create_submission(
+    submission, replayed = store.create_or_replay_submission(
         org_id=str(org_id),
         order_id=str(req.order_id),
         sample_id=str(req.sample_id),
@@ -510,15 +529,14 @@ def post_interpretation(
         qc_metrics=req.qc_metrics,
     )
 
-    if submission.status == "complete":
-        # Existing complete submission — return 200
-        return InterpretationSubmissionResponse(
-            id=submission.id,
-            status=submission.status,
-            interpretation_id=submission.interpretation_id,
-        )
+    if replayed:
+        # Already on file for this organisation: nothing was accepted here, so
+        # 200, not 202. Decided by the store inside the same transaction as the
+        # existence check, not by re-reading `submission.status` -- a replayed
+        # submission that is still `queued` or `running` is just as much a
+        # replay as a `complete` one, which the old status-based branch missed.
+        response.status_code = 200
 
-    # New or in-progress submission — return 202
     return InterpretationSubmissionResponse(
         id=submission.id,
         status=submission.status,

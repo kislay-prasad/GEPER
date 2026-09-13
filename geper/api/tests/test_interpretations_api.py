@@ -211,7 +211,7 @@ class TestPostInterpretations:
             "/interpretations",
             json=_body(submission_key="key-3", vcf_path="/path/2", sample_ref="sample-2", consent_ref="consent-2"),
         )
-        assert response2.status_code == 202
+        assert response2.status_code == 200
         assert response2.json()["id"] == id1
 
     def test_idempotency_is_per_organisation(self, client, client_b, store):
@@ -233,11 +233,88 @@ class TestPostInterpretations:
 
         response = client.post("/interpretations", json=_body(submission_key="key-4"))
 
-        assert response.status_code == 202
+        assert response.status_code == 200
         data = response.json()
         assert data["id"] == sub.id
         assert data["status"] == "complete"
         assert data["interpretation_id"] == "interp-1"
+
+
+class TestReplayIsAnsweredWith200NotAnother202:
+    """Wave 117, 2026-09-13. POST answered 202 to EVERY submission, replays
+    included, and main.py's own docstring told clients not to branch on the
+    status code -- which conceded the distinction had been collapsed rather
+    than intending it. 202 Accepted asserts "taken, not yet acted on"; saying
+    that about a submission the server already holds (possibly already
+    complete) is false about what the server just did.
+
+    The body shape does not change: both branches return the same model, and
+    `status` is still where the run's progress is read. Only the code, and
+    what it means, moves.
+    """
+
+    def test_the_same_submission_twice_is_202_then_200(self, client):
+        """The behaviour in one test: first POST creates (202), an identical
+        second POST replays (200)."""
+        first = client.post("/interpretations", json=_body(submission_key="replayed-key"))
+        second = client.post("/interpretations", json=_body(submission_key="replayed-key"))
+
+        assert first.status_code == 202
+        assert second.status_code == 200
+
+    def test_the_replay_names_the_same_submission(self, client):
+        """CONTROL: 200 must not mean "some other submission". The replay is
+        the one that already exists -- same id, and the store holds one row."""
+        first = client.post("/interpretations", json=_body(submission_key="replayed-key"))
+        second = client.post(
+            "/interpretations",
+            json=_body(submission_key="replayed-key", vcf_path="/a/different/path"),
+        )
+
+        assert second.json()["id"] == first.json()["id"]
+        assert set(second.json()) == set(first.json())
+
+    def test_a_genuinely_new_submission_is_still_202(self, client):
+        """CONTROL: the 200 is not swallowing the create path. A second,
+        DIFFERENT key after a replay is still an acceptance."""
+        client.post("/interpretations", json=_body(submission_key="first-key"))
+        replay = client.post("/interpretations", json=_body(submission_key="first-key"))
+        fresh = client.post("/interpretations", json=_body(submission_key="second-key"))
+
+        assert replay.status_code == 200
+        assert fresh.status_code == 202
+        assert fresh.json()["id"] != replay.json()["id"]
+
+    def test_another_organisation_sending_the_same_key_is_not_a_replay(self, client, client_b, store):
+        """CONTROL, unchanged behaviour: the idempotency key is
+        UNIQUE(org_id, submission_key). Org B is refused the replay -- it does
+        not reach org A's submission, it gets its own new one and its own 202.
+        A 200 here would be a cross-tenant leak, not idempotency."""
+        a_first = client.post("/interpretations", json=_body(submission_key="shared-key"))
+        b_first = client_b.post("/interpretations", json=_body(submission_key="shared-key"))
+
+        assert a_first.status_code == 202
+        assert b_first.status_code == 202, "another organisation's key is a new submission, not a replay"
+        assert b_first.json()["id"] != a_first.json()["id"]
+        assert store.get_submission(b_first.json()["id"]).org_id == str(ORG_B)
+
+        # And each organisation's own second POST is a replay of its own row.
+        assert client.post("/interpretations", json=_body(submission_key="shared-key")).status_code == 200
+        assert (
+            client_b.post("/interpretations", json=_body(submission_key="shared-key")).json()["id"]
+            == (b_first.json()["id"])
+        )
+
+    def test_a_replay_of_a_running_submission_is_also_200(self, client, store):
+        """The old branch keyed on `status == "complete"`, so even it would
+        have answered 202 to a replay that was merely running. A replay is a
+        replay at every status."""
+        first = client.post("/interpretations", json=_body(submission_key="running-key"))
+        store.update_status(first.json()["id"], "running")
+
+        second = client.post("/interpretations", json=_body(submission_key="running-key"))
+        assert second.status_code == 200
+        assert second.json()["status"] == "running"
 
     @pytest.mark.parametrize("missing", ["submission_key", "vcf_path", "consent_ref", "order_id", "sample_id"])
     def test_post_requires_field(self, client, missing):

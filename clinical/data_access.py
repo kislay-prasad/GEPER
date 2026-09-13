@@ -186,6 +186,23 @@ class SessionExpired(AuthenticationError):
     """Session is terminated, past its absolute cap, or idle too long."""
 
 
+class BrokenRevisionRecordError(Exception):
+    """
+    get_report_revision: the amendment / re-analysis records for this report
+    cannot be read into a coherent statement about it.
+
+    HUMAN RULING R7 (2026-09-13): "a broken or unreadable revision record is
+    an ERROR. Fail closed. No marker text, no silent omission."
+
+    Its own class rather than a bare ValueError because the two ways the
+    banners can fail a reader are OPPOSITE mistakes and a caller may want to
+    tell them apart: refusing to produce the document (this) versus producing
+    a document that reads as an original when it is not (which is what a
+    marker string or an omitted block would do). Any caller that catches this
+    must NOT fall back to rendering the report.
+    """
+
+
 class VcfChangedError(ValueError):
     """
     record_pipeline_result: the VCF on disk no longer hashes to the value the
@@ -5399,6 +5416,293 @@ class DataAccess:
         )
 
         return amendment_report_id, notification_id
+
+    # ─── w118: the reader that makes the revision banners reachable ─────────
+    #
+    # The banner WORDING shipped 2026-09-11 and the rendering merged with it
+    # (geper d28da0a), but NOTHING READ THESE TABLES INTO A DOCUMENT: an
+    # amended report, the stale original it replaced, and a re-analysis
+    # reissue all rendered byte-for-byte like a first-ever report, because
+    # `document["report_revision"]` was only ever filled in by hand in tests.
+    # This method is that missing read. It returns FACTS ONLY, in the shape
+    # `geper/report/clinical_report_builder.py::normalize_report_revision`
+    # consumes -- no banner text is produced here and this module imports
+    # nothing from the renderer, so the signed-off wording keeps living in
+    # exactly one place.
+
+    def _issued_moment(
+        self, org_id: uuid.UUID, report_id: uuid.UUID, approved_at: Any
+    ) -> tuple[Optional[Any], Optional[str]]:
+        """
+        HUMAN RULINGS R2 and R4: when a report was ISSUED, and on what basis.
+
+        Returns (timestamp, 'released') using the EARLIEST release event --
+        "originally issued on" is the day the report first went out, not the
+        day a second consumer asked for a copy. Falls back to (approved_at,
+        'approved') for a report approved but never released, and (None, None)
+        for one that is neither.
+
+        The basis travels WITH the timestamp, as one value, because the whole
+        point of R2 is that the reader must never be handed the second kind of
+        date under the first kind of sentence.
+        """
+        row = self._query_one(
+            "SELECT MIN(released_at) FROM release_events WHERE org_id = %s AND report_id = %s",
+            (org_id, report_id),
+        )
+        released_at = row[0] if row else None
+        if released_at is not None:
+            return released_at, "released"
+        if approved_at is not None:
+            return approved_at, "approved"
+        return None, None
+
+    def _signing_identity_text(self, session: Session, user_id: uuid.UUID) -> str:
+        """R1/R10's three fields, as the one string a banner prints for a person."""
+        identity = self.get_signing_identity(session, user_id)
+        return f"{identity['full_name']} ({identity['registration_number']}), {identity['hospital']}"
+
+    @auditable(
+        action="report_revision_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action; the amendment and re-analysis it reads are already audited",
+    )
+    @transactional
+    def get_report_revision(self, session: Session, report_id: uuid.UUID) -> dict[str, Any]:
+        """
+        Every revision fact this report's document must state, read from the
+        clinical database: does it amend something, has it been superseded,
+        is it a re-analysis, has it been re-analysed since.
+
+        Returns the raw block for `normalize_report_revision` -- `{}` when the
+        report is in none of the four states, which renders no banner at all.
+        Never `None`: this method HAS looked, so "nothing to say" is a
+        positive answer, not the unknown that `None` means to the renderer.
+
+        Raises NotFoundError for an unknown or cross-org report, and
+        BrokenRevisionRecordError (R7) when a record exists but cannot be read
+        into a true sentence.
+        """
+        report = self._query_one(
+            "SELECT interpretation_id, created_at, approved_at FROM reports WHERE org_id = %s AND id = %s",
+            (session.org_id, report_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        interpretation_id, report_created_at, report_approved_at = report
+
+        revision: dict[str, Any] = {}
+        amends = self._read_amends(session, report_id)
+        if amends:
+            revision["amends"] = amends
+        superseded_by = self._read_superseded_by(session, report_id)
+        if superseded_by:
+            revision["superseded_by"] = superseded_by
+        reanalysis_of = self._read_reanalysis_of(session, interpretation_id)
+        if reanalysis_of:
+            revision["reanalysis_of"] = reanalysis_of
+        reanalysed_since = self._read_reanalysed_since(
+            session, report_id, interpretation_id, report_created_at, report_approved_at
+        )
+        if reanalysed_since:
+            revision["reanalysed_since"] = reanalysed_since
+        return revision
+
+    def _read_amends(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Banner 1. This report IS an amendment of something."""
+        rows = self._query(
+            "SELECT id, original_report_id, reason, created_at, created_by FROM amendments "
+            "WHERE org_id = %s AND amendment_report_id = %s",
+            (session.org_id, report_id),
+        )
+        if not rows:
+            return None
+        if len(rows) > 1:
+            # One report is the amendment OF one original. Two rows claiming
+            # it means the banner would have to pick an original to name, and
+            # picking is guessing. R7: refuse.
+            raise BrokenRevisionRecordError(
+                f"Report {report_id} is named as the amendment report by {len(rows)} amendments rows; "
+                "it cannot state which report it amends."
+            )
+        _amendment_id, original_report_id, reason, created_at, created_by = rows[0]
+        if not (reason or "").strip():
+            raise BrokenRevisionRecordError(
+                f"The amendment record for report {report_id} carries no reason (ISO 15189 7.4.1.8 "
+                "requires it to be retrievable); refusing to state the amendment without it."
+            )
+        original = self._query_one(
+            "SELECT approved_at FROM reports WHERE org_id = %s AND id = %s",
+            (session.org_id, original_report_id),
+        )
+        if original is None:
+            raise BrokenRevisionRecordError(
+                f"The amendment record for report {report_id} names original report {original_report_id}, "
+                "which does not exist in this organisation."
+            )
+        original_issued_at, basis = self._issued_moment(session.org_id, original_report_id, original[0])
+        if original_issued_at is None:
+            # create_amendment refuses an original that is not approved or
+            # released, so an original with neither date is a record that
+            # contradicts the method that wrote it.
+            raise BrokenRevisionRecordError(
+                f"Original report {original_report_id} was amended but carries neither a release nor an "
+                "approval; there is no date on which it was issued."
+            )
+        return {
+            "original_report_id": original_report_id,
+            "original_issued_at": original_issued_at,
+            "original_issued_basis": basis,
+            "reason": reason,
+            # R1/R10: the person, by the three fields a report may print.
+            "amended_by": self._signing_identity_text(session, created_by),
+            # The amendment ACT, not an issue date -- amendments.created_at is
+            # exactly "when this report was amended", so no basis applies.
+            "amended_at": created_at,
+        }
+
+    def _read_superseded_by(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """
+        Banner 2. Something amended THIS report.
+
+        R3: a DRAFT amendment does not supersede anything. An amendment that
+        has not been approved is work in progress -- telling a clinician not
+        to act on the report they hold, in favour of a document that may never
+        be approved and cannot be obtained, is worse than saying nothing. The
+        state filter here IS that ruling.
+
+        R5: the LATEST approved amendment is the one named. Its reason is
+        printed only when it is also the amendment that superseded THIS
+        document (nothing in front of it in the chain); otherwise its reason
+        explains a change from a document this reader has never seen, so the
+        chain depth goes out instead.
+        """
+        rows = self._query(
+            "SELECT a.id, a.amendment_report_id, a.reason, a.supersedes_amendment_id, a.created_at, "
+            "       r.state, r.approved_at, r.tombstoned_at "
+            "FROM amendments a JOIN reports r ON r.org_id = a.org_id AND r.id = a.amendment_report_id "
+            "WHERE a.org_id = %s AND a.original_report_id = %s "
+            "ORDER BY a.created_at, a.id",
+            (session.org_id, report_id),
+        )
+        if not rows:
+            return None
+        supersedes_by_id = {row[0]: row[3] for row in rows}
+        issued = [row for row in rows if row[5] in ("approved", "released")]
+        if not issued:
+            return None
+        latest = issued[-1]
+        amendment_id, amendment_report_id, reason, _supersedes, _created_at, _state, approved_at, tombstoned_at = latest
+
+        amended_at, basis = self._issued_moment(session.org_id, amendment_report_id, approved_at)
+        if amended_at is None:
+            raise BrokenRevisionRecordError(
+                f"Amendment report {amendment_report_id} is in an issued state but carries neither a "
+                "release nor an approval; there is no date on which the amended report was issued."
+            )
+
+        # How many amendment steps stand between this document and the one
+        # being named. 1 means the named amendment is the one that superseded
+        # THIS document, so its reason describes a change from what the reader
+        # is holding.
+        depth = 1
+        walker = supersedes_by_id.get(amendment_id)
+        seen = {amendment_id}
+        while walker is not None:
+            if walker in seen:
+                raise BrokenRevisionRecordError(
+                    f"The amendment chain for report {report_id} contains a cycle at {walker}."
+                )
+            seen.add(walker)
+            if walker not in supersedes_by_id:
+                raise BrokenRevisionRecordError(
+                    f"Amendment {walker} is superseded in the chain for report {report_id} but is not an "
+                    "amendment of that report."
+                )
+            depth += 1
+            walker = supersedes_by_id.get(walker)
+
+        block: dict[str, Any] = {
+            "amendment_report_id": amendment_report_id,
+            "amended_at": amended_at,
+            "amended_at_basis": basis,
+            # R8: still superseded, but the reader is told the amended report
+            # is gone rather than sent to fetch it.
+            "retained": tombstoned_at is None,
+        }
+        if depth == 1:
+            if not (reason or "").strip():
+                raise BrokenRevisionRecordError(
+                    f"The amendment superseding report {report_id} carries no reason; refusing to state "
+                    "the supersession without it."
+                )
+            block["reason"] = reason
+        else:
+            block["amendment_count"] = depth
+        return block
+
+    def _read_reanalysis_of(self, session: Session, interpretation_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """Banner 3. This report's interpretation branched from another one (spec 15.3)."""
+        row = self._query_one(
+            "SELECT parent_interpretation_id FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, interpretation_id),
+        )
+        if row is None:
+            raise BrokenRevisionRecordError(
+                f"Report names interpretation {interpretation_id}, which does not exist in this organisation."
+            )
+        parent_id = row[0]
+        if parent_id is None:
+            return None
+        parent = self._query_one(
+            "SELECT created_at FROM interpretations WHERE org_id = %s AND id = %s",
+            (session.org_id, parent_id),
+        )
+        if parent is None:
+            raise BrokenRevisionRecordError(
+                f"Interpretation {interpretation_id} names parent {parent_id}, which does not exist in "
+                "this organisation; the report cannot say what it is a re-analysis of."
+            )
+        return {"parent_interpretation_id": parent_id, "parent_interpreted_at": parent[0]}
+
+    def _read_reanalysed_since(
+        self,
+        session: Session,
+        report_id: uuid.UUID,
+        interpretation_id: uuid.UUID,
+        report_created_at: Any,
+        report_approved_at: Any,
+    ) -> List[dict[str, Any]]:
+        """
+        Banner 4. Re-analyses that exist SINCE this report was issued.
+
+        HUMAN RULING R6, both halves:
+
+          DIRECT children only -- interpretations naming this report's
+          interpretation as their parent. A grandchild is a re-analysis of a
+          re-analysis; it branched from a document this reader never held.
+
+          Created AFTER this report -- anything earlier is not "since". A
+          sibling branch that predates this report would make the word "since"
+          a lie, and the banner is entirely built on that word.
+
+        The cutoff is this report's issue moment (R2's basis again), falling
+        back to its creation for a report that was never approved: an
+        unissued report has no "since" of its own, and its creation is the
+        earliest moment anything could be said to come after it.
+        """
+        cutoff, _basis = self._issued_moment(session.org_id, report_id, report_approved_at)
+        if cutoff is None:
+            cutoff = report_created_at
+        rows = self._query(
+            "SELECT id, created_at FROM interpretations "
+            "WHERE org_id = %s AND parent_interpretation_id = %s AND created_at > %s "
+            "ORDER BY created_at, id",
+            (session.org_id, interpretation_id, cutoff),
+        )
+        return [{"interpretation_id": row[0], "created_at": row[1]} for row in rows]
 
     @auditable(
         action="notification_read_receipt_recorded",

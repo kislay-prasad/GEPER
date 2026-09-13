@@ -130,7 +130,15 @@ class TestRenderClinicalPdf:
         # clause, so it still survives the 150-character footer
         # truncation unchanged. Noted here rather than left silent, so
         # this unchanged assertion doesn't read as having been missed.
-        assert "in-development bioinformatics pipeline" in text
+        #
+        # UPDATED again (EJ-01 alignment, human ruling "Option 1"): the
+        # default is now component_identity.RESEARCH_USE_DISCLAIMER, which is
+        # GEPER's text byte for byte, so "in-development bioinformatics
+        # pipeline" is gone. Asserted here: exactly the first 150 characters
+        # the footer draws, taken from the constant itself.
+        from pipeline.reporting.component_identity import RESEARCH_USE_DISCLAIMER
+
+        assert RESEARCH_USE_DISCLAIMER[:150] in text
 
     def test_custom_disclaimer_used_when_provided(self, tmp_path):
         from pypdf import PdfReader

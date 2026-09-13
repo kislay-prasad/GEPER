@@ -2668,9 +2668,20 @@ class DataAccess:
     )
     @transactional
     def get_report(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
-        """Retrieve a report by ID, within the session's organisation."""
+        """
+        Retrieve a report by ID, within the session's organisation.
+
+        `state` is returned (added w117, 2026-09-13) because a caller outside
+        this module has to be able to ASK what state a report is in without
+        being given SQL. review/signoff.py needs it to refuse an override of
+        an already-approved report and point at the amendment path instead;
+        without it, that refusal could only be written by reaching past this
+        class. Reading state here is not a state FILTER -- every report is
+        still returned in every state, which is the property
+        test_report_state_is_a_control.py guards.
+        """
         row = self._query_one(
-            "SELECT id, interpretation_id, created_at, created_by FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT id, interpretation_id, created_at, created_by, state FROM reports WHERE id = %s AND org_id = %s",
             (report_id, session.org_id),
         )
         if row is None:
@@ -2680,6 +2691,7 @@ class DataAccess:
             "interpretation_id": row[1],
             "created_at": row[2],
             "created_by": row[3],
+            "state": row[4],
         }
 
     # ── Phase 4c: Document discovery (all interpretations, including orphaned) ─────
@@ -4432,6 +4444,147 @@ class DataAccess:
         """
         self._validate_claim_inputs(session, interpretation_id, report_id, actor_id, reason)
         return self._insert_claim(session, interpretation_id, report_id, actor_id, reason, claim_type="accept")
+
+    @auditable(
+        action="record_sole_signatory",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=True,
+        reason="the one signatory records their own concurrence, as a single signature and not as a second one",
+    )
+    @transactional
+    def record_sole_signatory_claim(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        report_id: Any,
+        reason: str,
+    ) -> Any:
+        """
+        Record a 'sole_signatory' claim: THE ONE PERSON SIGNING THIS REPORT
+        concurs with the interpretation.
+
+        WHY THIS IS NOT AN 'accept' (human ruling, 2026-09-13, w117). The
+        product signs off with one person. _record_accept above documents an
+        'accept' as an INDEPENDENT CONCURRENCE BY A SECOND CLINICIAN, so the
+        sole signatory writing one would write a row the schema itself defines
+        as false: the record would assert two-clinician review where one
+        person acted. A distinct kind makes the record true at the level
+        things query it -- an audit asking which reports had independent
+        concurrence answers correctly from claim_type alone, and a site that
+        later adopts two-person sign-off can see which historical reports were
+        single-signed.
+
+        PUBLIC, unlike the four spec-13.2 recorders, and the difference is not
+        cosmetic. This is the method a delivery path (review/signoff.py) calls,
+        and a delivery path reaching into private methods is how enforcement
+        gets bypassed by accident. There is no separate actor_id: THE SIGNATORY
+        IS THE SESSION. Letting the two diverge here would let one identity
+        record another person's concurrence, which is exactly the falsehood
+        this claim kind exists to stop.
+
+        Interpretation-scoped, so variant_key and classification both stay
+        NULL, exactly like 'accept'. `reason` is required, exactly like every
+        other claim: concurrence without stated grounds is not evidence.
+
+        CHANGES NO ENFORCEMENT. It satisfies submit_for_review's
+        at-least-one-claim precondition the way any claim does, and
+        _approve_report's Approver checks are untouched. Whether this platform
+        should require two signatures is a separate, carded decision.
+        """
+        self._validate_claim_inputs(session, interpretation_id, report_id, session.user_id, reason)
+        return self._insert_claim(
+            session,
+            interpretation_id,
+            report_id,
+            session.user_id,
+            reason,
+            claim_type="sole_signatory",
+        )
+
+    @auditable(
+        action="record_disagreement",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=False,
+        reason=(
+            "declared non-auditable HERE because the act IS audited, once, by _record_disagreement, "
+            "which this method does nothing but delegate to. A second decorator on the wrapper would "
+            "write two audit entries for one clinical act, which is worse than none: it would inflate "
+            "the count of recorded disagreements."
+        ),
+    )
+    def record_disagreement_claim(
+        self,
+        session: Session,
+        interpretation_id: Any,
+        report_id: Any,
+        variant_key: str,
+        new_classification: str,
+        reason: str,
+    ) -> Any:
+        """
+        PUBLIC wrapper over _record_disagreement, with the actor fixed to the
+        session's own user.
+
+        Exists so review/signoff.py -- a delivery path -- never has to reach
+        into a private method to record the disagreement an override is. A
+        caller outside this module cannot see the private recorders' contracts
+        and would be one refactor away from silently bypassing them.
+
+        Deliberately NOT separately @auditable: the method it delegates to
+        already writes the 'record_disagreement' audit entry, and a second
+        decorator here would record one clinical act twice. Nesting is safe --
+        @transactional passes through an open transaction (see its docstring).
+
+        No actor_id parameter, for the same reason record_sole_signatory_claim
+        has none: the person acting is the authenticated person.
+        """
+        return self._record_disagreement(
+            session,
+            interpretation_id=interpretation_id,
+            report_id=report_id,
+            variant_key=variant_key,
+            actor_id=session.user_id,
+            new_classification=new_classification,
+            reason=reason,
+        )
+
+    @auditable(
+        action="report_approved",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason=(
+            "declared non-auditable HERE because the approval IS audited, once, by _approve_report, "
+            "which this method does nothing but delegate to with actor_id fixed to the session's own "
+            "user. A second decorator would record one approval twice -- and an approval counted "
+            "twice in the audit log is a worse record than one counted once."
+        ),
+    )
+    def approve_report(self, session: Session, report_id: uuid.UUID) -> None:
+        """
+        PUBLIC wrapper over _approve_report, recording the SESSION'S OWN USER
+        as the approver.
+
+        The one-person sign-off path needs an approval it can call without
+        touching a private method, and without being handed the ability to
+        name somebody else as approver. Fixing actor_id to session.user_id is
+        that: the person authenticated is the person recorded.
+
+        ENFORCEMENT IS UNCHANGED AND IS NOT RE-IMPLEMENTED HERE. _approve_report
+        still requires the Approver role on the session AND on the recorded
+        approver, still refuses anything but 'under_review', and still writes
+        approver_id/approved_at/content_hash together. Because the approver is
+        the session's user, its two role checks collapse onto one identity --
+        that is a consequence of one person signing, not a relaxation: an
+        actor without the Approver role is refused exactly as before.
+
+        Not separately @auditable, for the same reason as
+        record_disagreement_claim: _approve_report already writes the
+        'report_approved' entry.
+        """
+        return self._approve_report(session, report_id, actor_id=session.user_id)
 
     @auditable(
         action="record_disagreement",

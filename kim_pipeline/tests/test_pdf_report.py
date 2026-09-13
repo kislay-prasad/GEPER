@@ -18,6 +18,19 @@ from pipeline.reporting.clinical_sections import (
 )
 
 
+def _default_disclaimer():
+    from pipeline.reporting.component_identity import RESEARCH_USE_DISCLAIMER
+
+    return RESEARCH_USE_DISCLAIMER
+
+
+def _flatten(text):
+    """Collapse the line breaks a wrapped PDF footer introduces, so a
+    multi-line rendering can be compared against the single-line source
+    string. Whitespace only -- no words are altered."""
+    return " ".join(text.split())
+
+
 def _minimal_kwargs():
     patient = normalize_patient_metadata(None)
     qc_rows = qc_status_summary({"q30_fraction": 0.9}, {"mean_depth": 30, "pct_mapped": 98})
@@ -133,12 +146,31 @@ class TestRenderClinicalPdf:
         #
         # UPDATED again (EJ-01 alignment, human ruling "Option 1"): the
         # default is now component_identity.RESEARCH_USE_DISCLAIMER, which is
-        # GEPER's text byte for byte, so "in-development bioinformatics
-        # pipeline" is gone. Asserted here: exactly the first 150 characters
-        # the footer draws, taken from the constant itself.
+        # GEPER's text byte for byte. The footer no longer truncates it at
+        # all -- see TestFooterDisclaimerIsWhole below, which owns that claim
+        # in full. This test keeps its narrower job: the DEFAULT is used when
+        # no lab_disclaimer is passed.
         from pipeline.reporting.component_identity import RESEARCH_USE_DISCLAIMER
 
-        assert RESEARCH_USE_DISCLAIMER[:150] in text
+        assert _flatten(RESEARCH_USE_DISCLAIMER) in _flatten(text)
+
+    def test_footer_disclaimer_is_not_cut_off_mid_word(self, tmp_path):
+        """The regression this class exists for, stated as a single check:
+        the footer used to draw `lab_disclaimer[:150]`, which ended the
+        sentence at "...machine-learning predict"."""
+        from pypdf import PdfReader
+
+        from pipeline.reporting.component_identity import RESEARCH_USE_DISCLAIMER
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        text = _flatten("".join(p.extract_text() for p in PdfReader(out).pages))
+        truncated = _flatten(RESEARCH_USE_DISCLAIMER[:150])  # "...machine-learning predict"
+        assert truncated.endswith("machine-learning predict"), "the 150-char cut point moved"
+        assert not text.split(truncated)[1].startswith(" Reference genome"), (
+            "the footer disclaimer is still cut off at 150 characters"
+        )
+        assert "machine-learning predictors." in text
 
     def test_custom_disclaimer_used_when_provided(self, tmp_path):
         from pypdf import PdfReader
@@ -239,3 +271,134 @@ class TestRenderClinicalPdf:
             assert False, "expected ReportLabUnavailableError"
         except ReportLabUnavailableError:
             pass
+
+
+# ── the footer prints the WHOLE disclaimer, on every page ────────────────────
+#
+# REGRESSION THIS CLASS EXISTS FOR: the footer drew `lab_disclaimer[:150]` on
+# one line. That truncated nothing while Kim's own shorter text was in place,
+# but once Kim adopted GEPER's ratified text (EJ-01, human ruling "Option 1")
+# it cut the sentence mid-word at "...machine-learning predict" -- losing the
+# operative clause the human ruled the point of the disclaimer: "not a
+# substitute for professional clinical genetic interpretation, diagnosis, or
+# advice". A disclaimer that stops before its own operative sentence is worse
+# than the shorter text it replaced, so the footer now wraps instead.
+
+
+def _render_and_capture_frame_bottom(pdf_path, **kwargs):
+    """Render for real and report the frame bottom the document was built
+    with, captured from the live footer callback. That value IS the layout
+    contract: ReportLab lays every content flowable out above the frame
+    bottom, so `footer top <= frame bottom` means no collision.
+
+    (Read from the build rather than from pypdf on purpose: pypdf's per-run
+    text matrices do not compose reliably for platypus content -- two
+    consecutive lines of one paragraph report baselines 123pt apart -- so
+    extracted coordinates cannot prove or disprove an overlap here.)"""
+    import pipeline.reporting.pdf_report as pdf_module
+
+    seen = []
+    original = pdf_module._draw_footer_without_page_number
+
+    def spy(canvas, doc_, *args):
+        seen.append(doc_.bottomMargin)
+        return original(canvas, doc_, *args)
+
+    pdf_module._draw_footer_without_page_number = spy
+    try:
+        pdf_module.render_clinical_pdf(pdf_path, **kwargs)
+    finally:
+        pdf_module._draw_footer_without_page_number = original
+    assert seen, "the footer callback never ran"
+    assert len(set(seen)) == 1, f"frame bottom differed between pages: {sorted(set(seen))}"
+    return seen[0]
+
+
+class TestFooterDisclaimerIsWhole:
+    def test_every_page_footer_carries_the_disclaimer_verbatim_to_its_last_word(self, tmp_path):
+        from pypdf import PdfReader
+
+        from pipeline.reporting.component_identity import RESEARCH_USE_DISCLAIMER
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        pages = PdfReader(out).pages
+        assert len(pages) > 1, "this fixture is expected to span more than one page"
+        for n, page in enumerate(pages, start=1):
+            flat = _flatten(page.extract_text())
+            assert RESEARCH_USE_DISCLAIMER in flat, f"page {n} lost part of the disclaimer"
+            # The operative clause, named explicitly so a future truncation
+            # cannot pass by keeping merely "most" of the text.
+            assert (
+                "It is not a substitute for professional clinical genetic interpretation, "
+                "diagnosis, or advice." in flat
+            ), f"page {n} is missing the operative closing sentence"
+
+    def test_a_custom_disclaimer_of_any_length_is_also_printed_whole(self, tmp_path):
+        from pypdf import PdfReader
+
+        custom = (
+            "CUSTOM LAB DISCLAIMER. " + "This sentence exists only to make the text long enough "
+            "to need several footer lines, so the wrap is exercised by a caller-supplied string "
+            "and not only by the default constant. " * 2 + "END OF CUSTOM DISCLAIMER."
+        )
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", lab_disclaimer=custom, **_minimal_kwargs())
+        flat = _flatten(PdfReader(out).pages[0].extract_text())
+        assert _flatten(custom) in flat
+
+    # ── controls: the rest of the footer, the layout, and the page count ──
+
+    def test_the_rest_of_the_footer_still_renders_on_every_page(self, tmp_path):
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        pages = PdfReader(out).pages
+        n = len(pages)
+        for i, page in enumerate(pages, start=1):
+            flat = _flatten(page.extract_text())
+            assert "Reference genome: GRCh38" in flat
+            assert f"Pipeline: {PIPELINE_VERSION}" in flat
+            assert "Generated:" in flat
+            assert f"Page {i} of {n}" in flat
+
+    def test_footer_block_does_not_overlap_the_content_above_it(self, tmp_path):
+        """The wrapped footer grows upward, so the content frame above it has
+        to move up with it. Under the old one-line footer the frame bottom was
+        a flat 0.8 inch (57.6pt) that knew nothing about the footer at all."""
+        from reportlab.lib.pagesizes import letter
+
+        from pipeline.reporting.pdf_report import footer_block_top, footer_disclaimer_lines
+
+        out = str(tmp_path / "report.pdf")
+        frame_bottom = _render_and_capture_frame_bottom(out, sample_id="S01", **_minimal_kwargs())
+        lines = footer_disclaimer_lines(_default_disclaimer(), letter[0])
+        assert len(lines) > 1, "this disclaimer is expected to need a wrapped footer"
+        assert footer_block_top(len(lines)) <= frame_bottom, (
+            f"footer top {footer_block_top(len(lines)):.1f}pt reaches into the content "
+            f"frame, which starts at {frame_bottom:.1f}pt"
+        )
+        # And it really did grow: the old flat margin would not have fitted.
+        assert frame_bottom > 0.8 * 72.0
+
+    def test_a_short_disclaimer_leaves_the_original_layout_untouched(self, tmp_path):
+        """One line still costs exactly what it used to: the 0.8 inch frame
+        bottom this report was laid out with before the footer could wrap."""
+        out = str(tmp_path / "report.pdf")
+        frame_bottom = _render_and_capture_frame_bottom(
+            out, sample_id="S01", lab_disclaimer="Short disclaimer.", **_minimal_kwargs()
+        )
+        assert frame_bottom == 0.8 * 72.0
+
+    def test_page_count_is_unchanged_by_the_taller_footer(self, tmp_path):
+        """Measured, both before and after the wrap: this fixture renders 2
+        pages. The taller footer costs ~22pt of frame height per page, which
+        this report absorbs without spilling onto a third page. If a future
+        change moves this number, that is a real layout change and wants a
+        deliberate update, not a silent one."""
+        from pypdf import PdfReader
+
+        out = str(tmp_path / "report.pdf")
+        render_clinical_pdf(out, sample_id="S01", **_minimal_kwargs())
+        assert len(PdfReader(out).pages) == 2

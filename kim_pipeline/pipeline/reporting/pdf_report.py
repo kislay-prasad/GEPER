@@ -60,6 +60,55 @@ class ReportLabUnavailableError(RuntimeError):
     path — PDF generation must never crash the pipeline."""
 
 
+# ── Footer geometry ──────────────────────────────────────────────────────────
+#
+# ONE declaration of the footer's typography, used twice: to DRAW the footer,
+# and to size the frame the report content is laid out in ABOVE it. They were
+# independent before -- the frame used a flat 0.8 inch bottom margin while the
+# footer drew `lab_disclaimer[:150]` on a single line -- so the footer could
+# not grow, and a disclaimer longer than 150 characters was silently cut off
+# mid-word. Kim adopting GEPER's ratified text (EJ-01) made that real: the
+# sentence ended at "...machine-learning predict", losing the operative clause
+# ("not a substitute for professional clinical genetic interpretation,
+# diagnosis, or advice"). The disclaimer now WRAPS over as many lines as it
+# needs and the frame moves up to make room, so no wording is ever dropped.
+# Do not reintroduce a slice here: shortening the text is a clinical claim.
+_FOOTER_FONT = "Helvetica"
+_FOOTER_FONT_SIZE = 6.5
+_FOOTER_LEADING = 7.5
+# Baselines in points from the bottom of the page, unchanged from the
+# single-line footer: the reference/version/timestamp line, then the LOWEST
+# disclaimer line 16pt above it. Extra disclaimer lines stack upward.
+_FOOTER_METADATA_BASELINE = 28.8  # 0.4 inch
+_FOOTER_DISCLAIMER_BASELINE = 44.8
+# Clearance between the footer's topmost line and the content frame above.
+_FOOTER_FRAME_GAP = 6.0
+# The frame bottom this report used before the footer could wrap; still the
+# floor, so a short disclaimer leaves the layout exactly as it was.
+_MIN_BOTTOM_MARGIN = 0.8 * 72.0
+_PAGE_SIDE_MARGIN = 0.6 * 72.0
+
+
+def footer_disclaimer_lines(lab_disclaimer: str, page_width: float) -> List[str]:
+    """The disclaimer, wrapped to the printable width at the footer's own
+    font and size. Never truncated: every word of the input comes back."""
+    from reportlab.lib.utils import simpleSplit
+
+    available = page_width - 2 * _PAGE_SIDE_MARGIN
+    return simpleSplit(lab_disclaimer or "", _FOOTER_FONT, _FOOTER_FONT_SIZE, available) or [""]
+
+
+def footer_block_top(line_count: int) -> float:
+    """Top edge of the whole footer block, in points from the page bottom."""
+    top_baseline = _FOOTER_DISCLAIMER_BASELINE + (max(line_count, 1) - 1) * _FOOTER_LEADING
+    return top_baseline + _FOOTER_FONT_SIZE
+
+
+def footer_bottom_margin(line_count: int) -> float:
+    """How far up the content frame must start so the footer fits beneath it."""
+    return max(_MIN_BOTTOM_MARGIN, footer_block_top(line_count) + _FOOTER_FRAME_GAP)
+
+
 def render_clinical_pdf(
     pdf_path: str,
     *,
@@ -289,11 +338,14 @@ def render_clinical_pdf(
     # ── Footer (drawn on every page: disclaimer, reference genome,
     #    pipeline version, timestamp, Page X of Y) ──
 
+    # The frame's bottom is derived from the footer that will be drawn under
+    # it, so a disclaimer that needs several lines cannot collide with the
+    # report content (see the footer-geometry block above).
     doc = SimpleDocTemplate(
         pdf_path,
         pagesize=letter,
         topMargin=0.6 * inch,
-        bottomMargin=0.8 * inch,
+        bottomMargin=footer_bottom_margin(len(footer_disclaimer_lines(lab_disclaimer, letter[0]))),
         leftMargin=0.6 * inch,
         rightMargin=0.6 * inch,
         title=f"{pipeline_version} Clinical Report — {sample_id}",
@@ -354,13 +406,27 @@ def _draw_footer_without_page_number(
     known (see render_clinical_pdf's docstring on why two passes are
     needed)."""
     from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
     from reportlab.lib.units import inch
 
     c.saveState()
-    c.setFont("Helvetica", 6.5)
+    c.setFont(_FOOTER_FONT, _FOOTER_FONT_SIZE)
     c.setFillColor(colors.grey)
-    footer_y = 0.4 * inch
-    c.drawString(0.6 * inch, footer_y + 16, lab_disclaimer[:150])
+    footer_y = _FOOTER_METADATA_BASELINE
+    # Whole disclaimer, not truncated -- `render_clinical_pdf` sized the frame
+    # above for exactly these lines. Drawn top line FIRST (highest baseline,
+    # descending), which is both the reading order and the order text
+    # extraction returns it in: a clinician -- or a LIMS parsing this PDF --
+    # gets the sentences in the order they were written.
+    page_width = getattr(doc_, "pagesize", letter)[0]
+    wrapped = footer_disclaimer_lines(lab_disclaimer, page_width)
+    for index, line in enumerate(wrapped):
+        lines_below = len(wrapped) - 1 - index
+        c.drawString(
+            _PAGE_SIDE_MARGIN,
+            _FOOTER_DISCLAIMER_BASELINE + lines_below * _FOOTER_LEADING,
+            line,
+        )
     c.drawString(
         0.6 * inch,
         footer_y,

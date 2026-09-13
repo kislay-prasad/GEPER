@@ -36,7 +36,10 @@ import argparse
 import sys
 from typing import Any, Dict, List, Optional
 
+import os
+
 from component_identity import COMPONENT_NAME, SHORT_NAME
+from review.signoff import ClinicalCredentials
 from review.signoff import approve as _approve
 from review.signoff import list_pending as _list_pending
 from review.signoff import override as _override
@@ -45,6 +48,101 @@ from utils.exceptions import SignoffError
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+_PASSWORD_ENV_DEFAULT = "GEPER_CLINICAL_PASSWORD"
+
+
+class _RefusePasswordOnTheCommandLine(argparse.Action):
+    """
+    `--clinical-password` exists ONLY to be refused, and it has to exist.
+
+    Without it, argparse's prefix matching accepts `--clinical-password` as an
+    unambiguous abbreviation of `--clinical-password-env` -- so an operator
+    reaching for the obvious flag would have their PASSWORD silently bound to
+    the variable-NAME argument and written into shell history and process
+    listings, which is precisely what naming the variable instead of the
+    secret was for. Declaring it explicitly removes the abbreviation and turns
+    a silent leak into an error that says what to do instead.
+
+    `nargs=0` so the password is never consumed as an argument value at all:
+    argparse errors on the flag itself, before the secret is bound to
+    anything.
+    """
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.error(
+            f"{option_string} is not accepted: a password on the command line is readable by every "
+            f"process on this machine and is recorded in shell history. Put the password in an "
+            f"environment variable and name that variable with --clinical-password-env (default: "
+            f"{_PASSWORD_ENV_DEFAULT})."
+        )
+
+
+def _add_clinical_arguments(subparser: argparse.ArgumentParser) -> None:
+    """
+    The identity a LINKED run's sign-off is recorded under (w117).
+
+    THERE IS NO --clinical-password, deliberately and permanently. A password
+    on a command line is visible to every process on the machine, lands in the
+    shell's history file and is copied into any log that echoes the invocation.
+    The password is named INDIRECTLY, by the environment variable that holds
+    it, so the secret never becomes an argv element.
+
+    Absent on an unlinked run's sign-off, which needs no clinical identity at
+    all -- these are optional here for exactly that reason, and their absence
+    on a LINKED run is refused by review/signoff.py with a message naming them.
+    """
+    subparser.add_argument(
+        "--clinical-email",
+        help="The clinical platform login of the person signing. Required for a run linked to a "
+        "clinical record (one carrying clinical_link.json); ignored otherwise.",
+    )
+    subparser.add_argument(
+        "--clinical-password-env",
+        default=_PASSWORD_ENV_DEFAULT,
+        help=f"NAME of the environment variable holding that login's password (default: "
+        f"{_PASSWORD_ENV_DEFAULT}). The password itself is never passed on the command line, "
+        "where it would be readable by every process on the machine and recorded in shell history.",
+    )
+    subparser.add_argument(
+        "--clinical-password",
+        action=_RefusePasswordOnTheCommandLine,
+        nargs=0,
+        help=argparse.SUPPRESS,
+    )
+    subparser.add_argument(
+        "--clinical-totp",
+        help="Current TOTP code, if the clinical account is enrolled in two-factor authentication.",
+    )
+
+
+def _clinical_credentials(args: argparse.Namespace) -> Optional[ClinicalCredentials]:
+    """
+    Credentials, or None when no --clinical-email was given.
+
+    None is NOT "sign off without an identity": review/signoff.py refuses a
+    linked run that reaches it without credentials. It only means this
+    invocation supplied none, which is the correct and complete answer for an
+    unlinked run.
+
+    A named-but-empty password variable is an error rather than an empty
+    password, because the overwhelmingly likely cause is a variable that was
+    never exported, and attempting a login with "" would report it as a
+    credential failure the operator would then debug in the wrong place.
+    """
+    if not getattr(args, "clinical_email", None):
+        return None
+    env_name = args.clinical_password_env
+    password = os.getenv(env_name)
+    if not password:
+        raise SignoffError(
+            f"--clinical-email was given but the environment variable '{env_name}' is unset or "
+            f"empty, so there is no password to authenticate with. Export it (or name a different "
+            f"variable with --clinical-password-env). The password is never accepted as a "
+            f"command-line argument."
+        )
+    return ClinicalCredentials(email=args.clinical_email, password=password, totp_code=args.clinical_totp)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -77,6 +175,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     approve_parser.add_argument("--reg-number", required=True, help='Medical registration number, e.g. "MCI-12345".')
     approve_parser.add_argument("--hospital", required=True, help='Hospital/lab name, e.g. "AIIMS Delhi".')
+    approve_parser.add_argument(
+        "--reason",
+        help="The signatory's stated grounds for concurring. REQUIRED for a run linked to a "
+        "clinical record (one carrying clinical_link.json), where it is recorded as the "
+        "'sole_signatory' claim's reason. Ignored for an unlinked run.",
+    )
+    _add_clinical_arguments(approve_parser)
 
     override_parser = subparsers.add_parser(
         "override",
@@ -93,6 +198,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     override_parser.add_argument(
         "--clinician-id", required=True, help="Identifies who made the override, e.g. an email address."
     )
+    _add_clinical_arguments(override_parser)
 
     list_parser = subparsers.add_parser(
         "list-pending",
@@ -142,6 +248,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 clinician_name=args.clinician_name,
                 reg_number=args.reg_number,
                 hospital=args.hospital,
+                clinical_credentials=_clinical_credentials(args),
+                clinical_reason=args.reason,
             )
             print(f"Approved. Manifest: {manifest}")
         elif args.command == "override":
@@ -151,6 +259,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 new_classification=args.new_classification,
                 reason=args.reason,
                 clinician_id=args.clinician_id,
+                clinical_credentials=_clinical_credentials(args),
             )
             print(f"Override applied: {record}")
         elif args.command == "list-pending":

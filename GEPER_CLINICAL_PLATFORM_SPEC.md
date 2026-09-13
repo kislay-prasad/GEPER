@@ -460,15 +460,49 @@ produces coordinates that are silently wrong.
 
 ### 10.3 The submission contract
 
-**GEPER's actual interface today is a CLI.** There is no importable API, no HTTP
-endpoint returning a classification, no queue, no webhook. The integration
-surfaces are: subprocess invocation, reading `geper_results.json` from a known
-path, the structures endpoint, and gated LIMS export.
+**IMPLEMENTED, 2026-09-03 (Phase 5b).** This section previously read "GEPER's
+actual interface today is a CLI. There is no importable API, no HTTP endpoint
+returning a classification, no queue, no webhook," and carried a **Requirement**
+to wrap GEPER in a service interface. Both were true when written and are false
+now; they are corrected here rather than left standing, because a reader acting
+on the old text would build a second wrapper alongside the one that ships.
 
-**Requirement:** wrap GEPER in a service interface. The platform must not shell
-out and watch a directory.
+The service interface exists. `geper/api/main.py` serves `POST /interpretations`
+and `GET /interpretations/{id}` on the same FastAPI app as the structures
+endpoint, under the same `GEPER_API_KEYS` fail-to-start control (§23.3). The
+platform does not shell out and does not watch a directory.
 
-**Minimum service contract:**
+Behind those endpoints:
+
+- **Queue and worker.** `geper/api/submission_store.py` is a SQLite-backed store
+  that persists on every path — `queued`, `running`, `complete`, `failed` — with
+  no in-memory cache. `geper/api/submission_worker.py` executes submissions off
+  the request path.
+- **Idempotency.** Enforced in the schema, not in application code:
+  `UNIQUE(org_id, submission_key)`. A repeat submission returns the first
+  interpretation (§10.4).
+- **Crash recovery.** The store marks submissions interrupted at startup if the
+  worker died mid-execution, so a crashed run does not sit in `running` forever.
+- **Exception workflow.** Shipped 2026-09-03 (Phase 5d):
+  `clinical/models/exception.py` plus `geper/api/exception_retry_worker.py`,
+  which retries with exponential backoff. Both workers fail closed on a missing
+  `CLINICAL_DSN`.
+- **Clinical-record link.** Added 2026-09-12 (wave 113). A submission carries the
+  `order_id` and `sample_id` for the organisation its API key belongs to, and a
+  completed run is written to clinical records in one transaction
+  (`clinical/data_access.py::record_pipeline_result`, with
+  `find_interpretation_by_submission_key` for lookup); retried and restarted runs
+  adopt the existing record.
+
+**The clinical-record link is present but unexercised in production.** Order
+entry does not exist yet (§7, Phase 3), so nothing in a live deployment creates
+the `order_id` the link needs. The code path is tested and shipped; it has never
+run against a real clinical order. This is a plumbing milestone, not a working
+clinical path, and §10.1's preconditions still gate a path that has no first
+step.
+
+**Minimum service contract**, as specified — the shipped wire shape differs in
+four named ways, listed after the block:
 
 ```
 POST /interpretations
@@ -489,6 +523,24 @@ GET /interpretations/{id}
       "run_document_ref": "...",             when complete
       "error": "..." }                       when failed
 ```
+
+**Where the shipped shape differs** (`geper/api/main.py`,
+`InterpretationSubmissionRequest` / `...Response` /
+`InterpretationStatusResponse`) — these are the real field names a client must
+use:
+
+1. The request also requires `order_id` and `sample_id`, the clinical order and
+   sample the run interprets. A run that cannot be attributed to a sample is not
+   run. The organisation is deliberately **not** a request field: it comes from
+   the API key.
+2. Both responses key on `id` (the submission), with `interpretation_id`
+   optional and populated once one exists.
+3. The failure field is `error_message`, not `error`.
+4. There is no `run_document_ref` on the status response. The run document is
+   reached through the clinical record the worker writes, not through this
+   endpoint — which is the §11.3 discovery gap, still open.
+
+`hpo_terms` and `qc_metrics` remain optional, as specified.
 
 **The platform passes no patient identity.** `sample_ref` is an opaque platform
 identifier. GEPER never learns who the patient is, which preserves the boundary
@@ -1201,13 +1253,31 @@ including the discovery layer for run documents.
 *Acceptance:* given any report, every upstream artefact is retrievable; given a
 model version, every affected report is retrievable.
 
-**Phase 5 — Engine integration.** The `kim_pipeline` API client, the GEPER
-service wrapper, the automatic submission path with preconditions, idempotency,
-retry and the exception workflow.
+**Phase 5 — Engine integration. SHIPPED 2026-09-03, extended 2026-09-12.** The
+GEPER service wrapper, the automatic submission path with preconditions,
+idempotency, retry and the exception workflow, out of order relative to the
+phases above — it did not wait for Phase 3.
 
-*Acceptance:* a VCF submitted twice produces one interpretation; a failed
+- 5a (2026-09-03) — preconditions, VCF validation, assembly normalisation.
+- 5b (2026-09-03) — submission store with SQLite schema and startup
+  reconciliation, `POST`/`GET /interpretations`, background worker (§10.3).
+- 5c (2026-09-03) — automatic submission: system principal, submission key,
+  audit (§10.5).
+- 5d (2026-09-03) — exception workflow: vocabulary, schema, wiring into all
+  failure paths, retry with exponential backoff (§10.6).
+- Wave 113 (2026-09-12) — the delivery link: a submission carries its
+  organisation, order and sample; a completed run is recorded as clinical
+  records atomically; retried and restarted runs adopt the record.
+
+*Acceptance, met:* a VCF submitted twice produces one interpretation; a failed
 precondition blocks submission and raises a visible exception; a transient failure
 retries without duplicating.
+
+**What shipping this phase does not mean.** The `kim_pipeline` API client is
+still outstanding, and the clinical-record link added in wave 113 **has never run
+against a real clinical order**, because order entry (Phase 3) does not exist —
+the human approving that wave said so explicitly. Phase 5 being green is a
+statement about plumbing, not about a usable clinical path.
 
 **Phase 6 — Review and release.** Interpretation screen, approval, release
 control, report rendering with state markings.

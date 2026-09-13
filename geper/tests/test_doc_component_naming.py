@@ -74,8 +74,11 @@ _COMPONENT_SITE_PINS = {
         "Any feature that would require GEPER to know a patient identity, or the Platform",
         "## 10. VCF ingestion and automatic submission to GEPER",
         "are satisfied, the platform submits it to GEPER without manual trigger.",
-        "**GEPER's actual interface today is a CLI.** There is no importable API, no HTTP",
-        "**Requirement:** wrap GEPER in a service interface. The platform must not shell",
+        # §10.3 was rewritten 2026-09-13 once the service wrapper shipped; the
+        # retired sentences are quoted in place, so they stay covered here.
+        "**IMPLEMENTED, 2026-09-03 (Phase 5b).** This section previously read \"GEPER's",
+        "to wrap GEPER in a service interface. Both were true when written and are false",
+        "The service interface exists. `geper/api/main.py` serves `POST /interpretations`",
         "identifier. GEPER never learns who the patient is, which preserves the boundary",
         "in §1.4 and limits what a GEPER compromise exposes.",
         "### 11.3 What must be recorded from GEPER",

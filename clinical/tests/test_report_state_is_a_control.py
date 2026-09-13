@@ -63,6 +63,7 @@ from datetime import date, timezone
 import json
 import os
 import pathlib
+import re
 import uuid
 
 import pytest
@@ -541,17 +542,26 @@ class TestRetrievalDoesNotFilterOnState:
 #   test below rather than silently dropped.
 #
 # HOW COMPOSITION IS IDENTIFIED: the method calls `self._read_retraction_row`,
-# the one place retraction is read from the database. Routing every composer
-# through one helper is what makes this question mechanical instead of
-# textual. Note what this does and does not establish: it proves the QUESTION
-# WAS ASKED, not that the answer was used.
+# the one-row reader a gate asks the retraction question with. Routing every
+# COMPOSER through one helper is what makes this question mechanical instead
+# of textual. Note what this does and does not establish: it proves the
+# QUESTION WAS ASKED, not that the answer was used.
+#
+# AND NOTE WHAT IT DOES NOT SAY (w124). That helper is not the only code that
+# reads `report_retractions` -- its w122 docstring claimed to be and was
+# wrong. `_read_retracted` and clinical/retention.py's tombstone cascade each
+# run their own SELECT, for reasons recorded at both sites. The property this
+# enumeration needs is narrower and is the one that holds: every DELIVERY-STATE
+# GATE in DataAccess goes through the helper. test_the_retraction_reader_
+# docstring_names_every_reader_of_the_table below measures the wider set so
+# the narrower claim cannot quietly turn back into a census.
 
 _DATA_ACCESS = pathlib.Path(__file__).resolve().parent.parent / "data_access.py"
 
 DELIVERY_STATES = frozenset({"approved", "released"})
 
-# The one place retraction is read. A composer calls it; a forgetful reader
-# does not.
+# The one-row retraction read. A composer calls it; a forgetful reader does
+# not. (Not the only reader of the table -- see the note above.)
 RETRACTION_READER = "_read_retraction_row"
 
 # Deliberately exempt, with a reason as specific as the ones in
@@ -571,10 +581,13 @@ RETRACTION_COMPOSITION_EXEMPT = {
     #
     # It IS the retraction reader -- the function that turns a retraction row
     # into the banner a report prints -- so requiring it to compose retraction
-    # is requiring it to call itself. It reaches report_retractions with its
-    # own SELECT rather than through _read_retraction_row, which is a real
-    # (and separately worth fixing) crack in that helper's "one place" claim;
-    # this exemption records it instead of hiding it. Its `== 'approved'` /
+    # is requiring it to call itself. It reaches the retraction table with its
+    # own SELECT rather than through _read_retraction_row -- w122 called that a
+    # crack worth fixing; w124 measured it and ruled the other way. The helper
+    # is a `_query_one` and this reader must see a SECOND row to refuse it, so
+    # the CODE is right and it was the helper's "one place" SENTENCE that was
+    # wrong. That sentence is now corrected; this exemption stands on the
+    # reader/composer distinction rather than on a defect. Its `== 'approved'` /
     # `== 'released'` comparisons are against retracted_from_state -- the state
     # the report was retracted FROM, stored on the retraction row -- not
     # against reports.state, so it gates nothing that reaches a consumer.
@@ -773,3 +786,160 @@ def test_the_exempt_gates_still_exist():
     gates = _delivery_state_gates(ast.parse(_DATA_ACCESS.read_text(encoding="utf-8")))
     stale = sorted(RETRACTION_COMPOSITION_EXEMPT - set(gates))
     assert not stale, f"exempted method(s) that no longer gate on the delivery states: {stale}"
+
+
+# ─── w124: the census the definite article was claiming ───────────────────────
+#
+# THE DEFECT THIS EXISTS FOR WAS A SENTENCE, not a behaviour. w122 wrote that
+# _read_retraction_row is "THE ONE PLACE retraction is read from the database";
+# _read_retracted was already reaching the same table with its own SELECT, and
+# clinical/retention.py's tombstone cascade with a third. HUMAN RULING (w124):
+# fix the claim rather than the code -- the helper is a `_query_one` and
+# _read_retracted must see a SECOND row in order to refuse it, so routing the
+# reader through the helper would cost a real refusal to buy a true sentence.
+#
+# THE TELL, in the human's words: THE DEFINITE ARTICLE. "The single read
+# point", "the one gate", "the only place" -- each is claiming a census, and a
+# census has to be measured. This test is that measurement, kept executable so
+# the corrected sentence cannot rot back into the claim it replaced. It reads
+# the docstring it is about, in the shape TestHpoTermsDocstringCitations uses.
+
+_RETENTION = pathlib.Path(__file__).resolve().parent.parent / "retention.py"
+
+# A SELECT against the table, in the only form this codebase writes queries:
+# an SQL string literal inside a method. UPDATE/INSERT are writes and are not
+# counted; the claim under test is about READS.
+_RETRACTION_TABLE_READ = re.compile(r"FROM\s+report_retractions")
+
+# Measured, at w124, over clinical/data_access.py and clinical/retention.py.
+# Every one of these is named in _read_retraction_row's docstring with what it
+# is for. A fourth reader makes this test red, which is the point: the
+# docstring now enumerates, and an enumeration nobody re-measures is the
+# census claim again with extra steps.
+EXPECTED_RETRACTION_TABLE_READERS = {
+    "data_access.py::_read_retraction_row",
+    "data_access.py::_read_retracted",
+    "retention.py::_cascade_tombstone_report_dependents",
+}
+
+# The four DataAccess methods that ask the retraction question through the
+# helper. The w122 docstring listed "the delivery gate, the release recorder,
+# the revision reader, get_report" -- and the revision reader (_read_retracted)
+# was never one of them, while retract_report's own already-retracted refusal
+# was left out. Measured here so a wrong roster cannot be written twice.
+EXPECTED_HELPER_CALLERS = {
+    "get_report",
+    "_release_report",
+    "require_release",
+    "retract_report",
+}
+
+
+def _functions_with_sql_matching(path, pattern):
+    """
+    Names of functions in `path` holding an SQL string literal that matches.
+
+    The DOCSTRING IS SKIPPED DELIBERATELY. This file's whole subject is a
+    docstring that talks about queries; a prose mention of one is not one, and
+    counting it would make the guard agree with whatever the docstring says.
+    """
+    found = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]
+        for statement in body:
+            for inner in ast.walk(statement):
+                if isinstance(inner, ast.Constant) and isinstance(inner.value, str) and pattern.search(inner.value):
+                    found.add(node.name)
+    return found
+
+
+def _data_access_methods_calling(attr):
+    tree = ast.parse(_DATA_ACCESS.read_text(encoding="utf-8"))
+    callers = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef) or node.name != "DataAccess":
+            continue
+        for method in node.body:
+            if not isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)) or method.name == attr:
+                continue
+            for inner in ast.walk(method):
+                if isinstance(inner, ast.Call) and isinstance(inner.func, ast.Attribute) and inner.func.attr == attr:
+                    callers.add(method.name)
+    return callers
+
+
+def _retraction_reader_docstring():
+    for node in ast.walk(ast.parse(_DATA_ACCESS.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.FunctionDef) and node.name == RETRACTION_READER:
+            return ast.get_docstring(node) or ""
+    raise AssertionError(f"{RETRACTION_READER} is gone from clinical/data_access.py; its docstring cannot be checked")
+
+
+def test_the_retraction_reader_docstring_names_every_reader_of_the_table():
+    """
+    The corrected sentence is true of the code, measured rather than recalled.
+
+    Two things, and each fails for a different real reason:
+      1. the set of functions that SELECT from report_retractions is exactly
+         the three the docstring enumerates -- a fourth reader, or the loss of
+         one, is red;
+      2. the docstring names each of the other two readers, so the
+         enumeration cannot be quietly emptied back to the helper alone.
+
+    NO GREP FOR THE OFFENDING PHRASE, deliberately. The corrected docstring
+    QUOTES the false sentence in order to record that it was false, so a check
+    for "the one place" would fire on the correction itself. Measuring the
+    readers is the check that has teeth anyway: the phrase was only ever wrong
+    because the set had three members.
+
+    WHAT IT CANNOT SEE, stated rather than implied: SQL built by concatenation
+    or f-string, a read through a view, and any module other than
+    data_access.py and retention.py. It is the same AST blind spot the E10
+    enumeration above documents, and for the same reason.
+    """
+    measured = {
+        f"data_access.py::{name}" for name in _functions_with_sql_matching(_DATA_ACCESS, _RETRACTION_TABLE_READ)
+    }
+    measured |= {f"retention.py::{name}" for name in _functions_with_sql_matching(_RETENTION, _RETRACTION_TABLE_READ)}
+
+    assert measured, (
+        "no function in data_access.py or retention.py appears to SELECT from report_retractions at all; "
+        "the SQL shape this guard looks for has stopped describing the codebase and it is now measuring nothing"
+    )
+    assert measured == EXPECTED_RETRACTION_TABLE_READERS, (
+        f"the readers of report_retractions have changed: {sorted(measured)}. _read_retraction_row's docstring "
+        f"enumerates them by name and says what each is for; update the docstring AND this set together, and "
+        f"do not replace the enumeration with a count or with 'the one place' -- that sentence was already "
+        f"false once (w124)."
+    )
+
+    docstring = _retraction_reader_docstring()
+    for name in ("_read_retracted", "retention.py"):
+        assert name in docstring, (
+            f"{RETRACTION_READER}'s docstring no longer names {name!r}, which reads the same table with its "
+            f"own SELECT. A docstring that stops naming the other readers is back to claiming to be the only one."
+        )
+
+
+def test_the_retraction_reader_docstring_names_its_actual_callers():
+    """
+    The w122 docstring's roster of composers named a method that does not call
+    it and omitted one that does. Rosters in prose drift; this one is read.
+    """
+    callers = _data_access_methods_calling(RETRACTION_READER)
+    assert callers == EXPECTED_HELPER_CALLERS, (
+        f"the callers of {RETRACTION_READER} have changed: {sorted(callers)}. Its docstring lists them with "
+        f"the ruling each one serves; update both."
+    )
+    docstring = _retraction_reader_docstring()
+    missing = sorted(name for name in EXPECTED_HELPER_CALLERS if name not in docstring)
+    assert not missing, f"{RETRACTION_READER}'s docstring does not name its caller(s) {missing}"

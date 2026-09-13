@@ -5394,14 +5394,36 @@ class DataAccess:
 
     def _read_retraction_row(self, session: Session, report_id: uuid.UUID) -> Optional[tuple]:
         """
-        THE ONE PLACE retraction is read from the database.
+        THE ONE-ROW READER a delivery-state gate asks the retraction question
+        with. NOT the only code that reads the retraction table.
 
-        Every composer below -- the delivery gate, the release recorder, the
-        revision reader, get_report -- goes through here rather than writing
-        its own SELECT, so "does this reader compose retraction" is a question
-        with a mechanical answer, which is what
-        clinical/tests/test_report_state_is_a_control.py's enumeration asks
-        (human ruling E10).
+        "The one place retraction is read from the database" is what this
+        docstring said at w122, and it was never true. The definite article
+        was claiming a census, so w124 measured one. Three readers reach
+        `report_retractions` in production:
+
+          - THIS HELPER. One row or None, six columns. Called by get_report
+            (the `is_retracted` flag), _release_report (the E6 debt owed to a
+            consumer receiving an already-retracted report), require_release
+            (the E3 delivery gate) and retract_report (the E5 refusal of a
+            second retraction).
+          - `_read_retracted` below, which runs its own SELECT on purpose: it
+            must see MORE THAN ONE row in order to refuse a report carrying
+            two retractions, and `_query_one` here would hand it the first and
+            hide the second. Human ruling (w124): FIX THE CLAIM, NOT THE CODE
+            -- routing it through this helper would cost that refusal.
+          - clinical/retention.py's _cascade_tombstone_report_dependents,
+            which selects the un-tombstoned rows to stamp (E8). Another
+            module, another database role, another set of grants.
+
+        WHAT IS ACTUALLY TRUE, and it is the property
+        clinical/tests/test_report_state_is_a_control.py's E10 enumeration
+        rests on: every DataAccess method that GATES ON A DELIVERY STATE asks
+        the retraction question by calling this helper, so "does this reader
+        compose retraction" has a mechanical answer. That is a statement about
+        the composers, not a census of the table's readers -- `_read_retracted`
+        is carried in that test's exemption list precisely because it is a
+        reader and not a composer.
 
         Returns the raw row or None. No interpretation: the callers differ in
         what they do with it, and a helper that decided for them would be the
@@ -5853,6 +5875,15 @@ class DataAccess:
         R7 fail-closed, in the shape `_read_amends` uses: a retraction that
         cannot be read into a true sentence is an error, never a marker and
         never a silent omission.
+
+        WHY THIS RUNS ITS OWN SELECT rather than calling
+        `_read_retraction_row`. That helper is a `_query_one`: it returns the
+        first row and says nothing about a second. This reader's whole R7
+        obligation is to REFUSE a report carrying two retractions instead of
+        picking one, so it needs the plural read and the ORDER BY that makes
+        the refusal deterministic. Ruled at w124, after the helper's docstring
+        was found claiming to be the only reader of the table: the claim was
+        corrected, this query was left alone.
         """
         rows = self._query(
             "SELECT id, retracted_at, retracted_by, reason, retracted_from_state, replacement_report_id "

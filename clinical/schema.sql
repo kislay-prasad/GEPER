@@ -1260,10 +1260,14 @@ CREATE INDEX idx_receipt_org_notification
 -- A retraction says "DO NOT ACT ON THIS DOCUMENT". It is NOT a state, NOT a
 -- sixth value of reports.state, and NOT a column on reports. The approved
 -- `reports` row stays BYTE-IDENTICAL: the report WAS approved on the day it
--- was approved, and a row rewritten to say otherwise would destroy the only
--- record of that approval (reports_approval_complete and
+-- was approved, and a row rewritten to say otherwise would destroy THE
+-- REPORT'S OWN record of that approval. Not the last trace of it -- w124
+-- checked before letting "the only record" stand: _approve_report is
+-- @auditable, so an audit_log 'report_approved' entry keeps the actor and the
+-- moment. But no reader of this platform asks audit_log whether a report is
+-- approved, and reports_approval_complete and
 -- reports_released_states_need_approval force the three approval facts to
--- travel with the state, so "un-approving" cannot be done truthfully).
+-- travel with the state, so "un-approving" cannot be done truthfully.
 --
 -- THE TRIGGER IS NOT BEING WORKED AROUND, IT IS BEING SERVED. The walk-back
 -- clause in enforce_content_immutability() below exists because an approved
@@ -1362,7 +1366,11 @@ CREATE INDEX idx_retraction_org_report
 -- IS NO DELIVERY TRANSPORT ANYWHERE IN THIS PLATFORM.
 --
 -- PER CONSUMER, NOT PER ROLE (human ruling E6, stated in those words). This
--- is the one structural difference from amendment_notifications, which
+-- is the difference the RULING names, not the only structural difference from
+-- amendment_notifications -- w124 counted them: that table has no `status`
+-- column at all (see the paragraph below) and no uniqueness on its recipient,
+-- so this one carries two columns and one constraint it has no counterpart
+-- for. What E6 settled is the recipient column: amendment_notifications
 -- hardcodes delivered_to_role = 'ordering_clinician'. release_events.consumer
 -- is free text and names "a clinician, a patient, a LIMS, any consumer"
 -- (spec 13.4): a release event's consumer may be a LIMS, and a role is an

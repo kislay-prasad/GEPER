@@ -58,6 +58,12 @@ SIGNATORY_REG = "MCI-12345"
 SIGNATORY_HOSPITAL = "ABC Diagnostics"
 HOSPITAL_B = "ABC Diagnostics"
 
+# w119 fix 2's CLI signatory, whose password is stored as a real bcrypt hash.
+# Its own registration number: users_org_registration_number_unique forbids
+# reusing SIGNATORY_REG inside one organisation.
+CLI_SIGNATORY_NAME = "Dr. C. Nair, MD"
+CLI_SIGNATORY_REG = "MCI-77777"
+
 
 class _PlainHasher:
     """The clinical layer's hasher protocol without bcrypt, which the geper
@@ -1030,6 +1036,112 @@ class TestLinkedWithdrawCannotLeaveTheRecordSayingApproved:
         assert _document(run_dir)["review_status"] == "draft"
         assert not os.path.exists(os.path.join(run_dir, s.MANIFEST_FILENAME))
         assert os.path.exists(os.path.join(run_dir, s.FULL_PDF_FILENAME))
+
+
+class TestTheCliDrivesARealClinicalConnection:
+    """
+    w119 FIX 2. Two things had never been executed by any test:
+
+      - `review/signoff.py::_connect_clinical_data_access()`, because every
+        existing test injects `clinical_data_access=dao`;
+      - `review/cli.py::main()` against a LINKED run at all -- only
+        `build_arg_parser` and `_clinical_credentials` were covered.
+
+    ONE test covers both: the CLI is driven with argv, nothing is injected,
+    and CLINICAL_DSN points at this suite's own disposable database, so the
+    real connect path builds the real DataAccess and the real login runs.
+
+    THE CLINICAL_DSN REFUSAL EXISTS IN CODE AND WAS UNTESTED -- it is NOT
+    missing, and the distinction matters because "untested" and "missing"
+    have different remediations. It is pinned below as an untested-but-present
+    path.
+
+    The password is a REAL bcrypt hash here, not the suite's _PlainHasher:
+    the CLI's own DataAccess is constructed with the production default
+    hasher, so a fixture user whose stored hash the default hasher cannot
+    verify would never get past login and the connect path would prove
+    nothing.
+
+    The connection this opens is not closed. That leak is ACCEPTED by the
+    human and is deliberately not fixed here.
+    """
+
+    @pytest.fixture
+    def bcrypt_signatory(self, clinical, clinical_conn, dao):
+        from clinical.data_access import BcryptHasher
+
+        bcrypt_dao = DataAccess(clinical_conn, clock=SystemClock(), password_hasher=BcryptHasher(rounds=4))
+        email = "cli-signatory@org-a.test"
+        user_id = bcrypt_dao.create_user(clinical["org_id"], email, "password")
+        for role in ("Interpreter", "Approver"):
+            dao.assign_role(clinical["admin"], user_id, role, basis="w119 CLI end-to-end fixture role grant")
+        # A registration number of its own: users_org_registration_number_unique
+        # means this account cannot reuse the other signatory's.
+        dao.set_clinician_identity(clinical["admin"], user_id, CLI_SIGNATORY_NAME, CLI_SIGNATORY_REG, HOSPITAL_B)
+        clinical_conn.commit()
+        return email
+
+    def test_cli_main_signs_a_linked_run_over_a_real_clinical_dsn(
+        self, linked_run_dir, clinical, clinical_conn, clinical_dsn, bcrypt_signatory, monkeypatch
+    ):
+        from review.cli import main as cli_main
+
+        monkeypatch.setenv("CLINICAL_DSN", clinical_dsn)
+        monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", "password")
+        # The CLI opens its OWN connection: this one must not be sitting on
+        # locks the CLI would then wait for.
+        clinical_conn.commit()
+
+        exit_code = cli_main(
+            [
+                "approve",
+                "--output-dir",
+                linked_run_dir,
+                "--clinical-email",
+                bcrypt_signatory,
+                "--reason",
+                "Sole signatory concurrence, via the CLI.",
+            ]
+        )
+
+        assert exit_code == 0, "the CLI's real connect path failed to sign a linked run"
+
+        # The clinical half really happened, through a connection this test
+        # never handed in.
+        state, approver_id, approved_at, content_hash = _report_row(clinical_conn, clinical["report_id"])
+        assert state == "approved"
+        assert approved_at is not None and content_hash is not None
+        claims = _claims(clinical_conn, clinical["report_id"])
+        assert len(claims) == 1 and claims[0][0] == "sole_signatory"
+        assert claims[0][4] == "Sole signatory concurrence, via the CLI."
+        assert approver_id == claims[0][3]
+
+        # ... and so did the file half, with the identity read from the
+        # signing account's record rather than from any flag (none was given).
+        document = _document(linked_run_dir)
+        assert document["review_status"] == "reviewed"
+        assert document["reviewed_by"] == f"{CLI_SIGNATORY_NAME}, Reg. No. {CLI_SIGNATORY_REG}, {HOSPITAL_B}"
+        with open(os.path.join(linked_run_dir, s.MANIFEST_FILENAME), "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        assert manifest["identity_source"] == "user_record"
+        assert manifest["clinical"]["approver_user_id"] == str(approver_id)
+
+    def test_the_unset_clinical_dsn_refusal_is_present_and_now_exercised(self, linked_run_dir, creds, monkeypatch):
+        """
+        UNTESTED-BUT-PRESENT, now tested. This refusal has always existed in
+        `_connect_clinical_data_access`; nothing had ever run it, because
+        every other test injects a DataAccess and never reaches the connect
+        path. It is not a missing check.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(SignoffError, match="CLINICAL_DSN"):
+            s.approve(
+                linked_run_dir,
+                clinical_credentials=creds,
+                clinical_reason="Sole signatory concurrence.",
+            )
+        assert _directory_state(linked_run_dir) == before
 
 
 class TestCliCredentials:

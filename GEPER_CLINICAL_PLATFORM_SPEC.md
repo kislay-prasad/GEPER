@@ -480,7 +480,9 @@ Behind those endpoints:
   the request path.
 - **Idempotency.** Enforced in the schema, not in application code:
   `UNIQUE(org_id, submission_key)`. A repeat submission returns the first
-  interpretation (§10.4).
+  interpretation (§10.4), and says so: 200 for a replay, 202 only for a
+  submission this request created (wave 117, 2026-09-13 — both used to answer
+  202, see the contract block below).
 - **Crash recovery.** The store marks submissions interrupted at startup if the
   worker died mid-execution, so a crashed run does not sit in `running` forever.
 - **Exception workflow.** Shipped 2026-09-03 (Phase 5d):
@@ -524,13 +526,27 @@ POST /interpretations
     "hpo_terms": { ... },                    optional
     "qc_metrics": { ... }                    optional
   }
-  → 202 { "id": "...",                       the submission
+  → 202 { "id": "...",                       CREATED: a new submission
           "status": "queued",
           "interpretation_id": "..." }       once one exists
+  → 200 the same shape                       REPLAYED: this organisation had
+                                             already sent that key, and the
+                                             body is the submission that
+                                             already exists, with its own
+                                             progress and, when complete, the
+                                             interpretation it produced
 
-  Both branches return that one shape. A submission whose key was already
-  seen comes back with its own "status" and, when complete, its
-  "interpretation_id". Branch on "status", not on the status code.
+  Both branches return that one shape, so a client reading only the body
+  behaves identically either way, and progress is still read from the body,
+  never from the status code. The code says one thing only: whether this
+  request created the submission (202) or replayed an existing one (200) --
+  which is what lets a client that timed out learn whether its first attempt
+  landed, without a second GET.
+
+  A different organisation sending the same key is NOT a replay. The
+  idempotency key is UNIQUE(org_id, submission_key), so that request creates
+  its own submission and gets its own 202; it never reaches the other
+  tenant's row.
 
 GET /interpretations/{submission_id}
   → { "id": "...",

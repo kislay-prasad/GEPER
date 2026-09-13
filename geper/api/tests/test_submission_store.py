@@ -288,6 +288,29 @@ class TestSubmissionStore:
         )
         assert again.id == sub.id and again.sample_id == sub.sample_id
 
+    def test_create_or_replay_says_which_of_the_two_happened(self, db_path):
+        """Wave 117, 2026-09-13: `create_submission` returns the same object
+        whether it created or replayed, which is why POST /interpretations
+        could not tell them apart and answered 202 to both. The flag is
+        decided inside the same transaction as the INSERT.
+
+        Cross-organisation is the control: UNIQUE(org_id, submission_key)
+        means org B's identical key is a NEW row, never a replay of org A's.
+        """
+        store = SubmissionStore(db_path)
+        common = dict(submission_key="k", vcf_path="/v", assembly="hg38", sample_ref="s", consent_ref="c")
+
+        created, replayed_flag = store.create_or_replay_submission(org_id="org-a", **common)
+        assert replayed_flag is False
+
+        again, replayed_flag = store.create_or_replay_submission(org_id="org-a", **common)
+        assert replayed_flag is True
+        assert again.id == created.id
+
+        other_org, replayed_flag = store.create_or_replay_submission(org_id="org-b", **common)
+        assert replayed_flag is False, "another organisation's same key is its own submission, not a replay"
+        assert other_org.id != created.id
+
     def test_store_file_from_before_sample_id_is_migrated_in_place(self, db_path):
         """A store file written before the column existed gains it on open;
         its old rows read back with sample_id None (the worker refuses those

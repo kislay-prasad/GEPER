@@ -110,6 +110,34 @@ class TestContractBlockMatchesTheServedModels(unittest.TestCase):
                 self.assertIn("id", _model_fields(model))
                 self.assertFalse(model.model_fields["interpretation_id"].is_required())
 
+    def test_the_block_records_the_status_codes_the_route_actually_serves(self):
+        """Wave 117, 2026-09-13. The block used to show one outcome, 202, and
+        tell clients not to branch on the status code; the route now answers
+        202 for a created submission and 200 for a replay.
+
+        Coupled, not copied: 202 is read off the LIVE route's default
+        `status_code` (that default IS the create branch -- the replay branch
+        overrides it on the response), so changing the route's declared code
+        without moving the block fails here. The 200 half is checked as the
+        block naming it alongside the word "replay", because a per-branch
+        override is set in the handler body and no route attribute exposes it.
+        """
+        from api.main import app
+
+        post_route = next(
+            r
+            for r in app.routes
+            if getattr(r, "path", None) == "/interpretations" and "POST" in getattr(r, "methods", ())
+        )
+        post, _ = _post_and_get_sections()
+        self.assertEqual(post_route.status_code, 202)
+        self.assertIn(f"→ {post_route.status_code}", post)
+        self.assertIn("→ 200", post)
+        self.assertIn("REPLAYED", post)
+        # The retired instruction. Its return would mean the distinction was
+        # collapsed again.
+        self.assertNotIn("not on the status code", post)
+
     def test_the_failure_field_is_error_message_not_error(self):
         fields = _model_fields(self.status_response)
         self.assertIn("error_message", fields)

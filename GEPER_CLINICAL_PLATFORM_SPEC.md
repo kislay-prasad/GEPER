@@ -52,13 +52,13 @@ default.
 
 ## 1. Boundaries
 
-### 1.1 What Bij AI is
+### 1.1 What the Bij AI variant-interpretation component (GEPER) is
 
 The genomic interpretation engine. VCF in, evidence assembled from public
 databases and pretrained models, ACMG/AMP criteria evaluated, draft classification
 out. **IMPLEMENTED.**
 
-Bij AI:
+GEPER:
 - Evaluates 19 of the 28 ACMG/AMP criteria. The remaining nine have no integrated
   data source and are reported as not evaluated.
 - Integrates existing pretrained models as published. No model is retrained or
@@ -66,11 +66,11 @@ Bij AI:
 - Produces a draft classification requiring qualified human review and final
   sign-off before any clinical use.
 
-### 1.2 What Bij AI is not
+### 1.2 What the Bij AI variant-interpretation component (GEPER) is not
 
 **It does not refuse on clinical grounds.** There is no input gate on sample
 quality, consent, or patient identity. The disclaimer is a caveat in the output,
-not a precondition on the input. Bij AI will run on anything handed to it.
+not a precondition on the input. GEPER will run on anything handed to it.
 
 This is the single most important architectural fact in this document. **Every
 clinical precondition lives in the Clinical Platform, and none of them can be
@@ -84,11 +84,11 @@ hospital ERP and must not become one.
 
 ### 1.4 The separation, stated as a rule
 
-Bij AI knows nothing about patients. It receives a VCF and returns an
+GEPER knows nothing about patients. It receives a VCF and returns an
 interpretation. The Clinical Platform knows about patients and never performs
 interpretation.
 
-Any feature that would require Bij AI to know a patient identity, or the Platform
+Any feature that would require GEPER to know a patient identity, or the Platform
 to evaluate a variant, is on the wrong side of the boundary.
 
 ---
@@ -153,7 +153,7 @@ several.
 |---|---|
 | **Orderer** | Places genetic test orders. Clinician or genetic counsellor. |
 | **Lab technician** | Receives and tracks samples, records QC, operates sequencing. |
-| **Interpreter** | Reads Bij AI drafts, adds interpretation, prepares for sign-off. |
+| **Interpreter** | Reads GEPER drafts, adds interpretation, prepares for sign-off. |
 | **Approver** | Signs off reports. Must be qualified; the qualification is recorded. |
 | **Administrator** | Manages users, roles, organisation settings. |
 | **Auditor** | Read-only access to audit trail and lineage. Cannot alter records. |
@@ -426,10 +426,10 @@ The platform must use the API, not the bridge. The bridge remains for CLI use.
 
 ---
 
-## 10. VCF ingestion and automatic submission to Bij AI
+## 10. VCF ingestion and automatic submission to GEPER
 
 **RULED: automatic.** Once a VCF is produced and all platform-side preconditions
-are satisfied, the platform submits it to Bij AI without manual trigger.
+are satisfied, the platform submits it to GEPER without manual trigger.
 
 ### 10.1 Preconditions — all must hold
 
@@ -460,12 +460,12 @@ produces coordinates that are silently wrong.
 
 ### 10.3 The submission contract
 
-**Bij AI's actual interface today is a CLI.** There is no importable API, no HTTP
+**GEPER's actual interface today is a CLI.** There is no importable API, no HTTP
 endpoint returning a classification, no queue, no webhook. The integration
 surfaces are: subprocess invocation, reading `geper_results.json` from a known
 path, the structures endpoint, and gated LIMS export.
 
-**Requirement:** wrap Bij AI in a service interface. The platform must not shell
+**Requirement:** wrap GEPER in a service interface. The platform must not shell
 out and watch a directory.
 
 **Minimum service contract:**
@@ -491,8 +491,8 @@ GET /interpretations/{id}
 ```
 
 **The platform passes no patient identity.** `sample_ref` is an opaque platform
-identifier. Bij AI never learns who the patient is, which preserves the boundary
-in §1.4 and limits what a Bij AI compromise exposes.
+identifier. GEPER never learns who the patient is, which preserves the boundary
+in §1.4 and limits what a GEPER compromise exposes.
 
 ### 10.4 Idempotency
 
@@ -532,7 +532,7 @@ dropped.
 | Precondition failure | Order enters `blocked` with the failing precondition named. Visible to the orderer and the lab. Not retried automatically. |
 | Validation failure | Same. The VCF is wrong and retrying will not fix it. |
 | Transient submission failure | Retried with backoff. Idempotency key ensures no duplicate on success. |
-| Interpretation failure | Order enters `blocked`. Bij AI's error recorded verbatim. Retryable by a human. |
+| Interpretation failure | Order enters `blocked`. GEPER's error recorded verbatim. Retryable by a human. |
 
 **Retry safety:** GEPER writes files before it finishes. A failed submission can
 leave a partially written output directory. A retry must not read a partial
@@ -556,7 +556,7 @@ row in a log.
 | `order_id` | Platform | Organisation |
 | `sample_id` | Platform | Global, unique |
 | `sequencing_run_id` | Platform, mapped to kim's `run_id` | Global |
-| `interpretation_id` | Platform, mapped to a Bij AI run document | Global |
+| `interpretation_id` | Platform, mapped to a GEPER run document | Global |
 | `report_id` | Platform | Global |
 
 ### 11.2 The lineage chain
@@ -574,7 +574,7 @@ And in reverse.
 nonconformance — a wrong model version, a failed data source — the platform can
 identify every affected report.
 
-### 11.3 What must be recorded from Bij AI
+### 11.3 What must be recorded from GEPER
 
 The run document already carries what is needed: `code_version`,
 `model_checkpoints` with resolved versions and calibration status, `provenance`
@@ -595,13 +595,13 @@ supplies that layer, and it is a prerequisite for everything in §11.2.
 When an interpretation completes, the platform retrieves the run document and
 stores:
 
-- The complete document, immutably, as the record of what Bij AI produced
+- The complete document, immutably, as the record of what GEPER produced
 - Indexed fields for query: model versions, database versions, source health,
   criteria evaluated, per-variant classifications
 - The lineage links (§11.2)
 
 **The stored document is never edited.** Interpretation additions, corrections and
-sign-off are separate records referencing it. What Bij AI produced and what a human
+sign-off are separate records referencing it. What GEPER produced and what a human
 concluded are two different claims and must remain distinguishable.
 
 ---
@@ -627,14 +627,14 @@ covers export only.
 An Interpreter reads the draft, adds clinical interpretation, and may:
 - Accept a variant classification
 - Disagree with it, recording the disagreement and the reasoning
-- Add variants Bij AI did not surface
+- Add variants GEPER did not surface
 - Mark variants as not clinically relevant to the indication
 
-**Bij AI's classification is never silently overwritten.** A disagreement is a
+**GEPER's classification is never silently overwritten.** A disagreement is a
 second claim recorded alongside the first, not a correction of it.
 
 **EXPERT:** whether the reviewer re-derives the classification independently or
-ratifies Bij AI's draft. These are different workflows with different evidentiary
+ratifies GEPER's draft. These are different workflows with different evidentiary
 weight, and the answer changes what the review screen must show.
 
 ### 13.3 Approval
@@ -793,7 +793,7 @@ Every action that creates, modifies, releases or accesses clinical data:
 - Consent recorded, modified, withdrawn
 - Order placed, modified, cancelled
 - Sample received, QC recorded, rejected
-- Submission to Bij AI, with precondition results
+- Submission to GEPER, with precondition results
 - Interpretation viewed, modified
 - Approval, release, amendment
 - Any access to a patient record, including read
@@ -870,7 +870,7 @@ external billing system. Recommendation: yes, eventually; not v1.
 
 - Uploaded FASTQ and reference files
 - Generated VCFs
-- Bij AI run documents and rendered reports
+- GEPER run documents and rendered reports
 - Any documents attached to an order or patient record
 
 ### 21.2 Requirements
@@ -930,7 +930,7 @@ manual process. Nothing is deleted by someone remembering to.
 
 ### 23.3 Service authentication
 
-The platform authenticates to `kim_pipeline` and Bij AI with service credentials,
+The platform authenticates to `kim_pipeline` and GEPER with service credentials,
 not user credentials. Both currently use `GEPER_API_KEYS` with a fail-to-start
 control (`GEPER_DEV_INSECURE=1` as the explicit dev opt-in). **IMPLEMENTED** on
 both trees as of 2026-09-03.
@@ -977,7 +977,7 @@ Renders state and collects input. Screens required:
 | Patient record | Identity, consents, order history |
 | Order entry | Place an order |
 | Sample receipt | Log receipt, record QC |
-| Interpretation | Bij AI draft, evidence per variant, interpreter's additions |
+| Interpretation | GEPER draft, evidence per variant, interpreter's additions |
 | Approval | Review the assembled report, approve or return |
 | Report view | Rendered report with state marking |
 | Exceptions | Failed preconditions, failed submissions, blocked orders |
@@ -1152,10 +1152,10 @@ behaviour.
 
 - No report reaches a clinician without an identified Approver's sign-off
 - The draft state is visible on every surface, always
-- Bij AI's uncertainty is preserved, not resolved: not-evaluated criteria,
+- GEPER's uncertainty is preserved, not resolved: not-evaluated criteria,
   unavailable sources and failed lookups are shown as such, never as absence of
   finding
-- A disagreement between the interpreter and Bij AI is recorded, not overwritten
+- A disagreement between the interpreter and GEPER is recorded, not overwritten
 - **ISO 15189 7.4.1.6 i) `[UNVERIFIED-AGAINST-ISO-TEXT]`:** the report identifies that it derives from a research
   or development programme for which no specific performance claims are available.
   That is Bij AI's exact current status.
@@ -1201,7 +1201,7 @@ including the discovery layer for run documents.
 *Acceptance:* given any report, every upstream artefact is retrievable; given a
 model version, every affected report is retrievable.
 
-**Phase 5 — Engine integration.** The `kim_pipeline` API client, the Bij AI
+**Phase 5 — Engine integration.** The `kim_pipeline` API client, the GEPER
 service wrapper, the automatic submission path with preconditions, idempotency,
 retry and the exception workflow.
 
@@ -1233,7 +1233,7 @@ Phases 3, 6 and 7 cannot complete without:
 
 ### 32.3 Blocked on validation
 
-Nothing in this specification claims Bij AI's outputs are correct. **ISO 15189
+Nothing in this specification claims GEPER's outputs are correct. **ISO 15189
 7.3.3 `[UNVERIFIED-AGAINST-ISO-TEXT]` requires validation**, and no measurement runs have been performed. The
 validation study design exists with 25 expert-judgement decisions unfilled.
 
@@ -1274,7 +1274,7 @@ It does not claim Bij AI is validated, certified, production-ready, or safe for
 clinical use. It is none of those things today.
 
 It does not replace the validation study design, which remains the document that
-would establish whether Bij AI's outputs are correct.
+would establish whether GEPER's outputs are correct.
 
 ---
 

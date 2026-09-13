@@ -161,20 +161,28 @@ def build_arg_parser() -> argparse.ArgumentParser:
         required=True,
         help=f"An existing {SHORT_NAME} --output-dir (must already contain geper_results.json from a completed run).",
     )
-    # R10: these three are TYPED IN, with no user record behind them -- this
-    # CLI is the filesystem-only path and has no clinical database to read.
-    # The manifest records that (identity_source: "typed_in"), so an auditor
-    # can tell a typed identity from one taken from the signing account (see
-    # review/signoff.py::ClinicianIdentity). A deployment that HAS user
-    # records should call signoff.approve(identity=...) instead of this
-    # command, so the printed identity cannot contradict the record.
+    # R10: these three are TYPED IN, with no user record behind them -- on the
+    # filesystem-only path this CLI was written for, there is no clinical
+    # database to read. The manifest records that (identity_source:
+    # "typed_in"), so an auditor can tell a typed identity from one taken from
+    # the signing account (see review/signoff.py::ClinicianIdentity).
+    #
+    # NOT `required=True` any more (w117 join, 2026-09-13), and the rule that
+    # replaced it is in `_require_typed_identity_when_unlinked` below: with
+    # --clinical-email the sign-off authenticates against the clinical
+    # platform and the identity is READ FROM THAT ACCOUNT'S RECORD, so
+    # demanding the operator retype it would mean retyping values that must
+    # match the record exactly or be refused -- ceremony that can only
+    # introduce the disagreement R10 exists to prevent. Without
+    # --clinical-email nothing changes: all three are still demanded, by the
+    # explicit check rather than by argparse.
     approve_parser.add_argument(
         "--clinician-name",
-        required=True,
-        help='e.g. "Dr. Rajesh Sharma". Typed in: recorded in the manifest as identity_source "typed_in".',
+        help='e.g. "Dr. Rajesh Sharma". Typed in: recorded in the manifest as identity_source "typed_in". '
+        "Required unless --clinical-email is given, in which case the identity is read from that account.",
     )
-    approve_parser.add_argument("--reg-number", required=True, help='Medical registration number, e.g. "MCI-12345".')
-    approve_parser.add_argument("--hospital", required=True, help='Hospital/lab name, e.g. "AIIMS Delhi".')
+    approve_parser.add_argument("--reg-number", help='Medical registration number, e.g. "MCI-12345".')
+    approve_parser.add_argument("--hospital", help='Hospital/lab name, e.g. "AIIMS Delhi".')
     approve_parser.add_argument(
         "--reason",
         help="The signatory's stated grounds for concurring. REQUIRED for a run linked to a "
@@ -237,12 +245,59 @@ def _print_pending_table(rows: List[Dict[str, Any]]) -> None:
         print(" | ".join(str(row.get(h, "")).ljust(widths[h]) for h in headers))
 
 
+def _require_typed_identity_when_unlinked(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """
+    What `required=True` on --clinician-name/--reg-number/--hospital used to
+    say, now said conditionally (w117 join, 2026-09-13).
+
+    WITHOUT --clinical-email nothing has changed: all three are demanded, and
+    the operator gets argparse's own usage error rather than a traceback from
+    deeper in.
+
+    WITH --clinical-email the sign-off authenticates against the clinical
+    platform, and if the run is linked the identity is read from that
+    account's record -- so demanding the three here would force the operator
+    to retype values that must match the record exactly or be refused. That is
+    ceremony whose only possible outcomes are "identical" and "refused", and
+    the second one is the disagreement R10 exists to prevent, invited by the
+    interface rather than by anybody's mistake.
+
+    Values typed anyway are NOT ignored: review/signoff.py still compares them
+    against the record and refuses a contradiction. This only stops the CLI
+    from insisting on them.
+
+    Kept in the CLI rather than pushed into signoff.approve because it is a
+    statement about THIS command's arguments: the library function's own rule
+    (all three, or an identity) is already enforced by
+    _resolve_signing_identity and is not weakened here.
+    """
+    if getattr(args, "clinical_email", None):
+        return
+    missing = [
+        flag
+        for flag, value in (
+            ("--clinician-name", args.clinician_name),
+            ("--reg-number", args.reg_number),
+            ("--hospital", args.hospital),
+        )
+        if not (value or "").strip()
+    ]
+    if missing:
+        parser.error(
+            f"approve: the following arguments are required: {', '.join(missing)} "
+            "(a clinical report shows the signing clinician's name, registration number and "
+            "hospital). Alternatively pass --clinical-email to sign a run that is linked to a "
+            "clinical record, and the identity is read from that account."
+        )
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
 
     try:
         if args.command == "approve":
+            _require_typed_identity_when_unlinked(parser, args)
             manifest = _approve(
                 output_dir=args.output_dir,
                 clinician_name=args.clinician_name,

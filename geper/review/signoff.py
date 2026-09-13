@@ -952,11 +952,87 @@ def _clinical_login(
     return dao, session
 
 
+def _linked_signing_identity(
+    dao: Any,
+    session: Any,
+    identity: Optional[ClinicianIdentity],
+) -> ClinicianIdentity:
+    """
+    THE IDENTITY A LINKED RUN PRINTS COMES FROM THE USER RECORD OF THE ACCOUNT
+    THAT IS SIGNING. Never from the typed-in flags. (The join between w117's
+    linked sign-off and R10's record-backed identity, 2026-09-13.)
+
+    Three reasons, and the third is the one that makes this not merely
+    preferable but required:
+
+    1. R10 kept the typed-in path for exactly one deployment -- the
+       filesystem-only one, which has no user record to read. A LINKED RUN IS
+       BY DEFINITION NOT THAT DEPLOYMENT: `approve()` has just authenticated
+       against the clinical platform and is holding the signing account's own
+       session. The one justification for typed values is absent here.
+
+    2. R10's rule is that a report must not show an identity that CONTRADICTS
+       the user record. Where the record is reachable, reading it is the only
+       way to keep that true without trusting the caller to have typed
+       correctly.
+
+    3. THE LINKED SIGN-OFF ALREADY CREATES A SECOND ANSWER TO "WHO SIGNED".
+       `approve_report` writes `approver_id = session.user_id` on the clinical
+       report, and R10's `signing_identity_for_report(session, report_id)`
+       answers "whose name, registration number and hospital does this report
+       show?" from that very column. So after a linked sign-off there are two
+       renderings of one signature: the PDF's printed string and the clinical
+       layer's answer. Typed-in values would let those two disagree -- the
+       same shape of defect (a signed artefact and the clinical record saying
+       different things about one act) that the linked path exists to close,
+       reintroduced one field over. Reading the record makes them identical by
+       construction rather than by discipline.
+
+    CONTRADICTIONS ARE REFUSED BY R10'S OWN RULE, NOT BY NEW CODE. This
+    function only decides WHERE the identity comes from; the caller hands the
+    result to `_resolve_signing_identity` as `identity=`, which already
+    refuses any typed value that disagrees and accepts ones that agree. There
+    is therefore ONE resolution path and ONE refusal message for both
+    deployments, rather than a second identity path that could drift from it.
+
+    A caller-supplied `identity` object is checked against the record here for
+    the same reason and with the same verdict: on a linked run the record is
+    authoritative, so an identity object that disagrees with it is a caller
+    bug or an attempt to sign as somebody else, and both need to be seen.
+
+    Raises `SignoffError` (from `ClinicianIdentity.from_user_record`) when the
+    signing account carries no complete identity, and `clinical`'s own
+    `IncompleteClinicianIdentityError` from `get_signing_identity` for the
+    same condition detected one layer down. Called BEFORE any clinical write
+    and before any file write, so an account without a recorded identity
+    leaves both records untouched.
+    """
+    record = ClinicianIdentity.from_user_record(dao.get_signing_identity(session, session.user_id))
+    if identity is not None:
+        disagreements = [
+            f"{field} (identity object holds {given!r}, user record holds {held!r})"
+            for field, given, held in (
+                ("full_name", identity.full_name, record.full_name),
+                ("registration_number", identity.registration_number, record.registration_number),
+                ("hospital", identity.hospital, record.hospital),
+            )
+            if given != held
+        ]
+        if disagreements:
+            raise SignoffError(
+                "Refusing to sign: the identity supplied disagrees with the signing account's own "
+                "record -- " + "; ".join(disagreements) + ". This run is linked to a clinical record, "
+                "so the identity it prints is read from the account that signs (R10). Correct the user "
+                "record if it is wrong, or drop the supplied identity to use the record's."
+            )
+    return record
+
+
 def _record_clinical_signoff(
+    dao: Any,
+    session: Any,
     link: Dict[str, Any],
-    credentials: Optional[ClinicalCredentials],
     reason: str,
-    data_access: Any = None,
 ) -> Dict[str, Any]:
     """
     The whole clinical half of `approve()` on a linked run, as ONE
@@ -964,6 +1040,12 @@ def _record_clinical_signoff(
 
         login -> sole_signatory claim (with an explicit reason)
               -> submit_for_review -> approve_report (approver = that person)
+
+    Takes an ALREADY-OPEN `(dao, session)` rather than logging in itself. One
+    login per sign-off, and the session that reads the signing identity is the
+    same one that records the claim and the approval -- so the identity the
+    PDF prints and the `approver_id` the clinical report stores cannot come
+    from two different accounts.
 
     All four through PUBLIC DataAccess methods. Nothing here reaches into a
     private one, which is why commit 5 added the wrappers: a delivery path
@@ -987,7 +1069,6 @@ def _record_clinical_signoff(
     log, so the filesystem record can be matched to the clinical one later.
     """
     org_id, interpretation_id, report_id = _link_ids(link)
-    dao, session = _clinical_login(link, credentials, data_access)
 
     claim_id = dao.record_sole_signatory_claim(
         session,
@@ -1179,23 +1260,44 @@ def approve(
     a caller that already holds a connection; when it is None a linked run
     connects using CLINICAL_DSN.
 
+    ON A LINKED RUN THE THREE IDENTITY VALUES COME FROM THE SIGNING ACCOUNT'S
+    USER RECORD, NOT FROM `clinician_name`/`reg_number`/`hospital` (the join
+    between this path and R10). `identity_source` is therefore always
+    "user_record" for a linked sign-off. Typed-in values are still accepted
+    while they AGREE with the record and refused when they contradict it --
+    by `_resolve_signing_identity`, R10's own rule, rather than by a second
+    identity path that could drift from it. See `_linked_signing_identity` for
+    why: chiefly that `approve_report` writes `approver_id` on the clinical
+    report and R10's `signing_identity_for_report` reads the printed identity
+    back out of that same column, so a typed identity here would let the PDF
+    and the clinical record name different people. An account carrying no
+    recorded identity refuses before the claim, the submission, the approval
+    and every file write.
+
     Raises `SignoffError`, before any write, when a linked run is missing
     credentials or a reason, and propagates the clinical layer's own refusals
     (a wrong password, a signatory without the Interpreter or Approver role, a
     report not in `draft`) unchanged -- all of them leave the directory exactly
     as it was.
     """
-    signer, identity_source = _resolve_signing_identity(clinician_name, reg_number, hospital, identity)
+    link = read_clinical_link(output_dir)
+
+    # UNLINKED: R10's ordering exactly as it was -- the identity is resolved
+    # before the directory is read, so an incomplete or contradicting identity
+    # refuses without anything on disk having been touched.
+    if link is None:
+        signer, identity_source = _resolve_signing_identity(clinician_name, reg_number, hospital, identity)
 
     results_path = _require_results(output_dir)
     document = _load_document(results_path)
     _check_no_model_hash_mismatch(document)
 
-    # Clinical side FIRST, and entirely, before a single byte on disk changes.
-    # See the "clinical link" section's note on write order: the state this
-    # ordering forbids is a signed PDF existing while the clinical record still
-    # says draft.
-    link = read_clinical_link(output_dir)
+    # LINKED: identity from the signing account's own record, then the clinical
+    # writes -- both before a single byte on disk changes. See the "clinical
+    # link" section's note on write order (the state this forbids is a signed
+    # PDF existing while the clinical record still says draft) and
+    # _linked_signing_identity's docstring for why the identity is read rather
+    # than typed.
     clinical_record: Optional[Dict[str, Any]] = None
     if link is not None:
         if clinical_reason is None or not str(clinical_reason).strip():
@@ -1204,12 +1306,17 @@ def approve(
                 "'sole_signatory' claim -- and a claim requires the signatory's stated grounds. "
                 "Supply a reason (CLI: --reason). Nothing has been changed."
             )
-        clinical_record = _record_clinical_signoff(
-            link,
-            clinical_credentials,
-            str(clinical_reason),
-            data_access=clinical_data_access,
+        dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
+        # Read the identity BEFORE the claim, the submission and the approval:
+        # an account with no recorded identity must leave the clinical record
+        # untouched too, not approve a report it then cannot print.
+        signer, identity_source = _resolve_signing_identity(
+            clinician_name,
+            reg_number,
+            hospital,
+            _linked_signing_identity(dao, session, identity),
         )
+        clinical_record = _record_clinical_signoff(dao, session, link, str(clinical_reason))
 
     physician = signer.physician_string()
     patient_meta_path = _patient_meta_path(output_dir)

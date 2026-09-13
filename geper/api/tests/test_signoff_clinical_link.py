@@ -49,6 +49,16 @@ from tests.test_signoff import _make_document
 from utils.exceptions import SignoffError
 
 
+# The signatory's R10 identity, as held by the USER RECORD. The tests that
+# also type these three in are proving that agreeing values are accepted, not
+# that the typed ones are used -- TestIdentityComesFromTheUserRecord proves
+# which source wins.
+SIGNATORY_NAME = "Dr. A. Sharma, MD"
+SIGNATORY_REG = "MCI-12345"
+SIGNATORY_HOSPITAL = "ABC Diagnostics"
+HOSPITAL_B = "ABC Diagnostics"
+
+
 class _PlainHasher:
     """The clinical layer's hasher protocol without bcrypt, which the geper
     environment does not install. Only these fixtures' own logins use it."""
@@ -141,12 +151,25 @@ def clinical(dao, clinical_conn):
     conn.commit()
     report_id = dao.create_report(admin, interp_id)
 
+    signatory = _login_with_roles(dao, conn, org_id, admin, "signatory@org-a.test", ("Interpreter", "Approver"))
+    interpreter_only = _login_with_roles(dao, conn, org_id, admin, "interpreter@org-a.test", ("Interpreter",))
+    # R10 identities, recorded by the Administrator (the only role that may).
+    # A LINKED sign-off reads the three printed values from here, so an
+    # account without them cannot sign -- TestIdentityComesFromTheUserRecord
+    # covers that, with `unrecorded` below as its subject.
+    dao.set_clinician_identity(admin, signatory.user_id, SIGNATORY_NAME, SIGNATORY_REG, SIGNATORY_HOSPITAL)
+    dao.set_clinician_identity(admin, interpreter_only.user_id, "Dr. B. Interpreter, MD", "MCI-99999", HOSPITAL_B)
+
     return {
         "org_id": org_id,
         "interpretation_id": interp_id,
         "report_id": report_id,
-        "signatory": _login_with_roles(dao, conn, org_id, admin, "signatory@org-a.test", ("Interpreter", "Approver")),
-        "interpreter_only": _login_with_roles(dao, conn, org_id, admin, "interpreter@org-a.test", ("Interpreter",)),
+        "admin": admin,
+        "signatory": signatory,
+        "interpreter_only": interpreter_only,
+        # Holds both roles and can therefore sign the whole way through -- but
+        # carries no name, registration number or hospital.
+        "unrecorded": _login_with_roles(dao, conn, org_id, admin, "unrecorded@org-a.test", ("Interpreter", "Approver")),
     }
 
 
@@ -264,6 +287,165 @@ class TestUnlinkedRunIsUnchanged:
         assert _document(run_dir)["review_status"] == "overridden"
         assert record["new_classification"] == "Likely Pathogenic"
         assert "clinical" not in record
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# THE JOIN: w117's linked sign-off meets R10's record-backed identity
+# ───────────────────────────────────────────────────────────────────────────
+
+
+class TestIdentityComesFromTheUserRecord:
+    """
+    A linked sign-off prints the name, registration number and hospital held
+    by THE ACCOUNT THAT SIGNED, never the typed-in flags.
+
+    The reason this is not merely tidier: `approve_report` writes
+    `approver_id` on the clinical report, and R10's
+    `signing_identity_for_report` reads the printed identity back out of that
+    same column. So a linked sign-off already has two renderings of one
+    signature -- the PDF's string and the clinical layer's answer. Typed-in
+    values would let those two name different people, which is the same defect
+    (signed artefact and clinical record disagreeing about one act) that the
+    linked path exists to close, one field over.
+    """
+
+    def test_the_printed_identity_is_the_records_and_not_the_typed_one(self, linked_run_dir, dao, creds):
+        """
+        Nothing is typed at all, and the report still prints a full identity --
+        which can only have come from the record.
+        """
+        manifest = s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        assert manifest["clinician_name"] == SIGNATORY_NAME
+        assert manifest["reg_number"] == SIGNATORY_REG
+        assert manifest["hospital"] == SIGNATORY_HOSPITAL
+        assert manifest["identity_source"] == "user_record"
+        assert (
+            _document(linked_run_dir)["reviewed_by"]
+            == f"{SIGNATORY_NAME}, Reg. No. {SIGNATORY_REG}, {SIGNATORY_HOSPITAL}"
+        )
+
+    def test_the_pdf_and_the_clinical_record_name_the_same_person(self, linked_run_dir, clinical, dao, creds):
+        """
+        THE JOIN, ASSERTED AS THE ONE FACT IT EXISTS FOR. What the manifest
+        printed and what signing_identity_for_report answers for the same
+        report must be the same three values and the same account.
+        """
+        manifest = s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        from_record = dao.signing_identity_for_report(clinical["signatory"], clinical["report_id"])
+
+        assert manifest["clinician_name"] == from_record["full_name"]
+        assert manifest["reg_number"] == from_record["registration_number"]
+        assert manifest["hospital"] == from_record["hospital"]
+        assert manifest["clinician_user_id"] == str(from_record["user_id"])
+        assert manifest["clinician_user_id"] == manifest["clinical"]["approver_user_id"], (
+            "the account the manifest credits and the account recorded as approver on the clinical "
+            "report must be the same one"
+        )
+
+    def test_typed_values_that_agree_with_the_record_are_accepted(self, linked_run_dir, dao, creds):
+        """R10's own rule, unchanged: agreement is not an error."""
+        manifest = s.approve(
+            linked_run_dir,
+            SIGNATORY_NAME,
+            SIGNATORY_REG,
+            SIGNATORY_HOSPITAL,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        assert manifest["identity_source"] == "user_record"
+
+    @pytest.mark.parametrize(
+        "typed, field",
+        [
+            (("Dr. Someone Else", SIGNATORY_REG, SIGNATORY_HOSPITAL), "clinician_name"),
+            ((SIGNATORY_NAME, "MCI-00000", SIGNATORY_HOSPITAL), "reg_number"),
+            ((SIGNATORY_NAME, SIGNATORY_REG, "Some Other Hospital"), "hospital"),
+        ],
+    )
+    def test_a_typed_value_contradicting_the_record_is_refused(
+        self, linked_run_dir, clinical, clinical_conn, dao, creds, typed, field
+    ):
+        """
+        Refused by R10's own _resolve_signing_identity, not by a second rule
+        written for this path -- and refused BEFORE the claim, the approval and
+        every file write.
+        """
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(SignoffError, match=field):
+            s.approve(
+                linked_run_dir,
+                *typed,
+                clinical_credentials=creds,
+                clinical_reason="Sole signatory concurrence.",
+                clinical_data_access=dao,
+            )
+        assert _directory_state(linked_run_dir) == before
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "draft"
+        assert _claims(clinical_conn, clinical["report_id"]) == []
+
+    def test_an_identity_object_contradicting_the_record_is_refused(
+        self, linked_run_dir, clinical, clinical_conn, dao, creds
+    ):
+        """The same verdict when the caller passes a whole ClinicianIdentity:
+        on a linked run the record is authoritative, full stop."""
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(SignoffError, match="registration_number"):
+            s.approve(
+                linked_run_dir,
+                identity=s.ClinicianIdentity(SIGNATORY_NAME, "MCI-00000", SIGNATORY_HOSPITAL),
+                clinical_credentials=creds,
+                clinical_reason="Sole signatory concurrence.",
+                clinical_data_access=dao,
+            )
+        assert _directory_state(linked_run_dir) == before
+        assert _claims(clinical_conn, clinical["report_id"]) == []
+
+    def test_an_account_with_no_recorded_identity_cannot_sign_a_linked_run(
+        self, linked_run_dir, clinical, clinical_conn, dao
+    ):
+        """
+        R10 refuses rather than printing "Reg. No.: not provided". On a linked
+        run that refusal must arrive before the CLINICAL writes as well as the
+        file writes -- approving a report the platform then cannot print a
+        signature for would be the worst of both.
+        """
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(Exception) as exc:
+            s.approve(
+                linked_run_dir,
+                clinical_credentials=s.ClinicalCredentials("unrecorded@org-a.test", "password"),
+                clinical_reason="Sole signatory concurrence.",
+                clinical_data_access=dao,
+            )
+        assert "full_name" in str(exc.value) and "registration_number" in str(exc.value)
+        assert _directory_state(linked_run_dir) == before
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "draft"
+        assert _claims(clinical_conn, clinical["report_id"]) == [], (
+            "the identity must be read BEFORE the sole_signatory claim -- an account that cannot be "
+            "printed must not leave a concurrence behind it"
+        )
+
+    def test_an_unlinked_run_still_takes_the_typed_identity(self, run_dir, monkeypatch):
+        """
+        CONTROL. R10's filesystem-only path is untouched: no record to read,
+        typed values used, identity_source says so.
+        """
+        monkeypatch.delenv("CLINICAL_DSN", raising=False)
+        manifest = s.approve(run_dir, "Dr. Typed In", "MCI-55555", "Some Lab")
+        assert manifest["identity_source"] == "typed_in"
+        assert manifest["clinician_name"] == "Dr. Typed In"
+        assert manifest["clinician_user_id"] is None
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -695,6 +877,34 @@ class TestCliCredentials:
         )
         with pytest.raises(SignoffError, match="MY_CLINICAL_PW"):
             _clinical_credentials(args)
+
+    def test_the_three_identity_flags_are_still_demanded_without_clinical_email(self):
+        """
+        CONTROL for the join's CLI half: the filesystem-only invocation is
+        unchanged -- all three are still required, and the operator still gets
+        a usage error rather than a failure from deeper in.
+        """
+        from review.cli import main as cli_main
+
+        with pytest.raises(SystemExit):
+            cli_main(["approve", "--output-dir", "x", "--clinician-name", "Dr. X"])
+
+    def test_they_may_be_omitted_when_clinical_email_is_given(self, tmp_path, monkeypatch):
+        """
+        With --clinical-email the identity is read from the signing account, so
+        retyping it could only produce "identical" or "refused". The CLI stops
+        insisting; the failure below is the missing run, not a missing flag.
+        """
+        from review.cli import main as cli_main
+
+        monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", "password")
+        # No geper_results.json: this must reach signoff.py and fail THERE.
+        assert (
+            cli_main(
+                ["approve", "--output-dir", str(tmp_path), "--clinical-email", "signatory@org-a.test", "--reason", "r"]
+            )
+            == 1
+        )
 
     def test_no_clinical_email_means_no_credentials(self):
         from review.cli import _clinical_credentials, build_arg_parser

@@ -135,6 +135,17 @@ def vcf(tmp_path):
     return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+class _FixedClock:
+    """One moment, handed to every write -- the injectable clock the module
+    already takes, pinned so two rows can share a created_at."""
+
+    def __init__(self, moment: datetime.datetime) -> None:
+        self._moment = moment
+
+    def now(self) -> datetime.datetime:
+        return self._moment
+
+
 def _counts(conn):
     with conn.cursor() as cur:
         out = {}
@@ -309,3 +320,70 @@ class TestFindInterpretationBySubmissionKey:
 
         found = dao.find_interpretation_by_submission_key(system, recorded.submission_key)
         assert found["report_id"] == recorded.report_id != amendment_report_id
+
+    def test_report_is_the_original_when_no_amendment_exists(self, dao, conn, org_a, vcf):
+        """Control for the test below: with no amendments row at all, the
+        lookup returns the one report the run produced."""
+        vcf_path, vcf_hash = vcf
+        system = dao._create_system_session(org_a["org_id"])
+        recorded = dao.record_pipeline_result(system, org_a["sample_id"], vcf_path, vcf_hash, RUN_DOCUMENT)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM amendments WHERE org_id = %s", (org_a["org_id"],))
+            assert cur.fetchone()[0] == 0
+        conn.commit()
+
+        found = dao.find_interpretation_by_submission_key(system, recorded.submission_key)
+        assert found["report_id"] == recorded.report_id
+
+    def test_amendment_is_excluded_even_when_it_sorts_first(self, dao, conn, org_a, vcf, monkeypatch):
+        """The invariant is "not an amendment", NOT "oldest row wins".
+
+        `ORDER BY r.created_at, r.id` alone does not express it: two report
+        rows on the same interpretation can share a created_at (the clock is
+        injected, and a batch/reconciliation write stamps one moment across
+        the rows it writes), and the tie then breaks on a random uuid. Here
+        the amendment's report row wins BOTH keys -- same created_at as the
+        original, lower id -- so only the `NOT EXISTS (... amendments ...)`
+        filter can keep the original from being shadowed.
+        """
+        vcf_path, vcf_hash = vcf
+        system = dao._create_system_session(org_a["org_id"])
+        moment = datetime.datetime.now(datetime.timezone.utc)
+        monkeypatch.setattr(dao, "_clock", _FixedClock(moment))
+
+        recorded = dao.record_pipeline_result(system, org_a["sample_id"], vcf_path, vcf_hash, RUN_DOCUMENT)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE reports SET state = 'approved', approver_id = %s, approved_at = %s, content_hash = %s "
+                "WHERE id = %s",
+                (org_a["admin"].user_id, moment, "0" * 64, recorded.report_id),
+            )
+        conn.commit()
+
+        # Every uuid minted inside create_amendment is uuid4 (version bits
+        # set), so any UUID(int=n) for small n sorts below the original
+        # report's id -- deterministic, no coin flip.
+        counter = iter(range(1, 100))
+        monkeypatch.setattr(uuid, "uuid4", lambda: uuid.UUID(int=next(counter)))
+        try:
+            amendment_report_id, _ = dao.create_amendment(
+                org_a["admin"], recorded.report_id, "Corrected classification"
+            )
+        finally:
+            monkeypatch.undo()
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, created_at FROM reports WHERE org_id = %s AND interpretation_id = %s "
+                "ORDER BY created_at, id",
+                (org_a["org_id"], recorded.interpretation_id),
+            )
+            ordered = cur.fetchall()
+        conn.commit()
+        # Precondition of the test itself: the amendment really does sort first.
+        assert [r[0] for r in ordered] == [amendment_report_id, recorded.report_id]
+        assert ordered[0][1] == ordered[1][1]
+
+        found = dao.find_interpretation_by_submission_key(system, recorded.submission_key)
+        assert found["report_id"] == recorded.report_id
+        assert found["report_id"] != amendment_report_id

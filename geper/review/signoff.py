@@ -1116,8 +1116,12 @@ def _record_clinical_disagreement(
     appended beside it, which is the whole reason spec 13.2 made disagreement
     a claim.
 
-    AN OVERRIDE AFTER APPROVAL IS REFUSED, and the refusal names the amendment
-    path. An approved report has a content_hash over exactly what was
+    AN OVERRIDE AFTER APPROVAL IS REFUSED, and the refusal points at the
+    amendment CONCEPT while saying plainly that the path is NOT YET AVAILABLE
+    from this tool. It used to name `clinical.data_access::create_amendment`,
+    which no command reaches: a refusal naming something a user cannot run is a
+    false claim in user-facing text, and it arrives exactly when somebody is
+    trying to act (human ruling, w119). An approved report has a content_hash over exactly what was
     approved, and `verify_report_integrity` exists to detect content that
     changed underneath it; quietly appending a claim to an approved report
     would trip that as a nonconformance, and quietly rewriting the run
@@ -1147,10 +1151,11 @@ def _record_clinical_disagreement(
             f"Refusing to override: this run's clinical report {report_id} is already '{state}'. "
             "An approved report is not edited -- its content_hash attests to exactly what was "
             "approved, and changing the content behind it is the nonconformance ISO 15189 7.5 "
-            "asks to be detected, not a workflow. Issue an AMENDMENT instead (a second report on "
-            "the same interpretation, clinical.data_access::create_amendment), which records the "
-            "change as a new document rather than silently altering a signed one. Nothing on disk "
-            "has been changed."
+            "asks to be detected, not a workflow. The remedy is an AMENDMENT -- a second report on "
+            "the same interpretation, recording the change as a new document rather than silently "
+            "altering a signed one -- and THAT PATH IS NOT YET AVAILABLE from this tool: there is "
+            "no command here that issues one. Raise it with the clinical platform's owners. "
+            "Nothing on disk has been changed."
         )
 
     chrom, pos, ref, alt = parse_variant_key(variant_key)

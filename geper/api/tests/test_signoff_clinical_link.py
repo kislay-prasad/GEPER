@@ -1038,6 +1038,76 @@ class TestLinkedWithdrawCannotLeaveTheRecordSayingApproved:
         assert os.path.exists(os.path.join(run_dir, s.FULL_PDF_FILENAME))
 
 
+class TestTheRefusalsNameOnlyThingsAUserCanReach:
+    """
+    w119 FIX 3. The override-after-approval refusal used to name
+    `clinical.data_access::create_amendment`. NO COMMAND REACHES IT -- it is
+    a DataAccess method with no CLI subcommand and no HTTP route anywhere in
+    this repository.
+
+    THE HUMAN'S RULING: "A refusal naming a command a user can't reach is a
+    false claim in user-facing text, and worse than a stale docstring because
+    it arrives when someone is trying to act. Say the amendment path isn't yet
+    available rather than naming something that doesn't exist."
+
+    NOT A CANNOT-FAIL TEST. "the message does not contain create_amendment"
+    passes against an empty string, against a refusal that never fires and
+    against a message that says nothing useful. So the positive wording is
+    pinned too, and the message is taken from a refusal that actually
+    happened.
+    """
+
+    @pytest.fixture
+    def approved(self, linked_run_dir, dao, creds):
+        s.approve(
+            linked_run_dir,
+            clinical_credentials=creds,
+            clinical_reason="Sole signatory concurrence.",
+            clinical_data_access=dao,
+        )
+        return linked_run_dir
+
+    def test_the_override_refusal_does_not_name_an_unreachable_command(self, approved, clinical, dao, creds):
+        with pytest.raises(SignoffError) as exc:
+            s.override(
+                approved,
+                "17:43106534:C>A",
+                "Likely Pathogenic",
+                "Segregation data.",
+                "signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        # The message really is the refusal, and really is non-empty -- so the
+        # absence assertion below is about wording and not about nothing.
+        assert str(clinical["report_id"]) in message
+        assert "already 'approved'" in message
+        # POSITIVE: what it must say instead.
+        assert "AMENDMENT" in message
+        assert "NOT YET AVAILABLE" in message
+        assert "no command here that issues one" in message
+        # NEGATIVE: the false claim it used to make.
+        assert "create_amendment" not in message
+        assert "data_access::" not in message
+
+    def test_the_withdraw_refusal_names_no_unreachable_command_either(self, approved, dao, creds):
+        """The message added by fix 1 is held to the same rule, so the defect
+        is not reintroduced one function over."""
+        with pytest.raises(SignoffError) as exc:
+            s.withdraw(
+                approved,
+                reason="Signed off in error.",
+                actor="signatory@org-a.test",
+                clinical_credentials=creds,
+                clinical_data_access=dao,
+            )
+        message = str(exc.value)
+        assert "AMENDMENT" in message and "NOT YET AVAILABLE" in message
+        assert "create_amendment" not in message
+        assert "data_access::" not in message
+
+
 class TestTheCliDrivesARealClinicalConnection:
     """
     w119 FIX 2. Two things had never been executed by any test:

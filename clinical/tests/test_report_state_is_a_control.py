@@ -501,23 +501,50 @@ class TestRetrievalDoesNotFilterOnState:
 # RELATIONSHIP -- "gates on the delivery states" implies "composes retraction"
 # -- so a method written tomorrow is measured by the same rule.
 #
-# HOW A "READER" IS IDENTIFIED, and why this shape rather than a grep:
-#   1. It is a method of DataAccess decorated with @auditable. Every entry
-#      point into this class is; a delivery path written outside one would
-#      have no audit trail at all and would fail w120's own structural test
-#      long before it reached here.
-#   2. Its body compares something against the DELIVERY-STATE PAIR -- a
-#      containment test whose right-hand side is a literal sequence holding
-#      both 'approved' and 'released'. That pair is precisely "may this
-#      document go to a consumer", and it is the decision retraction has to
-#      travel with. Plain helpers that happen to mention the two states about
-#      SOME OTHER report (_read_superseded_by tests the AMENDMENT's state) are
-#      not entry points and are deliberately out of scope.
+# HOW A "READER" IS IDENTIFIED, and why this shape rather than a grep. It is
+# a method defined directly in class DataAccess, in this one file, whose body
+# contains an ==, !=, in or not in comparison that NAMES AT LEAST ONE DELIVERY
+# STATE as a string constant. The name may appear directly ('approved'), inside
+# a literal tuple/list/set, or through a module-level constant bound to such a
+# literal. That is the whole rule, and it is deliberately one rule rather than
+# a shape per call site.
+#
+# WHAT THE RULE USED TO BE, AND WHY IT WAS WIDENED (w123). It used to demand
+# all three of: an @auditable CALL decorator, a containment operator, and a
+# literal sequence holding BOTH states. Measured against a4907d3 with three
+# mutant readers inserted into DataAccess, only one of the three was caught:
+#   decorated   + `if state in ('approved', 'released')`   CAUGHT
+#   decorated   + `if state == 'released'`                 MISSED -- 21 passed
+#   undecorated + `if state in ('approved', 'released')`   MISSED -- 21 passed
+# Dropping the decorator requirement and admitting equality against a single
+# delivery state catches all three. The decorator requirement was the weakest
+# of the three anyway: it asserted a convention (every entry point is audited)
+# as if it were the definition of a reader, so the cheapest way to escape the
+# detector was to write the gate in a helper -- which is where gates normally
+# end up.
+#
+# NEGATION FORMS, AND THE ONE THAT IS DELIBERATELY NOT MATCHED.
+#   INCLUDED: `not in ('approved', 'released')` and `!= 'released'`. Those are
+#   the canonical shapes in this file -- require_release, retract_report and
+#   create_amendment all raise on `state not in (...)`, and _release_report
+#   tests `state != 'released'`. A decision taken BY NEGATING a delivery state
+#   is still a decision taken on the delivery states.
+#   NOT INCLUDED: the complement over NON-delivery states -- `!= 'draft'`,
+#   `not in ('draft', 'under_review', 'returned')`. It admits the delivery
+#   states by omission, so on paper it is a delivery gate too. In practice it
+#   is the shape of every ordinary workflow precondition: place_order tests
+#   `orders.state != 'draft'` and has nothing to do with reports at all;
+#   submit_for_review and _approve_report gate on ENTRY to the workflow, not on
+#   EXIT to a consumer. Matching it would pull three unrelated methods in and
+#   each would need an exemption, and a detector that hands out exemptions to
+#   stay quiet is how this guarantee dies. It is listed as a blind spot on the
+#   test below rather than silently dropped.
 #
 # HOW COMPOSITION IS IDENTIFIED: the method calls `self._read_retraction_row`,
 # the one place retraction is read from the database. Routing every composer
 # through one helper is what makes this question mechanical instead of
-# textual.
+# textual. Note what this does and does not establish: it proves the QUESTION
+# WAS ASKED, not that the answer was used.
 
 _DATA_ACCESS = pathlib.Path(__file__).resolve().parent.parent / "data_access.py"
 
@@ -538,39 +565,110 @@ RETRACTION_COMPOSITION_EXEMPT = {
     # toward issuing an unlinked new report and losing the link. This is the
     # one gate whose correct behaviour is to not care.
     "create_amendment",
+    # PULLED INTO SCOPE BY THE w123 WIDENING, listed here rather than left to
+    # be discovered, because an exemption nobody wrote down is the same thing
+    # as a matcher that never matched.
+    #
+    # It IS the retraction reader -- the function that turns a retraction row
+    # into the banner a report prints -- so requiring it to compose retraction
+    # is requiring it to call itself. It reaches report_retractions with its
+    # own SELECT rather than through _read_retraction_row, which is a real
+    # (and separately worth fixing) crack in that helper's "one place" claim;
+    # this exemption records it instead of hiding it. Its `== 'approved'` /
+    # `== 'released'` comparisons are against retracted_from_state -- the state
+    # the report was retracted FROM, stored on the retraction row -- not
+    # against reports.state, so it gates nothing that reaches a consumer.
+    "_read_retracted",
+    # Also pulled in by the widening (undecorated helper, `in ('approved',
+    # 'released')`). Its membership test is about the AMENDMENT's state, not
+    # the state of the report being read: it picks the latest amendment that
+    # has actually been issued. Human ruling E4 again -- a retracted report may
+    # still be amended, and the amendment banner must keep naming its
+    # amendment. The caller that assembles the report around it is the one that
+    # must compose retraction, and get_report does.
+    "_read_superseded_by",
 }
+
+
+def _module_level_state_constants(tree):
+    """
+    Module-level names bound to a literal sequence of strings.
+
+    Only module level, and only a literal: a name assigned inside a function,
+    or built by a call this walk cannot evaluate, is not resolved and the
+    comparison that uses it is simply not matched. Guessing at a value would
+    be worse than a stated blind spot.
+    """
+    constants = {}
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            # frozenset({...}) / set([...]) / tuple(...) around a literal.
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id in ("frozenset", "set", "tuple", "list")
+                and len(value.args) == 1
+            ):
+                value = value.args[0]
+            if not isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+                continue
+            strings = {e.value for e in value.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    constants[target.id] = strings
+    return constants
+
+
+def _names_a_delivery_state(node, constants):
+    """
+    Does this comparison operand name at least one delivery state?
+
+    Three shapes, and only three: the bare constant ('approved'), a literal
+    sequence containing one ({'approved', 'released'}), and a module-level
+    name bound to such a literal. Anything else -- an enum member, an f-string,
+    a value fetched from a column, a name assigned locally -- is not resolved.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value in DELIVERY_STATES
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return any(isinstance(e, ast.Constant) and e.value in DELIVERY_STATES for e in node.elts)
+    if isinstance(node, ast.Name):
+        return bool(constants.get(node.id, frozenset()) & DELIVERY_STATES)
+    return False
 
 
 def _delivery_state_gates(tree):
     """
-    Every @auditable DataAccess method whose body tests membership in the
-    delivery-state pair, with whether it composes retraction.
+    Every DataAccess method whose body compares something against a delivery
+    state, with whether it composes retraction.
+
+    Decorated or not; ==, !=, in or not in; one state or both. See the block
+    comment above for why each of those was widened and for the one negation
+    form (the complement over NON-delivery states) that is left out.
     """
+    constants = _module_level_state_constants(tree)
     found = {}
     for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "DataAccess"]:
         for node in cls.body:
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            decorated = any(
-                isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "auditable"
-                for dec in node.decorator_list
-            )
-            if not decorated:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             gates = False
             for inner in ast.walk(node):
                 if not isinstance(inner, ast.Compare):
                     continue
                 for op, comparator in zip(inner.ops, inner.comparators):
-                    if not isinstance(op, (ast.In, ast.NotIn)):
-                        continue
-                    if not isinstance(comparator, (ast.Tuple, ast.List, ast.Set)):
-                        continue
-                    values = {
-                        e.value for e in comparator.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
-                    }
-                    if DELIVERY_STATES <= values:
-                        gates = True
+                    if isinstance(op, (ast.In, ast.NotIn)):
+                        # `x in SEQ`: only the container names the states.
+                        if _names_a_delivery_state(comparator, constants):
+                            gates = True
+                    elif isinstance(op, (ast.Eq, ast.NotEq)):
+                        # Either side, so `'approved' == state` is not a hole.
+                        if _names_a_delivery_state(comparator, constants) or _names_a_delivery_state(
+                            inner.left, constants
+                        ):
+                            gates = True
             if not gates:
                 continue
             composes = any(
@@ -582,10 +680,49 @@ def _delivery_state_gates(tree):
 
 def test_every_delivery_state_gate_composes_retraction():
     """
-    THE RELATIONSHIP, not the roster. A reader added tomorrow that asks
-    "is this report approved or released" and does not ask "has it been
-    retracted" fails here -- which is the whole of what the human accepted
-    in place of a database constraint.
+    THE RELATIONSHIP, not the roster -- within one file, over one shape.
+
+    WHAT IT ENFORCES, EXACTLY. Every method defined directly in class
+    DataAccess in clinical/data_access.py whose PYTHON SOURCE contains an
+    ==, !=, in or not in comparison naming 'approved' or 'released' as a
+    string constant (bare, in a literal sequence, or via a module-level
+    constant bound to one) must also call self._read_retraction_row, or be
+    named in RETRACTION_COMPOSITION_EXEMPT with a reason.
+
+    WHAT IT CANNOT SEE. This is an AST walk over one Python file, and the
+    blind spots are not hypothetical -- the first one is a shape this very
+    codebase uses on every query:
+
+      1. SQL STRING GATES, and this is permanent. A gate written as
+         `WHERE state IN ('approved', 'released')` -- or `state = 'approved'`,
+         or pushed down into a view, a stored function or a trigger -- is a
+         string constant to Python. An AST walk sees a str, not a comparison,
+         and no amount of widening changes that without becoming a grep over
+         SQL text. A delivery path that filters in the database and never
+         mentions a state in Python passes this test while forgetting
+         retraction entirely.
+      2. INDIRECTION IN THE STATE NAME. An enum member (ReportState.APPROVED),
+         an f-string, a locally-assigned variable, a value read from another
+         row, a set built by a call -- none resolve here. Only bare constants,
+         literal sequences and module-level constants bound to literals do.
+      3. ANYTHING OUTSIDE DataAccess. Gates in geper/api routes, in
+         submission_worker, in a renderer, or in a subclass or mixin, are not
+         walked. Only methods in this one class body in this one file are.
+      4. COMPOSITION IS A CALL, NOT A USE. Matching self._read_retraction_row
+         proves the question was ASKED. A method that calls it and throws the
+         answer away passes. Nothing here checks what the caller does with a
+         retraction it found.
+      5. THE COMPLEMENT FORM IS NOT MATCHED ON PURPOSE. `state != 'draft'`
+         admits the delivery states by omission and is not treated as a
+         delivery gate; see the block comment above for why, and for the three
+         methods that would otherwise have needed exemptions.
+
+    So: this catches a forgetful reader that decides in Python, in this class,
+    by naming a delivery state. That is narrower than "a reader added
+    tomorrow", which is what this docstring used to claim. The residual is
+    real and the human accepted it against model 3; an overclaim here is worse
+    than the narrower guarantee honestly described, because the overclaim is
+    what gets quoted into a decision.
     """
     gates = _delivery_state_gates(ast.parse(_DATA_ACCESS.read_text(encoding="utf-8")))
 
@@ -600,8 +737,20 @@ def test_every_delivery_state_gate_composes_retraction():
     )
     # And it must still find the gates we know are there, BY NAME, so a method
     # cannot slip out of scope by losing its decorator or rewriting its
-    # comparison into a shape the walk does not see.
-    assert {"require_release", "_release_report", "create_amendment"} <= set(gates), sorted(gates)
+    # comparison into a shape the walk does not see. Each of the last three
+    # pins one ARM of the w123 widening, so that reverting the widening fails
+    # here rather than passing quietly on a matcher that sees less:
+    #   retract_report      the `not in (...)` gate (unchanged behaviour)
+    #   _read_retracted     equality against a SINGLE delivery state
+    #   _read_superseded_by an UNDECORATED helper
+    assert {
+        "require_release",
+        "_release_report",
+        "create_amendment",
+        "retract_report",
+        "_read_retracted",
+        "_read_superseded_by",
+    } <= set(gates), sorted(gates)
 
     offenders = sorted(
         name for name, composes in gates.items() if not composes and name not in RETRACTION_COMPOSITION_EXEMPT

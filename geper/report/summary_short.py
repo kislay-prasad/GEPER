@@ -63,6 +63,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from component_identity import SHORT_NAME
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer_short
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from report.clinical_report_builder import (
@@ -167,7 +168,7 @@ def _split_sentences(text: str) -> List[str]:
 
 
 _COMPANION_NOTE = (
-    "This is a summary report. The full detailed Bij AI report for this run -- including the "
+    "This is a summary report. The full detailed GEPER report for this run -- including the "
     "sequencing QC table, the complete ACMG/AMP criteria applied to each variant with their "
     "rationale, all supporting evidence, and the stated limitations of each finding -- is "
     "available as a companion document ({companion}) generated from the same analysis run and "
@@ -350,7 +351,7 @@ from report.summary import SCOPE_LINE  # noqa: E402 -- one source of truth for t
 def _build_short_header(logo_path: Optional[str], styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """Compact letterhead line: optional logo plus the report title. Same graceful degradation as the full report -- a missing or corrupt logo logs and falls back to the text-only title, never fails the render."""
     content_width = _PAGE_W - 2 * _MARGIN
-    title = Paragraph("Bij AI Clinical Genomic Summary Report", styles["ReportTitle"])
+    title = Paragraph(f"{SHORT_NAME} Clinical Genomic Summary Report", styles["ReportTitle"])
     _, title_height = title.wrap(content_width, 1000)
 
     resolved = _resolve_logo_path(logo_path)
@@ -499,7 +500,7 @@ def _build_variant_block(idx: int, variant_result: Dict[str, Any], styles: Dict[
             Paragraph(heading, styles["VariantHeading"]),
             Paragraph(
                 f"Out of scope ({esc(out_of_scope.get('scope', 'unspecified'))}): "
-                f"{esc(out_of_scope.get('reason')) or 'This variant is out of scope for this Bij AI build.'}",
+                f"{esc(out_of_scope.get('reason')) or f'This variant is out of scope for this {SHORT_NAME} build.'}",
                 styles["BodyText"],
             ),
             Paragraph(

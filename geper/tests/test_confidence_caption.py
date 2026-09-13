@@ -33,7 +33,7 @@ try:
 except ImportError:
     _PYPDF_AVAILABLE = False
 
-_CAPTION_TEXT = "Evidence Completeness reflects how much evidence Bij AI could gather for this variant"
+_CAPTION_TEXT = "Evidence Completeness reflects how much evidence GEPER could gather for this variant"
 
 
 def _clinical(classification="Pathogenic", confidence_label="High", confidence_score=90, pending=False):

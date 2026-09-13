@@ -100,7 +100,7 @@ def acmg_net_points_band_label(classification: Optional[str]) -> Optional[str]:
 # every renderer includes verbatim, so the caption can never drift out
 # of sync the way independently-worded footnotes would.
 EVIDENCE_COMPLETENESS_CAPTION = (
-    "Evidence Completeness reflects how much evidence Bij AI could gather for this variant, not how "
+    "Evidence Completeness reflects how much evidence GEPER could gather for this variant, not how "
     "certain the classification is."
 )
 
@@ -250,7 +250,7 @@ _REFERENCES = {
     "MMSplice": "MMSplice -- Cheng et al. 2019, Genome Biology",
     "BLAST": "NCBI BLAST -- https://blast.ncbi.nlm.nih.gov/",
     "HPO": "Human Phenotype Ontology (HPO) -- Gargano et al. 2024, Nucleic Acids Research",
-    "protein_translator": "Bij AI internal reference/alternate protein translation (standard genetic code).",
+    "protein_translator": "GEPER internal reference/alternate protein translation (standard genetic code).",
 }
 
 # Orphanet/Orphadata (CC-BY-4.0) is a genuine exception to the
@@ -1713,7 +1713,7 @@ def _qc_status(metric_key: str, value: float) -> str:
 # ---------------------------------------------------------------------------
 
 _QC_METRICS_NOT_APPLICABLE_REASON = (
-    "This report was generated directly from a VCF (no --qc-metrics-json was supplied), so Bij AI "
+    "This report was generated directly from a VCF (no --qc-metrics-json was supplied), so GEPER "
     "never ran or observed any upstream sequencing/alignment step for this sample -- there is no "
     "run-level QC to show here, not merely an unreported one."
 )

@@ -444,7 +444,7 @@ mention, or explicit statements that GEPER does not infer phase/compound-het sta
 (`config.py:2415-2421`; `summary.py:1553-1554,1605-1606` — the original card cited
 `summary.py:1547,1600`, which I re-checked directly and found had drifted a few lines since
 the card was written; corrected here to the current location of the same text, verified
-verbatim: *"Bij AI has no phase data and does not infer compound heterozygosity or a cis/trans
+verbatim: *"GEPER has no phase data and does not infer compound heterozygosity or a cis/trans
 relationship from this."*).
 
 **What is specifically being asked, as five distinct decidable questions, all required:**

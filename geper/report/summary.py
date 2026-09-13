@@ -50,6 +50,7 @@ from reportlab.platypus import Image, KeepTogether, PageBreak, Paragraph, Simple
 from reportlab.platypus.flowables import Flowable
 
 from annotation.thousand_genomes_sas import DIASPORA_DISCLOSURE, SAMPLE_SIZE_DISCLOSURE
+from component_identity import SHORT_NAME
 from config import CONFIG
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
 from pipeline.hgvs_utils import is_mitochondrial_chrom
@@ -654,7 +655,7 @@ def _make_later_page_decoration(header_label: str):
         canvas.saveState()
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(colors.grey)
-        canvas.drawString(_MARGIN, _PAGE_H - 12 * mm, f"Bij AI Clinical Genomic Report -- {header_label}")
+        canvas.drawString(_MARGIN, _PAGE_H - 12 * mm, f"{SHORT_NAME} Clinical Genomic Report -- {header_label}")
         canvas.setStrokeColor(colors.lightgrey)
         canvas.line(_MARGIN, _PAGE_H - 14 * mm, _PAGE_W - _MARGIN, _PAGE_H - 14 * mm)
         canvas.restoreState()
@@ -847,7 +848,7 @@ def _build_report_header(logo_path: Optional[str], styles: Dict[str, ParagraphSt
     before this feature existed.
     """
     content_width = _PAGE_W - 2 * _MARGIN
-    title = Paragraph("Bij AI Clinical Genomic Analysis Report", styles["ReportTitle"])
+    title = Paragraph(f"{SHORT_NAME} Clinical Genomic Analysis Report", styles["ReportTitle"])
     _, title_height = title.wrap(content_width, 1000)
 
     resolved = _resolve_logo_path(logo_path)
@@ -1083,7 +1084,7 @@ def _build_provenance_flowables(document: Dict[str, Any], styles: Dict[str, Para
             styles["Footnote"],
         ),
         Spacer(1, 2 * mm),
-        Paragraph(f"<b>Bij AI code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),
+        Paragraph(f"<b>{SHORT_NAME} code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),
         Spacer(1, 2 * mm),
     ]
 
@@ -1650,7 +1651,7 @@ def _multi_finding_observation_lines(document: Dict[str, Any], variants: List[Di
         finding_list = ", ".join(f"#{i}" for i in cluster)
         lines.append(
             f"Findings {finding_list} sit within {window_bp:,} bp of each other on chromosome {chrom} "
-            f"(positions {min(positions)}-{max(positions)}). Bij AI has no phase data and does not infer "
+            f"(positions {min(positions)}-{max(positions)}). {SHORT_NAME} has no phase data and does not infer "
             "compound heterozygosity or a cis/trans relationship from this -- proximity is noted for "
             "reviewer awareness only."
         )
@@ -2003,7 +2004,7 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         )
         flow.append(
             Paragraph(
-                esc(out_of_scope.get("reason")) or "This variant is out of scope for this Bij AI build.",
+                esc(out_of_scope.get("reason")) or f"This variant is out of scope for this {SHORT_NAME} build.",
                 styles["BodyText"],
             )
         )

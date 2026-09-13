@@ -836,23 +836,52 @@ CREATE TABLE reviewer_claims (
     -- (chrom-pos-ref-alt as produced by parse_variant_key). Reviewer claims
     -- reference them by that key rather than a foreign key. The system does
     -- not maintain a variant table; this column holds the key the engine
-    -- assigned. NULLABLE: 'accept' is interpretation-scoped and names no
-    -- variant; the other three claim types are variant-scoped.
+    -- assigned. NULLABLE: 'accept' and 'sole_signatory' are
+    -- interpretation-scoped and name no variant; the other three claim types
+    -- are variant-scoped.
     variant_key         TEXT,
 
     -- Spec 13.2's four reviewer actions, closed. 'disagree' does not remove
     -- the classification it disagrees with; 'variant_added' names a variant
     -- the pipeline did not surface; 'variant_not_relevant' scopes a variant
     -- out against the indication without deleting it.
+    --
+    -- 'sole_signatory' IS A FIFTH VALUE AND NOT ONE OF SPEC 13.2's FOUR
+    -- (human ruling, 2026-09-13, w117). The product signs off with ONE
+    -- person today. That person's concurrence had nowhere truthful to go:
+    -- 'accept' is documented above and in _record_accept as an INDEPENDENT
+    -- CONCURRENCE BY A SECOND CLINICIAN, so a same-person accept would write
+    -- a row the schema itself defines as false -- the record would assert
+    -- two-clinician review where one person acted.
+    --
+    -- A DISTINCT KIND MAKES THE RECORD TRUE AT THE LEVEL THINGS QUERY IT.
+    -- Two consequences the ruling named, neither obtainable from prose in a
+    -- reason field:
+    --   - a later audit asking WHICH REPORTS HAD INDEPENDENT CONCURRENCE gets
+    --     a correct answer by claim_type alone, without reading free text;
+    --   - a site that adopts two-person sign-off can see WHICH HISTORICAL
+    --     REPORTS WERE SINGLE-SIGNED, and decide what to do about them.
+    --
+    -- It is interpretation-scoped like 'accept' (variant_key and
+    -- classification both NULL) and it satisfies submit_for_review's
+    -- at-least-one-claim precondition like any other claim: review happened,
+    -- and the row says exactly how much of it happened.
+    --
+    -- WHAT THIS VALUE DOES NOT DO: it does not change enforcement anywhere.
+    -- The two-person path is untouched -- _approve_report still requires the
+    -- Approver role on both the session and the recorded approver, and
+    -- nothing here makes a second signature optional that was not already
+    -- optional. Adopting two-person sign-off is a separate, carded decision.
     claim_type          TEXT        NOT NULL
         CHECK (claim_type IN ('accept', 'disagree', 'variant_added',
-                              'variant_not_relevant')),
+                              'variant_not_relevant', 'sole_signatory')),
 
     -- The classification the REVIEWER asserts: the replacement on a
     -- 'disagree', the proposed call on a 'variant_added'. NULL on 'accept'
-    -- (which asserts no new classification, only concurrence with the one
-    -- already there) and on 'variant_not_relevant' (which scopes a variant
-    -- out against the indication rather than reclassifying it).
+    -- and 'sole_signatory' (both of which assert no new classification, only
+    -- concurrence with the one already there) and on 'variant_not_relevant'
+    -- (which scopes a variant out against the indication rather than
+    -- reclassifying it).
     --
     -- Deliberately unconstrained for now. A CHECK against the ACMG five-tier
     -- vocabulary is the obvious next move and is NOT made here: the

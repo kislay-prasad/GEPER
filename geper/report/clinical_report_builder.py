@@ -1173,10 +1173,67 @@ REPORT_REVISION_REANALYSIS_BANNER = (
     "THIS REPORT IS BASED ON A RE-ANALYSIS of the VCF data underlying interpretation {id}, "
     "originally interpreted on {date}. The system does not record reasons for re-analysis."
 )
+# E9(a), signed off 2026-09-13 (w122). ONE CLAUSE CHANGED, and it had to be.
+# The sentence used to read "it has not been retracted or superseded by the
+# re-analysis" -- true by construction only while retraction did not exist.
+# The moment it does, this banner can print ON A RETRACTED REPORT and assert
+# that the report has not been retracted: one document contradicting itself
+# between two banners on the same page. The clause still does its original
+# job (stop a reader treating a re-analysis as a withdrawal) but the subject
+# moves from the report to the re-analysis, which turns a universal claim into
+# a scoped one. Every other word, including the spec reference and the
+# parenthetical, is unchanged.
 REPORT_REVISION_REANALYSED_SINCE_BANNER = (
     "One or more re-analyses of the underlying VCF data exist since this report was issued. This report "
-    "reflects the original analysis only; it has not been retracted or superseded by the re-analysis "
+    "reflects the original analysis only; the re-analysis has neither retracted nor superseded it "
     "(see spec 15.3 -- re-analysis creates a new branch, it does not replace this one)."
+)
+
+# ── w122: the retraction banners. WORDING SIGNED OFF 2026-09-13 ────────────
+#
+# Same rule as the four above: this is the signed-off wording VERBATIM, tests
+# pin it as literals, do not reword it. `{verb}` is the SAME basis vocabulary
+# banners 1 and 2 use (_REVISION_BASIS_VERB), carrying human ruling E1 -- the
+# retraction row records whether the report had been RELEASED or only
+# APPROVED, so a report nobody ever received is never described as issued.
+# `{when}` on the retraction itself takes no basis: it is the act, not an
+# issue date, the same reasoning as `amended_at`.
+REPORT_REVISION_RETRACTED_BANNER = (
+    "*** THIS REPORT HAS BEEN RETRACTED. It was {verb} on {date} and was retracted on {when} by {who}; "
+    "do not act on this document. No replacement report has been issued. "
+    "Reason for the retraction: {reason}. ***"
+)
+REPORT_REVISION_RETRACTED_REPLACED_BANNER = (
+    "*** THIS REPORT HAS BEEN RETRACTED. It was {verb} on {date} and was retracted on {when} by {who}; "
+    "do not act on this document without first obtaining the replacement report ({id}). "
+    "Reason for the retraction: {reason}. ***"
+)
+# R8 GENERALISED, AND CURRENTLY UNREACHABLE FROM ANYTHING THIS WAVE WRITES.
+#
+# Stated plainly because the human asked for it to be: no code path added in
+# w122 can produce this banner. `retract_report()` names a replacement report
+# that exists and is live, and nothing in the retraction path tombstones
+# anything.
+#
+# THE CONDITION UNDER WHICH IT BECOMES REACHABLE: RetentionPrincipal
+# ::_purge_reports tombstones the REPLACEMENT report while the RETRACTED
+# report is still live. That is permitted today -- each report runs its own
+# clock, anchored on its own first release (D3) with its own inherited
+# retention_days (D2), and D6's live-descendant guard only protects an
+# ORIGINAL from being purged under a live AMENDMENT; it says nothing about a
+# replacement named by a retraction. So a replacement released earlier, or
+# carrying a shorter inherited window, purges first and this banner is what
+# the retracted report must then print.
+#
+# It stays. Deleting it would mean that on the day that happens, the document
+# tells a clinician to go and obtain a report that retention has already
+# destroyed -- which is exactly the harm ruling R8 was issued to prevent, one
+# table over.
+REPORT_REVISION_RETRACTED_REPLACEMENT_NOT_RETAINED_BANNER = (
+    "*** THIS REPORT HAS BEEN RETRACTED. It was {verb} on {date} and was retracted on {when} by {who}. "
+    "A replacement report ({id}) was issued and is NO LONGER RETAINED: it has passed its retention period "
+    "and cannot be obtained. This document remains retracted; do not act on it. "
+    "Reason for the retraction: {reason}. ***"
 )
 
 # ── R2/R4/R5/R8 variants (human rulings, 2026-09-13) ───────────────────────
@@ -1226,6 +1283,12 @@ REPORT_REVISION_SUPERSEDED_NOT_RETAINED_BANNER = (
 _REVISION_BASIS_VERB = {"released": "issued", "approved": "approved"}
 
 _REVISION_REQUIRED_FIELDS = {
+    # w122. Every one of these is NOT NULL on report_retractions, or derived
+    # from a NOT NULL column, so a block missing one is a corrupted record and
+    # the document is refused rather than rendered (R7). `reason` in
+    # particular: a retraction whose reason cannot be stated must not print a
+    # do-not-act instruction nobody can account for.
+    "retracted": ("issued_at", "retracted_at", "retracted_by", "reason"),
     "amends": ("original_report_id", "original_issued_at", "reason", "amended_by", "amended_at"),
     "superseded_by": ("amendment_report_id", "amended_at"),
     "reanalysis_of": ("parent_interpretation_id", "parent_interpreted_at"),
@@ -1255,6 +1318,20 @@ def _revision_block(kind: str, block: Any) -> Optional[Dict[str, Any]]:
     missing = [f for f in _REVISION_REQUIRED_FIELDS[kind] if not str(out.get(f) or "").strip()]
     if missing:
         raise ValueError(f"report_revision.{kind} is missing required field(s) {missing}; refusing to render it")
+    if kind == "retracted":
+        # E4, FAIL CLOSED. The replacement pointer and its retention state
+        # travel together or not at all. An id with no retention state cannot
+        # choose between "obtain the replacement" and "the replacement is
+        # gone"; a retention state with no id describes a document the banner
+        # has no way to name. Either half alone would make the renderer guess,
+        # and guessing here prints a clinical instruction.
+        has_replacement_id = bool(str(out.get("replacement_report_id") or "").strip())
+        has_retained = out.get("replacement_retained") is not None
+        if has_replacement_id != has_retained:
+            raise ValueError(
+                "report_revision.retracted must carry both 'replacement_report_id' and "
+                "'replacement_retained' or neither; refusing to render it"
+            )
     if kind == "superseded_by":
         # R5, FAIL CLOSED. Exactly one of the two ways to describe the
         # supersession must be present: the reason (one amendment, whose reason
@@ -1321,6 +1398,9 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
 
     Input (every key optional; an absent/empty key means "not in that
     state"):
+      retracted:       {issued_at, issued_basis, retracted_at, retracted_by,
+                        reason, replacement_report_id?,
+                        replacement_retained?}        -- banner 0 (w122)
       amends:          {original_report_id, original_issued_at, reason,
                         amended_by, amended_at,
                         original_issued_basis?}      -- banner 1
@@ -1333,10 +1413,12 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
                         when any re-analysis branches from this report's
                         interpretation                -- banner 4
 
-    Output adds the machine-readable flags (`is_amendment`, `is_superseded`,
-    `is_reanalysis`, `has_been_reanalysed`) and `banners`, the rendered text
-    in display order. Superseded comes FIRST: "do not act on this document"
-    outranks every other statement on the page.
+    Output adds the machine-readable flags (`is_retracted`, `is_amendment`,
+    `is_superseded`, `is_reanalysis`, `has_been_reanalysed`) and `banners`,
+    the rendered text in display order. Retracted comes FIRST and superseded
+    second: "do not act on this document" outranks every other statement on
+    the page, and retraction outranks supersession because a superseded report
+    has a successor to obtain and a retracted one may not.
 
     `None` stays `None` -- NOT an all-false block. A pipeline run cannot know
     whether the clinical platform will later store it as a re-analysis, so an
@@ -1358,6 +1440,7 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(raw, dict):
         raise ValueError(f"report_revision must be an object, got {type(raw).__name__}")
 
+    retracted = _revision_block("retracted", raw.get("retracted"))
     amends = _revision_block("amends", raw.get("amends"))
     superseded_by = _revision_block("superseded_by", raw.get("superseded_by"))
     reanalysis_of = _revision_block("reanalysis_of", raw.get("reanalysis_of"))
@@ -1370,6 +1453,31 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
     ]
 
     banners: List[str] = []
+    if retracted:
+        # w122: RETRACTION RENDERS FIRST, ahead of superseded. The rule stated
+        # below for supersession -- "do not act on this document" outranks
+        # every other statement -- puts retraction above it in turn: a
+        # superseded report has a successor the reader can be sent to obtain,
+        # and a retracted one may have nothing at all.
+        retraction_basis = _revision_basis(retracted, "issued_basis")
+        replacement_id = retracted.get("replacement_report_id")
+        fields = dict(
+            verb=_REVISION_BASIS_VERB[retraction_basis],
+            date=_revision_date(retracted["issued_at"]),
+            when=_revision_when(retracted["retracted_at"]),
+            who=retracted["retracted_by"],
+            reason=_revision_reason(retracted["reason"]),
+        )
+        if not replacement_id:
+            banners.append(REPORT_REVISION_RETRACTED_BANNER.format(**fields))
+        elif retracted.get("replacement_retained") is False:
+            # R8 generalised: named as gone, never pointed at. See the
+            # constant's own note on when this becomes reachable.
+            banners.append(
+                REPORT_REVISION_RETRACTED_REPLACEMENT_NOT_RETAINED_BANNER.format(id=replacement_id, **fields)
+            )
+        else:
+            banners.append(REPORT_REVISION_RETRACTED_REPLACED_BANNER.format(id=replacement_id, **fields))
     if superseded_by:
         basis = _revision_basis(superseded_by, "amended_at_basis")
         when = _revision_when(superseded_by["amended_at"])
@@ -1423,10 +1531,19 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
         banners.append(REPORT_REVISION_REANALYSED_SINCE_BANNER)
 
     return {
+        # HUMAN RULING E3, IN THOSE WORDS: "Not shipping without the flag."
+        # E3 permits a retracted report to be delivered, with the retraction
+        # travelling on it. The banner carries that for a human reader; this
+        # flag carries it for a consumer that reads structure rather than
+        # prose -- a LIMS taking the JSON and never rendering a page. Without
+        # it, "the retraction travels" is a claim about prose only, and the
+        # machine on the other end acts on a retracted report.
+        "is_retracted": retracted is not None,
         "is_amendment": amends is not None,
         "is_superseded": superseded_by is not None,
         "is_reanalysis": reanalysis_of is not None,
         "has_been_reanalysed": bool(reanalysed_since),
+        "retracted": retracted,
         "amends": amends,
         "superseded_by": superseded_by,
         "reanalysis_of": reanalysis_of,

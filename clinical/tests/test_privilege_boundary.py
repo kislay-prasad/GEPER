@@ -97,6 +97,12 @@ APPEND_ONLY = (
     "amendment_notifications",
     "notification_read_receipts",
     "fastq_sets",
+    # w122. A retraction that could be edited or deleted after the fact would
+    # let a deliberate safety act be un-said with no trace -- the invisible
+    # withdrawal the immutability trigger exists to forbid, arriving by the
+    # other door. Same privileges as every other evidentiary table.
+    "report_retractions",
+    "retraction_notifications",
 )
 
 # The three retention-managed tables. clinical_retention may SELECT and UPDATE

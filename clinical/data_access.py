@@ -2739,6 +2739,15 @@ class DataAccess:
         class. Reading state here is not a state FILTER -- every report is
         still returned in every state, which is the property
         test_report_state_is_a_control.py guards.
+
+        `is_retracted` is returned (added w122, human ruling E7) for the same
+        reason and under the same restriction. E7 ruled that a retracted
+        report is STILL RETURNED, carrying the fact: filtering it out would be
+        a state filter on a retrieval path, which is the exact property the
+        guard above forbids, and it would make a retracted report unfindable
+        by the route `geper/api/submission_worker.py` uses on the duplicate-
+        submission path. So the report comes back and the caller is told -- a
+        fact recorded alongside, never a record removed.
         """
         row = self._query_one(
             "SELECT id, interpretation_id, created_at, created_by, state FROM reports WHERE id = %s AND org_id = %s",
@@ -2752,6 +2761,7 @@ class DataAccess:
             "created_at": row[2],
             "created_by": row[3],
             "state": row[4],
+            "is_retracted": self._read_retraction_row(session, report_id) is not None,
         }
 
     # ── Phase 4c: Document discovery (all interpretations, including orphaned) ─────
@@ -5295,6 +5305,18 @@ class DataAccess:
                 ("released", report_id, session.org_id),
             )
 
+        # w122, human rulings E3 + E6. E3 permits a retracted report to be
+        # delivered; E6 says every party that received it is owed a
+        # notification. This consumer is receiving it NOW, after the
+        # retraction was recorded, so the debt for them arises now -- and if
+        # it were not written here, "which retractions have unnotified
+        # recipients" would silently miss exactly the people who received the
+        # report while it was already retracted. Same deduplication as
+        # retract_report's own pass: one debt per consumer, not per delivery.
+        retraction = self._read_retraction_row(session, report_id)
+        if retraction is not None:
+            self._record_retraction_notification_debts(session, retraction[0], [consumer], retraction[3], now)
+
         return release_id
 
     @auditable(
@@ -5307,7 +5329,7 @@ class DataAccess:
         details_builder=lambda params, result: {"report_id": str(params.get("report_id"))},
     )
     @transactional
-    def require_release(self, session: Session, report_id: uuid.UUID) -> None:
+    def require_release(self, session: Session, report_id: uuid.UUID) -> bool:
         """
         The one gate every delivery path calls before handing report content
         to a consumer (spec 13.4). Hard stop: a report that is not at least
@@ -5319,6 +5341,31 @@ class DataAccess:
         first _release_report call could ever have succeeded), and a second
         consumer requesting the same already-released report is not a reason
         to refuse it.
+
+        RETRACTION DOES NOT REFUSE HERE -- HUMAN RULING E3. A retracted report
+        is still returned, carrying the fact (E7). Refusing would not stop the
+        retracted document reaching people; it would stop the PLATFORM from
+        being the thing that hands it over, which pushes the copy into email
+        and out of the record -- no banner, no release_events row, an
+        uncontrolled copy produced by the control. And the document is
+        evidence: a clinician who treated on it and now needs to understand
+        what changed must be able to obtain the thing that was retracted.
+
+        What the gate does instead, and it is not nothing:
+
+          - It RETURNS whether the report is retracted, so a delivery path
+            that calls the gate (which is every delivery path, by spec 13.4)
+            cannot remain unaware of it. Previously `-> None`; a caller
+            written against the old signature is unaffected.
+          - It FAILS CLOSED on a retraction that cannot be stated (R7). A
+            retraction with an unusable reason would render no banner a
+            reader could act on, and E3's whole bargain is that the retraction
+            TRAVELS with the document. A retraction that cannot travel is not
+            a permitted delivery.
+
+        The machine-readable half of E3 lives in the rendered document, not
+        here: `normalize_report_revision` puts `is_retracted` in the JSON so a
+        consumer that reads structure rather than prose has something to check.
         """
         report = self._query_one(
             "SELECT state FROM reports WHERE id = %s AND org_id = %s",
@@ -5332,6 +5379,225 @@ class DataAccess:
             raise ValueError(
                 f"Report is in '{state}' state -- spec 13.4: no report leaves the platform without approval."
             )
+
+        retraction = self._read_retraction_row(session, report_id)
+        if retraction is None:
+            return False
+        if not (retraction[3] or "").strip():
+            raise BrokenRevisionRecordError(
+                f"Report {report_id} is retracted but the retraction carries no reason; the retraction "
+                "cannot travel with the document, so the document does not leave (human ruling E3)."
+            )
+        return True
+
+    # ─── w122: Retraction (model 3, human-approved 2026-09-13) ─────────────
+
+    def _read_retraction_row(self, session: Session, report_id: uuid.UUID) -> Optional[tuple]:
+        """
+        THE ONE PLACE retraction is read from the database.
+
+        Every composer below -- the delivery gate, the release recorder, the
+        revision reader, get_report -- goes through here rather than writing
+        its own SELECT, so "does this reader compose retraction" is a question
+        with a mechanical answer, which is what
+        clinical/tests/test_report_state_is_a_control.py's enumeration asks
+        (human ruling E10).
+
+        Returns the raw row or None. No interpretation: the callers differ in
+        what they do with it, and a helper that decided for them would be the
+        per-path discretion spec 13.4 exists to close.
+        """
+        return self._query_one(
+            "SELECT id, retracted_at, retracted_by, reason, retracted_from_state, replacement_report_id "
+            "FROM report_retractions WHERE org_id = %s AND report_id = %s",
+            (session.org_id, report_id),
+        )
+
+    def _record_retraction_notification_debts(
+        self,
+        session: Session,
+        retraction_id: uuid.UUID,
+        consumers: Sequence[str],
+        reason: str,
+        now: Any,
+    ) -> None:
+        """
+        HUMAN RULING E6: notification of a retraction is OWED, is RECORDED,
+        and does NOT BLOCK.
+
+        PER CONSUMER, NOT PER ROLE -- the human's words. create_amendment
+        hardcodes `delivered_to_role = 'ordering_clinician'`, but
+        release_events.consumer is free text and may name a LIMS, and a role
+        is an abstraction over people that a LIMS is not. One debt per
+        DISTINCT consumer named in release_events for the retracted report.
+
+        Delivery mechanism (email, SMS, etc.) is not implemented anywhere in
+        this platform. This method records that notification is OWED to each
+        recipient named in `release_events` for the retracted report; it does
+        not record that anything was sent, and nothing in this platform sends
+        it. The obligation is written as outstanding and stays outstanding:
+        discharging it is a future transport's job, and until that exists
+        every one of these rows is a debt the lab still owes.
+
+        DELIBERATELY NOT "Recorded as sent" (create_amendment's phrasing, and
+        the thing this wave must not inherit): that sentence asserts a
+        transmission the same docstring's previous sentence says did not
+        happen, and an auditor reading those rows would conclude recipients
+        were informed. `status = 'notification_owed'` makes "which retractions
+        have unnotified recipients" a query with a correct answer on day one.
+        """
+        for consumer in consumers:
+            self._execute(
+                "INSERT INTO retraction_notifications "
+                "(org_id, id, retraction_id, consumer, reason_for_retraction, status, created_at, created_by) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                # A consumer already carrying a debt for this retraction is
+                # not a second debt: uk_retraction_notification_consumer says
+                # so and this says the same thing to the second delivery path
+                # rather than letting it raise.
+                "ON CONFLICT (org_id, retraction_id, consumer) DO NOTHING",
+                (
+                    session.org_id,
+                    uuid.uuid4(),
+                    retraction_id,
+                    consumer,
+                    reason,
+                    "notification_owed",
+                    now,
+                    session.user_id,
+                ),
+            )
+
+    @auditable(
+        action="report_retracted",
+        resource_type="report",
+        requires_session=True,
+        auditable=True,
+        resource_id_param="report_id",
+        reason="retraction is a deliberate safety act on a report that was validly approved; the record must name which",
+        details_builder=lambda params, result: {
+            "report_id": str(params.get("report_id")),
+            "retraction_id": str(result) if result else None,
+            "replacement_report_id": (
+                str(params.get("replacement_report_id")) if params.get("replacement_report_id") else None
+            ),
+        },
+    )
+    @transactional
+    def retract_report(
+        self,
+        session: Session,
+        report_id: uuid.UUID,
+        reason: str,
+        replacement_report_id: Optional[uuid.UUID] = None,
+    ) -> uuid.UUID:
+        """
+        Record that a report must not be acted on. Writes ONE row in
+        `report_retractions`, plus one notification debt per prior recipient
+        (E6), AND NOT ONE UPDATE ANYWHERE.
+
+        THE APPROVED `reports` ROW IS NOT TOUCHED, AND THAT IS THE DESIGN.
+        A report approved on 1 March and retracted on 5 April WAS approved:
+        `state`, `approver_id`, `approved_at` and `content_hash` still say
+        exactly what they said, `signing_identity_for_report` still retrieves
+        the approver (ISO 15189 7.4.1.5 c) after retraction as well as
+        before), and `verify_report_integrity` still returns True -- because
+        retraction says "do not act on this", not "this is not what was
+        approved". A sixth state would have made the record deny an approval
+        that happened.
+
+        PRECONDITIONS
+          - E1: the report is 'approved' or 'released' -- and the row records
+            WHICH, in retracted_from_state, so a report approved but never
+            issued is never later described to a clinician as having been
+            issued. Retraction below approval is meaningless: a draft,
+            under_review or returned report has no standing to withdraw.
+          - E2: any Approver in the org may retract; no new role. The session
+            gate IS the actor gate here, unlike `_approve_report` -- this
+            method takes no separate actor_id, so it is structurally
+            impossible to record an unqualified colleague as the retractor,
+            and the second check that method needs has nothing to check.
+          - reason is required and non-empty (schema NOT NULL as well).
+          - E4: `replacement_report_id` is OPTIONAL. A report issued against
+            the wrong patient's sample has nothing to replace it with, and a
+            retracted report may still be amended.
+
+        ALREADY RETRACTED IS REFUSED. Not a reversal question (E5 ruled
+        retraction is not reversible and none is built): two retraction rows
+        for one report cannot be stated in one banner, so a reader would have
+        to pick, and picking is guessing -- R7 says refuse. Refusing at the
+        write is refusing earlier than refusing at the render.
+
+        Returns the retraction id. The audit row names the REPORT
+        (resource_id_param) and carries the retraction id in `details`: an
+        audit entry about a report that named a retraction id instead would
+        be the w120 defect in a new costume.
+        """
+        self._require_role(session, "Approver")
+
+        report = self._query_one(
+            "SELECT state FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        state = report[0]
+
+        if state not in ("approved", "released"):
+            raise ValueError(
+                f"Report is in '{state}' state, cannot retract -- human ruling E1: only an approved or "
+                "released report has standing to withdraw."
+            )
+
+        if not reason or not reason.strip():
+            raise ValueError("reason for retraction is required and cannot be empty")
+
+        if self._read_retraction_row(session, report_id) is not None:
+            raise ValueError(
+                f"Report {report_id} is already retracted; a retraction is append-only and is not "
+                "reversible (human ruling E5)."
+            )
+
+        if replacement_report_id is not None:
+            if replacement_report_id == report_id:
+                raise ValueError("A report cannot be its own replacement.")
+            replacement = self._query_one(
+                "SELECT 1 FROM reports WHERE id = %s AND org_id = %s",
+                (replacement_report_id, session.org_id),
+            )
+            if replacement is None:
+                raise NotFoundError(f"Replacement report {replacement_report_id} not found")
+
+        now = self._clock.now()
+        retraction_id = uuid.uuid4()
+        self._execute(
+            "INSERT INTO report_retractions (org_id, id, report_id, retracted_at, retracted_by, reason, "
+            "retracted_from_state, replacement_report_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                retraction_id,
+                report_id,
+                now,
+                session.user_id,
+                reason,
+                state,
+                replacement_report_id,
+            ),
+        )
+
+        # E6. Every party release_events records as having received this
+        # report is owed a notification, in the same transaction, and the
+        # retraction is recorded whether or not there are any.
+        consumers = [
+            row[0]
+            for row in self._query(
+                "SELECT DISTINCT consumer FROM release_events WHERE org_id = %s AND report_id = %s ORDER BY consumer",
+                (session.org_id, report_id),
+            )
+        ]
+        self._record_retraction_notification_debts(session, retraction_id, consumers, reason, now)
+
+        return retraction_id
 
     # ─── Phase 7 commit 2: Amendments (ISO 15189 7.4.1.8) ──────────────────
 
@@ -5542,6 +5808,13 @@ class DataAccess:
         interpretation_id, report_created_at, report_approved_at = report
 
         revision: dict[str, Any] = {}
+        # w122: FIRST, because the banner it feeds renders first -- "do not
+        # act on this document" outranks every other statement, and retraction
+        # outranks supersession because a superseded report has a successor to
+        # obtain and a retracted one may not.
+        retracted = self._read_retracted(session, report_id, report_approved_at)
+        if retracted:
+            revision["retracted"] = retracted
         amends = self._read_amends(session, report_id)
         if amends:
             revision["amends"] = amends
@@ -5557,6 +5830,101 @@ class DataAccess:
         if reanalysed_since:
             revision["reanalysed_since"] = reanalysed_since
         return revision
+
+    def _read_retracted(
+        self, session: Session, report_id: uuid.UUID, report_approved_at: Any
+    ) -> Optional[dict[str, Any]]:
+        """
+        Banner 0 (w122). THIS REPORT HAS BEEN RETRACTED.
+
+        THE DATE BASIS COMES FROM THE STORED FACT, NOT FROM A LOOKUP, and that
+        is human ruling E1's whole point. `_issued_moment` derives the basis
+        from whatever release_events says AT READ TIME -- correct for the
+        amendment banners, wrong here: a report retracted while 'approved' can
+        legitimately be released afterwards (E3 permits it), and a reader that
+        re-derived the basis would then print "issued on <the release date>"
+        over a retraction recorded before any release existed. The retraction
+        row records WHICH state it was retracted from, so the sentence keeps
+        saying what was true when the lab acted. That is R2's rule -- the basis
+        travels with the timestamp, never inferred from which column happens to
+        be populated -- applied to the one place where the column would have
+        been populated LATER.
+
+        R7 fail-closed, in the shape `_read_amends` uses: a retraction that
+        cannot be read into a true sentence is an error, never a marker and
+        never a silent omission.
+        """
+        rows = self._query(
+            "SELECT id, retracted_at, retracted_by, reason, retracted_from_state, replacement_report_id "
+            "FROM report_retractions WHERE org_id = %s AND report_id = %s "
+            "ORDER BY retracted_at, id",
+            (session.org_id, report_id),
+        )
+        if not rows:
+            return None
+        if len(rows) > 1:
+            # retract_report refuses a second retraction for exactly this
+            # reason: the banner would have to pick one, and picking is
+            # guessing. Asserted here as well because the reader must not
+            # depend on the writer having been the only way in.
+            raise BrokenRevisionRecordError(
+                f"Report {report_id} carries {len(rows)} retraction records; it cannot state which retraction applies."
+            )
+        _id, retracted_at, retracted_by, reason, retracted_from_state, replacement_report_id = rows[0]
+
+        if not (reason or "").strip():
+            raise BrokenRevisionRecordError(
+                f"The retraction record for report {report_id} carries no reason; refusing to state the "
+                "retraction without it."
+            )
+
+        if retracted_from_state == "released":
+            row = self._query_one(
+                "SELECT MIN(released_at) FROM release_events WHERE org_id = %s AND report_id = %s",
+                (session.org_id, report_id),
+            )
+            issued_at = row[0] if row else None
+            issued_basis = "released"
+        elif retracted_from_state == "approved":
+            issued_at = report_approved_at
+            issued_basis = "approved"
+        else:
+            # The CHECK constraint admits two values. A third is a record this
+            # reader has never heard of, not a third meaning to guess at.
+            raise BrokenRevisionRecordError(
+                f"The retraction record for report {report_id} names state {retracted_from_state!r}, "
+                "which is neither 'approved' nor 'released'."
+            )
+        if issued_at is None:
+            raise BrokenRevisionRecordError(
+                f"Report {report_id} was retracted from '{retracted_from_state}' but carries no "
+                f"{'release' if retracted_from_state == 'released' else 'approval'}; there is no date "
+                "on which it was issued."
+            )
+
+        block: dict[str, Any] = {
+            "issued_at": issued_at,
+            "issued_basis": issued_basis,
+            "retracted_at": retracted_at,
+            # R1/R10: the person, by the three fields a report may print.
+            "retracted_by": self._signing_identity_text(session, retracted_by),
+            "reason": reason,
+        }
+        if replacement_report_id is not None:
+            replacement = self._query_one(
+                "SELECT tombstoned_at FROM reports WHERE org_id = %s AND id = %s",
+                (session.org_id, replacement_report_id),
+            )
+            if replacement is None:
+                raise BrokenRevisionRecordError(
+                    f"The retraction record for report {report_id} names replacement report "
+                    f"{replacement_report_id}, which does not exist in this organisation."
+                )
+            block["replacement_report_id"] = replacement_report_id
+            # R8 generalised: still retracted either way, but the reader is
+            # told the replacement is gone rather than sent to fetch it.
+            block["replacement_retained"] = replacement[0] is None
+        return block
 
     def _read_amends(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
         """Banner 1. This report IS an amendment of something."""

@@ -57,10 +57,12 @@ WHAT THIS FILE ASSERTS, AND WHAT IT DELIBERATELY DOES NOT.
 
 from __future__ import annotations
 
+import ast
 import datetime
 from datetime import date, timezone
 import json
 import os
+import pathlib
 import uuid
 
 import pytest
@@ -450,6 +452,25 @@ class TestRetrievalDoesNotFilterOnState:
         report_id = report_in_state(state)
         assert dao.trace_report_ancestors(session, report_id) is not None
 
+    def test_get_report_returns_a_retracted_report_and_says_so(self, dao, session, approver, approved_report):
+        """
+        HUMAN RULING E7, and it is the same guard one wave later. A retracted
+        report is STILL RETURNED, carrying the fact. Filtering it out would be
+        a state filter on a retrieval path -- the exact property this class
+        exists to forbid -- and would make a retracted report unfindable by the
+        route geper/api/submission_worker.py uses on the duplicate-submission
+        path.
+
+        Both directions asserted on the VALUE of the flag, in one test, so
+        neither "always True" nor "always False" survives.
+        """
+        assert dao.get_report(session, approved_report)["is_retracted"] is False
+        dao.retract_report(approver, approved_report, reason="Sample mix-up: wrong patient's sample.")
+        after = dao.get_report(session, approved_report)
+        assert after is not None, "get_report stopped returning a retracted report -- that is a state filter"
+        assert after["is_retracted"] is True
+        assert after["state"] == "approved", "the reports row moved; retraction must not touch it"
+
     def test_a_missing_report_is_still_a_miss(self, dao, session):
         # THE KNOWN-POSITIVE for this class, and it is load-bearing: if get_report
         # returned something for every id, every assertion above would pass while
@@ -460,3 +481,146 @@ class TestRetrievalDoesNotFilterOnState:
         # which raises NotFoundError. Asserting the wrong one here would have made
         # this guard fail for a reason that has nothing to do with what it guards.
         assert dao.get_report(session, uuid.uuid4()) is None
+
+
+# ─── HUMAN RULING E10 (w122): the enumeration that catches a forgetful reader ─
+#
+# THE RESIDUAL THIS ANSWERS, STATED HONESTLY BECAUSE IT IS REAL. Under the
+# approved retraction model (model 3) the retraction lives in its own table
+# beside the report, and NOTHING IN THE DATABASE stops a reader that checks
+# `reports.state` and forgets to check for a retraction. The trigger cannot
+# help -- there is no row to refuse. The grant cannot help -- reading is
+# permitted. A sixth state would have refused a retracted report in every
+# existing reader for free, and would have bought that by rewriting a row that
+# says a report was approved into one that says it was not.
+#
+# The human accepted that trade on the condition that the forgetfulness is
+# DETECTED. This is the detector, and its design matters more than its
+# existence: an enumeration that pinned the CURRENT SET of composing methods
+# would pass happily while a new reader forgot. What is pinned instead is the
+# RELATIONSHIP -- "gates on the delivery states" implies "composes retraction"
+# -- so a method written tomorrow is measured by the same rule.
+#
+# HOW A "READER" IS IDENTIFIED, and why this shape rather than a grep:
+#   1. It is a method of DataAccess decorated with @auditable. Every entry
+#      point into this class is; a delivery path written outside one would
+#      have no audit trail at all and would fail w120's own structural test
+#      long before it reached here.
+#   2. Its body compares something against the DELIVERY-STATE PAIR -- a
+#      containment test whose right-hand side is a literal sequence holding
+#      both 'approved' and 'released'. That pair is precisely "may this
+#      document go to a consumer", and it is the decision retraction has to
+#      travel with. Plain helpers that happen to mention the two states about
+#      SOME OTHER report (_read_superseded_by tests the AMENDMENT's state) are
+#      not entry points and are deliberately out of scope.
+#
+# HOW COMPOSITION IS IDENTIFIED: the method calls `self._read_retraction_row`,
+# the one place retraction is read from the database. Routing every composer
+# through one helper is what makes this question mechanical instead of
+# textual.
+
+_DATA_ACCESS = pathlib.Path(__file__).resolve().parent.parent / "data_access.py"
+
+DELIVERY_STATES = frozenset({"approved", "released"})
+
+# The one place retraction is read. A composer calls it; a forgetful reader
+# does not.
+RETRACTION_READER = "_read_retraction_row"
+
+# Deliberately exempt, with a reason as specific as the ones in
+# test_w120_audit_resource_id.py's own exemption list. Growing this list needs
+# a ruling, not a convenience.
+RETRACTION_COMPOSITION_EXEMPT = {
+    # HUMAN RULING E4: "a replacement is optional; a retracted report may
+    # still be amended." Amendment is the mechanism that keeps traceability
+    # from a corrected document back to the one it corrects, so it is
+    # DELIBERATELY indifferent to retraction -- forbidding it would push a lab
+    # toward issuing an unlinked new report and losing the link. This is the
+    # one gate whose correct behaviour is to not care.
+    "create_amendment",
+}
+
+
+def _delivery_state_gates(tree):
+    """
+    Every @auditable DataAccess method whose body tests membership in the
+    delivery-state pair, with whether it composes retraction.
+    """
+    found = {}
+    for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "DataAccess"]:
+        for node in cls.body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            decorated = any(
+                isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name) and dec.func.id == "auditable"
+                for dec in node.decorator_list
+            )
+            if not decorated:
+                continue
+            gates = False
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Compare):
+                    continue
+                for op, comparator in zip(inner.ops, inner.comparators):
+                    if not isinstance(op, (ast.In, ast.NotIn)):
+                        continue
+                    if not isinstance(comparator, (ast.Tuple, ast.List, ast.Set)):
+                        continue
+                    values = {
+                        e.value for e in comparator.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                    }
+                    if DELIVERY_STATES <= values:
+                        gates = True
+            if not gates:
+                continue
+            composes = any(
+                isinstance(inner, ast.Attribute) and inner.attr == RETRACTION_READER for inner in ast.walk(node)
+            )
+            found[node.name] = composes
+    return found
+
+
+def test_every_delivery_state_gate_composes_retraction():
+    """
+    THE RELATIONSHIP, not the roster. A reader added tomorrow that asks
+    "is this report approved or released" and does not ask "has it been
+    retracted" fails here -- which is the whole of what the human accepted
+    in place of a database constraint.
+    """
+    gates = _delivery_state_gates(ast.parse(_DATA_ACCESS.read_text(encoding="utf-8")))
+
+    # THE ENUMERATION MUST NOT BE EMPTY, and this is not padding. If the AST
+    # shape above ever stops matching anything -- a refactor to a module-level
+    # constant, a decorator rename -- `offenders` is empty and the assertion
+    # below passes forever while detecting nothing. That is the cannot-fail
+    # shape this project has already been bitten by four times in one night.
+    assert gates, (
+        "the delivery-state enumeration matched NO methods at all; the AST shape it looks for has "
+        "stopped describing this file and it is now detecting nothing"
+    )
+    # And it must still find the gates we know are there, BY NAME, so a method
+    # cannot slip out of scope by losing its decorator or rewriting its
+    # comparison into a shape the walk does not see.
+    assert {"require_release", "_release_report", "create_amendment"} <= set(gates), sorted(gates)
+
+    offenders = sorted(
+        name for name, composes in gates.items() if not composes and name not in RETRACTION_COMPOSITION_EXEMPT
+    )
+    assert not offenders, (
+        f"DataAccess method(s) that gate on {sorted(DELIVERY_STATES)} without composing retraction: "
+        f"{offenders}. A reader that checks approval and forgets retraction will hand over a report "
+        f"the lab has withdrawn, and no database constraint stops it (that is the accepted residual of "
+        f"the approved model). Call self.{RETRACTION_READER}(session, report_id) and decide what to do "
+        f"with the answer, or add the method to RETRACTION_COMPOSITION_EXEMPT with a ruling behind it."
+    )
+
+
+def test_the_exempt_gates_still_exist():
+    """
+    An exemption for a method that has been renamed or deleted is a hole
+    nobody can see. Pairs with the assertion above: without this, emptying
+    the codebase would satisfy it.
+    """
+    gates = _delivery_state_gates(ast.parse(_DATA_ACCESS.read_text(encoding="utf-8")))
+    stale = sorted(RETRACTION_COMPOSITION_EXEMPT - set(gates))
+    assert not stale, f"exempted method(s) that no longer gate on the delivery states: {stale}"

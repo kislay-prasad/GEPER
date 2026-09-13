@@ -86,7 +86,11 @@ BANNER_REANALYSIS = (
 )
 BANNER_REANALYSED_SINCE = (
     "One or more re-analyses of the underlying VCF data exist since this report was issued. This report "
-    "reflects the original analysis only; it has not been retracted or superseded by the re-analysis "
+    # E9(a), w122: the clause was narrowed from a universal claim about the
+    # report to a scoped claim about the re-analysis, because retraction now
+    # exists and this banner could otherwise print on a retracted report and
+    # assert that it has not been retracted.
+    "reflects the original analysis only; the re-analysis has neither retracted nor superseded it "
     "(see spec 15.3 -- re-analysis creates a new branch, it does not replace this one)."
 )
 

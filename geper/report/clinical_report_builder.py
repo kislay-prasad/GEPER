@@ -1179,9 +1179,55 @@ REPORT_REVISION_REANALYSED_SINCE_BANNER = (
     "(see spec 15.3 -- re-analysis creates a new branch, it does not replace this one)."
 )
 
+# ── R2/R4/R5/R8 variants (human rulings, 2026-09-13) ───────────────────────
+#
+# R2: "originally issued on" IS THE RELEASE DATE. A report that was approved
+# but never released has no release date, and printing its approval date under
+# the word "issued" would silently change what the sentence claims. So the
+# approval date gets its own sentence that says "approved". The date basis is
+# carried explicitly (`original_issued_basis`) rather than inferred from which
+# field happens to be populated, because inference is exactly the silent swap
+# the ruling forbids.
+#
+# R4: banner 2's "issued on" is the SAME basis -- the amendment's release date,
+# falling back to its approval date -- so the two banners cannot disagree about
+# what "issued" means for the same pair of documents.
+REPORT_REVISION_AMENDED_APPROVED_BANNER = (
+    "THIS IS AN AMENDED REPORT. It amends a report originally approved on {date}. "
+    "Reason for amendment: {reason}. Amended by {who} on {when}."
+)
+REPORT_REVISION_SUPERSEDED_APPROVED_BANNER = (
+    "*** THIS REPORT HAS BEEN SUPERSEDED. An amended report was approved on {when} for the reason below; "
+    "do not act on this document without first obtaining the amended report ({id}). "
+    "Reason for the amendment: {reason}. ***"
+)
+# R5: with more than one amendment in force, the LATEST one's reason explains a
+# change from the PREVIOUS AMENDMENT -- a document the holder of this original
+# has never seen. Printing it here would attribute a change to this document
+# that this document does not contain. The count and a pointer to the current
+# amended report say what is true without explaining an invisible delta.
+REPORT_REVISION_SUPERSEDED_MULTIPLE_BANNER = (
+    "*** THIS REPORT HAS BEEN SUPERSEDED. It has been amended {count} times; the current amended report "
+    "was {verb} on {when}. Do not act on this document without first obtaining the current amended report "
+    "({id}). The reasons for the amendments are recorded against that report. ***"
+)
+# R8: retention deleting the successor does not un-supersede this document --
+# it is still not safe to act on. But the reader must not be sent to fetch a
+# report that no longer exists, so this wording names it and says plainly that
+# it is gone instead of instructing the reader to obtain it.
+REPORT_REVISION_SUPERSEDED_NOT_RETAINED_BANNER = (
+    "*** THIS REPORT HAS BEEN SUPERSEDED. An amended report ({id}) was {verb} on {when} and is NO LONGER "
+    "RETAINED: it has passed its retention period and cannot be obtained. This document remains superseded; "
+    "do not act on it. ***"
+)
+
+# Which date a "{issued}" slot is actually standing on. Anything else is a
+# corrupt record, not a third meaning -- see `_revision_basis`.
+_REVISION_BASIS_VERB = {"released": "issued", "approved": "approved"}
+
 _REVISION_REQUIRED_FIELDS = {
     "amends": ("original_report_id", "original_issued_at", "reason", "amended_by", "amended_at"),
-    "superseded_by": ("amendment_report_id", "amended_at", "reason"),
+    "superseded_by": ("amendment_report_id", "amended_at"),
     "reanalysis_of": ("parent_interpretation_id", "parent_interpreted_at"),
 }
 
@@ -1209,6 +1255,27 @@ def _revision_block(kind: str, block: Any) -> Optional[Dict[str, Any]]:
     missing = [f for f in _REVISION_REQUIRED_FIELDS[kind] if not str(out.get(f) or "").strip()]
     if missing:
         raise ValueError(f"report_revision.{kind} is missing required field(s) {missing}; refusing to render it")
+    if kind == "superseded_by":
+        # R5, FAIL CLOSED. Exactly one of the two ways to describe the
+        # supersession must be present: the reason (one amendment, whose reason
+        # explains the change FROM THIS DOCUMENT) or the count (several, whose
+        # latest reason explains a change the reader cannot see). Neither is a
+        # supersession nobody can account for; both is a record that cannot
+        # decide which of the two it is. Either way the document is refused
+        # rather than rendered with one of them quietly winning.
+        has_reason = bool(str(out.get("reason") or "").strip())
+        has_count = out.get("amendment_count") is not None
+        if has_reason == has_count:
+            raise ValueError(
+                "report_revision.superseded_by must carry exactly one of 'reason' (a single amendment) or "
+                "'amendment_count' (several); refusing to render it"
+            )
+        if has_count:
+            count = out.get("amendment_count")
+            if not isinstance(count, int) or isinstance(count, bool) or count < 2:
+                raise ValueError(
+                    f"report_revision.superseded_by.amendment_count must be an integer >= 2, got {count!r}"
+                )
     return out
 
 
@@ -1218,6 +1285,26 @@ def _revision_date(value: str) -> str:
 
 def _revision_when(value: str) -> str:
     return format_ist_from_iso(value)
+
+
+def _revision_basis(block: Dict[str, Any], field: str) -> str:
+    """
+    R2/R4. Which date the block's "issued" slot is standing on: 'released'
+    (the real issue date) or 'approved' (approved, never released).
+
+    Absent means 'released' -- the meaning every caller written before this
+    ruling already had, so an old caller keeps printing the sentence it was
+    always printing. An unrecognised value is NOT a third meaning and is NOT
+    quietly treated as 'released': that would be the silent swap R2 forbids,
+    so it raises (R7, fail closed).
+    """
+    basis = str(block.get(field) or "released").strip()
+    if basis not in _REVISION_BASIS_VERB:
+        raise ValueError(
+            f"report_revision date basis {field}={basis!r} is not one of "
+            f"{sorted(_REVISION_BASIS_VERB)}; refusing to render it"
+        )
+    return basis
 
 
 def _revision_reason(value: str) -> str:
@@ -1235,8 +1322,11 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
     Input (every key optional; an absent/empty key means "not in that
     state"):
       amends:          {original_report_id, original_issued_at, reason,
-                        amended_by, amended_at}      -- banner 1
-      superseded_by:   {amendment_report_id, amended_at, reason}  -- banner 2
+                        amended_by, amended_at,
+                        original_issued_basis?}      -- banner 1
+      superseded_by:   {amendment_report_id, amended_at,
+                        reason XOR amendment_count,
+                        amended_at_basis?, retained?}  -- banner 2
       reanalysis_of:   {parent_interpretation_id, parent_interpreted_at}
                                                        -- banner 3
       reanalysed_since: list of {interpretation_id, created_at}, non-empty
@@ -1253,8 +1343,15 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
     unsupplied state must not read as "not a re-analysis". An explicitly
     supplied block with no state (`{}`) is all-false with no banners.
 
-    Raises `ValueError` on a state block missing a required field (see
-    `_revision_block`).
+    `*_basis` is 'released' (default) or 'approved' and decides which sentence
+    the date is printed in -- R2/R4, see `_revision_basis`. `retained=False`
+    says retention has deleted the amendment report -- R8. `amendment_count`
+    replaces `reason` when more than one amendment is in force -- R5.
+
+    Raises `ValueError` on a state block missing a required field, carrying
+    both or neither of reason/amendment_count, or naming an unrecognised date
+    basis (see `_revision_block` and `_revision_basis`). R7: a revision record
+    that cannot be read is an error, never a marker and never an omission.
     """
     if raw is None:
         return None
@@ -1274,16 +1371,41 @@ def normalize_report_revision(raw: Any) -> Optional[Dict[str, Any]]:
 
     banners: List[str] = []
     if superseded_by:
-        banners.append(
-            REPORT_REVISION_SUPERSEDED_BANNER.format(
-                when=_revision_when(superseded_by["amended_at"]),
-                id=superseded_by["amendment_report_id"],
-                reason=_revision_reason(superseded_by["reason"]),
+        basis = _revision_basis(superseded_by, "amended_at_basis")
+        when = _revision_when(superseded_by["amended_at"])
+        amendment_id = superseded_by["amendment_report_id"]
+        if superseded_by.get("retained") is False:
+            # R8 first: whatever else is true, the reader must not be told to
+            # go and obtain a document retention has already deleted.
+            banners.append(
+                REPORT_REVISION_SUPERSEDED_NOT_RETAINED_BANNER.format(
+                    id=amendment_id, verb=_REVISION_BASIS_VERB[basis], when=when
+                )
             )
-        )
+        elif superseded_by.get("amendment_count") is not None:
+            banners.append(
+                REPORT_REVISION_SUPERSEDED_MULTIPLE_BANNER.format(
+                    count=superseded_by["amendment_count"],
+                    verb=_REVISION_BASIS_VERB[basis],
+                    when=when,
+                    id=amendment_id,
+                )
+            )
+        else:
+            template = (
+                REPORT_REVISION_SUPERSEDED_BANNER if basis == "released" else REPORT_REVISION_SUPERSEDED_APPROVED_BANNER
+            )
+            banners.append(
+                template.format(when=when, id=amendment_id, reason=_revision_reason(superseded_by["reason"]))
+            )
     if amends:
+        template = (
+            REPORT_REVISION_AMENDED_BANNER
+            if _revision_basis(amends, "original_issued_basis") == "released"
+            else REPORT_REVISION_AMENDED_APPROVED_BANNER
+        )
         banners.append(
-            REPORT_REVISION_AMENDED_BANNER.format(
+            template.format(
                 date=_revision_date(amends["original_issued_at"]),
                 reason=_revision_reason(amends["reason"]),
                 who=amends["amended_by"],

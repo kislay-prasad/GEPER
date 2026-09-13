@@ -501,46 +501,58 @@ run against a real clinical order. This is a plumbing milestone, not a working
 clinical path, and §10.1's preconditions still gate a path that has no first
 step.
 
-**Minimum service contract**, as specified — the shipped wire shape differs in
-four named ways, listed after the block:
+**The service contract, as served.** This block was reconciled against
+`geper/api/main.py` on 2026-09-13. It had been written before the endpoints
+existed and never brought back into line; where the two disagreed on field
+names and shapes, the implementation is the fact and this document was the
+claim that drifted, so the block moved. The one place the specification was
+describing something genuinely **missing** rather than the same thing
+differently — `run_document_ref` — is kept below as an open gap, not quietly
+dropped.
 
 ```
 POST /interpretations
+  the organisation is taken from the API key, never from the body
   {
     "submission_key": "<idempotency key, see 10.4>",
+    "order_id": "<platform order id>",
+    "sample_id": "<platform sample id>",
     "vcf_path": "<path>",
     "assembly": "GRCh38",
-    "sample_ref": "<platform sample id>",
-    "hpo_terms": ["HP:0000001", ...],       optional
-    "qc_metrics": { ... },                   optional
-    "consent_ref": "<platform consent id>"
+    "sample_ref": "<opaque platform sample ref>",
+    "consent_ref": "<platform consent id>",
+    "hpo_terms": { ... },                    optional
+    "qc_metrics": { ... }                    optional
   }
-  → 202 { "interpretation_id": "...", "status": "queued" }
-  → 200 { "interpretation_id": "...", "status": "..." }   if key already seen
+  → 202 { "id": "...",                       the submission
+          "status": "queued",
+          "interpretation_id": "..." }       once one exists
 
-GET /interpretations/{id}
-  → { "status": "queued|running|complete|failed",
-      "run_document_ref": "...",             when complete
-      "error": "..." }                       when failed
+  Both branches return that one shape. A submission whose key was already
+  seen comes back with its own "status" and, when complete, its
+  "interpretation_id". Branch on "status", not on the status code.
+
+GET /interpretations/{submission_id}
+  → { "id": "...",
+      "status": "queued|running|complete|failed",
+      "interpretation_id": "...",            when complete
+      "error_message": "..." }               when failed
+
+  404 for an unknown id and for another organisation's id alike, so a key
+  cannot probe another tenant's ids.
 ```
 
-**Where the shipped shape differs** (`geper/api/main.py`,
-`InterpretationSubmissionRequest` / `...Response` /
-`InterpretationStatusResponse`) — these are the real field names a client must
-use:
+**`order_id` and `sample_id` are required** (wave 113, 2026-09-12). A run that
+cannot be attributed to a clinical order and sample is not run. The
+organisation is deliberately not a body field: taking it from the API key means
+a caller cannot assert an organisation it does not hold a key for.
 
-1. The request also requires `order_id` and `sample_id`, the clinical order and
-   sample the run interprets. A run that cannot be attributed to a sample is not
-   run. The organisation is deliberately **not** a request field: it comes from
-   the API key.
-2. Both responses key on `id` (the submission), with `interpretation_id`
-   optional and populated once one exists.
-3. The failure field is `error_message`, not `error`.
-4. There is no `run_document_ref` on the status response. The run document is
-   reached through the clinical record the worker writes, not through this
-   endpoint — which is the §11.3 discovery gap, still open.
-
-`hpo_terms` and `qc_metrics` remain optional, as specified.
+**NOT SERVED TODAY: `run_document_ref`.** This section previously specified it
+on the status response, and nothing returns it. The run document is reached
+only through the clinical record the worker writes. **This is the §11.3
+discovery gap — GEPER run documents are unfindable by construction: no id, no
+recorded location, no index — and it remains open.** It is recorded here as a
+missing capability, not reconciled away.
 
 **The platform passes no patient identity.** `sample_ref` is an opaque platform
 identifier. GEPER never learns who the patient is, which preserves the boundary

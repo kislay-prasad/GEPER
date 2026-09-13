@@ -1,9 +1,12 @@
 """
 FIX #13 (already ruled -- executing the rename only): the fallback run-ID
 prefix `report/summary.py::_derive_run_id` generates changes from
-"GEPER-RUN-" to "BIJ-RUN-", matching the "Bij AI" branding already used
-elsewhere in generated reports (e.g. `summary_short.py`'s report title
-"Bij AI Clinical Genomic Summary Report").
+"GEPER-RUN-" to "BIJ-RUN-", matching the "Bij AI" branding then used
+elsewhere in generated reports. (That branding rationale has since been
+superseded for the report titles themselves: wave 116 ruled that a title
+saying which component produced the report names the component, so
+`summary_short.py`'s title is now "GEPER Clinical Genomic Summary
+Report". The run-ID prefix itself was ruled separately and is unchanged.)
 
 This is the only LIVE producer of the prefix -- confirmed by grep across
 geper/ before touching anything: every other "GEPER-RUN-..." occurrence

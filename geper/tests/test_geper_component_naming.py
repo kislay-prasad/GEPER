@@ -10,8 +10,9 @@ this file pins sites, not patterns:
 
   (1) in every inventoried file, each "Bij AI" is followed by
       "variant-interpretation component" or is one of the pinned sites below;
-      the five product-name sites (the ratified intended-use statement and two
-      licence facts true for the whole product) are pinned byte-unchanged;
+      the eight product-name sites (the ratified intended-use statement, its
+      twin and the ISO research-programme statement in the report package, and
+      two licence facts true for the whole product) are pinned byte-unchanged;
   (2) the surfaces themselves -- main.py --help, the API's OpenAPI title and
       summaries, serve_api --help and its startup line (a stand-in uvicorn,
       no port opened), the sign-off CLI's help, and the verify_environment
@@ -20,7 +21,13 @@ this file pins sites, not patterns:
       that produced the classification, not the product (human ruling
       2026-09-12, each site listed with what it identifies and approved) --
       byte for byte, and the only "Bij AI" left in their files is a
-      ratified product-name leave-site.
+      ratified product-name leave-site;
+  (4) the four renderers in report/ -- the blind spot this guard used to
+      have. Wave 112's inventory scoped everything in `_SCOPED_FILES` below
+      but NOT `report/*.py`, so 17 sites in the renderers were never
+      reviewed and this test could not see them. Wave 116 ruled them per
+      site (14 -> GEPER, 3 product-level kept) and added the four files
+      here, so the same gap cannot reopen.
 
 Code-emitted strings come from geper/component_identity.py.
 """
@@ -77,6 +84,56 @@ _PRODUCT_NAME_PINS = {
         "Bij AI is a variant prioritisation system built on pretrained machine",
         "clinical use, and Bij AI does not independently provide final clinical",
     ),
+    # Wave 116, the three report-package sites ruled product-level: the
+    # intended-use statement (the twin of explainability_engine.py's, above),
+    # the same sentence inside the research-use disclaimer, and the ISO
+    # 7.4.1.6 i) research-programme statement. All three are claims about the
+    # product, not about which component acted, so all three stay "Bij AI".
+    "report/clinical_report_builder.py": (
+        '"lookups, curated clinical resources, and machine-learning predictors. Bij AI is a variant "',
+        '"Bij AI is undertaken as part of a research or development programme for which no specific "',
+        '"Bij AI is a variant prioritisation system that assists qualified clinicians and pathologists. "',
+    ),
+}
+
+# Wave 113's ratified PDF /Title metadata (tests/test_component_scope_names.py
+# pins the rendered titles). The name is split across two source lines, and the
+# first line's "Bij AI" is followed by the report title rather than by the
+# continuation, so it is pinned here rather than reworded.
+_COMPONENT_TITLE_PINS = {
+    "report/summary.py": ('"Bij AI Clinical Genomic Analysis Report — variant interpretation from a supplied VCF"',),
+    "report/summary_short.py": (
+        '"Bij AI Clinical Genomic Summary Report — variant interpretation from a supplied VCF"',
+    ),
+}
+
+# Wave 116: the 14 renderer sites the human ruled name GEPER, the component
+# that produced the report / gathered the evidence / lacks the phase data.
+# Where the line is built in code it reads the name from component_identity
+# (as wave 112 did); static module-level text stays static literal.
+_REPORT_FILE_GEPER_PINS = {
+    "report/clinical_report_builder.py": (
+        '"Evidence Completeness reflects how much evidence GEPER could gather for this variant, not how "',
+        '"protein_translator": "GEPER internal reference/alternate protein translation (standard genetic code).",',
+        '"This report was generated directly from a VCF (no --qc-metrics-json was supplied), so GEPER "',
+    ),
+    "report/report_generator.py": (
+        'lines.append(f"# {SHORT_NAME} Variant Analysis Report")',
+        """lines.append(f"- **{SHORT_NAME} code version:** `{json_document.get('code_version') or 'unknown'}`")""",
+        'lines.append(out_of_scope.get("reason") or f"This variant is out of scope for this {SHORT_NAME} build.")',
+    ),
+    "report/summary.py": (
+        'canvas.drawString(_MARGIN, _PAGE_H - 12 * mm, f"{SHORT_NAME} Clinical Genomic Report -- {header_label}")',
+        'title = Paragraph(f"{SHORT_NAME} Clinical Genomic Analysis Report", styles["ReportTitle"])',
+        """Paragraph(f"<b>{SHORT_NAME} code version:</b> {document.get('code_version') or 'unknown'}", styles["BodyText"]),""",
+        'f"(positions {min(positions)}-{max(positions)}). {SHORT_NAME} has no phase data and does not infer "',
+        'esc(out_of_scope.get("reason")) or f"This variant is out of scope for this {SHORT_NAME} build.",',
+    ),
+    "report/summary_short.py": (
+        '"This is a summary report. The full detailed GEPER report for this run -- including the "',
+        'title = Paragraph(f"{SHORT_NAME} Clinical Genomic Summary Report", styles["ReportTitle"])',
+        """f"{esc(out_of_scope.get('reason')) or f'This variant is out of scope for this {SHORT_NAME} build.'}",""",
+    ),
 }
 
 
@@ -104,6 +161,13 @@ _SCOPED_FILES = (
     "pipeline/explainability_engine.py",
     "README.md",
     "GEPER_Colab.ipynb",
+    # Added by wave 116. These four were the gap: wave 112 inventoried the
+    # tree but not the renderers, so nothing here could catch a report saying
+    # "Bij AI" where it meant GEPER.
+    "report/clinical_report_builder.py",
+    "report/report_generator.py",
+    "report/summary.py",
+    "report/summary_short.py",
 )
 _ALLOWED_CONTINUATION = "variant-interpretation component"
 # "Bij AI" naming neither component -- the whole-product claim.
@@ -115,7 +179,11 @@ def _lines(rel):
 
 
 def _pinned(rel):
-    return set(_PRODUCT_NAME_PINS.get(rel, ())) | set(_REPORT_TEXT_PINS.get(rel, ()))
+    return (
+        set(_PRODUCT_NAME_PINS.get(rel, ()))
+        | set(_REPORT_TEXT_PINS.get(rel, ()))
+        | set(_COMPONENT_TITLE_PINS.get(rel, ()))
+    )
 
 
 # ── (1) per-site guard ────────────────────────────────────────────────────────
@@ -131,13 +199,19 @@ class TestEveryScopedSiteNamesTheComponent(unittest.TestCase):
                 if "Bij AI" not in line or line.strip() in pinned:
                     continue
                 # Join the next line: a wrapped name is still the name.
+                # In Python source the wrap is an implicit string
+                # concatenation, so the two halves are separated by the
+                # closing and opening quotes as well as whitespace (see
+                # report/summary.py::SCOPE_LINE); those are not part of the
+                # name and must not hide it.
                 window = " ".join((line + " " + (lines[i + 1] if i + 1 < len(lines) else "")).split())
                 for m in re.finditer(r"Bij AI", window[: len(" ".join(line.split()))]):
-                    if not window[m.end() :].lstrip().startswith(_ALLOWED_CONTINUATION):
+                    rest = re.sub(r"^[\s\"']+", "", window[m.end() :])
+                    if not rest.startswith(_ALLOWED_CONTINUATION):
                         offenders.append(f"{rel}:{i + 1}: {line.strip()[:110]}")
         self.assertEqual(offenders, [])
 
-    def test_the_five_product_name_sites_are_byte_unchanged(self):
+    def test_the_product_name_leave_sites_are_byte_unchanged(self):
         for rel, pins in _PRODUCT_NAME_PINS.items():
             stripped = [line.strip() for line in _lines(rel)]
             for pin in pins:
@@ -258,6 +332,49 @@ class TestReportTextSitesNameGeper(unittest.TestCase):
             found = {line.strip() for line in _lines(rel) if "Bij AI" in line}
             with self.subTest(rel=rel):
                 self.assertEqual(found, set(_PRODUCT_NAME_PINS.get(rel, ())))
+
+
+# ── (4) the four report renderers -- wave 112's blind spot ────────────────────
+
+
+class TestReportRenderersNameGeper(unittest.TestCase):
+    """The 14 sites wave 116 ruled. Each says which component produced the
+    report, gathered the evidence, or lacks the phase data -- so each names
+    GEPER. The three product-level sentences in the same package (intended
+    use, its twin in the research-use disclaimer, and the ISO research-
+    programme statement) keep "Bij AI" and are pinned in _PRODUCT_NAME_PINS."""
+
+    def test_each_renderer_site_names_geper_byte_for_byte(self):
+        for rel, pins in _REPORT_FILE_GEPER_PINS.items():
+            stripped = [line.strip() for line in _lines(rel)]
+            for pin in set(pins):
+                with self.subTest(rel=rel, pin=pin[:60]):
+                    self.assertEqual(stripped.count(pin), pins.count(pin))
+
+    def test_code_built_renderer_lines_read_the_name_from_component_identity(self):
+        # Static module text stays static; every line built at render time
+        # takes the name from the one constant, as wave 112 did.
+        for rel in ("report/report_generator.py", "report/summary.py", "report/summary_short.py"):
+            with self.subTest(rel=rel):
+                self.assertIn("from component_identity import SHORT_NAME", _lines(rel))
+
+    def test_the_rendered_markdown_names_geper_and_never_the_bare_product(self):
+        from report.report_generator import ReportGenerator
+        from tests.test_disclaimer_consistency import _document
+
+        md = ReportGenerator().generate(_document(1))
+        self.assertIn(f"# {_SHORT_NAME} Variant Analysis Report", md)
+        self.assertIn(f"- **{_SHORT_NAME} code version:**", md)
+        # The only "Bij AI" the Markdown may carry is the product-level
+        # disclaimer text and the ratified scope line's component name.
+        for line in md.splitlines():
+            if not _BARE.search(line):
+                continue
+            with self.subTest(line=line[:80]):
+                self.assertTrue(
+                    any(pin.strip('"') in line for pin in _PRODUCT_NAME_PINS["report/clinical_report_builder.py"]),
+                    f"unruled bare product name in rendered Markdown: {line.strip()[:110]}",
+                )
 
 
 if __name__ == "__main__":

@@ -189,7 +189,7 @@ class TestGeneratePdfEndToEnd(unittest.TestCase):
             reader = PdfReader(out)
             page = reader.pages[0]
             content = page.extract_text()
-            self.assertIn("Bij AI Clinical Genomic Analysis Report", content)
+            self.assertIn("GEPER Clinical Genomic Analysis Report", content)
 
             from reportlab.lib.pagesizes import A4
 
@@ -212,7 +212,7 @@ class TestGeneratePdfEndToEnd(unittest.TestCase):
         # height exactly -- a literal match, not an approximation.
         styles = summary_module._build_stylesheet()
         content_width = summary_module._PAGE_W - 2 * summary_module._MARGIN
-        title_only = summary_module.Paragraph("Bij AI Clinical Genomic Analysis Report", styles["ReportTitle"])
+        title_only = summary_module.Paragraph("GEPER Clinical Genomic Analysis Report", styles["ReportTitle"])
         _, expected_title_height = title_only.wrap(content_width, 1000)
 
         table = _build_report_header(_REAL_LOGO, styles)[0]

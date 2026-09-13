@@ -47,7 +47,7 @@ import secrets
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
 
 from clinical.retention import resolve_vcf_retention_days
 
@@ -156,6 +156,29 @@ class ImmutabilityViolationError(Exception):
     catchable application exception instead of a raw driver error surfacing
     through a method whose signature never previously mentioned failure
     here.
+    """
+
+
+class IncompleteClinicianIdentityError(Exception):
+    """
+    R10 (human ruling 2026-09-13): a clinical report shows the signing
+    clinician's NAME, REGISTRATION NUMBER and HOSPITAL. Raised when the user
+    record that signed a report does not carry all three, naming exactly which
+    are missing.
+
+    REFUSAL RATHER THAN A MARKING, and the choice is recorded here because
+    both were available. Rendering "Reg. No.: not provided" would produce a
+    document that asserts a qualified signature while withholding the one
+    credential that evidences the qualification -- and a released report is
+    the artefact a recipient acts on, so the defect leaves the platform.
+    Refusing keeps the failure inside the lab, where the remedy is one
+    administrator call (set_clinician_identity) against an account that should
+    have carried these fields before it was ever given the Approver role.
+
+    Deliberately NOT raised by _approve_report. Approval behaviour is
+    unchanged for accounts with no identity -- the gate is at the point the
+    identity is read for printing, so no existing report, workflow or legacy
+    account changes behaviour because these columns now exist.
     """
 
 
@@ -314,6 +337,41 @@ class User:
     password_changed_at: _datetime.datetime
     totp_enrolled_at: Optional[_datetime.datetime]
     created_at: _datetime.datetime
+    # R10: the three values a signed report shows. Optional because most
+    # accounts never sign one (system accounts, Auditors, Administrators) --
+    # see schema.sql's users comments and IncompleteClinicianIdentityError.
+    # Defaulted so that a caller constructing a User positionally from an
+    # older SELECT list still works.
+    full_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    hospital: Optional[str] = None
+
+
+def _clean_identity_value(value: Optional[str], field: str, allow_none: bool = False) -> Optional[str]:
+    """
+    Trim one signing-identity value, or refuse it (R10).
+
+    Whitespace-only is refused rather than stored, because " " is not a
+    missing value to any SQL predicate or to `if value:` in a renderer -- it
+    is a present one that prints as nothing. That is precisely the "report
+    shows a signature with a blank credential" outcome
+    IncompleteClinicianIdentityError exists to prevent, arriving by the one
+    route a NOT NULL constraint would never catch.
+
+    `allow_none` is for provisioning (create_user), where omitting the fields
+    entirely is the normal case for every account that will never sign a
+    report. It permits None and nothing else: an explicitly supplied blank is
+    still refused there, so the provisioning path cannot admit what the
+    administrative path rejects.
+    """
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"{field} is required and must not be empty.")
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError(f"{field} is required and must not be blank (received whitespace only).")
+    return cleaned
 
 
 # Tables whose rows belong to exactly one organisation. Every statement this
@@ -1048,7 +1106,7 @@ class DataAccess:
         """
         row = self._query_one(
             "SELECT user_id, org_id, email, disabled, password_changed_at, "
-            "       totp_enrolled_at, created_at "
+            "       totp_enrolled_at, created_at, full_name, registration_number, hospital "
             "FROM users WHERE org_id = %s AND user_id = %s",
             (session.org_id, user_id),
         )
@@ -1083,23 +1141,198 @@ class DataAccess:
         details_builder=lambda params, result: {"email": params.get("email")},
     )
     @transactional
-    def create_user(self, org_id: uuid.UUID, email: str, password: str) -> uuid.UUID:
+    def create_user(
+        self,
+        org_id: uuid.UUID,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        registration_number: Optional[str] = None,
+        hospital: Optional[str] = None,
+    ) -> uuid.UUID:
         """
         Provisioning entry point. Takes org_id directly rather than a Session
         because the first user of an organisation is created before any
         session in it can exist -- the bootstrap case. Every OTHER org-scoped
         method takes a Session; this exception is the reason ORG_SCOPED_TABLES
         drives the isolation test rather than a blanket rule about signatures.
+
+        R10: the three signing-identity fields may be supplied here, so an
+        account that will sign reports carries them from the moment it exists
+        rather than acquiring them in a second step someone can forget. All
+        three are OPTIONAL and default to NULL, not to "": most accounts never
+        sign a report, and an empty string would print as a signature with a
+        blank credential rather than refusing (see get_signing_identity).
+        Whatever is supplied is validated by the same
+        _clean_identity_value the administrator path uses, so "  " cannot
+        enter through provisioning what set_clinician_identity would refuse.
         """
         user_id = uuid.uuid4()
         now = self._clock.now()
         self._execute(
             "INSERT INTO users (user_id, org_id, email, password_hash, password_changed_at, "
-            "                   created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (user_id, org_id, email, self._hasher.hash(password), now, now, now),
+            "                   full_name, registration_number, hospital, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                user_id,
+                org_id,
+                email,
+                self._hasher.hash(password),
+                now,
+                _clean_identity_value(full_name, "full_name", allow_none=True),
+                _clean_identity_value(registration_number, "registration_number", allow_none=True),
+                _clean_identity_value(hospital, "hospital", allow_none=True),
+                now,
+                now,
+            ),
         )
         return user_id
+
+    @auditable(
+        action="clinician_identity_set",
+        resource_type="user",
+        requires_session=True,
+        auditable=True,
+        reason="the identity a signed report prints is a clinical fact about who stands behind it (R10)",
+        details_builder=lambda params, result: {
+            "target_user_id": str(params.get("target_user_id")),
+            "registration_number": params.get("registration_number"),
+        },
+    )
+    @transactional
+    def set_clinician_identity(
+        self,
+        session: Session,
+        target_user_id: uuid.UUID,
+        full_name: str,
+        registration_number: str,
+        hospital: str,
+    ) -> None:
+        """
+        Record (or correct) the three values a signed report shows for this
+        user: name, registration number, hospital.
+
+        ADMINISTRATOR ONLY, and deliberately not self-service. These are the
+        credentials a report prints as evidence of who stands behind it; a
+        clinician who could edit their own would make the printed credential
+        self-asserted, which is the property the ruling exists to remove. The
+        same separation assign_role already draws between holding a role and
+        granting one.
+
+        All three are required together. A partial update would let an
+        administrator leave an account in exactly the state this method exists
+        to end -- a name with no registration number -- while believing the
+        identity had been recorded.
+
+        Corrections are supported (this is an UPDATE, not an insert-once), and
+        they propagate: signing_identity_for_report reads the record live, so
+        a corrected registration number corrects what an already-approved
+        report may print. A value frozen into the report at sign-off could not
+        be corrected without re-signing, which would mean a typo forced a
+        re-approval.
+
+        Raises NotFoundError for an unknown or cross-org user (get_user's
+        org-scoped read is what enforces that), ValueError for a blank value,
+        and lets the database's users_org_registration_number_unique refuse a
+        registration number already held by another account in this
+        organisation.
+        """
+        self._require_role(session, "Administrator")
+        self.get_user(session, target_user_id)
+
+        self._execute(
+            "UPDATE users SET full_name = %s, registration_number = %s, hospital = %s, updated_at = %s "
+            "WHERE user_id = %s AND org_id = %s",
+            (
+                _clean_identity_value(full_name, "full_name"),
+                _clean_identity_value(registration_number, "registration_number"),
+                _clean_identity_value(hospital, "hospital"),
+                self._clock.now(),
+                target_user_id,
+                session.org_id,
+            ),
+        )
+
+    @auditable(
+        action="signing_identity_read",
+        resource_type="user",
+        requires_session=True,
+        auditable=False,
+        reason="a read of who a user is, not an action on them; the sign-off that uses it is itself audited",
+    )
+    @transactional
+    def get_signing_identity(self, session: Session, user_id: uuid.UUID) -> Dict[str, Any]:
+        """
+        The three values a report may print for this user, read from the user
+        record -- never from anything a caller typed.
+
+        Returns {"user_id", "full_name", "registration_number", "hospital"}.
+
+        Raises NotFoundError for an unknown or cross-org user, and
+        IncompleteClinicianIdentityError -- naming every missing field -- when
+        the record does not carry all three. See that exception's docstring
+        for why an incomplete identity is refused rather than printed with a
+        placeholder.
+        """
+        user = self.get_user(session, user_id)
+        missing = [
+            field
+            for field in ("full_name", "registration_number", "hospital")
+            if not (getattr(user, field) or "").strip()
+        ]
+        if missing:
+            raise IncompleteClinicianIdentityError(
+                f"User {user_id} cannot be shown as the signing clinician: the user record is missing "
+                f"{', '.join(missing)}. A clinical report shows the signing clinician's name, registration "
+                "number and hospital (R10), so a report will not be produced with any of them absent. An "
+                "Administrator can record them with set_clinician_identity()."
+            )
+        return {
+            "user_id": user.user_id,
+            "full_name": user.full_name,
+            "registration_number": user.registration_number,
+            "hospital": user.hospital,
+        }
+
+    @auditable(
+        action="signing_identity_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="reading who signed is not itself a resource action; the approval it reads is already audited",
+    )
+    @transactional
+    def signing_identity_for_report(self, session: Session, report_id: uuid.UUID) -> Dict[str, Any]:
+        """
+        THE ONE PLACE A RENDERER ASKS "whose name, registration number and
+        hospital does this report show?" -- answered from the approver's user
+        record, so a report cannot show an identity that contradicts it.
+
+        Returns get_signing_identity's dict for the report's approver_id.
+
+        Raises:
+          - NotFoundError for an unknown or cross-org report id (the usual
+            meaning throughout this file: a caller in another organisation
+            cannot learn that the report exists);
+          - ValueError when the report has not been approved. NOT-YET-SIGNED
+            IS A DIFFERENT ANSWER FROM SIGNED-BY-SOMEONE, and an empty
+            identity here would be a report claiming an unnamed signature;
+          - IncompleteClinicianIdentityError when the approver's record lacks
+            any of the three.
+        """
+        row = self._query_one(
+            "SELECT approver_id FROM reports WHERE org_id = %s AND id = %s",
+            (session.org_id, report_id),
+        )
+        if row is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        approver_id = row[0]
+        if approver_id is None:
+            raise ValueError(
+                f"Report {report_id} has not been approved and has no signing clinician. Nothing may be "
+                "printed as its signature until it is approved (spec 13.3)."
+            )
+        return self.get_signing_identity(session, approver_id)
 
     @auditable(
         action=lambda params, result: "user_disabled" if params.get("disabled") else "user_enabled",

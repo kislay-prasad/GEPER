@@ -4040,18 +4040,27 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         actor_id: Any,
         reason: Optional[str],
     ) -> None:
         """
         Shared precondition check for every reviewer claim.
 
-        Both lookups are org-scoped by construction -- they filter on
-        session.org_id, so an interpretation or an actor belonging to another
-        organisation is indistinguishable from one that does not exist. That is
-        the intended answer, not a rounding of it: a cross-org id is not a
-        permission error to be reported back, it is simply absent from this
+        All three lookups are org-scoped by construction -- they filter on
+        session.org_id, so an interpretation, a report or an actor belonging to
+        another organisation is indistinguishable from one that does not exist.
+        That is the intended answer, not a rounding of it: a cross-org id is not
+        a permission error to be reported back, it is simply absent from this
         org's world, and reporting it as "forbidden" would confirm it exists.
+
+        THE REPORT MUST BE A REPORT OF THIS INTERPRETATION, and that check is
+        here rather than in the schema because a row constraint cannot read the
+        reports row to compare against -- the same reason variant membership
+        and supersession uniqueness are methods' work (see reviewer_claims's
+        own schema comment). Without it, report_id would be a column the
+        application could fill with any report at all, which would make
+        "this report's claims" a query over an association nothing established.
         """
         if reason is None or not str(reason).strip():
             raise ValueError(
@@ -4064,6 +4073,19 @@ class DataAccess:
         )
         if interpretation is None:
             raise NotFoundError(f"Interpretation {interpretation_id} not found")
+
+        report = self._query_one(
+            "SELECT interpretation_id FROM reports WHERE org_id = %s AND id = %s",
+            (session.org_id, report_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        if report[0] != interpretation_id:
+            raise ValueError(
+                f"Report {report_id} is not a report of interpretation {interpretation_id}: a claim is "
+                "recorded against one report of the interpretation it is about, and attaching it to "
+                "another interpretation's report would attribute the review to a document it never read."
+            )
 
         actor = self._query_one(
             "SELECT 1 FROM users WHERE org_id = %s AND user_id = %s",
@@ -4109,6 +4131,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         actor_id: Any,
         reason: str,
         claim_type: str,
@@ -4125,13 +4148,14 @@ class DataAccess:
         claim_id = uuid.uuid4()
         self._execute(
             "INSERT INTO reviewer_claims "
-            "(org_id, id, interpretation_id, variant_key, claim_type, classification, "
+            "(org_id, id, interpretation_id, report_id, variant_key, claim_type, classification, "
             ' actor_id, "timestamp", reason) '
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 session.org_id,
                 claim_id,
                 interpretation_id,
+                report_id,
                 variant_key,
                 claim_type,
                 classification,
@@ -4154,11 +4178,12 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         actor_id: Any,
         reason: str,
     ) -> Any:
         """
-        Record an 'accept' claim against an interpretation.
+        Record an 'accept' claim against one report of an interpretation.
 
         Under the re-derive reading the schema's own comment records, an accept
         is NOT agreement with a draft -- it is an independent concurrence, a
@@ -4166,12 +4191,14 @@ class DataAccess:
         is evidence, and evidence without stated grounds is not evidence, which
         is why `reason` is required here exactly as it is for a disagreement.
 
-        The only one of the four scoped to the whole interpretation: it names
-        no variant and asserts no classification, so both of those columns stay
-        NULL. That asymmetry is why they are nullable.
+        The only one of the four that names no VARIANT: it concurs with the
+        interpretation as a whole, so variant_key and classification both stay
+        NULL. That asymmetry is why they are nullable. It is still scoped to a
+        report like every other claim -- see report_id's schema comment for
+        why every claim names one.
         """
-        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
-        return self._insert_claim(session, interpretation_id, actor_id, reason, claim_type="accept")
+        self._validate_claim_inputs(session, interpretation_id, report_id, actor_id, reason)
+        return self._insert_claim(session, interpretation_id, report_id, actor_id, reason, claim_type="accept")
 
     @auditable(
         action="record_disagreement",
@@ -4185,6 +4212,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         variant_key: str,
         actor_id: Any,
         new_classification: str,
@@ -4199,12 +4227,13 @@ class DataAccess:
         it was. Both readings survive, which is the whole point of recording a
         disagreement as a claim rather than as an edit.
         """
-        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._validate_claim_inputs(session, interpretation_id, report_id, actor_id, reason)
         self._require_variant_scope(variant_key, "disagree")
         self._require_classification(new_classification, "disagree")
         return self._insert_claim(
             session,
             interpretation_id,
+            report_id,
             actor_id,
             reason,
             claim_type="disagree",
@@ -4224,6 +4253,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         variant_key: str,
         actor_id: Any,
         acmg_classification: str,
@@ -4238,12 +4268,13 @@ class DataAccess:
         classification is required for exactly that reason: an addition with no
         call attached says a variant matters without saying what it means.
         """
-        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._validate_claim_inputs(session, interpretation_id, report_id, actor_id, reason)
         self._require_variant_scope(variant_key, "variant_added")
         self._require_classification(acmg_classification, "variant_added")
         return self._insert_claim(
             session,
             interpretation_id,
+            report_id,
             actor_id,
             reason,
             claim_type="variant_added",
@@ -4263,6 +4294,7 @@ class DataAccess:
         self,
         session: Session,
         interpretation_id: Any,
+        report_id: Any,
         variant_key: str,
         actor_id: Any,
         reason: str,
@@ -4276,16 +4308,85 @@ class DataAccess:
         the place to answer it. A classification here would assert something the
         reviewer has not said.
         """
-        self._validate_claim_inputs(session, interpretation_id, actor_id, reason)
+        self._validate_claim_inputs(session, interpretation_id, report_id, actor_id, reason)
         self._require_variant_scope(variant_key, "variant_not_relevant")
         return self._insert_claim(
             session,
             interpretation_id,
+            report_id,
             actor_id,
             reason,
             claim_type="variant_not_relevant",
             variant_key=variant_key,
         )
+
+    @auditable(
+        action="reviewer_claims_read",
+        resource_type="reviewer_claim",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def get_reviewer_claims(self, session: Session, report_id: uuid.UUID) -> List[dict[str, Any]]:
+        """
+        This report's reviewer claims, oldest first -- ITS OWN AND ONLY ITS
+        OWN (R9 defect (a), human ruling 2026-09-13, resolving expert-branch
+        decision point 4 in reviewer_claims's schema comment).
+
+        An amended report does NOT carry the cumulative set including the
+        original's, and the reason is the reader rather than tidiness:
+        showing the original's claims presents reasoning about a document
+        the reader is not holding, and a cumulative set makes it impossible
+        to tell which claim applied to which version. The original keeps its
+        own claims, on its own report, and stays queryable -- nothing is
+        withdrawn (ISO 15189 7.4.1.8 b)/d)); the two sets simply do not mix.
+
+        Ordered by ("timestamp", id), the same total order
+        _compute_report_content_hash uses, so what a surface displays and
+        what was hashed enumerate the rows identically. WHICH of these
+        claims a given surface chooses to show, and how, is expert-branch
+        point 3 and still open: this method answers what the report's claims
+        ARE, not how any renderer presents them.
+
+        Raises NotFoundError for an unknown or cross-org report, the usual
+        meaning throughout this file. A report with no claims returns [] --
+        an empty review is a fact a caller may read, not an error.
+        """
+        report = self._query_one(
+            "SELECT 1 FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+
+        rows = self._query(
+            'SELECT id, claim_type, variant_key, classification, reason, actor_id, "timestamp", '
+            "evidence_json, supersedes "
+            "FROM reviewer_claims WHERE org_id = %s AND report_id = %s "
+            'ORDER BY "timestamp", id',
+            (session.org_id, report_id),
+        )
+
+        claims: List[dict[str, Any]] = []
+        for row in rows:
+            evidence_json = row[7]
+            if isinstance(evidence_json, str):
+                evidence_json = json.loads(evidence_json)
+            claims.append(
+                {
+                    "id": row[0],
+                    "claim_type": row[1],
+                    "variant_key": row[2],
+                    "classification": row[3],
+                    "reason": row[4],
+                    "actor_id": row[5],
+                    "timestamp": row[6],
+                    "evidence_json": evidence_json,
+                    "supersedes": row[8],
+                }
+            )
+        return claims
 
     # ─── Phase 6: approval and release (spec 13.3, 13.4) ─────────────────────
     #
@@ -4352,13 +4453,20 @@ class DataAccess:
            itself, so a double submission is a refusal rather than a silent
            no-op that would leave a caller believing it had just submitted.
 
-        3. AT LEAST ONE REVIEWER CLAIM against the report's interpretation.
+        3. AT LEAST ONE REVIEWER CLAIM AGAINST THIS REPORT.
            This is the substantive one. Zero claims means no review happened,
            and submitting then would put raw engine output into the approval
-           queue with a human's submission standing behind it. The claim is
-           checked against THIS report's interpretation and within THIS org:
-           another interpretation's review, or another organisation's, is not
-           this report's review.
+           queue with a human's submission standing behind it.
+
+           Checked against THIS REPORT, not against its interpretation (R9,
+           human ruling 2026-09-13: a report carries its own claims and only
+           its own). The difference is the whole amendment case. An amendment
+           is a second report on the same interpretation, so an
+           interpretation-scoped check would let an amendment be submitted on
+           the strength of the ORIGINAL's review -- the original's reviewer
+           would stand behind a document they never read, which is the
+           failure this precondition exists to prevent, arriving by the one
+           route the old check could not see.
 
            This precondition is what makes the explicit 'accept' claim
            load-bearing rather than ceremonial. A reviewer who agrees with
@@ -4375,12 +4483,12 @@ class DataAccess:
         self._require_role(session, "Interpreter")
 
         report = self._query_one(
-            "SELECT interpretation_id, state FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT state FROM reports WHERE id = %s AND org_id = %s",
             (report_id, session.org_id),
         )
         if report is None:
             raise NotFoundError(f"Report {report_id} not found")
-        interpretation_id, state = report
+        state = report[0]
 
         if state != "draft":
             raise ValueError(
@@ -4388,12 +4496,12 @@ class DataAccess:
             )
 
         claim = self._query_one(
-            "SELECT 1 FROM reviewer_claims WHERE org_id = %s AND interpretation_id = %s LIMIT 1",
-            (session.org_id, interpretation_id),
+            "SELECT 1 FROM reviewer_claims WHERE org_id = %s AND report_id = %s LIMIT 1",
+            (session.org_id, report_id),
         )
         if claim is None:
             raise ValueError(
-                f"Report {report_id} has no reviewer claim against its interpretation and "
+                f"Report {report_id} has no reviewer claim of its own and "
                 "cannot be submitted for review: submitting with zero claims would present "
                 "unreviewed engine output as reviewed. Record at least one claim first "
                 "(spec 13.2) -- an explicit 'accept' counts, and is the point of it."
@@ -4404,11 +4512,31 @@ class DataAccess:
             (session.org_id, report_id),
         )
 
-    def _compute_report_content_hash(self, session: Session, interpretation_id: uuid.UUID) -> str:
+    def _compute_report_content_hash(self, session: Session, report_id: uuid.UUID) -> str:
         """
         Deterministic SHA-256 over exactly what an Approver reviewed: the
         interpretation's run_document AND the full set of reviewer_claims
-        recorded against it, AS STORED.
+        recorded against THIS REPORT, AS STORED.
+
+        KEYED ON THE REPORT, NOT THE INTERPRETATION (R9 defect (b), human
+        ruling 2026-09-13). It took interpretation_id and hashed every claim
+        on the interpretation. An amendment is a second report row on the
+        same interpretation, so the first claim recorded for an amendment
+        landed inside the ORIGINAL report's recomputed hash and
+        verify_report_integrity() reported the original as tampered with.
+        Nothing had been tampered with, and a false alarm on an integrity
+        check teaches people to ignore integrity checks.
+
+        The rejected alternative was a cutoff at reports.approved_at, which
+        needed no schema change. It was refused because it trades a false
+        alarm for a real blind spot: a claim injected after approval is
+        exactly what this hash exists to catch, and a timestamp cutoff
+        cannot tell that injection apart from an amendment's first
+        legitimate claim. See reviewer_claims.report_id's schema comment.
+
+        run_document is still read through the report, so an amendment and
+        its original -- which share an interpretation -- hash the same
+        document and differ only where they genuinely differ: their claims.
 
         Shared by _approve_report (which writes the result) and
         verify_report_integrity (which recomputes it later and compares) so
@@ -4493,8 +4621,10 @@ class DataAccess:
         id) is a genuine total order: id alone can never tie.
         """
         interp_row = self._query_one(
-            "SELECT run_document FROM interpretations WHERE org_id = %s AND id = %s",
-            (session.org_id, interpretation_id),
+            "SELECT i.run_document FROM interpretations i "
+            "JOIN reports r ON r.org_id = i.org_id AND r.interpretation_id = i.id "
+            "WHERE r.org_id = %s AND r.id = %s",
+            (session.org_id, report_id),
         )
         run_document = interp_row[0]
         if isinstance(run_document, str):
@@ -4503,9 +4633,9 @@ class DataAccess:
         claim_rows = self._query(
             'SELECT claim_type, variant_key, classification, reason, actor_id, "timestamp", '
             "evidence_json, supersedes "
-            "FROM reviewer_claims WHERE org_id = %s AND interpretation_id = %s "
+            "FROM reviewer_claims WHERE org_id = %s AND report_id = %s "
             'ORDER BY "timestamp", id',
-            (session.org_id, interpretation_id),
+            (session.org_id, report_id),
         )
         claims = []
         for row in claim_rows:
@@ -4592,7 +4722,7 @@ class DataAccess:
                 "under_review may be approved."
             )
 
-        content_hash = self._compute_report_content_hash(session, interpretation_id)
+        content_hash = self._compute_report_content_hash(session, report_id)
 
         now = self._clock.now()
         self._execute(
@@ -4630,17 +4760,17 @@ class DataAccess:
         from "verified and found to differ."
         """
         report = self._query_one(
-            "SELECT interpretation_id, content_hash FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT content_hash FROM reports WHERE id = %s AND org_id = %s",
             (report_id, session.org_id),
         )
         if report is None:
             raise NotFoundError(f"Report {report_id} not found")
-        interpretation_id, stored_hash = report
+        stored_hash = report[0]
 
         if stored_hash is None:
             raise ValueError(f"Report {report_id} has not been approved and has no content_hash to verify against.")
 
-        current_hash = self._compute_report_content_hash(session, interpretation_id)
+        current_hash = self._compute_report_content_hash(session, report_id)
         return current_hash == stored_hash
 
     @auditable(

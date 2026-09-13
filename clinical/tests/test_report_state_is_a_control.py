@@ -241,6 +241,7 @@ def report_in_state(dao, conn, session, approver, interp):
             dao._record_accept(
                 approver,
                 interp,
+                report_id=report_id,
                 actor_id=approver.user_id,
                 reason="Independent concurrence with the engine's classification.",
             )
@@ -273,6 +274,7 @@ def approved_report(dao, conn, session, approver, interp):
     dao._record_accept(
         approver,
         interp,
+        report_id=report_id,
         actor_id=approver.user_id,
         reason="Independent concurrence with the engine's classification.",
     )

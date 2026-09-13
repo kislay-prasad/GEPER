@@ -163,13 +163,28 @@ def interp_b(dao, conn, session_b):
     return _make_interpretation(dao, conn, session_b)
 
 
+# reviewer_claims.report_id is NOT NULL (R9, human ruling 2026-09-13): a claim
+# is recorded AGAINST a report, so these tests need one to name. The draft
+# report is all they need -- this file is about the four claim recorders, not
+# about the report lifecycle, which test_phase_6_submit_for_review.py owns.
+@pytest.fixture
+def report_a(dao, session_a, interp_a):
+    return dao.create_report(session_a, interp_a)
+
+
+@pytest.fixture
+def report_b(dao, session_b, interp_b):
+    return dao.create_report(session_b, interp_b)
+
+
 class TestRecordAccept:
     """_record_accept: spec 13.2's 'accept' action -- an independent concurrence."""
 
-    def test_inserts_single_accept_claim(self, dao, conn, session_a, interp_a):
+    def test_inserts_single_accept_claim(self, dao, conn, session_a, interp_a, report_a):
         claim_id = dao._record_accept(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             actor_id=session_a.user_id,
             reason="Independently re-derived the same classification from ClinVar and gnomAD.",
         )
@@ -194,15 +209,17 @@ class TestRecordAccept:
         assert row[7] is None, "accept is interpretation-scoped and names no variant"
         assert row[8] is None, "accept asserts no classification of its own"
 
-    def test_inserts_exactly_one_row(self, dao, conn, session_a, interp_a):
-        dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="Concur.")
+    def test_inserts_exactly_one_row(self, dao, conn, session_a, interp_a, report_a):
+        dao._record_accept(
+            session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="Concur."
+        )
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM reviewer_claims WHERE interpretation_id = %s", (interp_a,))
             assert cur.fetchone()[0] == 1
 
-    def test_records_timezone_aware_timestamp(self, dao, conn, session_a, interp_a):
+    def test_records_timezone_aware_timestamp(self, dao, conn, session_a, interp_a, report_a):
         claim_id = dao._record_accept(
-            session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="Concur."
+            session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="Concur."
         )
         with conn.cursor() as cur:
             cur.execute('SELECT "timestamp" FROM reviewer_claims WHERE id = %s', (claim_id,))
@@ -210,45 +227,64 @@ class TestRecordAccept:
         assert ts is not None
         assert ts.tzinfo is not None, "timestamp must be timezone-aware"
 
-    def test_empty_reason_rejected(self, dao, session_a, interp_a):
+    def test_empty_reason_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="reason"):
-            dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="")
+            dao._record_accept(
+                session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason=""
+            )
 
-    def test_whitespace_only_reason_rejected(self, dao, session_a, interp_a):
+    def test_whitespace_only_reason_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="reason"):
-            dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="   ")
+            dao._record_accept(
+                session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="   "
+            )
 
-    def test_none_reason_rejected(self, dao, session_a, interp_a):
+    def test_none_reason_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="reason"):
-            dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason=None)
+            dao._record_accept(
+                session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason=None
+            )
 
-    def test_unknown_actor_rejected(self, dao, session_a, interp_a):
+    def test_unknown_actor_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(NotFoundError):
-            dao._record_accept(session_a, interpretation_id=interp_a, actor_id=uuid.uuid4(), reason="Concur.")
+            dao._record_accept(
+                session_a, interpretation_id=interp_a, report_id=report_a, actor_id=uuid.uuid4(), reason="Concur."
+            )
 
-    def test_actor_from_other_org_rejected(self, dao, session_a, session_b, interp_a):
+    def test_actor_from_other_org_rejected(self, dao, session_a, session_b, interp_a, report_a):
         """An actor who exists, but in a different org, is not an actor here."""
         with pytest.raises(NotFoundError):
-            dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_b.user_id, reason="Concur.")
+            dao._record_accept(
+                session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_b.user_id, reason="Concur."
+            )
 
-    def test_unknown_interpretation_rejected(self, dao, session_a):
+    def test_unknown_interpretation_rejected(self, dao, session_a, report_a):
         with pytest.raises(NotFoundError):
             dao._record_accept(
                 session_a,
                 interpretation_id=uuid.uuid4(),
+                report_id=report_a,
                 actor_id=session_a.user_id,
                 reason="Concur.",
             )
 
-    def test_cross_org_interpretation_rejected(self, dao, session_a, interp_b):
+    def test_cross_org_interpretation_rejected(self, dao, session_a, interp_b, report_b):
         """Org A cannot record a claim against Org B's interpretation."""
         with pytest.raises(NotFoundError):
-            dao._record_accept(session_a, interpretation_id=interp_b, actor_id=session_a.user_id, reason="Concur.")
+            dao._record_accept(
+                session_a, interpretation_id=interp_b, report_id=report_b, actor_id=session_a.user_id, reason="Concur."
+            )
 
-    def test_cross_org_claims_stay_in_their_own_org(self, dao, conn, session_a, session_b, interp_a, interp_b):
+    def test_cross_org_claims_stay_in_their_own_org(
+        self, dao, conn, session_a, session_b, interp_a, interp_b, report_a, report_b
+    ):
         """Claims recorded in one org never land under the other org's id."""
-        dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="A concurs.")
-        dao._record_accept(session_b, interpretation_id=interp_b, actor_id=session_b.user_id, reason="B concurs.")
+        dao._record_accept(
+            session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="A concurs."
+        )
+        dao._record_accept(
+            session_b, interpretation_id=interp_b, report_id=report_b, actor_id=session_b.user_id, reason="B concurs."
+        )
 
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM reviewer_claims WHERE org_id = %s", (session_a.org_id,))
@@ -256,8 +292,10 @@ class TestRecordAccept:
             cur.execute("SELECT count(*) FROM reviewer_claims WHERE org_id = %s", (session_b.org_id,))
             assert cur.fetchone()[0] == 1
 
-    def test_writes_audit_entry(self, dao, conn, session_a, interp_a):
-        dao._record_accept(session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="Concur.")
+    def test_writes_audit_entry(self, dao, conn, session_a, interp_a, report_a):
+        dao._record_accept(
+            session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="Concur."
+        )
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT count(*) FROM audit_log WHERE org_id = %s AND action = 'record_accept'",
@@ -280,11 +318,12 @@ def _claim_row(conn, claim_id):
 class TestRecordDisagreement:
     """_record_disagreement: spec 13.2's 'disagree' -- appended, never an edit."""
 
-    def test_inserts_disagree_claim_with_variant_and_classification(self, dao, conn, session_a, interp_a):
+    def test_inserts_disagree_claim_with_variant_and_classification(self, dao, conn, session_a, interp_a, report_a):
         variant_key = "chr1-1000-A-T"
         claim_id = dao._record_disagreement(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             variant_key=variant_key,
             actor_id=session_a.user_id,
             new_classification="Likely Benign",
@@ -303,58 +342,63 @@ class TestRecordDisagreement:
         assert row[7] is None, "evidence_json is not written in this commit"
         assert row[8] is None, "an original claim supersedes nothing"
 
-    def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
+    def test_missing_variant_id_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="variant_key"):
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key=None,
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="Reason.",
             )
 
-    def test_missing_classification_rejected(self, dao, session_a, interp_a):
+    def test_missing_classification_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="classification"):
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="",
                 reason="Reason.",
             )
 
-    def test_missing_reason_rejected(self, dao, session_a, interp_a):
+    def test_missing_reason_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="reason"):
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="   ",
             )
 
-    def test_cross_org_interpretation_rejected(self, dao, session_a, interp_b):
+    def test_cross_org_interpretation_rejected(self, dao, session_a, interp_b, report_b):
         with pytest.raises(NotFoundError):
             dao._record_disagreement(
                 session_a,
                 interpretation_id=interp_b,
+                report_id=report_b,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 new_classification="Benign",
                 reason="Reason.",
             )
 
-    def test_does_not_alter_an_existing_accept(self, dao, conn, session_a, interp_a):
+    def test_does_not_alter_an_existing_accept(self, dao, conn, session_a, interp_a, report_a):
         """A disagreement is appended; it never edits the claim it disputes."""
         accept_id = dao._record_accept(
-            session_a, interpretation_id=interp_a, actor_id=session_a.user_id, reason="Concur."
+            session_a, interpretation_id=interp_a, report_id=report_a, actor_id=session_a.user_id, reason="Concur."
         )
         dao._record_disagreement(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             variant_key="chr1-1000-A-T",
             actor_id=session_a.user_id,
             new_classification="Benign",
@@ -374,11 +418,12 @@ class TestRecordDisagreement:
 class TestAddVariantByReviewer:
     """_add_variant_by_reviewer: spec 13.2's 'variant_added'."""
 
-    def test_inserts_variant_added_claim(self, dao, conn, session_a, interp_a):
+    def test_inserts_variant_added_claim(self, dao, conn, session_a, interp_a, report_a):
         variant_key = "chr1-1000-A-T"
         claim_id = dao._add_variant_by_reviewer(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             variant_key=variant_key,
             actor_id=session_a.user_id,
             acmg_classification="Pathogenic",
@@ -391,34 +436,37 @@ class TestAddVariantByReviewer:
         assert row[4] == "Pathogenic"
         assert row[6].startswith("Known founder variant")
 
-    def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
+    def test_missing_variant_id_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="variant_key"):
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key=None,
                 actor_id=session_a.user_id,
                 acmg_classification="Pathogenic",
                 reason="Reason.",
             )
 
-    def test_missing_classification_rejected(self, dao, session_a, interp_a):
+    def test_missing_classification_rejected(self, dao, session_a, interp_a, report_a):
         """An addition with no call says a variant matters without saying what it means."""
         with pytest.raises(ValueError, match="classification"):
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 acmg_classification=None,
                 reason="Reason.",
             )
 
-    def test_actor_from_other_org_rejected(self, dao, session_a, session_b, interp_a):
+    def test_actor_from_other_org_rejected(self, dao, session_a, session_b, interp_a, report_a):
         with pytest.raises(NotFoundError):
             dao._add_variant_by_reviewer(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_b.user_id,
                 acmg_classification="Pathogenic",
@@ -429,11 +477,12 @@ class TestAddVariantByReviewer:
 class TestMarkVariantNotRelevant:
     """_mark_variant_not_relevant: scoped out against the indication, not deleted."""
 
-    def test_inserts_variant_not_relevant_claim(self, dao, conn, session_a, interp_a):
+    def test_inserts_variant_not_relevant_claim(self, dao, conn, session_a, interp_a, report_a):
         variant_key = "chr1-1000-A-T"
         claim_id = dao._mark_variant_not_relevant(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             variant_key=variant_key,
             actor_id=session_a.user_id,
             reason="Cardiac gene; this indication is hereditary breast cancer.",
@@ -444,32 +493,35 @@ class TestMarkVariantNotRelevant:
         assert row[3] == "variant_not_relevant"
         assert row[6].startswith("Cardiac gene")
 
-    def test_asserts_no_classification(self, dao, conn, session_a, interp_a):
+    def test_asserts_no_classification(self, dao, conn, session_a, interp_a, report_a):
         """Scoping out is not a statement about what the variant means."""
         claim_id = dao._mark_variant_not_relevant(
             session_a,
             interpretation_id=interp_a,
+            report_id=report_a,
             variant_key="chr1-1000-A-T",
             actor_id=session_a.user_id,
             reason="Out of scope for this indication.",
         )
         assert _claim_row(conn, claim_id)[4] is None
 
-    def test_missing_variant_id_rejected(self, dao, session_a, interp_a):
+    def test_missing_variant_id_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="variant_key"):
             dao._mark_variant_not_relevant(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key=None,
                 actor_id=session_a.user_id,
                 reason="Reason.",
             )
 
-    def test_missing_reason_rejected(self, dao, session_a, interp_a):
+    def test_missing_reason_rejected(self, dao, session_a, interp_a, report_a):
         with pytest.raises(ValueError, match="reason"):
             dao._mark_variant_not_relevant(
                 session_a,
                 interpretation_id=interp_a,
+                report_id=report_a,
                 variant_key="chr1-1000-A-T",
                 actor_id=session_a.user_id,
                 reason=None,
@@ -479,11 +531,14 @@ class TestMarkVariantNotRelevant:
 class TestAllFourClaimTypes:
     """Cross-cutting guarantees that must hold for every claim type."""
 
-    def _record_all_four(self, dao, session, interp):
-        dao._record_accept(session, interpretation_id=interp, actor_id=session.user_id, reason="Concur.")
+    def _record_all_four(self, dao, session, interp, report):
+        dao._record_accept(
+            session, interpretation_id=interp, report_id=report, actor_id=session.user_id, reason="Concur."
+        )
         dao._record_disagreement(
             session,
             interpretation_id=interp,
+            report_id=report,
             variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             new_classification="Benign",
@@ -492,6 +547,7 @@ class TestAllFourClaimTypes:
         dao._add_variant_by_reviewer(
             session,
             interpretation_id=interp,
+            report_id=report,
             variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             acmg_classification="Pathogenic",
@@ -500,13 +556,14 @@ class TestAllFourClaimTypes:
         dao._mark_variant_not_relevant(
             session,
             interpretation_id=interp,
+            report_id=report,
             variant_key="chr1-1000-A-T",
             actor_id=session.user_id,
             reason="Out of scope.",
         )
 
-    def test_all_four_recorded_against_one_interpretation(self, dao, conn, session_a, interp_a):
-        self._record_all_four(dao, session_a, interp_a)
+    def test_all_four_recorded_against_one_interpretation(self, dao, conn, session_a, interp_a, report_a):
+        self._record_all_four(dao, session_a, interp_a, report_a)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -522,9 +579,9 @@ class TestAllFourClaimTypes:
             "variant_not_relevant",
         }, "all four of spec 13.2's actions must be recordable"
 
-    def test_no_claim_writes_evidence_json(self, dao, conn, session_a, interp_a):
+    def test_no_claim_writes_evidence_json(self, dao, conn, session_a, interp_a, report_a):
         """evidence_json stays NULL across every claim type in this commit."""
-        self._record_all_four(dao, session_a, interp_a)
+        self._record_all_four(dao, session_a, interp_a, report_a)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -533,9 +590,9 @@ class TestAllFourClaimTypes:
             )
             assert cur.fetchone()[0] == 0
 
-    def test_no_claim_writes_supersedes(self, dao, conn, session_a, interp_a):
+    def test_no_claim_writes_supersedes(self, dao, conn, session_a, interp_a, report_a):
         """Supersession is commit 3's; nothing here writes the pointer."""
-        self._record_all_four(dao, session_a, interp_a)
+        self._record_all_four(dao, session_a, interp_a, report_a)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -544,8 +601,8 @@ class TestAllFourClaimTypes:
             )
             assert cur.fetchone()[0] == 0
 
-    def test_every_claim_type_is_audited(self, dao, conn, session_a, interp_a):
-        self._record_all_four(dao, session_a, interp_a)
+    def test_every_claim_type_is_audited(self, dao, conn, session_a, interp_a, report_a):
+        self._record_all_four(dao, session_a, interp_a, report_a)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -561,10 +618,10 @@ class TestAllFourClaimTypes:
             "mark_variant_not_relevant",
         }, "every reviewer action must leave its own audit trail"
 
-    def test_all_four_are_org_scoped(self, dao, conn, session_a, session_b, interp_a, interp_b):
+    def test_all_four_are_org_scoped(self, dao, conn, session_a, session_b, interp_a, interp_b, report_a, report_b):
         """Every claim type lands under its own org and no other."""
-        self._record_all_four(dao, session_a, interp_a)
-        self._record_all_four(dao, session_b, interp_b)
+        self._record_all_four(dao, session_a, interp_a, report_a)
+        self._record_all_four(dao, session_b, interp_b, report_b)
 
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM reviewer_claims WHERE org_id = %s", (session_a.org_id,))

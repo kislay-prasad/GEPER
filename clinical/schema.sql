@@ -684,6 +684,17 @@ CREATE INDEX idx_reports_org_state ON reports (org_id, state);
 --      together on report surfaces.
 --   4. Report claims -- which claims reach the released report, and how they
 --      are attributed there.
+--      DECIDED, 2026-09-13 (human ruling, R9 defect (a)): A REPORT CARRIES
+--      ITS OWN CLAIMS AND ONLY ITS OWN. An amended report does NOT carry the
+--      cumulative set including the original's. Two reasons, both about the
+--      reader: showing the original's claims presents reasoning about a
+--      document the reader is not holding, and a cumulative set makes it
+--      impossible to tell which claim applied to which version. The
+--      attribution mechanism is report_id on this table (see that column);
+--      the retrieval is get_reviewer_claims(session, report_id). The
+--      original is still never withdrawn -- it keeps its own claims, on its
+--      own report, and both reports stay queryable.
+--      Points 1, 2, 3, 5 and 6 remain open and are untouched by this.
 --   5. D1 applicability -- whether the D1 criterion applies to a re-derived
 --      classification on the same terms as to a ratified one.
 --   6. Evidence capture -- what evidence_json must hold per claim_type;
@@ -695,6 +706,68 @@ CREATE TABLE reviewer_claims (
     org_id              UUID        NOT NULL,
     id                  UUID        PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
     interpretation_id   UUID        NOT NULL,
+
+    -- THE REPORT THIS CLAIM BELONGS TO (R9 defects (a) and (b), human ruling
+    -- 2026-09-13). Added because scoping claims to the INTERPRETATION alone
+    -- made two different reports on one interpretation indistinguishable.
+    --
+    -- An amendment (see the amendments table below) is a SECOND reports row
+    -- on the SAME interpretation. With claims scoped only to the
+    -- interpretation, two things followed, both wrong:
+    --
+    --   (b) THE FALSE TAMPER ALARM. _compute_report_content_hash() hashed
+    --       every claim on the interpretation, so the FIRST claim recorded
+    --       for an amendment changed the recomputed hash of the ORIGINAL
+    --       report, and verify_report_integrity() reported the original as
+    --       tampered. Nothing had been tampered with. A false alarm on an
+    --       integrity check teaches people to ignore integrity checks.
+    --
+    --   (a) THE AMENDED REPORT WITH THE ORIGINAL'S BODY. An amendment could
+    --       not carry reviewer claims of its own, because every claim on the
+    --       interpretation was equally every report's claim. There was no
+    --       query that could answer "this report's claims" at all.
+    --
+    -- THE ALTERNATIVE THAT WAS REJECTED, recorded because it is cheaper and
+    -- will be proposed again: bound the hash by reports.approved_at instead,
+    -- hashing only claims recorded at or before approval. No schema change,
+    -- and it silences the false alarm. It was rejected because it trades a
+    -- false alarm for a real blind spot: a claim INJECTED after approval is
+    -- precisely what an integrity check exists to catch, and a timestamp
+    -- cutoff cannot tell that injection apart from an amendment's first
+    -- legitimate claim. The check was never wrong to care that a claim
+    -- appeared; it was wrong about which claims belong to which report.
+    -- This column is what makes the data model match what is being verified.
+    --
+    -- NOT NULL, no "unassigned" state: a claim that names no report is the
+    -- ambiguity this column exists to remove, and admitting one would put
+    -- the old bug back one row at a time. A claim is therefore recorded
+    -- AGAINST an existing report -- create_report() first, then the claims,
+    -- then submit_for_review().
+    --
+    -- The claim's report must be a report OF this claim's interpretation.
+    -- That is not a CHECK here (a row constraint cannot read the reports
+    -- row) and is enforced by _validate_claim_inputs(), alongside variant
+    -- membership and supersession uniqueness, which are unenforceable here
+    -- for the same reason.
+    --
+    -- BACKFILL, for any database predating this column: every existing claim
+    -- belongs to its interpretation's ORIGINAL report -- the earliest report
+    -- on that interpretation that is not itself an amendment, the same
+    -- derivation find_interpretation_by_submission_key() uses. Amendments
+    -- could not have had claims of their own before this column existed, so
+    -- there is no case this misattributes.
+    --
+    --   ALTER TABLE reviewer_claims ADD COLUMN report_id UUID;
+    --   UPDATE reviewer_claims c SET report_id = (
+    --       SELECT r.id FROM reports r
+    --        WHERE r.org_id = c.org_id AND r.interpretation_id = c.interpretation_id
+    --          AND NOT EXISTS (SELECT 1 FROM amendments a
+    --                           WHERE a.org_id = r.org_id AND a.amendment_report_id = r.id)
+    --        ORDER BY r.created_at, r.id LIMIT 1);
+    --   ALTER TABLE reviewer_claims ALTER COLUMN report_id SET NOT NULL;
+    --   ALTER TABLE reviewer_claims ADD CONSTRAINT fk_claim_report
+    --       FOREIGN KEY (org_id, report_id) REFERENCES reports (org_id, id);
+    report_id           UUID        NOT NULL,
 
     -- The variant this claim is about, identified within
     -- interpretations.run_document. NOT a foreign key, and cannot be one:
@@ -813,6 +886,8 @@ CREATE TABLE reviewer_claims (
 
     CONSTRAINT fk_claim_interp
         FOREIGN KEY (org_id, interpretation_id) REFERENCES interpretations (org_id, id),
+    CONSTRAINT fk_claim_report
+        FOREIGN KEY (org_id, report_id) REFERENCES reports (org_id, id),
     CONSTRAINT fk_claim_actor
         FOREIGN KEY (org_id, actor_id) REFERENCES users (org_id, user_id),
     CONSTRAINT fk_claim_supersedes
@@ -828,6 +903,13 @@ CREATE TABLE reviewer_claims (
 -- The review screen reads every claim on one interpretation, oldest first.
 CREATE INDEX idx_claims_org_interp
     ON reviewer_claims (org_id, interpretation_id, "timestamp");
+
+-- "This report's claims", oldest first: the read behind both
+-- _compute_report_content_hash() and get_reviewer_claims(). Ordered by
+-- ("timestamp", id) at the query, so the index leads with "timestamp";
+-- id can never tie, which is what makes that order total.
+CREATE INDEX idx_claims_org_report
+    ON reviewer_claims (org_id, report_id, "timestamp");
 
 
 -- ─── Phase 6: release_events ───────────────────────────────────────────

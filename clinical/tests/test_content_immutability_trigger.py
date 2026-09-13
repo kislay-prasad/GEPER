@@ -201,9 +201,10 @@ def approved_report(dao, conn):
 
     with conn.cursor() as cur:
         cur.execute(
-            'INSERT INTO reviewer_claims (org_id, id, interpretation_id, claim_type, reason, actor_id, "timestamp") '
-            "VALUES (%s, %s, %s, 'accept', 'looks right', %s, %s)",
-            (org_id, uuid.uuid4(), interp_id, admin_id, now),
+            "INSERT INTO reviewer_claims "
+            '(org_id, id, interpretation_id, report_id, claim_type, reason, actor_id, "timestamp") '
+            "VALUES (%s, %s, %s, %s, 'accept', 'looks right', %s, %s)",
+            (org_id, uuid.uuid4(), interp_id, report_id, admin_id, now),
         )
     conn.commit()
 
@@ -381,9 +382,10 @@ class TestStateMayAdvance:
         report_id = dao.create_report(session, interp_id)
         with conn.cursor() as cur:
             cur.execute(
-                'INSERT INTO reviewer_claims (org_id, id, interpretation_id, claim_type, reason, actor_id, "timestamp") '
-                "VALUES (%s, %s, %s, 'accept', 'looks right', %s, %s)",
-                (org_id, uuid.uuid4(), interp_id, admin_id, now),
+                "INSERT INTO reviewer_claims "
+                '(org_id, id, interpretation_id, report_id, claim_type, reason, actor_id, "timestamp") '
+                "VALUES (%s, %s, %s, %s, 'accept', 'looks right', %s, %s)",
+                (org_id, uuid.uuid4(), interp_id, report_id, admin_id, now),
             )
         conn.commit()
 

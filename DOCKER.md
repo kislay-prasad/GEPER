@@ -2,7 +2,8 @@
 
 Containerizes the whole combined pipeline described in
 [README_INTEGRATION.md](README_INTEGRATION.md): Kim (FASTQ → VCF),
-Bij AI (VCF → draft clinical report), and the `bridge/` glue that chains them.
+the Bij AI variant-interpretation component (GEPER) (VCF → draft clinical
+report), and the `bridge/` glue that chains them.
 
 **Why this exists:** every fresh Colab runtime this session required
 manually reinstalling `bwa`/`samtools`/`bcftools`/`freebayes`/`tabix`
@@ -92,7 +93,7 @@ docker compose build
 ```
 
 ```bash
-# Run Bij AI standalone against an existing VCF
+# Run GEPER standalone against an existing VCF
 docker run --rm -it \
   -e GEPER_NCBI_EMAIL=you@example.com \
   -e GEPER_NCBI_API_KEY=your_key_here \
@@ -125,7 +126,7 @@ one-page-style summary companion).
 image. Full reasoning is in the Dockerfile's own header comment; short
 version:
 
-- Bij AI's own `requirements.txt` forces Python 3.11 or 3.12 exactly
+- GEPER's own `requirements.txt` forces Python 3.11 or 3.12 exactly
   (evo2's PyPI metadata). `python:3.12-slim` gives that by construction.
 - `bwa`/`samtools`/`bcftools`/`tabix` are all plain Debian apt packages;
   only `freebayes` needs a source build (Debian/Ubuntu don't package a
@@ -236,7 +237,7 @@ declares support for.**
 
 They're large (Enformer alone is 1.9GB; `plugin_model_cache/` totals
 ~3.1GB; the AlphaMissense catalogue is multi-GB on its own) and
-Bij AI's own loaders already handle "auto-download on first use,
+GEPER's own loaders already handle "auto-download on first use,
 idempotent, cached thereafter" — baking them into the image would (a)
 make every `docker pull`/`docker build` multiple times larger for
 every user, even ones who only need a subset of models, and (b) still
@@ -624,7 +625,7 @@ discovered wrong only after the seed is already lost):
 ### One shared venv, not the `--kim-python`/`--geper-python` split
 
 `README_INTEGRATION.md` documents the bridge as supporting two
-*separate* Python environments because Bij AI's heavier PyTorch/AI stack
+*separate* Python environments because GEPER's heavier PyTorch/AI stack
 was assumed to conflict with Kim's lighter toolchain. Checked by hand
 against both `requirements.txt` files (not assumed): they don't
 actually conflict today. Every package they share (`pydantic`,
@@ -649,7 +650,7 @@ flags already support a two-venv split with zero other code changes.
 All three are already documented in `README_INTEGRATION.md`; here's the
 Docker form of each.
 
-### 1. Bij AI standalone (VCF already in hand)
+### 1. GEPER standalone (VCF already in hand)
 
 ```bash
 docker run --rm -it \
@@ -753,7 +754,7 @@ its own decision with its own card, not an extension of this one.
 
 | Variable | What it's for |
 |---|---|
-| `GEPER_BLAST_DATABASE` | Path to a pre-built local BLAST database (mount it in, point this at it) instead of falling back to remote NCBI BLAST or Bij AI auto-building one from `GEPER_BLAST_REFERENCE_FASTA`. |
+| `GEPER_BLAST_DATABASE` | Path to a pre-built local BLAST database (mount it in, point this at it) instead of falling back to remote NCBI BLAST or GEPER auto-building one from `GEPER_BLAST_REFERENCE_FASTA`. |
 | `GEPER_ALPHAMISSENSE_HG38_LOCAL` / `GEPER_ALPHAMISSENSE_HG19_LOCAL` | Path to a pre-downloaded AlphaMissense catalogue file, to skip the multi-GB GCS download on first use. |
 | `GEPER_ASSEMBLY`, `GEPER_ENABLE_*`, every other `GEPER_*` variable `geper/config.py` defines | Passed through normally — this image doesn't restrict or override any of them beyond the `transformers` pin above. |
 
@@ -778,7 +779,7 @@ GEPER_NCBI_API_KEY=your_key_here
 - **Output**: `geper/main.py --output-dir` / `--geper-output-dir`
   pointed at a path under `/data` lands directly back in `./data/` on
   the host — no `docker cp` needed. `docker-compose.yml` additionally
-  bind-mounts `./output` straight to `/app/geper/geper_output` (Bij AI's
+  bind-mounts `./output` straight to `/app/geper/geper_output` (GEPER's
   own default output directory) for the case where you don't pass
   `--output-dir` explicitly.
 - **Model weight caches**: named Docker volumes (`geper_model_cache`,
@@ -845,7 +846,7 @@ avoid — deliberately not started).
   directory out at all.
 - Every system-binary dependency this Dockerfile installs — found by
   grepping every `subprocess` call to an external binary across
-  `pipeline/models/`, `models/`, and `database/` in the actual Bij AI
+  `pipeline/models/`, `models/`, and `database/` in the actual GEPER
   source, not assumed from documentation alone (this is how the
   `git`/`git-lfs`/`r-base-core` requirements were found — none of them
   were in this task's original required-tool list).

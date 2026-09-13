@@ -239,6 +239,17 @@ jobs:
           fi
           python -c "import torch; print('torch', torch.__version__, '| cuda build:', torch.version.cuda)"
 
+      # The environment verdict GATES this job (human, 2026-09-12: "A check
+      # nothing runs is the same inert control as an exit code nobody reads").
+      # verify_environment.py exits 1 on FAIL and 0 on PASS or WARN-only, so
+      # DO NOT add `|| true` or continue-on-error: the only thing either can
+      # silence is a FAIL. Expected here: no FAIL; WARN for the absent GPU and
+      # BLAST+, possibly for disk (a LOCAL SIMULATION of this job, 2026-09-12,
+      # not yet an observed CI run -- the first run of this step is that).
+      # tests/test_verify_environment_is_run.py pins this step.
+      - name: Verify the environment (a FAIL verdict fails the job)
+        run: python verify_environment.py
+
       # WHAT CI DOES NOT COVER:
       #
       # 1. Optional integration tests (opt-in markers):

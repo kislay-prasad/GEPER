@@ -422,6 +422,7 @@ def auditable(
     reason: str | None = None,
     details_builder: Any = None,
     resource_id_param: str | None = None,
+    resource_id_from_result: Any = None,
 ):
     """
     Decorator that wraps a DataAccess method to capture audit outcomes.
@@ -447,12 +448,60 @@ def auditable(
     reason: explanation for non-auditable methods or special cases.
 
     resource_id_param: name of the method PARAMETER that identifies the resource
-        this entry is about. Default None keeps the original behaviour -- the
-        audit row's resource_id comes from the method's RETURN VALUE, which is
-        right for the creators (create_report returns the report id) and only
-        for them.
+        this entry is about.
 
-        THE DEFECT THIS PARAMETER EXISTS FOR (w120). A method declared `-> None`
+    resource_id_from_result: opt-in for a method whose RETURN VALUE is (or
+        contains) the identifier. `True` means the return value IS the id;
+        a callable is passed the return value and must return the id, so a
+        method returning a structure names one field of it and leaves the rest
+        out of the log. Declaring both this and resource_id_param is a
+        ConfigurationError -- two answers to one question is a mistake, not a
+        preference order.
+
+    ── WHY A RETURN VALUE IS NEVER RECORDED UNLESS ASKED FOR (w121) ──────────
+
+        THE EXPOSURE. This decorator used to take resource_id from whatever the
+        method returned:
+
+            resource_id=str(result) if result else "<none>"
+
+        `enrol_totp(session, target_user_id, secret) -> List[str]` returns the
+        eight TOTP backup codes in PLAINTEXT. Its docstring says that return
+        value "is the only moment they exist in readable form". It was not: the
+        decorator stringified the list into
+
+            action='totp_enrolled'  resource_type='totp'
+            resource_id="['d620e8cae2', '89ebd91e0f', ... ]"
+
+        THE CONSEQUENCE IS PERMANENT. audit_log is APPEND-ONLY BY GRANT (see
+        schema.sql: GRANT SELECT, INSERT ON audit_log TO clinical_app; REVOKE
+        UPDATE, DELETE ...). The application cannot delete or redact a row it
+        has written. So every TOTP enrolment ever performed left an
+        unremovable copy of that user's second-factor recovery codes in the
+        audit table, beside the user id they belong to. Rotating the codes does
+        not remove the old ones from the log; nothing the application can do
+        does.
+
+        WHY THE DEFAULT CHANGED RATHER THAN enrol_totp. The same mechanism --
+        "record whatever came back" -- produced all three groups of wrong
+        rows: the credential exposure above, w120's '<none>' approvals, and the
+        stringified result sets of the read/query methods. Silencing one method
+        would leave the mechanism armed for the next method someone writes. So
+        a return value is now written ONLY when the decorator was explicitly
+        told to write it. Undeclared means resource_id='<none>'.
+
+        The methods whose returned value legitimately IS the id -- create_report,
+        create_patient, create_organisation and the rest of the creators --
+        record exactly what they recorded before, but now because they say so.
+
+        ENFORCED STRUCTURALLY by
+        clinical/tests/test_w121_audit_optin_identifier.py, whose
+        test_every_auditable_method_declares_where_its_identifier_comes_from
+        fails any auditable method that declares neither source and is not on
+        that test's reasoned NO_RESOURCE_ID list.
+
+        THE DEFECT resource_id_param ORIGINALLY ARRIVED FOR (w120). A method
+        declared `-> None`
         returns no identifier ever, so `str(result) if result else "<none>"`
         recorded '<none>' every time. _approve_report is one of those, and its
         entry -- action='report_approved', resource_type='report' -- therefore
@@ -475,6 +524,11 @@ def auditable(
         separate question, and widening it here would be a redesign rather
         than a correction.
     """
+    if resource_id_param is not None and resource_id_from_result is not None:
+        raise ConfigurationError(
+            "@auditable: resource_id_param and resource_id_from_result both declared. "
+            "An audit row has one subject; declare one source for it."
+        )
 
     def decorator(func):
         def wrapper(self, *args, **kwargs):
@@ -531,11 +585,21 @@ def auditable(
                 # For any provisioning method, try to extract org_id from parameters
                 elif not session and bound_params.get("org_id") and not write_org_id:
                     write_org_id = bound_params.get("org_id")
-                # Which value identifies the resource this entry is about: a
-                # declared parameter when the method cannot return one (see
-                # resource_id_param in the decorator's docstring), else the
-                # return value, unchanged, for every method that returns an id.
-                identifier = bound_params.get(resource_id_param) if resource_id_param else result
+                # Which value identifies the resource this entry is about. Only
+                # a DECLARED source is ever written: a named parameter, or the
+                # return value when the method explicitly opted in. Undeclared
+                # records no id, because a return value that was never chosen
+                # as an identifier may be a payload -- see the w121 block in
+                # this decorator's docstring for the credential that reached
+                # the append-only audit_log that way.
+                if resource_id_param is not None:
+                    identifier = bound_params.get(resource_id_param)
+                elif resource_id_from_result is True:
+                    identifier = result
+                elif callable(resource_id_from_result):
+                    identifier = resource_id_from_result(result)
+                else:
+                    identifier = None
                 # Success: write audit entry
                 self._write_audit_entry(
                     action_name,
@@ -797,6 +861,9 @@ class DataAccess:
     @auditable(
         action="login_succeeded",
         resource_type="session",
+        # login returns a Session dataclass; str() of it is a repr, not an
+        # identifier. Name the one field that is.
+        resource_id_from_result=lambda result: result.session_id if result else None,
         requires_session=False,
         details_builder=lambda params, result: {
             "session_id": str(result.session_id) if result else None,
@@ -1059,6 +1126,7 @@ class DataAccess:
     @auditable(
         action="role_assigned",
         resource_type="role_assignment",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "target_user_id": str(params.get("target_user_id")),
@@ -1172,6 +1240,7 @@ class DataAccess:
     @auditable(
         action="organisation_created",
         resource_type="organisation",
+        resource_id_from_result=True,
         requires_session=False,
         reason="provisioning: called before any session exists",
         details_builder=lambda params, result: {"name": params.get("name")},
@@ -1189,6 +1258,7 @@ class DataAccess:
     @auditable(
         action="user_created",
         resource_type="user",
+        resource_id_from_result=True,
         requires_session=False,
         reason="provisioning: called before any session exists",
         details_builder=lambda params, result: {"email": params.get("email")},
@@ -1408,6 +1478,13 @@ class DataAccess:
     @auditable(
         action="totp_enrolled",
         resource_type="totp",
+        # THE CREDENTIAL EXPOSURE (w121). This method returns the plaintext
+        # backup codes. With no declaration the decorator used to write that
+        # list into resource_id, and audit_log is append-only by grant -- the
+        # codes could never be removed. The enrolment record names WHOSE second
+        # factor was set; the codes themselves are recorded nowhere, and only
+        # their COUNT appears in details.
+        resource_id_param="target_user_id",
         requires_session=True,
         details_builder=lambda params, result: {
             "target_user_id": str(params.get("target_user_id")),
@@ -1499,6 +1576,7 @@ class DataAccess:
     @auditable(
         action="patient_created",
         resource_type="patient",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "name": params.get("name"),
@@ -1529,6 +1607,7 @@ class DataAccess:
     @auditable(
         action="consent_recorded",
         resource_type="consent",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "patient_id": str(params.get("patient_id")),
@@ -1582,6 +1661,7 @@ class DataAccess:
     @auditable(
         action="order_created",
         resource_type="order",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "patient_id": str(params.get("patient_id")),
@@ -1718,6 +1798,7 @@ class DataAccess:
     @auditable(
         action="sample_received",
         resource_type="sample",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "order_id": str(params.get("order_id")),
@@ -1962,6 +2043,7 @@ class DataAccess:
     @auditable(
         action="sequencing_run_created",
         resource_type="sequencing_run",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "sample_id": str(params.get("sample_id")),
@@ -2025,6 +2107,7 @@ class DataAccess:
     @auditable(
         action="vcf_created",
         resource_type="vcf",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "sequencing_run_id": str(params.get("sequencing_run_id")),
@@ -2085,6 +2168,7 @@ class DataAccess:
     @auditable(
         action="interpretation_created",
         resource_type="interpretation",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "vcf_id": str(params.get("vcf_id")),
@@ -2170,6 +2254,7 @@ class DataAccess:
     @auditable(
         action="report_created",
         resource_type="report",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "interpretation_id": str(params.get("interpretation_id")),
@@ -2204,6 +2289,7 @@ class DataAccess:
     @auditable(
         action="reanalysis_created",
         resource_type="interpretation",
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "vcf_id": str(params.get("vcf_id")),
@@ -4020,6 +4106,7 @@ class DataAccess:
     @auditable(
         action="create_or_reopen_exception",
         resource_type="exception",
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="create/reopen exception on order failure; may retry same failure",
@@ -5226,6 +5313,7 @@ class DataAccess:
     @auditable(
         action="report_released",
         resource_type="report",
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="release is a delivery event and the record of who received what, when (spec 13.4)",
@@ -5755,6 +5843,7 @@ class DataAccess:
     @auditable(
         action="notification_read_receipt_recorded",
         resource_type="notification",
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="Read receipt recorded: clinician opened the amendment notification (ISO 15189 7.4.1.8)",
@@ -5848,6 +5937,7 @@ class DataAccess:
     @auditable(
         action="fastq_set_detected",
         resource_type="fastq_set",
+        resource_id_from_result=True,
         requires_session=False,
     )
     def record_fastq_set(

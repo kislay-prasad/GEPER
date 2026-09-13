@@ -17,6 +17,7 @@ engine is.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import uuid
@@ -580,3 +581,64 @@ class TestWorkerClinicalLinkUnit:
             "vcf_id": str(rec.vcf_id),
             "submission_key": rec.submission_key,
         }
+
+
+class TestHpoTermsDocstringCitations:
+    """The 2026-09-13 (wave 117) defect this guards: `_hpo_terms_to_cli_arg`'s
+    docstring claimed the platform spec "declares hpo_terms as a plain list"
+    and cited GEPER_CLINICAL_PLATFORM_SPEC.md:457 for it. The spec moved --
+    the POST /interpretations contract block was reconciled against the
+    implementation and hpo_terms became an object -- and :457 became an
+    unrelated paragraph, with nothing re-checking the citation. Same class of
+    defect as the dbSNP docstring: a claim that stopped being true.
+
+    So: re-check it. Each assertion below reads the line the docstring
+    actually cites and fails if that line no longer says what is claimed --
+    either because the document moved, or because the shape changed back."""
+
+    @staticmethod
+    def _docstring():
+        from api.submission_worker import _hpo_terms_to_cli_arg
+
+        return _hpo_terms_to_cli_arg.__doc__
+
+    @staticmethod
+    def _cited_line(relpath, lineno):
+        """The 1-based `lineno` of `relpath`, as the docstring cites it."""
+        root = Path(__file__).resolve().parents[3]
+        return (root / relpath).read_text(encoding="utf-8").splitlines()[lineno - 1]
+
+    def _first_citation(self, filename):
+        """The line number of the FIRST citation of `filename` in the
+        docstring -- the live claim. Later ones are the historical note
+        recording what the citation used to be, and are meant to be stale."""
+        m = re.search(re.escape(filename) + r":(\d+)", self._docstring())
+        assert m, f"docstring no longer cites {filename}"
+        return int(m.group(1))
+
+    def test_cited_spec_line_still_declares_hpo_terms_an_object(self):
+        lineno = self._first_citation("GEPER_CLINICAL_PLATFORM_SPEC.md")
+        line = self._cited_line("GEPER_CLINICAL_PLATFORM_SPEC.md", lineno)
+        assert "hpo_terms" in line, (
+            f"docstring cites GEPER_CLINICAL_PLATFORM_SPEC.md:{lineno} for hpo_terms, "
+            f"but that line is now: {line!r}. The spec moved; fix the citation."
+        )
+        assert "{" in line and "[" not in line, (
+            f"docstring claims the spec declares hpo_terms an OBJECT, but "
+            f"GEPER_CLINICAL_PLATFORM_SPEC.md:{lineno} now reads: {line!r}."
+        )
+
+    def test_cited_request_model_line_is_the_hpo_terms_field(self):
+        lineno = self._first_citation("geper/api/main.py")
+        line = self._cited_line("geper/api/main.py", lineno)
+        assert "hpo_terms" in line and "Dict[str, Any]" in line, (
+            f"docstring cites geper/api/main.py:{lineno} as hpo_terms' declared type, but that line is now: {line!r}."
+        )
+
+    def test_cited_attesting_test_line_uses_the_terms_object(self):
+        lineno = self._first_citation("geper/api/tests/test_interpretations_api.py")
+        line = self._cited_line("geper/api/tests/test_interpretations_api.py", lineno)
+        assert 'hpo_terms={"terms"' in line, (
+            f"docstring cites geper/api/tests/test_interpretations_api.py:{lineno} as "
+            f'the attested {{"terms": [...]}} shape, but that line is now: {line!r}.'
+        )

@@ -126,14 +126,31 @@ def _hpo_terms_to_cli_arg(hpo_terms) -> str:
     """
     Converts the platform's `hpo_terms` JSON into the comma-separated
     "HP:#######" string geper/main.py's --hpo-terms wants
-    (geper/main.py:175-189's own help text). The platform spec
-    (GEPER_CLINICAL_PLATFORM_SPEC.md:457) declares hpo_terms as a plain
-    list -- ["HP:0000001", ...] -- but the implemented request model
-    (geper/api/main.py:209) is Optional[Dict[str, Any]], so in practice a
-    dict is what reaches here; the one shape attested anywhere in this
-    repo (geper/api/tests/test_interpretations_api.py:77,
+    (geper/main.py:175-189's own help text). The platform spec declares
+    hpo_terms as an OBJECT -- `"hpo_terms": { ... }`
+    (GEPER_CLINICAL_PLATFORM_SPEC.md:526, in the POST /interpretations
+    contract block) -- and the implemented request model
+    (geper/api/main.py:290) agrees: Optional[Dict[str, Any]]. The one
+    concrete shape attested anywhere in this repo
+    (geper/api/tests/test_interpretations_api.py:197,
     geper/api/tests/test_submission_worker.py) is {"terms": [...]}.
-    Accepts either shape.
+    A bare list is also accepted, defensively; it is not a declared
+    shape and nothing on the wire produces one.
+
+    CORRECTED 2026-09-13 (wave 117): this docstring used to say the spec
+    "declares hpo_terms as a plain list -- ["HP:0000001", ...]" and cited
+    GEPER_CLINICAL_PLATFORM_SPEC.md:457 for it. That was true when
+    written and stopped being true when the POST /interpretations
+    contract block was reconciled against geper/api/main.py on
+    2026-09-13 and the field became an object; :457 is now section 10.2's
+    build-mismatch paragraph and says nothing about hpo_terms at all.
+    Ruled: the object shipping today is correct, so the false CLAIM is
+    what gets fixed, not the API -- "the fix is to correct the comment,
+    not to change the API to match a document that already changed."
+    Nothing about the shapes this function accepts changed here.
+    TestHpoTermsDocstringCitations
+    (geper/api/tests/test_submission_worker.py) now re-checks the
+    citations above, so the next time the spec moves, a test says so.
 
     Raises ValueError, naming exactly what's wrong, on anything that
     isn't a non-empty list of well-formed HPO IDs -- ruled 2026-09-08:

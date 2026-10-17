@@ -115,6 +115,17 @@ class TestTheAdministratorManagesTheCatalogue:
         assert rows[0][2] == world["a"]["org_id"]
         assert test_id
 
+    def test_the_creation_row_names_the_new_test_as_its_resource(self, client, world, conn):
+        """`create_test` returns the new test's UUID and must OPT IN to having it
+        recorded (`resource_id_from_result=True`): an `@auditable` method records no
+        return value unless it says so, because a return value can be a payload (the
+        w121 TOTP backup codes). Without the opt-in this row reads '<none>'."""
+        test_id = _make_test(client, world)
+        with conn.cursor() as cur:
+            cur.execute("SELECT resource_type, resource_id FROM audit_log WHERE action = 'test_created'")
+            rows = cur.fetchall()
+        assert rows == [("test", test_id)], rows
+
     @pytest.mark.parametrize("who", NOT_THE_ADMINISTRATOR)
     def test_no_other_principal_can_create_and_the_refusal_is_uniform(self, client, world, who):
         cookie = _staff_cookie(client, world["a"]["org_id"], world["a"][f"{who}_email"])

@@ -3208,6 +3208,10 @@ class DataAccess:
     @auditable(
         action="test_created",
         resource_type="test",
+        # The returned UUID IS the new test's id, so this method opts in (master's w121
+        # default records no return value unless asked, and without this the row
+        # would say "<none>").
+        resource_id_from_result=True,
         requires_session=True,
         details_builder=lambda params, result: {
             "name": params.get("name"),

@@ -339,6 +339,7 @@ from clinical.data_access import (
     NotFoundError,
     PatientAlreadyEnrolledError,
     Session,
+    scrub_audit_details,
 )
 from clinical.endpoints import _get_data_access, _get_session
 
@@ -1046,8 +1047,16 @@ async def read_audit(
     ROWS ARE RENDERED, NOT INTERPRETED. `details` is passed through as the
     JSONB object the method returned; `ip_address` and the identifiers are
     stringified because a UUID and an `inet` are not JSON. Nothing is
-    filtered, reordered or summarised here — a second view of the audit trail
-    is a second answer to "what happened".
+    reordered or summarised here — a second view of the audit trail is a second
+    answer to "what happened".
+
+    ONE THING IS REWRITTEN, and it narrows what an Auditor can see. A session id
+    is the bearer credential (it is the cookie value), and rows written before
+    audit rows stopped carrying it still hold one in `details`. They cannot be
+    changed (append-only by grant), so this route shows a REFERENCE in place of
+    the id (`session_ref`, `target_session_ref`): the same value the newer rows
+    carry, so a login and its logout still match, and nothing that can be
+    presented as a cookie leaves the service through this route.
     """
     try:
         rows = dao.read_audit(session, action or None, limit)
@@ -1060,7 +1069,7 @@ async def read_audit(
             org_id=str(row[1]) if row[1] is not None else None,
             user_id=str(row[2]) if row[2] is not None else None,
             action=row[3],
-            details=row[4],
+            details=scrub_audit_details(row[4]),
             ip_address=str(row[5]) if row[5] is not None else None,
             timestamp=row[6].isoformat(),
         )

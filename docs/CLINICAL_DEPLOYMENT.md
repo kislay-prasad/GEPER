@@ -428,6 +428,55 @@ retention period.
    logins appear there with the action name `login_succeeded` and outcome `error`
    alongside `login_failed` rows; the naming is confusing but existing behaviour.
 
+## Session identifiers and the audit log
+
+**The finding.** The session cookie's value *is* `sessions.session_id`: it is the whole
+of authentication. Until this change, `login_succeeded` and `patient_login_succeeded`
+wrote that id into `audit_log.details` (and, after the `@auditable` opt-in default,
+into `resource_id`). `audit_log` is append-only by grant, so the id could never be
+removed, and anyone able to read the table (an Auditor through `/admin/audit`, a
+database reader, a backup, a log export) could present it as a cookie for as long as
+that session lived. By reading the code (not by exploiting a system), an Auditor could therefore have acted as an Administrator.
+
+**What changed.** No audit field carries a session id any more. Staff login, patient
+login, both logouts and an administrator ending a session record a **reference**
+instead (`sref_` plus 32 hex characters, in `resource_id` and in `details` as
+`session_ref` / `target_session_ref`). The reference is a SHA-256 digest of the session
+id with a version prefix. The input is a server-generated random UUID (122 bits), so
+the digest cannot be walked back by guessing, and no key is needed. The login row and
+the logout row of one session carry the same reference, so a session can still be
+followed from start to end. Both audit writers also rewrite a `session_id` key if a
+future change names one, and the audit route shows a reference in place of the id in
+rows written before the change. *Verified* over HTTP against the real database with the
+real cookie value as the search string (`test_w173_session_ids_not_in_audit.py`).
+
+**Session validation is not bound to a client.** *Verified*, by reading
+`DataAccess.session_valid` and by a request with a different user agent and a different
+`X-Forwarded-For`: `sessions` stores `ip_address` and `user_agent` at login, but the
+lookup uses the session id alone, so the same cookie works from any address with any
+user agent. This was not changed here (it is a separate hardening decision, with real
+cost for users on mobile networks), and a test pins today's behaviour so a change is
+deliberate. It is what makes a leaked session id directly usable.
+
+**Existing deployments and historical rows.** Rows already written cannot be changed
+(append-only by grant), and nothing here modified any. Do the following when this change
+is deployed to a system that has real users:
+
+1. **Treat existing `audit_log` rows, dumps and exports as holding credentials** until
+   the sessions they name have ended. A session ends at logout, administrative
+   termination, its idle timeout (30 minutes since last activity) or its absolute cap.
+2. **After deploying, end every session that predates the deployment** so that no
+   historical id is still usable. This signs everyone out once. It is an operator
+   decision and was **not done or tested against any real data**; the statement is
+   `UPDATE sessions SET terminated_at = now() WHERE terminated_at IS NULL` (and the same
+   for `patient_sessions`), run as a database administrator.
+3. Until then, the audit route no longer returns a session id in any row, old or new.
+   A database reader still sees the old rows.
+4. Keep backups taken before the change under the same controls as the database.
+
+**Still open.** A random opaque cookie value that is *not* `sessions.session_id` would
+remove this class of problem; so would binding sessions to a client. Neither is done.
+
 ## Workers and the login throttle
 
 The image runs **one** uvicorn worker. Two facts from the code and a measurement bear
@@ -513,6 +562,8 @@ access log; restoring across PostgreSQL versions; the image under a vulnerabilit
 | MFA key has no escrow and no re-encryption tool | Keep the key and every older key in a separate, backed-up secret store. |
 | Retention purge is not operable (`clinical_retention` has a role and a password; nothing runs it) | Define the retention policy and authorisation, then provide an explicit, audited operation. |
 | Capacity unknown; handlers block the event loop; throttle is per process | Measure before raising workers; consider making handlers non-blocking (an application change). |
+| A session id is the cookie and is not bound to an address or user agent | A leaked cookie is usable until the session ends. Keep sessions short, terminate sessions after any suspected exposure, and decide whether to bind them to a client. |
+| Rows written before the session-reference change still hold session ids | See "Session identifiers and the audit log": end all pre-change sessions at deployment and treat old dumps as sensitive. |
 | Logs contain record UUIDs and client addresses (query values are now redacted) | Treat the log as sensitive; decide who reads it, where it goes and how long it is kept. Redact the proxy's log too. |
 | An external database was exercised only for privileges, not TLS or a managed service | Test the real target, including certificate verification and egress rules. |
 | MFA is optional for administrators | Decide the policy. |

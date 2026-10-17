@@ -1010,6 +1010,62 @@ TABLES_EXEMPT_FROM_ORG_SCOPING = {
 }
 
 
+# ─── Session references for the audit log ───────────────────────────────────
+#
+# THE SESSION ID IS THE BEARER CREDENTIAL. `sessions.session_id` is the value of
+# the session cookie (auth_endpoints._set_session_cookie), and the cookie is the
+# whole of authentication. audit_log is append-only by grant, so an id written to
+# it can never be removed, and anyone who can read the table -- an Auditor
+# through the audit route, a database reader, a backup -- could present it for as
+# long as that session lives. So an audit row must never carry one.
+#
+# What an audit row carries instead is a REFERENCE: a one-way digest that lets a
+# login row and its logout row be matched, and that cannot be presented as a
+# cookie. The input is a server-generated uuid4 (122 random bits), so the digest
+# cannot be walked back by guessing; no key is needed for that, and adding one
+# would add a secret to manage for no gain. The version prefix lets the scheme be
+# changed later without ambiguity.
+_SESSION_REF_PREFIX = "geper-audit-session-ref:v1:"
+
+# details keys that name a session, and the reference key each is rewritten to.
+_AUDIT_SESSION_KEYS = {
+    "session_id": "session_ref",
+    "target_session_id": "target_session_ref",
+}
+
+
+def session_audit_ref(session_id: Any) -> Optional[str]:
+    """The audit reference for a session id (UUID or its string form), or None."""
+    if session_id is None:
+        return None
+    text = str(session_id)
+    try:
+        text = str(uuid.UUID(text))  # one canonical spelling, so every writer agrees
+    except ValueError:
+        pass
+    return "sref_" + hashlib.sha256((_SESSION_REF_PREFIX + text).encode("utf-8")).hexdigest()[:32]
+
+
+def scrub_audit_details(details: Any) -> Any:
+    """
+    Rewrite any session-id key in an audit `details` mapping to its reference.
+
+    Used twice: as a FAIL-SAFE on every audit writer, so a future details_builder
+    that names `session_id` cannot put a credential in the log; and at the audit
+    route, so rows written BEFORE this existed show a reference rather than a
+    live credential. It returns a new mapping and never touches the stored row.
+    """
+    if not isinstance(details, dict):
+        return details
+    cleaned = {}
+    for key, value in details.items():
+        if key in _AUDIT_SESSION_KEYS:
+            cleaned[_AUDIT_SESSION_KEYS[key]] = session_audit_ref(value) if value not in (None, "None") else None
+        else:
+            cleaned[key] = value
+    return cleaned
+
+
 # ─── Audit decorator ────────────────────────────────────────────────────────
 
 
@@ -1023,6 +1079,7 @@ def auditable(
     resource_id_param: str | None = None,
     audit_denials_only: bool = False,
     resource_id_from_result: Any = None,
+    resource_id_transform: Any = None,
 ):
     """
     Decorator that wraps a DataAccess method to capture audit outcomes.
@@ -1123,6 +1180,11 @@ def auditable(
         '<denied>'/'<error>' markers: what those rows should record is a
         separate question, and widening it here would be a redesign rather
         than a correction.
+
+    resource_id_transform: applied to the identifier AFTER it is chosen (by either
+        source) and before it is written. For an identifier that is itself a
+        credential: the session methods pass `session_audit_ref`, so the row
+        carries a reference and never the session id.
 
     audit_denials_only: for a PUBLIC WRAPPER that does nothing but gate and
         delegate to an @auditable method (approve_report, release_report,
@@ -1294,6 +1356,8 @@ def auditable(
                     identifier = resource_id_from_result(result)
                 else:
                     identifier = None
+                if resource_id_transform is not None and identifier is not None:
+                    identifier = resource_id_transform(identifier)
                 # Success: write audit entry
                 self._write_audit_entry(
                     action_name,
@@ -1521,7 +1585,7 @@ class DataAccess:
                 resource_type,
                 resource_id,
                 outcome,
-                json.dumps(details or {}),
+                json.dumps(scrub_audit_details(details or {})),
                 ip_address,
             ),
         )
@@ -1553,7 +1617,7 @@ class DataAccess:
         self._execute(
             'INSERT INTO audit_log (org_id, user_id, action, details, ip_address, "timestamp") '
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (org_id, user_id, action, json.dumps(details or {}), ip_address, self._clock.now()),
+            (org_id, user_id, action, json.dumps(scrub_audit_details(details or {})), ip_address, self._clock.now()),
         )
 
     # ── authentication ───────────────────────────────────────────────────────
@@ -1588,9 +1652,11 @@ class DataAccess:
         # login returns a Session dataclass; str() of it is a repr, not an
         # identifier. Name the one field that is.
         resource_id_from_result=lambda result: result.session_id if result else None,
+        # The session id is the cookie value. Record its reference, never the id.
+        resource_id_transform=session_audit_ref,
         requires_session=False,
         details_builder=lambda params, result: {
-            "session_id": str(result.session_id) if result else None,
+            "session_ref": session_audit_ref(result.session_id) if result else None,
             "user_id": str(result.user_id) if result else None,
         },
     )
@@ -1906,8 +1972,11 @@ class DataAccess:
         action="session_terminated",
         resource_type="session",
         resource_id_param="target_session_id",
+        resource_id_transform=session_audit_ref,
         requires_session=True,
-        details_builder=lambda params, result: {"target_session_id": str(params.get("target_session_id"))},
+        details_builder=lambda params, result: {
+            "target_session_ref": session_audit_ref(params.get("target_session_id"))
+        },
     )
     @transactional
     def terminate_session(self, session: Session, target_session_id: uuid.UUID) -> None:
@@ -1931,8 +2000,9 @@ class DataAccess:
         action="session_logged_out",
         resource_type="session",
         resource_id_from_result=True,
+        resource_id_transform=session_audit_ref,
         requires_session=True,
-        details_builder=lambda params, result: {"session_id": str(result)},
+        details_builder=lambda params, result: {"session_ref": session_audit_ref(result)},
     )
     @transactional
     def terminate_my_session(self, session: Session) -> uuid.UUID:
@@ -4247,9 +4317,13 @@ class DataAccess:
             "denied": "patient_login_failed",
         },
         resource_type="patient_session",
+        # Record the session's reference (login and logout rows then correlate); the id
+        # is the portal cookie and never goes in the log.
+        resource_id_from_result=lambda result: result.session_id if result else None,
+        resource_id_transform=session_audit_ref,
         requires_session=False,
         details_builder=lambda params, result: {
-            "session_id": str(result.session_id) if result else None,
+            "session_ref": session_audit_ref(result.session_id) if result else None,
             "patient_login_id": str(result.patient_login_id) if result else None,
         },
     )
@@ -4433,6 +4507,7 @@ class DataAccess:
         action="patient_session_logged_out",
         resource_type="patient_session",
         resource_id_from_result=True,
+        resource_id_transform=session_audit_ref,
         # requires_session=False BECAUSE THE DECORATOR REFUSES A PatientSession
         # WHERE requires_session=True (w130 decision 7), which is correct and
         # is not being worked around: this method is not a staff operation.
@@ -4459,7 +4534,7 @@ class DataAccess:
         # AuthorizationError, turning a clean refusal into a crash. Found by
         # test_a_staff_session_is_refused_by_the_patient_logout_method.
         details_builder=lambda params, result: {
-            "session_id": str(getattr(params.get("patient_session"), "session_id", None)),
+            "session_ref": session_audit_ref(getattr(params.get("patient_session"), "session_id", None)),
             "org_id": str(getattr(params.get("patient_session"), "org_id", None)),
             "patient_login_id": str(getattr(params.get("patient_session"), "patient_login_id", None)),
         },

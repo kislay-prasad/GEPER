@@ -37,11 +37,22 @@ review, who may read logs) are outside what a deployment file can answer.
 | `scripts/clinical-secrets.sh` | Creates and checks the secret files. Never overwrites, never prints. |
 | `.env.clinical.example` | Non-secret configuration to copy to `.env.clinical`. |
 | `clinical/docker-entrypoint.sh` | Reads `*_FILE` secrets into the environment for six listed variables. |
+| `clinical/log_redaction.py`, `clinical/log_config.json` | Removes every query-parameter value from uvicorn's access log; the image starts uvicorn with this config. |
 | `clinical/requirements.txt`, `requirements.lock` | Runtime dependencies: direct pins, and the full pinned set the image installs. |
 | `clinical/requirements-dev.txt`, `requirements-dev.lock` | The same plus `pytest` and `httpx`, for CI and the `test` target. |
 
 `clinical/Dockerfile` (built on the pipeline image) is unchanged and still
 builds. The slim image is the one this document describes.
+
+**Recommendation: supersede the `w125-clinical-service-up` branch.** That branch is
+one commit that adds the clinical service to the *shared* `docker-compose.yml` and
+`.env.example`, builds it from `clinical/Dockerfile` (the multi-gigabyte pipeline
+image), and takes the database passwords as ordinary environment variables. This
+document's stack is a separate Compose project with a clinical-only non-root image,
+file-based secrets, an init job that verifies the migrations, and tests. The
+branch was not modified, deleted or tested by this work; read-only inspection only.
+Retire it once someone has confirmed that nothing on it is wanted that is missing
+here. That decision, and the deletion, are the owner's.
 
 ## Quick start
 
@@ -196,11 +207,30 @@ client. uvicorn can rewrite the client address, but only for peers on an allow-l
 Set `CLINICAL_FORWARDED_ALLOW_IPS` to the proxy's **explicit address or subnet**,
 and only then. **Never `*`**: that lets any caller forge its own address.
 
-Measured on uvicorn 0.52.4: with a proxy address trusted, the client becomes the
-right-most untrusted entry of `X-Forwarded-For`, so a forged left-hand entry is
-discarded; a header from any peer not on the list is ignored; the default list
-(`127.0.0.1`) means no one is trusted in a container. The behaviour end to end
-through a real proxy has **not** been verified yet.
+*Verified* through a real disposable nginx 1.27 in front of the real stack (a
+throwaway Compose project on a network with a fixed subnet; the proxy had a fixed
+address, and `CLINICAL_FORWARDED_ALLOW_IPS` named exactly that one address; nginx
+was configured to *append* to `X-Forwarded-For`, the harder case). Recorded in
+`sessions.ip_address` and `audit_log.ip_address`:
+
+| Request | Address recorded |
+|---|---|
+| Straight to the API from an untrusted container, with a forged `X-Forwarded-For: 203.0.113.99` | the container's real address; the header was ignored |
+| Through the proxy, no header | the real client's address |
+| Through the proxy with forged entries `203.0.113.77, 198.51.100.5` | the real client's address; the forged entries were discarded |
+| 12 failed logins through the proxy from one client, a different forged address each time | attempts 1-10 answered 401, 11 and 12 answered 429: rotating the header did not evade the throttle |
+| A second client through the same proxy while the first was throttled | answered 401, not 429: the throttle is keyed per client address, so one client does not lock out the others |
+| Proxy address **not** on the list (the default `127.0.0.1`), with a forged header | every request was recorded as the proxy's own address; the header was ignored |
+
+That last row is the safe default and also the reason to set the variable: without
+it the throttle is one global cap and audit rows name the proxy. The semantics are
+also pinned by tests that need no Docker (`test_w172_log_redaction_and_proxy.py`):
+a direct untrusted peer cannot forge its address, a trusted proxy's right-most
+untrusted entry is used, and a neighbouring address is not trusted. No wildcard was
+used anywhere, and a test fails if the Compose default contains one. Although the
+service tolerates an appending proxy, still configure the proxy to **overwrite**
+the header. (Incidentally, the failed logins also locked the test administrator account after
+five attempts, which is existing behaviour.)
 
 ## Multi-factor authentication key
 
@@ -239,6 +269,51 @@ generates one; to make one by hand:
   re-enrol (an administrator can reset enrolment). There is no escrow.
 * MFA is available, not mandatory: nothing requires administrators to enrol. That is a
   policy decision, not a deployment one.
+
+## External PostgreSQL
+
+Omit the `with-db` profile and point `clinical_dsn` (the `clinical_app` role) and
+`clinical_bootstrap_dsn` (the administrative role) at the database. The design was
+reviewed against the code and exercised on a disposable PostgreSQL 16 with the
+privileges a managed service typically gives. **Verified:**
+
+* **A non-superuser is enough to initialise.** A role with `LOGIN CREATEROLE
+  NOSUPERUSER` that *owns the empty database* ran `bootstrap`, applied migrations
+  1-9 and passed `migrate --verify`. The one extension (`pgcrypto`) installs for a
+  database owner on PostgreSQL 13 and later.
+* **Roles that already exist are the trap.** If `clinical_app` and `clinical_retention`
+  were created by someone else, bootstrap fails with *permission denied to alter role*
+  (PostgreSQL 16 requires the `ADMIN` option on a role to alter it). After
+  `GRANT clinical_app, clinical_retention TO <admin role> WITH ADMIN OPTION` the same
+  run succeeded. Either let bootstrap create the roles or make that grant.
+* **The DSN options are honoured**: `sslmode=require` made a connection to a server
+  without TLS fail with *server does not support SSL*, so a DSN with `sslmode` is
+  passed to the driver. That proves the option is read, not that TLS works.
+* The API, built from the image, reached the database over a user-defined network and
+  answered `/readyz` 200 with a `clinical_app` login.
+
+**Design facts that matter, from the code and the Compose file (not load-tested):**
+
+* **One new database connection per request** (no pool). Each request pays a TCP and
+  possibly TLS handshake to a remote host, and concurrent requests each hold a
+  connection. One worker serves one request at a time, so the connection count stays
+  small here, but it is a cost over a network and a limit to check with the provider.
+* **Network path.** The bundled database sits on an `internal` network. The API and
+  init job are *also* on the `app` network, so they can route out to an external host;
+  nothing was run to prove that from a restricted network. Decide egress rules
+  deliberately (allow only the database host and port).
+* **Three credentials**: `clinical_app` (API), `clinical_retention` (nothing runs it
+  yet), and the administrative role, which only the init job reads.
+* **Migrations run as the administrative role** (`CLINICAL_BOOTSTRAP_DSN`), so use the
+  same role for every later migration; table ownership was not inspected here.
+* The clinical suite was not run against a managed service.
+
+**Not verified:** TLS to the database (certificate verification, a CA file mounted into
+the container -- the Compose file mounts none, so `sslmode=verify-full` needs an
+addition), a real managed service (RDS, Cloud SQL, Azure), connection limits and
+failover, provider-specific restrictions on `ALTER ROLE` or extensions, backups
+and point-in-time recovery on the provider's side, and latency over a WAN. The
+`pg_dump` procedure below was tried against the bundled database only.
 
 ## Backup and restore
 
@@ -290,10 +365,33 @@ delete the audit log, and accepted the application's own `clinical_app` login.
 a worklist query, unauthenticated and forbidden calls) and searching the entire logs
 of the API, init and database containers for the values sent.
 
-**What the access log is.** uvicorn's default line: client address and port, the
-request line (method, path, query string), and the status. Example shapes:
+**What the access log is.** uvicorn's line: client address and port, the request
+line (method, path, query string), and the status. Example shapes:
 `POST /auth/login ... 204`, `POST /clinic/patients/<uuid>/consents ... 201`,
-`GET /exceptions/worklist?owner=<value> ... 200`.
+`GET /exceptions/worklist?owner=<redacted> ... 200`.
+
+**Redaction (implemented).** uvicorn's default line carried the *value* of every
+query parameter, for example an e-mail address in `?owner=`. The image now starts
+uvicorn with `--log-config clinical/log_config.json`, which attaches a filter
+(`clinical/log_redaction.py`) to the access handler:
+
+* **every query-parameter value is replaced by `<redacted>`**, whatever the parameter
+  is called (no list of names to maintain), including repeated parameters, encoded
+  values, empty values and segments with no `=`;
+* a parameter **name** is kept only if it is a plain token (letters, digits, `_ . - [ ]`,
+  at most 64 characters); anything else is replaced too. Names are the API's
+  vocabulary and are kept for diagnosis; a client that puts data in a *name* has put
+  it in the URL it chose, and that is not hidden;
+* method, path, HTTP version, status and the client address are **kept**;
+* **fail closed**: a record with an unexpected shape, or a path containing a control
+  character (log injection), is logged as `<request line redacted: unrecognised log
+  record>` and never as the original text.
+
+*Verified* by tests against a real uvicorn process started with the shipped config
+(a distinctive value sent in the query, an `Authorization` header and a cookie never
+appears in the output), through uvicorn's own formatter, and in the built image
+(`GET /exceptions/worklist?owner=<redacted>&owner=<redacted>`). The reverse proxy's
+own access log is **not** covered: configure it the same way.
 
 **What is not in it.** No password, session id, cookie value, bearer token, MFA key,
 request body (so no patient name, date of birth or e-mail typed into a form), and no
@@ -304,23 +402,28 @@ organisation id. None of those strings appeared anywhere in the container logs.
 | Item | Observation | Concern |
 |---|---|---|
 | Record UUIDs in paths (`/clinic/patients/<id>/consents`, `/admin/users/<id>/roles`, `/review/reports/<id>/approval`) | Present | Pseudonymous identifiers. Not names, but linkable to a person by anyone who can read the database; whether they count as personal data is a regulatory question. |
-| Query strings | `GET /exceptions/worklist?owner=<free text>` logged the value, here an e-mail address | A caller-supplied value, which can be personal data, written to a log. |
+| Query strings | Values are redacted (above). Before this change `?owner=<free text>` logged an e-mail address | Resolved for this log; the reverse proxy's log still needs the same treatment. |
 | Client address | Present | Personal data in some regimes. Behind a proxy it is the proxy's address unless forwarded headers are trusted. |
 
-**Recommendations** (nothing below is implemented except the rotation cap):
+**Record UUIDs in paths are still logged, deliberately.** Operators need them to
+correlate a request with the `audit_log`. They identify patient records, so they
+remain **sensitive identifiers** and the log must be treated as sensitive: restrict
+who can read it, ship it only to somewhere with the same controls, and give it a
+retention period.
+
+**Recommendations** (the rotation cap and query redaction are implemented; the rest are not):
 
 1. **Rotation is in place.** Each service keeps five files of 10 MB, so logs cannot fill
    the disk. That is a cap, not a retention policy.
 2. **Decide who may read `docker logs`** and whether logs are shipped elsewhere; apply
    the same policy to the reverse proxy's access log, which records the same paths.
-3. **Do not put free text or identifiers you care about in query strings.** The
-   `owner` parameter of the worklist is the one such case found; changing the route to
-   avoid it is an application change.
-4. **If record UUIDs must not appear in logs**, either start uvicorn with
-   `--no-access-log` (state-changing actions are already recorded, with actor, action,
-   resource and address, in the `audit_log` table) or add a logging filter that masks
-   UUID path segments and drops query strings. The filter needs a small code module
-   and `--log-config`; it was not written without a decision.
+3. **Prefer not to put free text in query strings at all.** They are redacted here,
+   but they also reach browser history and the proxy's log. The worklist's `owner`
+   parameter is the case found; changing the route is an application change.
+4. **If record UUIDs must not appear in logs**, start uvicorn with `--no-access-log`
+   (state-changing actions are already recorded, with actor, action, resource and
+   address, in the `audit_log` table) or extend the filter to mask UUID path
+   segments. Not done: it needs a decision, because it removes the correlation key.
 5. The audit trail is the database's `audit_log`, not these logs. Note that failed
    logins appear there with the action name `login_succeeded` and outcome `error`
    alongside `login_failed` rows; the naming is confusing but existing behaviour.
@@ -385,13 +488,19 @@ repository:
   throttle (above);
 * second-factor enrolment, login with a one-time code, replay refusal, and the key
   rotation drill (above);
-* access-log content (above);
+* access-log content before redaction, and after it in a real process and in the
+  built image (above);
+* client-address attribution through a real nginx, trusted and untrusted, with forged
+  headers (above);
+* initialisation as a non-superuser with `CREATEROLE`, and the pre-existing-role
+  failure and its fix (above);
 * backup and restore, same cluster and new cluster (above).
 
 **Not verified:** a native Linux host (file ownership, `CLINICAL_UID`); any other Docker
-Desktop platform; the stack behind a real reverse proxy; HTTPS; more than one worker;
-behaviour under load; an externally managed PostgreSQL; restoring across PostgreSQL
-versions; the image under a vulnerability scanner.
+Desktop platform; HTTPS (the proxy test was plain HTTP between disposable containers); more than one worker;
+behaviour under load; TLS to, and a real managed, external PostgreSQL (only the
+privilege model was exercised, on a plain PostgreSQL 16); the reverse proxy's own
+access log; restoring across PostgreSQL versions; the image under a vulnerability scanner.
 
 ## Unresolved risks
 
@@ -404,7 +513,8 @@ versions; the image under a vulnerability scanner.
 | MFA key has no escrow and no re-encryption tool | Keep the key and every older key in a separate, backed-up secret store. |
 | Retention purge is not operable (`clinical_retention` has a role and a password; nothing runs it) | Define the retention policy and authorisation, then provide an explicit, audited operation. |
 | Capacity unknown; handlers block the event loop; throttle is per process | Measure before raising workers; consider making handlers non-blocking (an application change). |
-| Logs contain record UUIDs, client addresses and, for one route, a query-string value | Apply the recommendations above; decide log access and retention. |
+| Logs contain record UUIDs and client addresses (query values are now redacted) | Treat the log as sensitive; decide who reads it, where it goes and how long it is kept. Redact the proxy's log too. |
+| An external database was exercised only for privileges, not TLS or a managed service | Test the real target, including certificate verification and egress rules. |
 | MFA is optional for administrators | Decide the policy. |
 | Operator bootstrap needs a database-administrator connection string | It is mounted only into the init job, never the API; restrict who can read `secrets/`. |
 | The first administrator has no second factor until they enrol | Enrol administrators immediately after provisioning. |

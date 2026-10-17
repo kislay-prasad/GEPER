@@ -74,6 +74,7 @@ COPY clinical/*.py /app/clinical/
 COPY clinical/models /app/clinical/models
 COPY clinical/migrations /app/clinical/migrations
 COPY clinical/schema.sql /app/clinical/schema.sql
+COPY clinical/log_config.json /app/clinical/log_config.json
 COPY clinical/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
  && chmod -R go-w,a+rX /app \
@@ -89,7 +90,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 # ONE WORKER by decision. Raising it is a deliberate act with a cost stated above.
-CMD ["python", "-m", "uvicorn", "clinical.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-server-header"]
+CMD ["python", "-m", "uvicorn", "clinical.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-server-header", "--log-config", "/app/clinical/log_config.json"]
 
 # -- test: runtime plus the test tools -----------------------------------------
 FROM runtime AS test

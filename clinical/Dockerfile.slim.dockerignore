@@ -12,6 +12,7 @@
 !clinical/models/*.py
 !clinical/migrations/*.sql
 !clinical/schema.sql
+!clinical/log_config.json
 !clinical/docker-entrypoint.sh
 !clinical/requirements.lock
 !clinical/requirements-dev.lock

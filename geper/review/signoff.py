@@ -160,9 +160,12 @@ for this codebase's other DPDP-adjacent feature.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
+import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -170,11 +173,12 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 
 from component_identity import SHORT_NAME
 from pipeline.provenance import HashVerification, VersionStatus
-from report.clinical_report_builder import candidate_interpretation_of
+from report.clinical_report_builder import apply_report_revision, candidate_interpretation_of
 from report.models import compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from report.summary_short import generate_short_pdf
+from review.revision_status import ReportRevisionStatus, fetch_report_revision_status
 from utils.exceptions import SignoffError
 from utils.logger import get_logger
 
@@ -186,6 +190,13 @@ SHORT_PDF_FILENAME = "geper_report_short.pdf"
 MARKDOWN_REPORT_FILENAME = "geper_report.md"
 PATIENT_META_FILENAME = "geper_patient_meta.json"
 MANIFEST_FILENAME = "geper_signoff_manifest.json"
+# Derived CURRENT-STATUS artefacts (`refresh_revision`). Named so that none can be
+# mistaken for, or collide with, a signed original: the signed files above are
+# never rewritten by a refresh.
+CURRENT_PDF_FILENAME = "report_current.pdf"
+CURRENT_SHORT_PDF_FILENAME = "report_short_current.pdf"
+CURRENT_MARKDOWN_FILENAME = "report_current.md"
+REVISION_STATUS_FILENAME = "report_revision_status.json"
 AUDIT_LOG_FILENAME = "geper_signoff_audit.log"
 
 # Written by api/submission_worker.py once a run has been recorded as a
@@ -961,6 +972,45 @@ def _clinical_login(
     return dao, session
 
 
+def _linked_revision_status(dao: Any, session: Any, link: Dict[str, Any]) -> ReportRevisionStatus:
+    """
+    The authoritative, VALIDATED revision status of a linked run's report, read
+    with an already-authenticated (dao, session). Raises `RevisionStatusError`
+    (a SignoffError) on any failure -- see review/revision_status.py. Called
+    BEFORE any write in every operation that uses it, so a failed lookup leaves
+    the directory and the clinical record exactly as they were.
+    """
+    org_id, interpretation_id, report_id = _link_ids(link)
+    return fetch_report_revision_status(
+        dao, session, org_id=org_id, interpretation_id=interpretation_id, report_id=report_id
+    )
+
+
+def fetch_linked_revision_status(
+    link: Dict[str, Any], credentials: Optional[ClinicalCredentials], data_access: Any = None
+) -> Tuple[ReportRevisionStatus, uuid.UUID]:
+    """
+    (status, acting user id) for a linked run: authenticate as the sign-off tooling
+    does, then read and validate the report's status. For callers (the LIMS
+    export) that need the status but are not themselves a sign-off operation.
+    """
+    dao, session = _clinical_login(link, credentials, data_access)
+    return _linked_revision_status(dao, session, link), session.user_id
+
+
+def _with_revision(document: Dict[str, Any], status: Optional[ReportRevisionStatus]) -> Dict[str, Any]:
+    """
+    A COPY of `document` carrying `status`'s revision, for rendering ONLY. The
+    document that gets written to `geper_results.json` is never this object:
+    current status is kept out of the signed JSON (see `refresh_revision`).
+    `status` None -- an unlinked run -- returns the document itself, so an
+    unlinked run renders exactly as it always has.
+    """
+    if status is None:
+        return document
+    return apply_report_revision(copy.copy(document), status.revision)
+
+
 def _linked_signing_identity(
     dao: Any,
     session: Any,
@@ -1105,9 +1155,15 @@ def _record_clinical_disagreement(
     new_classification: str,
     reason: str,
     data_access: Any = None,
+    authenticated_session: Any = None,
 ) -> Dict[str, Any]:
     """
     The clinical half of `override()` on a linked run.
+
+    `authenticated_session`: when `override()` has already logged in (it does so
+    first, to read the report's revision status before anything is written), the
+    session to use, with `data_access` being the matching DataAccess. Absent, this
+    function authenticates exactly as it always did.
 
     AN OVERRIDE BEFORE APPROVAL is a DISAGREEMENT CLAIM by the same person,
     plus this module's existing file change. It is not an edit of the
@@ -1137,7 +1193,10 @@ def _record_clinical_disagreement(
     the CLI value -- so the two vocabularies meet in exactly one place.
     """
     org_id, interpretation_id, report_id = _link_ids(link)
-    dao, session = _clinical_login(link, credentials, data_access)
+    if authenticated_session is not None:
+        dao, session = data_access, authenticated_session
+    else:
+        dao, session = _clinical_login(link, credentials, data_access)
 
     report = dao.get_report(session, report_id)
     if report is None:
@@ -1313,6 +1372,7 @@ def approve(
     # _linked_signing_identity's docstring for why the identity is read rather
     # than typed.
     clinical_record: Optional[Dict[str, Any]] = None
+    revision_status: Optional[ReportRevisionStatus] = None
     if link is not None:
         if clinical_reason is None or not str(clinical_reason).strip():
             raise SignoffError(
@@ -1330,6 +1390,11 @@ def approve(
             hospital,
             _linked_signing_identity(dao, session, identity),
         )
+        # The report's clinical status (re-analysis, amendment, retraction ...) is read
+        # and validated BEFORE the sign-off is recorded anywhere: an unreadable status
+        # refuses the whole operation, with the clinical record and the directory as
+        # they were. The signed PDFs below state it; the signed JSON does not carry it.
+        revision_status = _linked_revision_status(dao, session, link)
         clinical_record = _record_clinical_signoff(dao, session, link, str(clinical_reason))
 
     physician = signer.physician_string()
@@ -1354,8 +1419,11 @@ def approve(
     # fixed the signed-PDF-claims-no-QC defect by passing document QC
     # through explicitly; that hand-off is now the renderer's own job, so
     # no future re-render path can forget it.
-    generate_pdf(document, pdf_path, patient_meta=patient_meta_path)
-    generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_path, companion_filename=FULL_PDF_FILENAME)
+    rendered_document = _with_revision(document, revision_status)
+    generate_pdf(rendered_document, pdf_path, patient_meta=patient_meta_path)
+    generate_short_pdf(
+        rendered_document, short_pdf_path, patient_meta=patient_meta_path, companion_filename=FULL_PDF_FILENAME
+    )
 
     manifest = {
         "pdf_sha256": _sha256_file(pdf_path),
@@ -1549,14 +1617,21 @@ def override(
     # and the Markdown have been rewritten underneath it.
     link = read_clinical_link(output_dir)
     clinical_claim: Optional[Dict[str, Any]] = None
+    revision_status: Optional[ReportRevisionStatus] = None
     if link is not None:
+        # Authenticate once, read the report's status BEFORE recording anything (an
+        # unreadable status refuses the override with nothing changed), then record the
+        # disagreement claim with that same session.
+        override_dao, override_session = _clinical_login(link, clinical_credentials, clinical_data_access)
+        revision_status = _linked_revision_status(override_dao, override_session, link)
         clinical_claim = _record_clinical_disagreement(
             link,
             clinical_credentials,
             variant_key,
             new_classification,
             reason,
-            data_access=clinical_data_access,
+            data_access=override_dao,
+            authenticated_session=override_session,
         )
 
     acmg = clinical_report.setdefault("acmg_classification", {})
@@ -1600,15 +1675,18 @@ def override(
 
     _write_document(results_path, document)
 
-    ReportGenerator().write(document, os.path.join(output_dir, MARKDOWN_REPORT_FILENAME))
+    rendered_document = _with_revision(document, revision_status)
+    ReportGenerator().write(rendered_document, os.path.join(output_dir, MARKDOWN_REPORT_FILENAME))
 
     patient_meta_path = _patient_meta_path(output_dir)
     patient_meta_arg = patient_meta_path if os.path.exists(patient_meta_path) else None
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
     short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
     # QC needs no threading here any more -- see approve()'s note.
-    generate_pdf(document, pdf_path, patient_meta=patient_meta_arg)
-    generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_arg, companion_filename=FULL_PDF_FILENAME)
+    generate_pdf(rendered_document, pdf_path, patient_meta=patient_meta_arg)
+    generate_short_pdf(
+        rendered_document, short_pdf_path, patient_meta=patient_meta_arg, companion_filename=FULL_PDF_FILENAME
+    )
 
     _append_audit_log(
         output_dir,
@@ -1837,6 +1915,7 @@ def withdraw(
     # not a write.
     link = read_clinical_link(output_dir)
     clinical_state: Optional[str] = None
+    revision_status: Optional[ReportRevisionStatus] = None
     if link is not None:
         _org_id, _interpretation_id, report_id = _link_ids(link)
         dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
@@ -1864,6 +1943,9 @@ def withdraw(
                 "the clinical platform's owners. Nothing on disk has been changed."
             )
 
+    if link is not None:
+        # Read and validate the report's clinical status before any file is touched (see approve()).
+        revision_status = _linked_revision_status(dao, session, link)
     document = _load_document(results_path)
     previous_status = document.get("review_status")
     if previous_status == "reviewed":
@@ -1874,11 +1956,14 @@ def withdraw(
 
     patient_meta_path = _patient_meta_path(output_dir)
     patient_meta_arg = patient_meta_path if os.path.exists(patient_meta_path) else None
+    rendered_document = _with_revision(document, revision_status)
     pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
     short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
-    generate_pdf(document, pdf_path, patient_meta=patient_meta_arg)
-    generate_short_pdf(document, short_pdf_path, patient_meta=patient_meta_arg, companion_filename=FULL_PDF_FILENAME)
-    ReportGenerator().write(document, os.path.join(output_dir, MARKDOWN_REPORT_FILENAME))
+    generate_pdf(rendered_document, pdf_path, patient_meta=patient_meta_arg)
+    generate_short_pdf(
+        rendered_document, short_pdf_path, patient_meta=patient_meta_arg, companion_filename=FULL_PDF_FILENAME
+    )
+    ReportGenerator().write(rendered_document, os.path.join(output_dir, MARKDOWN_REPORT_FILENAME))
 
     timestamp = datetime.now(timezone.utc).isoformat()
     _append_audit_log(
@@ -1904,4 +1989,263 @@ def withdraw(
         "actor": actor,
         "timestamp": timestamp,
         **({"clinical_report_state": clinical_state} if link is not None else {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# refresh_revision -- a CURRENT-STATUS copy of a signed report
+# ---------------------------------------------------------------------------
+
+
+def _status_summary(revision: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The audit-sized facts of a normalised revision block (no free text)."""
+    if not revision:
+        return None
+    retracted = revision.get("retracted") or {}
+    return {
+        "is_retracted": bool(revision.get("is_retracted")),
+        "is_amendment": bool(revision.get("is_amendment")),
+        "is_superseded": bool(revision.get("is_superseded")),
+        "is_reanalysis": bool(revision.get("is_reanalysis")),
+        "has_been_reanalysed": bool(revision.get("has_been_reanalysed")),
+        "replacement_report_id": retracted.get("replacement_report_id"),
+        "replacement_retained": retracted.get("replacement_retained"),
+    }
+
+
+def _read_previous_status(output_dir: str) -> Optional[Dict[str, Any]]:
+    """The previous refresh's recorded summary, or None. Best effort: it only labels the audit entry."""
+    path = os.path.join(output_dir, REVISION_STATUS_FILENAME)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            previous = json.load(fh)
+        return {
+            "checked_at": previous.get("checked_at"),
+            "status": _status_summary(previous.get("revision")),
+        }
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def refresh_revision(
+    output_dir: str,
+    clinical_credentials: Optional[ClinicalCredentials] = None,
+    clinical_data_access: Any = None,
+) -> Dict[str, Any]:
+    """
+    Regenerate a LINKED, SIGNED run's report as a CURRENT-STATUS COPY: the same
+    signed content, plus the clinical status the clinical platform holds NOW
+    (retracted, amended, superseded, re-analysed), in separate derived files.
+
+    WHAT IT WRITES -- only these four, all new names:
+        report_current.pdf, report_short_current.pdf, report_current.md,
+        report_revision_status.json
+    WHAT IT NEVER TOUCHES: geper_results.json, geper_report_full.pdf,
+    geper_report_short.pdf, geper_report.md, geper_signoff_manifest.json,
+    clinical_link.json. A signed report stays byte-identical to what was signed
+    (the manifest's SHA-256s keep holding), and the current-status files say, on
+    every page, that they are a copy and NOT a new sign-off. The status JSON is
+    where the machine-readable `is_retracted` flag lives; it is deliberately not
+    added to the signed `geper_results.json`.
+
+    PRECONDITIONS, each a refusal that leaves the directory as it was:
+      * the run is linked (clinical_link.json) -- an unlinked run has no clinical
+        status to refresh;
+      * it was signed (a manifest exists) and the signed originals still match the
+        manifest's hashes -- a copy is not derived from a file that no longer
+        matches its signature;
+      * the clinician authenticates, and the link's organisation, interpretation
+        and report agree with the clinical record (review/revision_status.py);
+      * the revision lookup succeeds and validates. `{}` is a successful "nothing to
+        say", and renders a copy with no revision banner; it is not evidence that
+        the report was never retracted, only that this lookup, at `checked_at`,
+        found nothing.
+
+    ATOMIC: everything is rendered into a private temporary directory first, and
+    only complete files are moved into place (the status JSON last, since it lists
+    their hashes). A failure before that point writes nothing; the previous
+    current-status files, if any, are left as they were.
+
+    Every attempt is recorded in the run's audit log (`revision_refreshed` or
+    `revision_refresh_failed`) -- never with credentials.
+    """
+    results_path = _require_results(output_dir)
+    link = read_clinical_link(output_dir)
+    if link is None:
+        raise SignoffError(
+            f"'{output_dir}' is not linked to a clinical record ('{CLINICAL_LINK_FILENAME}' is absent), so there is "
+            "no clinical status to refresh. Nothing has been changed."
+        )
+    try:
+        return _refresh_revision(output_dir, results_path, link, clinical_credentials, clinical_data_access)
+    except Exception as exc:
+        _append_audit_log(
+            output_dir,
+            {
+                "action": "revision_refresh_failed",
+                "outcome": "error",
+                "error_type": type(exc).__name__,
+                "reason": str(exc)[:500],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        raise
+
+
+def _refresh_revision(
+    output_dir: str,
+    results_path: str,
+    link: Dict[str, Any],
+    clinical_credentials: Optional[ClinicalCredentials],
+    clinical_data_access: Any,
+) -> Dict[str, Any]:
+    manifest_path = _manifest_path(output_dir)
+    if not os.path.exists(manifest_path):
+        raise SignoffError(
+            f"No '{MANIFEST_FILENAME}' in '{output_dir}': this run has not been signed off, so there is no signed "
+            "report to derive a current-status copy from. Nothing has been changed."
+        )
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise SignoffError(f"Could not read/parse '{manifest_path}': {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise SignoffError(f"'{manifest_path}' does not contain a JSON object.")
+
+    signed = {
+        "results_json_sha256": results_path,
+        "pdf_sha256": os.path.join(output_dir, FULL_PDF_FILENAME),
+        "short_pdf_sha256": os.path.join(output_dir, SHORT_PDF_FILENAME),
+    }
+    for key, path in signed.items():
+        recorded = manifest.get(key)
+        if not recorded or not os.path.exists(path) or _sha256_file(path) != recorded:
+            raise SignoffError(
+                f"The signed original '{os.path.basename(path)}' does not match the hash recorded in "
+                f"'{MANIFEST_FILENAME}' ({key}). A current-status copy is not derived from a file that no longer "
+                "matches its signature; investigate the nonconformance first. Nothing has been changed."
+            )
+
+    document = _load_document(results_path)
+    if document.get("review_status") != "reviewed":
+        raise SignoffError(
+            f"The run's review_status is {document.get('review_status')!r}, not 'reviewed'. Only a signed report has "
+            "a current-status copy. Nothing has been changed."
+        )
+    signed_at = manifest.get("approved_at") or document.get("reviewed_at")
+    if not signed_at:
+        raise SignoffError(
+            "The manifest records no approval time, so a copy cannot say when the report it reproduces was signed."
+        )
+
+    _org_id, _interpretation_id, report_id = _link_ids(link)
+    manifest_clinical = manifest.get("clinical")
+    if isinstance(manifest_clinical, dict) and manifest_clinical.get("report_id"):
+        if str(manifest_clinical["report_id"]) != str(report_id):
+            raise SignoffError(
+                f"The manifest records the sign-off against clinical report {manifest_clinical['report_id']}, but "
+                f"'{CLINICAL_LINK_FILENAME}' names report {report_id}. The link and the signed record disagree about "
+                "which report this run is. Nothing has been changed."
+            )
+
+    dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
+    status = _linked_revision_status(dao, session, link)
+    previous = _read_previous_status(output_dir)
+
+    render = copy.deepcopy(document)
+    apply_report_revision(render, status.revision)
+    render["current_status_copy"] = {
+        "signed_at": str(signed_at),
+        "checked_at": status.checked_at,
+        "signed_original": FULL_PDF_FILENAME,
+    }
+
+    patient_meta_path = _patient_meta_path(output_dir)
+    patient_meta_arg = patient_meta_path if os.path.exists(patient_meta_path) else None
+    staging = tempfile.mkdtemp(prefix=".refresh-", dir=output_dir)
+    try:
+        staged = {
+            CURRENT_MARKDOWN_FILENAME: os.path.join(staging, CURRENT_MARKDOWN_FILENAME),
+            CURRENT_SHORT_PDF_FILENAME: os.path.join(staging, CURRENT_SHORT_PDF_FILENAME),
+            CURRENT_PDF_FILENAME: os.path.join(staging, CURRENT_PDF_FILENAME),
+        }
+        ReportGenerator().write(render, staged[CURRENT_MARKDOWN_FILENAME])
+        generate_short_pdf(
+            render,
+            staged[CURRENT_SHORT_PDF_FILENAME],
+            patient_meta=patient_meta_arg,
+            companion_filename=CURRENT_PDF_FILENAME,
+        )
+        generate_pdf(render, staged[CURRENT_PDF_FILENAME], patient_meta=patient_meta_arg)
+        for name, path in staged.items():
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                raise SignoffError(f"Rendering '{name}' produced no file; nothing has been published.")
+
+        refreshed_at = datetime.now(timezone.utc).isoformat()
+        derived_hashes = {name: _sha256_file(path) for name, path in staged.items()}
+        status_doc = {
+            "kind": "geper_report_revision_status",
+            "version": 1,
+            "derived": True,
+            "is_signoff": False,
+            "notice": (
+                "A CURRENT-STATUS record derived from the signed report. It is not a sign-off and does not "
+                "replace the signed original, whose files and manifest are unchanged."
+            ),
+            "refreshed_at": refreshed_at,
+            "checked_at": status.checked_at,
+            "org_id": status.org_id,
+            "interpretation_id": status.interpretation_id,
+            "report_id": status.report_id,
+            "report_state": status.report_state,
+            "is_retracted": status.is_retracted,
+            "revision": status.revision,
+            "signed_original": {
+                "signed_at": str(signed_at),
+                "results_json_sha256": manifest.get("results_json_sha256"),
+                "pdf_sha256": manifest.get("pdf_sha256"),
+                "short_pdf_sha256": manifest.get("short_pdf_sha256"),
+                "content_hash": manifest.get("content_hash"),
+            },
+            "derived_artefacts_sha256": derived_hashes,
+        }
+        status_stage = os.path.join(staging, REVISION_STATUS_FILENAME)
+        with open(status_stage, "w", encoding="utf-8") as fh:
+            json.dump(status_doc, fh, indent=2)
+        # Publish: the three renderings first, the status record (which lists their
+        # hashes) last. os.replace is atomic per file.
+        for name, path in staged.items():
+            os.replace(path, os.path.join(output_dir, name))
+        os.replace(status_stage, os.path.join(output_dir, REVISION_STATUS_FILENAME))
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+    _append_audit_log(
+        output_dir,
+        {
+            "action": "revision_refreshed",
+            "outcome": "success",
+            "output_dir": os.path.abspath(output_dir),
+            "actor_user_id": str(session.user_id),
+            "org_id": status.org_id,
+            "interpretation_id": status.interpretation_id,
+            "report_id": status.report_id,
+            "report_state": status.report_state,
+            "previous": previous,
+            "current": _status_summary(status.revision),
+            "derived_artefacts_sha256": derived_hashes,
+            "timestamp": refreshed_at,
+        },
+    )
+    logger.info(
+        f"Refreshed the current-status copy of '{output_dir}' (retracted={status.is_retracted}); "
+        "signed originals untouched."
+    )
+    return {
+        "output_dir": os.path.abspath(output_dir),
+        "report_id": status.report_id,
+        "is_retracted": status.is_retracted,
+        "checked_at": status.checked_at,
+        "artefacts": sorted([*staged.keys(), REVISION_STATUS_FILENAME]),
     }

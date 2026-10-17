@@ -1705,6 +1705,39 @@ Phase 6) already computed for each variant — never recalculated here.
 A corrupt `geper_results.json` under the search root is skipped with a
 warning, not a fatal error.
 
+### What `refresh-revision` does (linked, signed runs)
+
+A retraction, amendment or re-analysis made in the clinical platform AFTER a run was
+signed off cannot appear in the signed files: they are never rewritten (the manifest holds
+their SHA-256s). `refresh-revision` is how a linked run's report is shown with its CURRENT
+clinical status:
+
+```bash
+python review/cli.py refresh-revision --output-dir ./out     --clinical-email you@lab.example     # password: the env var GEPER_CLINICAL_PASSWORD
+```
+
+It authenticates as `approve` does, checks that the link's organisation, interpretation and
+report agree with the clinical record, reads the report's revision (organisation-scoped
+`DataAccess.get_report_revision`), and writes four NEW files beside the signed ones:
+`report_current.pdf`, `report_short_current.pdf`, `report_current.md` and
+`report_revision_status.json` (the machine-readable `is_retracted` flag lives here, not in
+the signed `geper_results.json`). Each rendering states on its face that it is a
+**current-status copy, not a new sign-off**. The signed JSON, PDFs, manifest and
+`clinical_link.json` are byte-identical afterwards.
+
+It refuses (writing nothing, and recording the failed attempt in `geper_signoff_audit.log`)
+when the run is unlinked or unsigned, a signed file no longer matches the manifest, login
+fails, the link and the record disagree, or the revision cannot be read or validated. An
+empty answer (`{}`) is a successful "nothing to say", not proof the report was never
+retracted. Files are staged privately and published only complete, so a failure leaves any
+earlier copy as it was. A success is audited as `revision_refreshed` (actor, report, previous
+and current status).
+
+`approve`, `override` and `withdraw` on a linked run read the same status (before changing
+anything, and refuse if it cannot be read) and state it in the PDFs/Markdown they write.
+The LIMS export of a linked run carries it too: see `LIMS_EXPORT_MAPPING.md`, "Clinical report
+status".
+
 **Testing:** `tests/test_signoff.py` (36 tests) uses synthetic
 3-variant fixtures (Pathogenic / VUS-with-a-conflict / Likely Benign)
 built via the real `report/clinical_report_builder.py

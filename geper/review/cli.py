@@ -243,7 +243,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="For a signed run linked to a clinical record: write a CURRENT-STATUS copy of its report "
         "(report_current.pdf, report_short_current.pdf, report_current.md, report_revision_status.json) stating "
         "its clinical status -- retracted, amended, superseded, re-analysed -- as read from the clinical platform "
-        "now. Never modifies the signed files or the manifest, and is not a new sign-off.",
+        "now. Never modifies the signed files or the manifest, and is not a new clinical sign-off. Run by an "
+        "operator: it is not triggered automatically when the status changes.",
     )
     refresh_parser.add_argument(
         "--output-dir", required=True, help=f"An existing, signed, linked {SHORT_NAME} --output-dir."

@@ -1559,17 +1559,22 @@ def apply_report_revision(document: Dict[str, Any], revision: Any) -> Dict[str, 
     return document
 
 
-# A CURRENT-STATUS COPY is regenerated from a signed report to show its clinical
+# A CURRENT-STATUS DOCUMENT is regenerated from a signed report to show its clinical
 # status as of a later moment (a retraction, an amendment, a re-analysis made
-# after sign-off). It must never be mistaken for the signed report itself or for
-# a new sign-off, so every renderer prints this line on it. Its wording is NOT
-# one of the signed-off revision banners above; it is operational text stating
-# what the document is, added with the current-status copy (review/signoff.py::
-# refresh_revision) and open to review.
+# after sign-off). It must never be mistaken for the signed report itself, or for
+# a new clinical sign-off, so every renderer prints this notice on it. Its wording is
+# NOT one of the signed-off revision banners above. It is operational text written with
+# review/signoff.py::refresh_revision and HAS NOT BEEN REVIEWED OR APPROVED by whoever
+# owns this lab's report templates / document control; treat it as a proposal until
+# they have. The pages of such a document still carry the footer of the report it
+# reproduces ("reviewed by <clinician>"), which is why the last clause says that name
+# refers to the signed original.
 CURRENT_STATUS_COPY_BANNER = (
-    "THIS IS A CURRENT-STATUS COPY, NOT A NEW SIGN-OFF. It reproduces the report as signed on {signed_at}, "
-    "with its clinical content unchanged, and states the report's status as read from the clinical platform "
-    "on {checked_at}. The signed original remains the clinical record."
+    "CURRENT REPORT STATUS — NOT A NEW CLINICAL SIGN-OFF. This document reproduces, unchanged, the clinical "
+    "content of the report signed on {signed_at} and adds the report's status as recorded in the clinical "
+    "platform on {checked_at}. It was generated after that sign-off and has not been reviewed or signed by a "
+    "clinician; any reviewer named on its pages refers to the signed original. The signed original remains the "
+    "clinical record."
 )
 
 

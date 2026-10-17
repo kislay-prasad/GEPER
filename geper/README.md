@@ -1721,8 +1721,11 @@ report agree with the clinical record, reads the report's revision (organisation
 `DataAccess.get_report_revision`), and writes four NEW files beside the signed ones:
 `report_current.pdf`, `report_short_current.pdf`, `report_current.md` and
 `report_revision_status.json` (the machine-readable `is_retracted` flag lives here, not in
-the signed `geper_results.json`). Each rendering states on its face that it is a
-**current-status copy, not a new sign-off**. The signed JSON, PDFs, manifest and
+the signed `geper_results.json`). Each rendering opens with a notice, **CURRENT REPORT STATUS — NOT A NEW CLINICAL
+SIGN-OFF**, saying it reproduces the signed report unchanged, was generated afterwards, has not
+been reviewed or signed by a clinician, and that any reviewer named on its pages refers to the
+signed original. (That wording is operational text and has not been approved by whoever owns
+this lab's report templates; treat it as a proposal until they have.) The signed JSON, PDFs, manifest and
 `clinical_link.json` are byte-identical afterwards.
 
 It refuses (writing nothing, and recording the failed attempt in `geper_signoff_audit.log`)
@@ -1732,6 +1735,12 @@ empty answer (`{}`) is a successful "nothing to say", not proof the report was n
 retracted. Files are staged privately and published only complete, so a failure leaves any
 earlier copy as it was. A success is audited as `revision_refreshed` (actor, report, previous
 and current status).
+
+**It is run by an operator.** Nothing triggers it when the clinical platform's status changes: a
+retraction made after the last refresh is not in these files until someone runs the command again
+(`checked_at` in `report_revision_status.json` says when it last looked). Refreshing automatically
+after a status change is separate follow-up work. The LIMS export does **not** depend on it: it
+reads the authoritative status itself at export time.
 
 `approve`, `override` and `withdraw` on a linked run read the same status (before changing
 anything, and refuse if it cannot be read) and state it in the PDFs/Markdown they write.

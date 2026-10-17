@@ -114,6 +114,21 @@ unaffected; a strict consumer must accept version `1.1.0`.
   `report_is_reanalysis`, `report_has_been_reanalysed`, `report_revision_banners`
   (banners joined by ` | `). Run-level, repeated in every row.
 
+**Why `1.1.0` although the change is additive.** The table below says to bump the version
+on a breaking change only. This bump is deliberate and departs from that: `report_status` carries
+a retraction, and a consumer that ignores unknown fields *and* ignores the version would drop it
+without any signal. A consumer that keys on `export_format_version` now notices; one that rejects
+`1.1.0` fails visibly instead of silently losing the status. Unlinked exports keep `1.0.0`.
+
+**Compatibility with a receiving LIMS is NOT verified.** This repository contains no consumer
+implementation, ingest specification, schema file or sample from any receiving system, and this
+document's own opening section records that no target LIMS format is known. Before a linked run is
+exported to a real system, confirm with that system's owner that it (1) accepts
+`export_format_version` `1.1.0` (or does not reject unknown versions), (2) accepts, or safely
+ignores, the `report_status` object and the extra CSV columns, (3) surfaces `is_retracted` and
+acts on it, and (4) understands `replacement.retained: false` as "the replacement no longer exists".
+GEPER's own tests prove what GEPER writes, not what a receiver does with it.
+
 **Fail closed.** If the run is linked and its status cannot be read and validated --
 no clinical credentials, a failed login, a report that is not in the link's
 organisation or does not belong to the link's interpretation, an unreadable or

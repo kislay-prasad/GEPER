@@ -257,14 +257,16 @@ class TestTheCurrentStatusCopyIsNeverMistakenForTheSignedReport:
         document["current_status_copy"] = dict(self.COPY)
         banners = report_revision_banners(document)
         assert banners[0].startswith("*** THIS REPORT HAS BEEN RETRACTED.")
-        assert banners[-1].startswith("THIS IS A CURRENT-STATUS COPY, NOT A NEW SIGN-OFF.")
+        assert banners[-1].startswith("CURRENT REPORT STATUS — NOT A NEW CLINICAL SIGN-OFF.")
         assert "signed original remains the clinical record" in banners[-1]
+        assert "has not been reviewed or signed by a clinician" in banners[-1]
+        assert "refers to the signed original" in banners[-1]
 
     def test_an_unrevised_copy_still_says_it_is_a_copy(self):
         document = apply_report_revision({}, _fetch(_Platform({})).revision)
         document["current_status_copy"] = dict(self.COPY)
         (banner,) = report_revision_banners(document)
-        assert "CURRENT-STATUS COPY" in banner and "{signed_at}" not in banner
+        assert "CURRENT REPORT STATUS" in banner and "{signed_at}" not in banner
 
     def test_a_copy_that_cannot_say_what_it_is_fails_closed(self):
         for meta in ({}, {"signed_at": "x"}, {"checked_at": "y"}, "nope"):

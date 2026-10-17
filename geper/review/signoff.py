@@ -94,8 +94,10 @@ clinical writes come before the file writes.
 
 `withdraw` joined that set in w119 (2026-09-13) and is the one member of
 it whose clinical side is a REFUSAL rather than a write: the clinical
-layer has no operation that retracts an approval, and its schema forbids
-walking an approved report's state back, so a withdrawal on a run whose
+layer has no operation that WITHDRAWS an approval (it can RETRACT a report,
+which is an append-only record that the report must not be acted on and
+leaves the approval, the approver and the state untouched), and its schema
+forbids walking an approved report's state back, so a withdrawal on a run whose
 clinical report is already `approved`/`released` is refused before any
 file changes instead of leaving the record saying `approved` behind a
 retracted sign-off. See `withdraw`'s docstring for the evidence and for
@@ -1854,13 +1856,19 @@ def withdraw(
     ACT, so a record that still says `approved` afterwards contradicts a
     clinician's explicit decision rather than merely lagging a change.
 
-    THE CLINICAL LAYER HAS NO OPERATION THAT RETRACTS AN APPROVAL, AND THIS
+    THE CLINICAL LAYER HAS NO OPERATION THAT WITHDRAWS AN APPROVAL, AND THIS
     FUNCTION DOES NOT INVENT ONE. Established by reading the layer, not
-    assumed:
+    assumed (and corrected after `retract_report` was added -- see below):
 
-      - `clinical/data_access.py` has no unapprove/retract/rescind method.
-        Its only public verbs past approval are `_release_report` (forward)
-        and `create_amendment` (a NEW report beside the signed one).
+      - `clinical/data_access.py` has no unapprove/rescind method. Its public
+        verbs past approval are `_release_report` (forward), `create_amendment`
+        (a NEW report beside the signed one) and `retract_report`. That last
+        one is NOT a withdrawal of the approval: it appends a record that the
+        report must not be acted on (migration 0003, "model 3"), and the
+        approver, the approval time, the content hash and the state are all
+        left exactly as they were. A retraction made after sign-off is shown
+        by `refresh_revision()` and carried by the LIMS export; it does not
+        make a withdrawal possible.
       - `reports.approver_id`/`approved_at`/`content_hash` are write-once:
         `enforce_content_immutability()` (clinical/schema.sql) raises on any
         attempt to change them once set.
@@ -1884,8 +1892,8 @@ def withdraw(
     is closed by never creating it -- the files keep saying `reviewed`, the
     clinical record keeps saying `approved`, and the two still agree --
     rather than by a state transition the schema does not support. Giving
-    the clinical layer a real retraction is a schema and governance
-    question and is NOT decided here.
+    the clinical layer a real WITHDRAWAL of an approval is a schema and
+    governance question and is NOT decided here.
 
     A LINKED RUN WHOSE CLINICAL REPORT IS NOT YET APPROVED (`draft`,
     `under_review`, `returned`) IS WITHDRAWN NORMALLY: there is no approval
@@ -2068,6 +2076,13 @@ def refresh_revision(
 
     Every attempt is recorded in the run's audit log (`revision_refreshed` or
     `revision_refresh_failed`) -- never with credentials.
+
+    OPERATOR-RUN, BY DESIGN. Nothing calls this when the clinical platform's status
+    changes: a retraction made after the last refresh is NOT reflected in these files
+    until someone runs it again (`checked_at` in the status record says when it last
+    looked). Refreshing automatically after a status change is separate follow-up work.
+    The LIMS export does not depend on this: it reads the authoritative status itself
+    at export time (report/export_lims.py).
     """
     results_path = _require_results(output_dir)
     link = read_clinical_link(output_dir)
@@ -2190,8 +2205,9 @@ def _refresh_revision(
             "derived": True,
             "is_signoff": False,
             "notice": (
-                "A CURRENT-STATUS record derived from the signed report. It is not a sign-off and does not "
-                "replace the signed original, whose files and manifest are unchanged."
+                "A CURRENT-STATUS record derived from the signed report. It is not a clinical sign-off and does "
+                "not replace the signed original, whose files and manifest are unchanged. It reflects the "
+                "clinical platform as of checked_at only; it is refreshed by an operator, not automatically."
             ),
             "refreshed_at": refreshed_at,
             "checked_at": status.checked_at,

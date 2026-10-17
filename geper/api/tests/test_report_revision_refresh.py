@@ -284,7 +284,7 @@ class TestRefreshWritesOnlyDerivedArtefacts:
 
     def test_every_derived_rendering_says_it_is_a_copy_and_not_a_signoff(self, signed, dao, creds):
         _refresh(signed, dao, creds)
-        needle = _flat("CURRENT-STATUS COPY, NOT A NEW SIGN-OFF")
+        needle = _flat("CURRENT REPORT STATUS — NOT A NEW CLINICAL SIGN-OFF")
         assert needle in _md(signed)
         assert needle in _pdf_text(os.path.join(signed, s.CURRENT_PDF_FILENAME))
         assert needle in _pdf_text(os.path.join(signed, s.CURRENT_SHORT_PDF_FILENAME))
@@ -328,7 +328,7 @@ class TestRetractionReachesTheDerivedArtefacts:
         assert status["is_retracted"] is True and status["revision"]["is_retracted"] is True
         assert status["revision"]["retracted"]["reason"] == REASON
         # the retraction leads: it is above the current-status notice
-        assert md.index(_flat("THIS REPORT HAS BEEN RETRACTED")) < md.index(_flat("CURRENT-STATUS COPY"))
+        assert md.index(_flat("THIS REPORT HAS BEEN RETRACTED")) < md.index(_flat("CURRENT REPORT STATUS"))
 
     def test_a_retained_replacement_is_named_and_obtainable(self, signed, clinical, dao, creds):
         replacement = _draft_report(clinical, dao)
@@ -667,7 +667,7 @@ class TestSignOffOperationsReadTheStatusAndFailClosed:
     ):
         _sign(linked_run_dir, dao, creds)
         text = _pdf_text(os.path.join(linked_run_dir, s.FULL_PDF_FILENAME))
-        for banner in ("THISREPORTHASBEENRETRACTED", "AMENDEDREPORT", "CURRENT-STATUSCOPY", "RE-ANALYSIS"):
+        for banner in ("THISREPORTHASBEENRETRACTED", "AMENDEDREPORT", "CURRENTREPORTSTATUS", "RE-ANALYSIS"):
             assert banner not in text.upper()
 
     def test_override_with_an_unreadable_status_records_no_claim_and_changes_no_file(

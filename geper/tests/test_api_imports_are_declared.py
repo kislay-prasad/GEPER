@@ -41,6 +41,9 @@ _IMPORT_TO_DIST = {
     # api/tests/test_report_revision_refresh.py reads back the PDFs it asserts on. pypdf is declared in
     # geper/requirements.txt for exactly that (tests only); this guard then checks the declaration.
     "pypdf": "pypdf",
+    # review/clinical_http.py (the human tools' HTTPS client) and its tests use httpx directly; it is declared
+    # in geper/requirements.txt and this guard checks the declaration.
+    "httpx": "httpx",
 }
 
 # Imports that need a package they do not name. starlette.testclient (which

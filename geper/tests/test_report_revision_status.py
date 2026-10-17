@@ -428,7 +428,7 @@ class TestLimsExportOfALinkedRunFailsClosed:
     def test_the_cli_path_blocks_and_audits_when_the_status_cannot_be_read(self, tmp_path, monkeypatch):
         run_dir = _link_dir(tmp_path)
 
-        def _boom(link, credentials, data_access=None):
+        def _boom(link, credentials, data_access=None, clinical_url=None):
             raise SignoffError("no credentials were supplied")
 
         monkeypatch.setattr("review.signoff.fetch_linked_revision_status", _boom)

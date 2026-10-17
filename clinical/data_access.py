@@ -45,6 +45,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -102,6 +103,11 @@ ROLES = (
 # census is readable and so a future role that is also not human-assignable
 # has one place to go.
 HUMAN_ASSIGNABLE_ROLES = tuple(r for r in ROLES if r != "System")
+
+# Stage 3 follow-up. The `release_events.consumer` recorded when a report is
+# released over the review surface. The patient portal is the only delivery
+# path that exists; the column itself stays free text for the paths that do not.
+PORTAL_RELEASE_CONSUMER = "patient_portal"
 
 # Phase 7 commit 4 (spec 22, human ruling D2). RE-RULED 2026-09-09:
 # "everything downstream of a VCF inherits the VCF period" -- so
@@ -1015,6 +1021,7 @@ def auditable(
     reason: str | None = None,
     details_builder: Any = None,
     resource_id_param: str | None = None,
+    audit_denials_only: bool = False,
 ):
     """
     Decorator that wraps a DataAccess method to capture audit outcomes.
@@ -1067,6 +1074,25 @@ def auditable(
         '<denied>'/'<error>' markers: what those rows should record is a
         separate question, and widening it here would be a redesign rather
         than a correction.
+
+    audit_denials_only: for a PUBLIC WRAPPER that does nothing but gate and
+        delegate to an @auditable method (approve_report, release_report,
+        record_disagreement_claim). Such a wrapper must not write a success
+        row -- the delegate already writes the one row for the act, and a
+        second would count one clinical act twice -- but a refusal raised by
+        the wrapper's OWN gate never reaches the delegate, so without this it
+        left no trace at all. With the flag, the wrapper writes NOTHING on
+        success and NOTHING on an ordinary error (the delegate has recorded
+        those), and writes exactly ONE `denied` row when it raises
+        AuthorizationError itself.
+
+        A refusal that a delegate already recorded is not recorded again: the
+        denied branch marks the exception it has audited, and a denials-only
+        wrapper skips an exception so marked. So the flag cannot produce a
+        duplicate even if the delegate later gains a gate of its own.
+
+        Requires `auditable=False` (it is a non-success-auditing wrapper) and
+        is meaningless otherwise.
     """
 
     def decorator(func):
@@ -1098,7 +1124,7 @@ def auditable(
                     "Patient access is served by the portal surface, which binds the patient from "
                     "the session rather than from an argument."
                 )
-            if not auditable:
+            if not auditable and not audit_denials_only:
                 # Non-auditable method: just call it
                 return func(self, *args, **kwargs)
 
@@ -1168,6 +1194,11 @@ def auditable(
 
             try:
                 result = func(self, *args, **kwargs)
+                if audit_denials_only:
+                    # A gate-and-delegate wrapper: the delegate wrote the one
+                    # success row for the act. Writing another would count the
+                    # act twice.
+                    return result
                 # Determine action name for this outcome
                 if isinstance(action, str):
                     action_name = action
@@ -1213,7 +1244,11 @@ def auditable(
                 )
                 self._DataAccess__connection.commit()
                 return result
-            except AuthorizationError:
+            except AuthorizationError as denial:
+                # A denials-only wrapper does not repeat a refusal that a
+                # delegate has already put on the record.
+                if audit_denials_only and getattr(denial, "_audit_recorded", False):
+                    raise
                 # Denied: write audit entry with action name for denied, re-raise
                 if isinstance(action, str):
                     action_name = action
@@ -1235,8 +1270,12 @@ def auditable(
                     ip_address=bound_params.get("ip_address"),
                 )
                 self._DataAccess__connection.commit()
+                denial._audit_recorded = True
                 raise
             except Exception:
+                if audit_denials_only:
+                    # The delegate has already recorded an ordinary error.
+                    raise
                 # Error: write audit entry with action name for error, re-raise
                 if isinstance(action, str):
                     action_name = action
@@ -2940,10 +2979,14 @@ class DataAccess:
 
         # Validate test exists in this org
         test = self._query_one(
-            "SELECT test_id FROM tests WHERE test_id = %s AND org_id = %s",
+            "SELECT test_id FROM tests WHERE test_id = %s AND org_id = %s AND status = 'active'",
             (test_id, session.org_id),
         )
         if test is None:
+            # Unknown, another organisation's, and RETIRED all read the same:
+            # a retired test is withdrawn from the catalogue and cannot be
+            # ordered, and the caller must not be able to tell which of the
+            # three it was.
             raise NotFoundError(f"Test {test_id} not found")
 
         # Validate consent exists, is active, and has the required scope
@@ -3057,6 +3100,180 @@ class DataAccess:
             "UPDATE orders SET state = %s, cancelled_at = %s WHERE order_id = %s AND org_id = %s",
             ("cancelled", now, order_id, session.org_id),
         )
+
+    # ── the test catalogue (stage 2) ─────────────────────────────────────────
+    #
+    # `tests` and `test_genes` have always been in the schema, and
+    # `create_order` has always required a `test_id` into them, but no method
+    # of any kind wrote either table, so no production path could create the
+    # subject of an order. These three are that path.
+    #
+    # THE CATALOGUE IS PER-ORGANISATION (`tests.org_id`) and is managed by the
+    # Administrator only: who may define a panel is a controlled act, not a
+    # clinician's. Every statement binds `org_id` from the session. A test is
+    # never edited, only retired: `test_id` is the stable identifier orders
+    # point at, and rewriting what a placed order referred to would change the
+    # clinical meaning of a record that already exists. To change a panel,
+    # retire it and create its successor.
+    #
+    # `approved_at` / `approved_by` are stamped at creation: the Administrator
+    # who creates the entry is the approving act. A separate approval step is
+    # a product decision nobody has made, and the columns are there for it.
+
+    _GENE_SYMBOL = re.compile(r"^[A-Za-z][A-Za-z0-9.\-]{0,24}$")
+    _MAX_TEST_NAME = 200
+    _MAX_PANEL_GENES = 1000
+
+    @auditable(
+        action="test_created",
+        resource_type="test",
+        requires_session=True,
+        details_builder=lambda params, result: {
+            "name": params.get("name"),
+            "assembly": params.get("assembly"),
+            "gene_count": len(params.get("genes") or []),
+        },
+    )
+    @transactional
+    def create_test(
+        self,
+        session: Session,
+        name: str,
+        assembly: str,
+        genes: Sequence[str],
+        cdsco_class: Optional[str] = None,
+    ) -> uuid.UUID:
+        """
+        Add an active test to the caller's organisation's catalogue.
+
+        Administrator only. `assembly` must be one `ASSEMBLY_CANONICAL`
+        recognises and is stored CANONICAL, so a test saved as 'hg38' and one
+        saved as 'GRCh38' are the same test. `genes` is a non-empty list of
+        symbols, de-duplicated case-insensitively, order preserved. An active
+        test of the same name in this organisation is refused (ValueError).
+        """
+        self._require_role(session, "Administrator")
+
+        clean_name = (name or "").strip()
+        if not clean_name or len(clean_name) > self._MAX_TEST_NAME:
+            raise ValueError(f"Test name must be 1-{self._MAX_TEST_NAME} characters")
+        canonical = ASSEMBLY_CANONICAL.get((assembly or "").strip())
+        if canonical is None:
+            raise ValueError(f"Unrecognised assembly {assembly!r}")
+        if isinstance(genes, str):
+            raise ValueError("genes must be a list of symbols, not a string")
+        symbols: list[str] = []
+        seen: set[str] = set()
+        for raw in genes:
+            symbol = (raw or "").strip() if isinstance(raw, str) else ""
+            if not self._GENE_SYMBOL.match(symbol):
+                raise ValueError(f"Invalid gene symbol {raw!r}")
+            if symbol.upper() not in seen:
+                seen.add(symbol.upper())
+                symbols.append(symbol)
+        if not symbols:
+            raise ValueError("A test needs at least one gene")
+        if len(symbols) > self._MAX_PANEL_GENES:
+            raise ValueError(f"A test may list at most {self._MAX_PANEL_GENES} genes")
+        clean_class = cdsco_class.strip() if cdsco_class and cdsco_class.strip() else None
+
+        if self._query_one(
+            "SELECT 1 FROM tests WHERE org_id = %s AND status = 'active' AND lower(name) = lower(%s)",
+            (session.org_id, clean_name),
+        ):
+            raise ValueError(f"An active test named {clean_name!r} already exists")
+
+        test_id = uuid.uuid4()
+        now = self._clock.now()
+        try:
+            self._execute(
+                "INSERT INTO tests (test_id, org_id, name, cdsco_class, assembly, status, "
+                "                   approved_at, approved_by, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s)",
+                (test_id, session.org_id, clean_name, clean_class, canonical, now, session.user_id, now),
+            )
+        except Exception as exc:  # noqa: BLE001 -- narrowed immediately below
+            # The check above is a courtesy and is racy; migration 0008's
+            # partial unique index is the control. Two concurrent creations of
+            # one name both pass the check and the second INSERT lands here.
+            if getattr(exc, "sqlstate", None) == "23505" and (
+                getattr(getattr(exc, "diag", None), "constraint_name", None) == "tests_org_active_name_unique"
+            ):
+                raise ValueError(f"An active test named {clean_name!r} already exists") from exc
+            raise
+        for symbol in symbols:
+            self._execute(
+                "INSERT INTO test_genes (gene_id, test_id, gene, added_at, added_by) VALUES (%s, %s, %s, %s, %s)",
+                (uuid.uuid4(), test_id, symbol, now, session.user_id),
+            )
+        return test_id
+
+    @auditable(
+        action="test_retired",
+        resource_type="test",
+        resource_id_param="test_id",
+        requires_session=True,
+        details_builder=lambda params, result: {"test_id": str(params.get("test_id"))},
+    )
+    @transactional
+    def retire_test(self, session: Session, test_id: uuid.UUID) -> None:
+        """
+        Withdraw a test from the catalogue so it can no longer be ordered.
+
+        Administrator only. Existing orders keep their reference (the row is
+        not deleted and is still returned by `list_tests(include_retired=True)`).
+        An unknown, cross-organisation or already-retired test is NotFoundError.
+        """
+        self._require_role(session, "Administrator")
+        row = self._query_one(
+            "SELECT test_id FROM tests WHERE test_id = %s AND org_id = %s AND status = 'active'",
+            (test_id, session.org_id),
+        )
+        if row is None:
+            raise NotFoundError(f"Test {test_id} not found")
+        self._execute(
+            "UPDATE tests SET status = 'retired' WHERE test_id = %s AND org_id = %s",
+            (test_id, session.org_id),
+        )
+
+    @auditable(
+        action="test_read",
+        resource_type="test",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action",
+    )
+    @transactional
+    def list_tests(self, session: Session, include_retired: bool = False) -> list[dict[str, Any]]:
+        """
+        The caller's organisation's catalogue. Administrator or Orderer: the
+        former maintains it, the latter must be able to see what can be
+        ordered. Neither role implies the other.
+        """
+        held = {a.role for a in self.get_user_roles(session)}
+        if not held & {"Administrator", "Orderer"}:
+            raise AuthorizationError("This action requires the Administrator or Orderer role.")
+        rows = self._query(
+            "SELECT t.test_id, t.name, t.cdsco_class, t.assembly, t.status, t.created_at, "
+            "       COALESCE(array_agg(g.gene ORDER BY g.added_at, g.gene) "
+            "                FILTER (WHERE g.gene IS NOT NULL), '{}') "
+            "FROM tests t LEFT JOIN test_genes g ON g.test_id = t.test_id "
+            "WHERE t.org_id = %s AND (%s OR t.status = 'active') "
+            "GROUP BY t.test_id ORDER BY t.created_at, t.name",
+            (session.org_id, include_retired),
+        )
+        return [
+            {
+                "test_id": r[0],
+                "name": r[1],
+                "cdsco_class": r[2],
+                "assembly": r[3],
+                "status": r[4],
+                "created_at": r[5],
+                "genes": list(r[6]),
+            }
+            for r in rows
+        ]
 
     @auditable(
         action="sample_received",
@@ -3434,7 +3651,10 @@ class DataAccess:
             "           count(DISTINCT rep.id) AS reports_total, "
             "           count(DISTINCT rep.id) FILTER (WHERE rep.state IN ('approved', 'released')) "
             "               AS reports_signed_off, "
-            "           count(DISTINCT rep.id) FILTER (WHERE rep.state = 'released') AS reports_released "
+            "           count(DISTINCT rep.id) FILTER (WHERE rep.state = 'released' "
+            "               AND EXISTS (SELECT 1 FROM release_events re "
+            "                            WHERE re.org_id = rep.org_id AND re.report_id = rep.id "
+            "                             AND re.consumer = 'patient_portal')) AS reports_released "
             "      FROM samples s2 "
             "      JOIN sequencing_runs r ON r.org_id = s2.org_id AND r.sample_id = s2.sample_id "
             "      JOIN vcfs v            ON v.org_id = r.org_id  AND v.sequencing_run_id = r.id "
@@ -3775,6 +3995,23 @@ class DataAccess:
     # the row it describes. It returns a plain boolean and nothing else --
     # no reason, no retractor, no timestamp, no replacement id -- so there is
     # no internal detail in this result set for a handler to leak by accident.
+    #
+    # THE LITERAL 'patient_portal' BELOW IS `PORTAL_RELEASE_CONSUMER`, written out
+    # and NOT interpolated: test_patient_identity's structural scan reads each
+    # portal statement as one plain string constant, and an f-string is a
+    # different AST node that it cannot read. test_w169_portal_visibility ties
+    # the literal to the constant, so they cannot drift.
+    #
+    # STAGE 3 FOLLOW-UP: "RELEASED" MEANS RELEASED TO THE PATIENT PORTAL. Both
+    # the `rel` aggregate and the amendment edge's EXISTS now count only
+    # release_events whose consumer is `PORTAL_RELEASE_CONSUMER`. Before this, ANY
+    # release row published a report to its patient -- so a report delivered
+    # only to an external consumer (a LIMS, a referring clinician; `_release_report`
+    # accepts any consumer and the schema reserves the column for them) would have
+    # appeared in the patient's portal as a side effect. `released_at` is
+    # therefore the FIRST PORTAL release, which is what the patient is told. The
+    # retention clock (first delivery of ANY kind) and the retraction debts
+    # (one per distinct consumer) deliberately still read every release.
     _MY_RELEASED_REPORTS_SQL = (
         "SELECT rep.id, o.order_id, rel.first_released_at, sup.amends_report_id, "
         "       EXISTS (SELECT 1 FROM report_retractions rr "
@@ -3789,7 +4026,8 @@ class DataAccess:
         "JOIN LATERAL ("
         "    SELECT min(re.released_at) AS first_released_at, count(*) AS deliveries "
         "      FROM release_events re "
-        "     WHERE re.org_id = rep.org_id AND re.report_id = rep.id"
+        "     WHERE re.org_id = rep.org_id AND re.report_id = rep.id "
+        "      AND re.consumer = 'patient_portal'"
         ") rel ON rel.deliveries > 0 "
         "LEFT JOIN LATERAL ("
         "    SELECT orig.id AS amends_report_id "
@@ -3800,7 +4038,8 @@ class DataAccess:
         "       AND orig.interpretation_id = rep.interpretation_id "
         "       AND orig.state = 'released' "
         "       AND EXISTS (SELECT 1 FROM release_events re2 "
-        "                    WHERE re2.org_id = orig.org_id AND re2.report_id = orig.id) "
+        "                    WHERE re2.org_id = orig.org_id AND re2.report_id = orig.id "
+        "                     AND re2.consumer = 'patient_portal') "
         "     ORDER BY amd.created_at, amd.id "
         "     LIMIT 1"
         ") sup ON TRUE "
@@ -7201,7 +7440,17 @@ class DataAccess:
         at-least-one-claim precondition the way any claim does, and
         _approve_report's Approver checks are untouched. Whether this platform
         should require two signatures is a separate, carded decision.
+
+        STAGE 3: THE INTERPRETER ROLE, as the first statement. Until the claim
+        recorders were reachable over HTTP nothing consulted a role here, so
+        any authenticated session in the organisation could write the review
+        evidence `submit_for_review` then accepts. Recording a claim is the
+        Interpreter's work -- the same role `submit_for_review` already
+        requires, and the one the only production caller (review/signoff.py,
+        which records the claim and then submits with the SAME session)
+        necessarily holds already.
         """
+        self._require_role(session, "Interpreter")
         self._validate_claim_inputs(session, interpretation_id, report_id, session.user_id, reason)
         return self._insert_claim(
             session,
@@ -7217,11 +7466,19 @@ class DataAccess:
         resource_type="reviewer_claim",
         requires_session=True,
         auditable=False,
+        audit_denials_only=True,
+        details_builder=lambda params, result: {
+            "interpretation_id": str(params.get("interpretation_id")),
+            "report_id": str(params.get("report_id")),
+            "variant_key": params.get("variant_key"),
+        },
         reason=(
-            "declared non-auditable HERE because the act IS audited, once, by _record_disagreement, "
-            "which this method does nothing but delegate to. A second decorator on the wrapper would "
+            "declared non-SUCCESS-auditing HERE because the act IS audited, once, by _record_disagreement, "
+            "which this method does nothing but delegate to. A second success row on the wrapper would "
             "write two audit entries for one clinical act, which is worse than none: it would inflate "
-            "the count of recorded disagreements."
+            "the count of recorded disagreements. A REFUSAL by this wrapper's own role gate never reaches "
+            "the delegate, so audit_denials_only records exactly that one row (no reason text: it is "
+            "free clinical prose, and the ids say what was attempted)."
         ),
     )
     def record_disagreement_claim(
@@ -7249,7 +7506,17 @@ class DataAccess:
 
         No actor_id parameter, for the same reason record_sole_signatory_claim
         has none: the person acting is the authenticated person.
+
+        STAGE 3: THE INTERPRETER ROLE, checked here and first, for the reason
+        given on record_sole_signatory_claim. It is on the PUBLIC wrapper and
+        not on `_record_disagreement` because the wrapper is the only entry a
+        session can reach; the private recorder takes an `actor_id` and is
+        exercised directly by the domain tests. A denial raised here IS
+        audit-logged, once, by `audit_denials_only` on this wrapper's decorator
+        (action 'record_disagreement', outcome 'denied', the acting user and
+        role, the ids attempted); a success is audited once, by the recorder.
         """
+        self._require_role(session, "Interpreter")
         return self._record_disagreement(
             session,
             interpretation_id=interpretation_id,
@@ -7295,6 +7562,80 @@ class DataAccess:
         'report_approved' entry.
         """
         return self._approve_report(session, report_id, actor_id=session.user_id)
+
+    @auditable(
+        action="report_released",
+        resource_type="report",
+        resource_id_param="report_id",
+        requires_session=True,
+        auditable=False,
+        audit_denials_only=True,
+        details_builder=lambda params, result: {"report_id": str(params.get("report_id"))},
+        reason=(
+            "declared non-SUCCESS-auditing HERE because the release IS audited, once, by _release_report "
+            "('report_released'), which this method does nothing but delegate to with actor_id fixed "
+            "to the session's own user. A second success row would record one delivery twice. A refusal "
+            "by this wrapper itself (already released) never reaches the delegate, so audit_denials_only "
+            "is what puts it on the record."
+        ),
+    )
+    def release_report(self, session: Session, report_id: uuid.UUID) -> uuid.UUID:
+        """
+        PUBLIC wrapper over _release_report, recording the SESSION'S OWN USER
+        as the releaser. Stage 3 -- the first production path to a release.
+
+        THE ONLY SUPPORTED DELIVERY PATH IS THE PATIENT PORTAL, so this method
+        takes NO consumer: it releases the report to `PORTAL_RELEASE_CONSUMER`,
+        and a caller cannot name anyone else. `release_events.consumer` is
+        unchanged -- still free text, still NOT NULL, no schema or migration
+        change -- and `_release_report` still takes any consumer for the future
+        delivery paths (a LIMS, an external clinician) that the schema comment
+        reserves it for. What was removed is the ability of an HTTP caller to
+        type an arbitrary recipient into a permanent delivery record.
+
+        A report already released to the portal is REFUSED (ValueError) rather
+        than given a second identical row: a duplicate inflates the delivery
+        count and states a delivery that did not happen. The read below is a
+        courtesy that gives a sequential second call a clean refusal; it is
+        racy, and MEASURED to be (eight simultaneous releases produced eight
+        rows). The control is migration 0009's partial unique index
+        `release_events_portal_once`, and the loser of a race is turned into
+        the same ValueError. Nothing else is constrained: other consumers, and
+        re-delivery to the same external consumer, remain ordinary.
+
+        Exactly the shape of approve_report, for exactly its reason: a delivery
+        path needs a release it can call without reaching into a private
+        method and without being handed the ability to name somebody else as
+        the releaser. `released_by` is read as an authority claim, and fixing
+        it to the authenticated person is what keeps it true.
+
+        ENFORCEMENT IS UNCHANGED AND NOT RE-IMPLEMENTED: _release_report still
+        requires Approver on the session, re-checks it on the recorded
+        releaser, refuses a blank consumer, and refuses any state but
+        'approved' or 'released' (spec 13.4). Release is an event: a second
+        consumer inserts a second release_events row.
+        """
+        self._require_role(session, "Approver")
+        already = self._query_one(
+            "SELECT 1 FROM release_events WHERE org_id = %s AND report_id = %s AND consumer = %s "
+            "AND tombstoned_at IS NULL LIMIT 1",
+            (session.org_id, report_id, PORTAL_RELEASE_CONSUMER),
+        )
+        if already is not None:
+            raise ValueError("Report has already been released to the patient portal.")
+        try:
+            return self._release_report(session, report_id, PORTAL_RELEASE_CONSUMER, actor_id=session.user_id)
+        except Exception as exc:  # noqa: BLE001 -- narrowed immediately below
+            # The read above is a courtesy and is racy. Migration 0009's partial
+            # unique index is the control: of N simultaneous releases exactly one
+            # INSERT lands and the rest arrive here, as the same ordinary refusal
+            # a sequential second release gets. The delegate has already rolled
+            # back and recorded the failed attempt as an 'error' outcome.
+            if getattr(exc, "sqlstate", None) == "23505" and (
+                getattr(getattr(exc, "diag", None), "constraint_name", None) == "release_events_portal_once"
+            ):
+                raise ValueError("Report has already been released to the patient portal.") from exc
+            raise
 
     @auditable(
         action="record_disagreement",

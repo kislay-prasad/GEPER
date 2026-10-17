@@ -1318,7 +1318,7 @@ class TestTheCatalogueSaysWhatTheBehaviourProved:
         MEASURED BY CATALOGUE QUERY, not by grep -- a text search cannot see a
         named CONSTRAINT, a separate CREATE UNIQUE INDEX, or a primary key that
         is not called `id`, which is exactly why the earlier census claim was
-        wrong. Seven tables lack the key after this wave and are listed by
+        wrong. Seven tables lacked the key after this wave (six since 0007 gave `tests` one) and are listed by
         name, so a later wave that "helpfully" fixes one has to edit this list.
         """
         still_lacking = set()
@@ -1363,7 +1363,9 @@ class TestTheCatalogueSaysWhatTheBehaviourProved:
             "patient_sessions",
             "role_assignments",
             "sessions",
-            "tests",
             "totp_backup_codes",
         }, still_lacking
+        # `tests` LEFT THIS LIST AT MIGRATION 0007, which gave it
+        # UNIQUE (test_id, org_id) as the target of orders_test_org_fk.
+        assert "tests" not in still_lacking
         assert "exception_events" not in still_lacking, "this wave's whole subject"

@@ -165,7 +165,7 @@ def _make_interpretation(dao, conn, session, parent_interpretation_id=None, crea
             cur.execute(
                 "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) "
                 "VALUES (%s, %s, %s, %s, %s, %s)",
-                (test_id, org_id, "Panel", "GRCh38", "active", T0),
+                (test_id, org_id, f"Panel {test_id}", "GRCh38", "active", T0),
             )
         conn.commit()
         patient_id = dao.create_patient(session, "Test", date(1990, 1, 1), "M")

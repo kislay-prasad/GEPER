@@ -170,7 +170,7 @@ def _make_interpretation(dao, conn, session):
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (test_id, org_id, "Panel", "GRCh38", "active", now),
+            (test_id, org_id, f"Panel {test_id}", "GRCh38", "active", now),
         )
     conn.commit()
 

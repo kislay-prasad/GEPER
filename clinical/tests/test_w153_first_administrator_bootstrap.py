@@ -861,6 +861,10 @@ class TestTheShapeThatMakesItInert:
             # is not scanned at all. `clinical/clinic_endpoints.py` defines the
             # three clinician routes -- registration, consent, withdrawal.
             "clinical.clinic_endpoints",
+            # Stage 3. THE EIGHTH: `clinical/review_endpoints.py` defines the
+            # five review routes. Same reason as every entry above -- a module
+            # missing from this tuple is not scanned at all.
+            "clinical.review_endpoints",
         ):
             try:
                 module = __import__(module_name, fromlist=["*"])

@@ -120,6 +120,7 @@ import os
 import pathlib
 
 import pytest
+from clinical.data_access import PORTAL_RELEASE_CONSUMER  # noqa: E402
 
 from clinical.tests.test_w135_patient_report_access import (  # noqa: E402
     PASSWORD,
@@ -1034,7 +1035,11 @@ class TestTheRetractionAndItsDebtsAreOneTransaction:
             )
             debts = cur.fetchall()
         assert len(debts) == 1, debts
-        assert debts[0][0] == "w135-consumer", debts
+        # The w135 fixture `_pipeline` releases to the patient portal (Stage 3
+        # follow-up: a patient sees a report only if it was), so that is the one
+        # consumer owed notice. The property -- one debt per distinct consumer --
+        # is unchanged.
+        assert debts[0][0] == PORTAL_RELEASE_CONSUMER, debts
         assert debts[0][1] == "notification_owed", debts
         assert debts[0][2] == "w156-e6-debt", debts
         assert debts[0][3] == a["approver_id"], debts

@@ -1132,3 +1132,83 @@ async def retract_report(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return RetractionCreated(retraction_id=str(retraction_id))
+
+
+# ─── the test catalogue (stage 2) ────────────────────────────────────────────
+#
+# ADMINISTRATOR-GATED, inside the domain method and first. The catalogue is
+# per-organisation; there is no org_id field on any body here because the
+# organisation is Session.org_id. A test is created and retired, never edited.
+
+
+class TestCreateRequest(BaseModel):
+    """The body of `POST /admin/tests`. `extra="forbid"`, so a body naming an
+    organisation or an approver is refused rather than ignored. Every value
+    rule (name length, assembly vocabulary, gene-symbol shape) lives in
+    `DataAccess.create_test`, after its role gate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    assembly: str
+    genes: List[str]
+    cdsco_class: Optional[str] = None
+
+
+class TestCreated(BaseModel):
+    test_id: str
+
+
+@router.post(
+    "/tests",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TestCreated,
+    summary="Add a test to the caller's own organisation's catalogue (Administrator)",
+    responses={
+        201: {"description": "The test is active and orderable"},
+        400: {"model": ErrorResponse, "description": "Invalid name, assembly or gene list; or the name is in use"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+    },
+)
+async def create_test(
+    body: TestCreateRequest,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> TestCreated:
+    """`DataAccess.create_test`, and nothing else."""
+    try:
+        test_id = dao.create_test(session, body.name, body.assembly, body.genes, body.cdsco_class)
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return TestCreated(test_id=str(test_id))
+
+
+@router.post(
+    "/tests/{test_id}/retirement",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Retire a test so it can no longer be ordered (Administrator)",
+    responses={
+        204: {"description": "The test is retired"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Not found, in another organisation, or already retired"},
+    },
+)
+async def retire_test(
+    test_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> Response:
+    """`DataAccess.retire_test`, and nothing else. The path id goes through
+    `_target` so a malformed one still meets the role gate first."""
+    target = _target(test_id)
+    try:
+        dao.retire_test(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

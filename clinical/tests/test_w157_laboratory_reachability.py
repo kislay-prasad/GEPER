@@ -627,14 +627,22 @@ class TestThePremiseThisWaveMeasured:
             if "_release_report" in path.read_text(encoding="utf-8", errors="ignore")
         )
         assert mentions >= 2, f"only {mentions} modules MENTION _release_report; this control can no longer distinguish"
-        assert _call_sites("_release_report") == [], _call_sites("_release_report")
+        # STAGE 3 WIRED RELEASE. The private method now has exactly ONE call
+        # site, the public `release_report` wrapper in data_access.py -- the
+        # same shape as `approve_report` -> `_approve_report`. The control is
+        # unchanged: it counts CALLS, and the dozen docstrings that name the
+        # method are still not callers.
+        assert [path for path, _ in _call_sites("_release_report")] == ["clinical/data_access.py"], _call_sites(
+            "_release_report"
+        )
 
     @pytest.mark.parametrize(
         "verb",
         [
-            "create_order",
-            "place_order",
-            "cancel_order",
+            # create_order / place_order / cancel_order LEFT THIS LIST AT
+            # STAGE 2: the test catalogue they were blocked on now has a
+            # writer, and the three are wired on `/clinic/orders*`. They are
+            # asserted in the positive twin below, as the tripwire asks.
             "create_sequencing_run",
             "create_vcf",
             "create_interpretation",
@@ -678,6 +686,59 @@ class TestThePremiseThisWaveMeasured:
             assert len(sites) == 1, (verb, sites)
             assert sites[0][0] == "clinical/workflow_endpoints.py", (verb, sites)
 
+    def test_the_order_stage_is_wired_exactly_once_each_on_the_clinic_router(self):
+        """STAGE 2. The three verbs the tripwire above used to hold at zero
+        now have exactly one production caller each, and it is the clinic
+        router. Moved here, as that row's docstring requires.
+
+        Catches: a second caller appearing beside the handler, or the routes
+        being mounted over some other method.
+        """
+        for verb in ("create_order", "place_order", "cancel_order"):
+            sites = _call_sites(verb)
+            assert len(sites) == 1, (verb, sites)
+            assert sites[0][0] == "clinical/clinic_endpoints.py", (verb, sites)
+
+    def test_each_order_route_is_registered_exactly_once_behind_the_staff_session(self):
+        """STAGE 2. WALKED, NOT COUNTED FROM DECORATORS (Standing Rule 9).
+
+        Each of the four order-stage routes is served exactly once, with
+        exactly the declared method, and carries the staff session dependency
+        -- so an unauthenticated request is refused before any handler runs.
+        The ROLE is the domain method's, `_require_role(session, "Orderer")`
+        as its first executable statement (proved for these three verbs by
+        test_w129_ordering_authority and, over HTTP for every other role, by
+        test_w166_catalogue_and_orders::TestOrdersRefuseEveryoneElse).
+
+        Catches: a route registered twice, mounted under a second path, or
+        mounted without the session dependency.
+        Vacuous against: a handler whose role gate was removed from the
+        domain method, which the two files above catch.
+        """
+        from clinical.app import app
+        from clinical.clinic_endpoints import router
+        from clinical.endpoints import _get_session
+        from clinical.tests.test_w132_structural_guards import served_routes
+
+        expected = {
+            "/clinic/tests": ("GET",),
+            "/clinic/orders": ("POST",),
+            "/clinic/orders/{order_id}/placement": ("POST",),
+            "/clinic/orders/{order_id}/cancellation": ("POST",),
+        }
+        served = served_routes(app)
+        for path, methods in expected.items():
+            matches = [entry for entry in served if entry[0] == path]
+            assert matches == [(path, methods)], (path, matches)
+
+        by_path = {}
+        for route in router.routes:
+            by_path.setdefault(route.path, []).append(route)
+        for prefixed in ("/clinic" + path.removeprefix("/clinic") for path in expected):
+            routes = by_path.get(prefixed, [])
+            assert len(routes) == 1, (prefixed, routes)
+            assert _get_session in [d.call for d in routes[0].dependant.dependencies], prefixed
+
     def test_the_order_stage_is_blocked_on_a_table_with_no_writer_at_all(self):
         """
         WHY THE ORDER STAGE IS CARDED RATHER THAN WIRED, as a measurement.
@@ -702,9 +763,12 @@ class TestThePremiseThisWaveMeasured:
             for c in ast.walk(node)
             if isinstance(c, ast.Constant) and isinstance(c.value, str) and "INSERT INTO tests" in c.value
         ]
-        assert writers == [], writers
+        # STAGE 2 closed this card: the catalogue has exactly one writer,
+        # `create_test`. The row is kept as the tripwire it always was -- a
+        # SECOND writer fails it, and so does the writer disappearing.
+        assert writers == ["create_test"], writers
         # The positive twin for the scan: it CAN find a writer when one is
-        # there, so the empty answer above is a fact and not a broken scan.
+        # there, so the answer above is a fact and not a broken scan.
         sample_writers = [
             name
             for name, node in methods.items()
@@ -848,13 +912,29 @@ class TestTheReleaseGapIsStillOpen:
     false.
     """
 
-    def test_release_still_has_no_production_caller_and_the_portal_still_needs_one(self):
+    def test_release_has_exactly_one_production_path_and_the_portal_reads_it(self):
         """
-        Catches: release being wired by a later wave without the card being
-        resolved — and equally, this file's own claim going stale.
-        Vacuous against: nothing about whether wiring it would be correct.
+        STAGE 3 RESOLVED THE CARD THIS ROW WAS THE TRIPWIRE FOR, and this is
+        the "say so out loud and move the entry" the tripwire asked for. It was
+        `test_release_still_has_no_production_caller_and_the_portal_still_needs_one`.
+
+        What is true now, measured by `ast.Call` census: `_release_report` has
+        exactly one caller, the public `release_report` wrapper, and the wrapper
+        has exactly one caller, the review router. The `consumer` column is
+        STILL free text -- the next row, unchanged, proves the vocabulary was
+        not fixed by wiring the route; whether it should be remains a product
+        decision.
+
+        Catches: a SECOND path to release appearing, or the wrapper losing its
+        route. Vacuous against: nothing about whether the delivery vocabulary
+        is right.
         """
-        assert _call_sites("_release_report") == [], _call_sites("_release_report")
+        assert [p for p, _ in _call_sites("_release_report")] == ["clinical/data_access.py"], _call_sites(
+            "_release_report"
+        )
+        assert [p for p, _ in _call_sites("release_report")] == ["clinical/review_endpoints.py"], _call_sites(
+            "release_report"
+        )
         # AND the consequence, measured rather than recited: the patient list
         # requires a `release_events` row, not merely `state = 'released'`.
         # A NEEDLE WITH EXACTLY ONE POSSIBLE ORIGIN — `release_events` appears
@@ -1623,8 +1703,15 @@ class TestTheRouteCensusGrewByExactlyTwo:
         assert declared["/lab/orders/{order_id}/samples"] == ("POST",), declared
         assert declared["/lab/samples/{sample_id}/qc"] == ("POST",), declared
 
-    def test_no_release_route_was_added_and_the_needle_has_one_origin(self):
+    def test_no_route_module_reaches_the_private_release_and_the_needle_has_one_origin(self):
         """
+        RENAMED AT STAGE 3 (it was `test_no_release_route_was_added_...`). A
+        release route now exists, deliberately, on the review router -- but it
+        reaches the one origin through the PUBLIC `release_report` wrapper, and
+        what this row still guards is that no route module calls the PRIVATE
+        `_release_report` directly (which would skip the wrapper's fixing of
+        `released_by` to the session user). The assertions are unchanged.
+
         THE WAVE 6 TECHNIQUE: when proving something is NOT exposed, pick a
         needle with exactly ONE possible origin.
 
@@ -1658,13 +1745,19 @@ class TestTheRouteCensusGrewByExactlyTwo:
             # needle never looks in. Adding a route family without adding it
             # here would silently narrow the search.
             "clinical/clinic_endpoints.py",
+            # Stage 3. THE EIGHTH MODULE -- the review surface. Added for the
+            # same reason: the set is what keeps the needle honest.
+            "clinical/review_endpoints.py",
         }
         # The route census keeps that list honest: every served route is
-        # defined in one of those seven. 23 at 44d624b; 26 from w162, which
+        # defined in one of those eight. 23 at 44d624b; 26 from w162, which
         # added registration, consent and withdrawal; 27 from w164, which
         # added TOTP enrolment -- on `clinical/admin_endpoints.py`, a module
-        # already in the set above, so the needle's search is not narrowed.
-        assert len(served_routes(app)) == 27, served_routes(app)
+        # already in the set above, so the needle's search is not narrowed;
+        # 33 from Stage 2, whose six routes are on `admin_endpoints.py` and
+        # `clinic_endpoints.py`, both already in the set.
+        # 38 from Stage 3, whose five routes are on `review_endpoints.py`.
+        assert len(served_routes(app)) == 38, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

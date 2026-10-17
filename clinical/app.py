@@ -74,6 +74,7 @@ from clinical.clinic_endpoints import router as clinic_router
 from clinical.auth_endpoints import router as auth_router
 from clinical.endpoints import router, session_router
 from clinical.portal_endpoints import router as portal_router
+from clinical.review_endpoints import router as review_router
 from clinical.workflow_endpoints import router as workflow_router
 
 _DSN_ENV = "CLINICAL_DSN"
@@ -219,6 +220,14 @@ app.include_router(workflow_router)
 # directly. What has changed is that these three verbs are no longer
 # unreachable BY DESIGN. See clinical/clinic_endpoints.py.
 app.include_router(clinic_router)
+
+# Stage 3. THE REVIEW SURFACE -- claim, submit, approve, release -- the FOURTH
+# prefix this service serves. Mounted ALONGSIDE, never through, like every
+# router above: it adds no dependency to any of them and none imports it. It
+# imports `_get_session`/`_get_data_access` and the three refusal helpers, so
+# there is no second security policy and no second refusal vocabulary. The
+# gates are the domain methods'. See clinical/review_endpoints.py.
+app.include_router(review_router)
 
 
 @app.get("/healthz", tags=["health"], summary="Liveness probe")

@@ -1,0 +1,286 @@
+# =============================================================================
+# docker-compose.clinical.yml -- THE CLINICAL SERVICE, AS ITS OWN COMPOSE PROJECT
+# =============================================================================
+# SEPARATE FROM docker-compose.yml ON PURPOSE. That file runs the genomic
+# pipeline toolbox (`geper`); this one runs GEPER Clinical's HTTP service and,
+# optionally, its database. They share no service, network, volume or image, so
+# bringing one up or down cannot touch the other:
+#
+#   docker compose -f docker-compose.clinical.yml --env-file .env.clinical ...
+#
+# Resource names are NOT hard-coded: Compose prefixes the networks and the
+# volume with the project name (`geper-clinical` by default; `-p NAME` to use
+# another), and no service sets container_name, so two copies cannot collide.
+#
+# READ docs/CLINICAL_DEPLOYMENT.md BEFORE USING THIS. It states what this stack
+# does not do -- TLS, backups, vulnerability scanning, retention -- and a stack
+# that is up is NOT a production deployment.
+#
+# QUICK START (bundled database, local use; details in the document):
+#   scripts/clinical-secrets.sh                          # creates ./secrets/*
+#   cp .env.clinical.example .env.clinical               # then edit CLINICAL_UID/GID
+#   docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+#       --profile with-db up -d --build                  # db -> init -> api
+#
+# PROFILES
+#   with-db   the bundled PostgreSQL 16. Omit it to use an external database
+#             (point clinical_dsn / clinical_bootstrap_dsn at it).
+#   ops       one-shot operator jobs (first-administrator provisioning).
+#   test      the clinical test suite and its own disposable database.
+#
+# WHAT IS PUBLISHED: only the API, only on 127.0.0.1. The database publishes
+# nothing. Do not change the API binding to a public interface: the service
+# speaks plain HTTP and its session cookie is `Secure` (browsers will not use it
+# over http:// to a non-local host). Remote use needs a TLS-terminating reverse
+# proxy -- see the document -- and FORWARDED_ALLOW_IPS must then name that
+# proxy's explicit address. NEVER `*`.
+# =============================================================================
+
+name: geper-clinical
+
+x-clinical-image: &clinical-image
+  image: ${CLINICAL_IMAGE:-geper-clinical:slim}
+  build:
+    context: .
+    dockerfile: clinical/Dockerfile.slim
+    target: runtime
+
+# Every clinical container: the unprivileged user, no capabilities, no privilege
+# gain, a read-only root filesystem and a small tmpfs. The user defaults to the
+# image's 10001; on a native Linux host set CLINICAL_UID/CLINICAL_GID to the
+# owner of ./secrets so a 0600 secret file is readable (Compose ignores secret
+# uid/gid/mode -- verified on Compose 5.4.0).
+x-clinical-hardening: &clinical-hardening
+  user: "${CLINICAL_UID:-10001}:${CLINICAL_GID:-10001}"
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+# Bounded container logs. Docker's default json-file driver has NO size limit, so
+# an access log (client addresses, record UUIDs in request paths) would grow
+# without bound and be kept for as long as the container exists. Five files of
+# 10 MB each is a cap, not a retention policy: how long logs may be kept, who may
+# read them, and whether they are shipped elsewhere is a deployment decision. See
+# docs/CLINICAL_DEPLOYMENT.md, "Logs and privacy".
+x-clinical-logging: &clinical-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  # ---------------------------------------------------------------------------
+  # clinical-db -- bundled PostgreSQL 16 (profile: with-db)
+  # ---------------------------------------------------------------------------
+  # Pinned by digest (the version the suite was run against); move it
+  # deliberately. No ports are published, and the network it is on is
+  # `internal`, so nothing outside this project can reach it. `service_healthy`
+  # below depends on this check: Postgres accepts connections, then restarts once
+  # during first-time initialisation, and a plain "started" dependency races that.
+  clinical-db:
+    <<: *clinical-logging
+    profiles: ["with-db"]
+    image: ${CLINICAL_POSTGRES_IMAGE:-postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94}
+    environment:
+      POSTGRES_DB: ${CLINICAL_DB_NAME:-clinical}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - clinical-pgdata:/var/lib/postgresql/data
+    networks:
+      - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # clinical-init -- roles, migrations, verification (runs to completion)
+  # ---------------------------------------------------------------------------
+  # Idempotent and forward-only: `bootstrap` creates the two login roles or
+  # updates their passwords; `migrate --migrate` applies every pending migration
+  # in order (all of 0001 onwards on an empty database, nothing on a current
+  # one); `migrate --verify` exits non-zero unless the database matches the
+  # migration set. A failure stops the API from starting. It refuses, rather
+  # than guesses, on a database that has the schema but no migration history --
+  # that needs a deliberate `migrate --adopt-existing` by an operator.
+  clinical-init:
+    <<: [*clinical-image, *clinical-hardening, *clinical-logging]
+    command:
+      - sh
+      - -c
+      - python -m clinical.bootstrap && python -m clinical.migrate --migrate && python -m clinical.migrate --verify
+    environment:
+      CLINICAL_BOOTSTRAP_DSN_FILE: /run/secrets/clinical_bootstrap_dsn
+      CLINICAL_APP_PASSWORD_FILE: /run/secrets/clinical_app_password
+      CLINICAL_RETENTION_PASSWORD_FILE: /run/secrets/clinical_retention_password
+    secrets:
+      - clinical_bootstrap_dsn
+      - clinical_app_password
+      - clinical_retention_password
+    networks:
+      - db
+      - app
+    depends_on:
+      clinical-db:
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # clinical-api -- the service
+  # ---------------------------------------------------------------------------
+  # One uvicorn worker (the image default). The login throttle is per process, so
+  # more workers multiply its limits; and handlers block the event loop, so one
+  # worker serves one request at a time. See the document before raising it.
+  #
+  # FORWARDED_ALLOW_IPS is uvicorn's own setting: the addresses whose
+  # X-Forwarded-* headers are believed. The default, 127.0.0.1, believes nobody
+  # in a container, and the client address seen is then the socket peer -- which
+  # is what the service's audit and throttle code wants. Set it to a reverse
+  # proxy's explicit address (CLINICAL_FORWARDED_ALLOW_IPS) and only then.
+  clinical-api:
+    <<: [*clinical-image, *clinical-hardening, *clinical-logging]
+    environment:
+      CLINICAL_DSN_FILE: /run/secrets/clinical_dsn
+      CLINICAL_TOTP_SECRET_KEYS_FILE: /run/secrets/clinical_totp_secret_keys
+      FORWARDED_ALLOW_IPS: ${CLINICAL_FORWARDED_ALLOW_IPS:-127.0.0.1}
+    secrets:
+      - clinical_dsn
+      - clinical_totp_secret_keys
+    ports:
+      - "127.0.0.1:${CLINICAL_API_PORT:-8000}:8000"
+    networks:
+      - db
+      - app
+    depends_on:
+      clinical-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # clinical-provision -- first administrator (profile: ops)
+  # ---------------------------------------------------------------------------
+  #   docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+  #     run --rm clinical-provision --org-name "NAME" --admin-email a@b.example \
+  #     --operating-context "who is doing this and why" --yes
+  # Prints the new org_id (which login needs) and nothing secret. Creates a new
+  # organisation each time; it cannot add an administrator to an existing one.
+  # Delete secrets/clinical_first_admin_password once you have used it.
+  clinical-provision:
+    <<: [*clinical-image, *clinical-hardening, *clinical-logging]
+    profiles: ["ops"]
+    entrypoint: ["docker-entrypoint.sh", "python", "-m", "clinical.provision"]
+    command: ["--help"]
+    environment:
+      CLINICAL_DSN_FILE: /run/secrets/clinical_dsn
+      CLINICAL_FIRST_ADMIN_PASSWORD_FILE: /run/secrets/clinical_first_admin_password
+    secrets:
+      - clinical_dsn
+      - clinical_first_admin_password
+    networks:
+      - db
+      - app
+    depends_on:
+      clinical-db:
+        condition: service_healthy
+        required: false
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # clinical-test-db / clinical-test -- the clinical suite (profile: test)
+  # ---------------------------------------------------------------------------
+  #   docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+  #     --profile test run --rm clinical-test
+  # The suite DROPS and rebuilds its schema and changes database roles, so it
+  # gets its OWN throwaway database -- in memory (tmpfs), on an `internal`
+  # network of its own, with no password because nothing outside the project can
+  # reach it -- and never the real one. CLINICAL_TEST_DB_DISPOSABLE and
+  # CLINICAL_REQUIRE_DB (skips become failures) are set here and nowhere else.
+  # The checkout is mounted read-only: several tests read files outside clinical/.
+# `run --rm` removes the runner but not its dependency: stop the throwaway database
+# afterwards with `--profile test down`.
+  clinical-test-db:
+    profiles: ["test"]
+    image: ${CLINICAL_POSTGRES_IMAGE:-postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94}
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  clinical-test:
+    <<: *clinical-hardening
+    profiles: ["test"]
+    image: ${CLINICAL_TEST_IMAGE:-geper-clinical:slim-test}
+    build:
+      context: .
+      dockerfile: clinical/Dockerfile.slim
+      target: test
+    # Docker mounts a tmpfs `noexec` by default, which is what the API and the jobs
+    # keep. The test runner is the exception: some tests write a small helper script
+    # under /tmp and run it (a stand-in `git`), and a noexec /tmp makes them fail for
+    # a reason that has nothing to do with the code. It is a disposable container on
+    # an internal network with a read-only root filesystem, so this costs little.
+    tmpfs:
+      - /tmp:exec
+    environment:
+      CLINICAL_TEST_DSN: postgresql://postgres@clinical-test-db:5432/postgres
+      CLINICAL_TEST_DB_DISPOSABLE: "1"
+      CLINICAL_REQUIRE_DB: "1"
+    volumes:
+      - type: bind
+        source: .
+        target: /repo
+        read_only: true
+    networks:
+      - test
+    depends_on:
+      clinical-test-db:
+        condition: service_healthy
+    restart: "no"
+
+networks:
+  # No route out: the database is reachable only from containers on this network.
+  db:
+    internal: true
+  app: {}
+  test:
+    internal: true
+
+volumes:
+  clinical-pgdata: {}
+
+# File-based secrets, created by scripts/clinical-secrets.sh. CLINICAL_SECRETS_DIR
+# moves the directory (keep it outside the repository, or git-ignored inside it).
+secrets:
+  postgres_password:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/postgres_password
+  clinical_app_password:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_app_password
+  clinical_retention_password:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_retention_password
+  clinical_first_admin_password:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_first_admin_password
+  clinical_totp_secret_keys:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_totp_secret_keys
+  clinical_dsn:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_dsn
+  clinical_bootstrap_dsn:
+    file: ${CLINICAL_SECRETS_DIR:-./secrets}/clinical_bootstrap_dsn

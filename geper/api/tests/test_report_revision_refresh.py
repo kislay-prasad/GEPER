@@ -747,11 +747,14 @@ def _write_link_new(directory, clinical):
 class TestLimsExportCannotShipARetractedReportWithoutItsStatus:
     def _export(self, directory, dao, creds, monkeypatch, tmp_path, fmt="json"):
         """The production path: lims._main() reading a results file that sits in a linked run directory."""
-        monkeypatch.setattr(s, "_connect_clinical_data_access", lambda: dao)
+        # A person's tool: the clinical record arrives over the service's HTTPS API, never a database connection.
+        # The seam below hands it the test's own data access in place of the HTTPS client.
+        monkeypatch.setattr(s, "_open_clinical_http", lambda url: dao)
         if creds is not None:
             monkeypatch.setenv("GEPER_CLINICAL_PASSWORD", creds.password)
         out = str(tmp_path / f"export.{fmt}")
         argv = ["export_lims", os.path.join(directory, s.RESULTS_FILENAME), f"--{fmt}", out]
+        argv += ["--clinical-url", "https://clinical.test"]
         if creds is not None:
             argv += ["--clinical-email", creds.email]
         monkeypatch.setattr("sys.argv", argv)

@@ -596,6 +596,14 @@ class TestTheRouteCensus:
             ("/review/reports/{report_id}/submission", ("POST",)),
             ("/review/reports/{report_id}/approval", ("POST",)),
             ("/review/reports/{report_id}/release", ("POST",)),
+            # The human-tool read API: a person's tool (sign-off, revision refresh, LIMS export) learns a
+            # report's state and revision, and its own identity, over HTTPS instead of through a
+            # database connection. Four GETs; the first two are role-gated reads in the review module,
+            # the last two answer about the session's own user only.
+            ("/review/reports/{report_id}", ("GET",)),
+            ("/review/reports/{report_id}/revision", ("GET",)),
+            ("/auth/me", ("GET",)),
+            ("/auth/me/signing-identity", ("GET",)),
             # w164. THE SECOND FACTOR. `enrol_totp` has been
             # Administrator-gated, audited and tenant-bound since Phase 1 and
             # had ZERO production call sites and no route -- AND it could not
@@ -644,7 +652,9 @@ class TestTheRouteCensus:
         # routes; 38 from Stage 3, which added the five review routes. The number is checked against the EXPECTED set above,
         # which is what actually names them — this row exists only to refuse
         # the empty and wrapper-shaped answers.
-        assert len(census) == 38, census
+        # 42 from the human-tool read API, which added `GET /auth/me`,
+        # `GET /auth/me/signing-identity` and the two `GET /review/reports/...` reads.
+        assert len(census) == 42, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

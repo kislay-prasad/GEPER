@@ -65,6 +65,10 @@ SESSION_ABSOLUTE_HOURS = 24
 SESSION_IDLE_MINUTES = 30
 BACKUP_CODE_COUNT = 8
 
+# The roles that may read a report's state and revision through the staff read API (see
+# DataAccess.read_report_status). A pilot policy choice, kept in one place.
+REPORT_READ_ROLES = ("Interpreter", "Approver", "Auditor", "Administrator")
+
 ROLES = (
     "Orderer",
     "Lab technician",
@@ -2282,6 +2286,12 @@ class DataAccess:
         held = {a.role for a in self.get_user_roles(session)}
         if role not in held:
             raise AuthorizationError(f"This action requires the {role} role.")
+
+    def _require_any_role(self, session: Session, roles: Sequence[str]) -> None:
+        """Like `_require_role`, satisfied by holding ANY ONE of `roles`. The message names them all."""
+        held = {a.role for a in self.get_user_roles(session)}
+        if not held.intersection(roles):
+            raise AuthorizationError(f"This action requires one of the roles: {', '.join(roles)}.")
 
     # ── users ────────────────────────────────────────────────────────────────
 
@@ -5755,6 +5765,63 @@ class DataAccess:
             "state": row[4],
             "is_retracted": self._read_retraction_row(session, report_id) is not None,
         }
+
+    # ── Staff reads for the HUMAN TOOLS (sign-off, revision refresh, LIMS export), over HTTP ──────
+    #
+    # These three exist so that a person's tool can learn a report's authoritative state through
+    # the authenticated HTTP API and never hold a database credential. Each is a READ that wraps
+    # an existing, organisation-scoped read behind a role gate; none writes, none widens what the
+    # underlying read returns, and none has a counterpart that names another organisation or user.
+    #
+    # WHO MAY READ. A report's state and revision are clinical-governance information, not
+    # something every member of staff needs: the roles that review, approve, audit or administer
+    # reports may (REPORT_READ_ROLES); an Orderer or a Lab technician may not. This list is a POLICY
+    # choice made for the pilot and is stated here so it can be reviewed and changed in one place.
+
+    @auditable(
+        action="report_status_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action; the sign-off or export that uses it is itself audited",
+    )
+    @transactional
+    def read_report_status(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """`get_report` for a staff reader: the report's state, interpretation and retraction flag, or
+        None for an unknown or cross-organisation id. Raises AuthorizationError without a reading role."""
+        self._require_any_role(session, REPORT_READ_ROLES)
+        return self.get_report(session, report_id)
+
+    @auditable(
+        action="report_revision_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action; the sign-off or export that uses it is itself audited",
+    )
+    @transactional
+    def read_report_revision(self, session: Session, report_id: uuid.UUID) -> dict[str, Any]:
+        """`get_report_revision` for a staff reader. `{}` means a successful lookup found nothing to
+        say; EVERY failure is an exception -- NotFoundError for an unknown or cross-organisation id,
+        AuthorizationError without a reading role, BrokenRevisionRecordError for a record that cannot
+        be read into a true sentence -- and none is ever turned into an empty answer."""
+        self._require_any_role(session, REPORT_READ_ROLES)
+        return self.get_report_revision(session, report_id)
+
+    @auditable(
+        action="signing_identity_read",
+        resource_type="user",
+        requires_session=True,
+        auditable=False,
+        reason="a read of the caller's own printed identity; the sign-off that uses it is itself audited",
+    )
+    @transactional
+    def read_own_signing_identity(self, session: Session) -> Dict[str, Any]:
+        """The CALLER'S OWN name, registration number and hospital (get_signing_identity for
+        `session.user_id`). There is no parameter naming anybody else: a person's tool asks who it is
+        signing as, and a colleague's identity is not reachable through it. Raises
+        IncompleteClinicianIdentityError when the record lacks any of the three."""
+        return self.get_signing_identity(session, session.user_id)
 
     # ── Phase 4c: Document discovery (all interpretations, including orphaned) ─────
     @auditable(

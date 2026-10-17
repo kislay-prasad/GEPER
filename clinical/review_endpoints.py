@@ -9,6 +9,8 @@ released one, over HTTP, and the FOURTH prefix this service serves.
     POST /review/reports/{report_id}/submission     Interpreter  submit_for_review
     POST /review/reports/{report_id}/approval       Approver     approve_report
     POST /review/reports/{report_id}/release        Approver     release_report  (to the patient portal)
+    GET  /review/reports/{report_id}                Interpreter, Approver, Auditor, Administrator   read_report_status
+    GET  /review/reports/{report_id}/revision       (same roles)                                    read_report_revision
 
 EVERY ROUTE IS ONE DOMAIN CALL. `@auditable` commits after each audit row it
 writes, so a handler that called two decorated methods ("record the claim, then
@@ -38,8 +40,12 @@ WHAT THIS SURFACE DOES NOT DO, AND WHY IT IS NOT A GAP IN THE SURFACE:
   read. An external-recipient release (a LIMS, a referring clinician) is a
   separate decision and a separate route; the domain's `_release_report`
   still accepts any consumer for it.
-* IT DOES NOT READ A REPORT BACK. Staff report/claim reads are a separate
-  stage; the patient portal already serves a released report to its patient.
+* IT DOES NOT SERVE A REPORT'S CONTENT OR ITS CLAIMS. The two GET routes added for the human
+  tools (sign-off, revision refresh, LIMS export) return a report's STATE, its interpretation,
+  whether it is retracted, and its authoritative REVISION facts -- what a person's tool needs
+  in order to refuse or to state a status, so that tool never holds a database credential. The
+  report document itself is rendered outside this schema, and the patient portal serves a
+  released report to its patient.
 * IT DOES NOT ADD OR REMOVE ANY REPORT STATE. Transitions are the domain's
   (draft -> under_review -> approved -> released) and an out-of-order call is a
   400 carrying the state the report was actually in.
@@ -54,11 +60,22 @@ that does not exist: 404, same body.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from clinical.admin_endpoints import _forbidden, _not_found, _target
-from clinical.data_access import AuthorizationError, DataAccess, NotFoundError, Session
+from clinical.data_access import (
+    AuthorizationError,
+    BrokenRevisionRecordError,
+    DataAccess,
+    IncompleteClinicianIdentityError,
+    NotFoundError,
+    Session,
+)
 from clinical.endpoints import _get_data_access, _get_session
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -254,3 +271,104 @@ async def release_report(
     except ValueError as exc:
         raise _bad_request(exc)
     return ReleaseRecorded(release_id=str(release_id))
+
+
+# ─── Staff reads for the human tools ─────────────────────────────────────────
+
+
+class ReportStatus(BaseModel):
+    """A report's state and identity within the CALLER'S organisation. No content, no claims."""
+
+    report_id: str
+    interpretation_id: str
+    state: str
+    is_retracted: bool
+    created_at: str
+
+
+class ReportRevision(BaseModel):
+    """
+    `revision` is the authoritative revision block. THE KEY IS ALWAYS PRESENT ON A 200, and `{}` means
+    the lookup SUCCEEDED and found nothing to say. Every failure is a non-200 status, so an empty
+    object can never be mistaken for "the lookup failed".
+    """
+
+    report_id: str
+    revision: dict[str, Any]
+
+
+class CodedErrorResponse(BaseModel):
+    detail: str
+    code: str
+
+
+REVISION_UNREADABLE = "revision_record_unreadable"
+
+
+@router.get(
+    "/reports/{report_id}",
+    response_model=ReportStatus,
+    summary="A report's state, interpretation and retraction flag in the CALLER'S OWN organisation",
+    responses=_COMMON,
+)
+async def read_report_status(
+    report_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> ReportStatus:
+    """`DataAccess.read_report_status`, and nothing else. The organisation is `Session.org_id`; a report in
+    another organisation is the same 404 as one that does not exist."""
+    target = _target(report_id)
+    try:
+        report = dao.read_report_status(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if report is None:
+        raise _not_found()
+    return ReportStatus(
+        report_id=str(report["id"]),
+        interpretation_id=str(report["interpretation_id"]),
+        state=str(report["state"]),
+        is_retracted=bool(report["is_retracted"]),
+        created_at=report["created_at"].isoformat(),
+    )
+
+
+@router.get(
+    "/reports/{report_id}/revision",
+    response_model=ReportRevision,
+    summary="A report's authoritative revision facts in the CALLER'S OWN organisation",
+    responses={
+        **_COMMON,
+        500: {
+            "model": CodedErrorResponse,
+            "description": "The revision record cannot be read (code revision_record_unreadable)",
+        },
+    },
+)
+async def read_report_revision(
+    report_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+):
+    """`DataAccess.read_report_revision`, and nothing else.
+
+    NO FAILURE BECOMES AN EMPTY ANSWER. An authorization refusal is 403, an unknown or cross-organisation
+    report is 404, a revision record that cannot be read into a true sentence is a 500 carrying
+    `code: revision_record_unreadable`, and any other failure is the service's ordinary 500. Only a
+    lookup that SUCCEEDED returns 200, and then `revision` may legitimately be `{}`."""
+    target = _target(report_id)
+    try:
+        revision = dao.read_report_revision(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    except (BrokenRevisionRecordError, IncompleteClinicianIdentityError) as exc:
+        # The second case is a retraction (or amendment) whose author's printed identity is incomplete: the
+        # revision cannot be STATED truthfully, which is exactly what "unreadable" means to a tool.
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": str(exc), "code": REVISION_UNREADABLE},
+        )
+    return JSONResponse(content=jsonable_encoder({"report_id": str(target), "revision": revision}))

@@ -26,12 +26,14 @@ import uuid
 from typing import Iterator, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from clinical.data_access import (
     GENERIC_AUTH_ERROR,
     AuthenticationError,
     DataAccess,
+    IncompleteClinicianIdentityError,
     NotFoundError,
     Session,
 )
@@ -363,6 +365,73 @@ def _clear_session_cookie(response: Response, name: str, path: str) -> None:
         httponly=True,
         secure=True,
         samesite="strict",
+    )
+
+
+class CallerIdentity(BaseModel):
+    """Who the session belongs to. Nothing else: no roles, no e-mail, no credential."""
+
+    user_id: str
+    org_id: str
+
+
+class SigningIdentity(BaseModel):
+    """The caller's OWN printed identity (R10), read from their user record."""
+
+    user_id: str
+    full_name: str
+    registration_number: str
+    hospital: str
+
+
+class IncompleteIdentityResponse(BaseModel):
+    detail: str
+    code: str
+
+
+INCOMPLETE_IDENTITY = "incomplete_clinician_identity"
+
+
+@session_router.get(
+    "/auth/me",
+    response_model=CallerIdentity,
+    summary="The authenticated STAFF caller's own user and organisation",
+    responses={401: {"model": ErrorResponse, "description": "Not authenticated"}},
+)
+async def staff_me(session: Session = Depends(_get_session)) -> CallerIdentity:
+    """Answers from the session alone. A tool that has just logged in over HTTP learns its own
+    `user_id` here (the login response has no body). There is no parameter, so it cannot be pointed
+    at anybody else."""
+    return CallerIdentity(user_id=str(session.user_id), org_id=str(session.org_id))
+
+
+@session_router.get(
+    "/auth/me/signing-identity",
+    response_model=SigningIdentity,
+    summary="The authenticated STAFF caller's OWN name, registration number and hospital",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        409: {"model": IncompleteIdentityResponse, "description": "The user record lacks a printed-identity field"},
+    },
+)
+async def staff_signing_identity(
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+):
+    """`DataAccess.read_own_signing_identity`. SELF ONLY BY CONSTRUCTION: the route takes no user id, so a
+    colleague's registration number is not reachable through it. A record missing any of the three values
+    is a 409 naming which, never a partial identity: a report is not printed with a blank signature line."""
+    try:
+        identity = dao.read_own_signing_identity(session)
+    except IncompleteClinicianIdentityError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT, content={"detail": str(exc), "code": INCOMPLETE_IDENTITY}
+        )
+    return SigningIdentity(
+        user_id=str(identity["user_id"]),
+        full_name=identity["full_name"],
+        registration_number=identity["registration_number"],
+        hospital=identity["hospital"],
     )
 
 

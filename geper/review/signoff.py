@@ -180,6 +180,7 @@ from report.models import compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from report.summary_short import generate_short_pdf
+from review.clinical_http import HttpClinicalDataAccess
 from review.revision_status import ReportRevisionStatus, fetch_report_revision_status
 from utils.exceptions import SignoffError
 from utils.logger import get_logger
@@ -974,6 +975,46 @@ def _clinical_login(
     return dao, session
 
 
+CLINICAL_URL_ENV = "GEPER_CLINICAL_URL"
+
+
+def _open_clinical_http(clinical_url: str) -> HttpClinicalDataAccess:
+    """The HTTPS client for the clinical service. A seam: tests substitute one wired to an in-process app."""
+    return HttpClinicalDataAccess(clinical_url)
+
+
+def _human_tool_access(clinical_url: Optional[str], data_access: Any) -> Tuple[Any, bool]:
+    """
+    (data access, whether this call opened it) for a tool a PERSON runs: report-revision refresh and the LIMS
+    export's status lookup. These never connect to the database. A caller-supplied `data_access` is used as given
+    (tests, and any server-side caller that already holds one); otherwise the clinical service is reached over
+    HTTPS at `clinical_url` or $GEPER_CLINICAL_URL, and with neither the operation is refused rather than falling
+    back to CLINICAL_DSN -- a database credential must not be needed on this machine.
+    """
+    if data_access is not None:
+        return data_access, False
+    url = clinical_url or os.getenv(CLINICAL_URL_ENV)
+    if not url:
+        raise SignoffError(
+            "This tool reads the clinical record through the clinical service's HTTPS API and never connects to "
+            f"the database. Supply the service address (CLI: --clinical-url, or the environment variable "
+            f"{CLINICAL_URL_ENV}). Nothing has been changed."
+        )
+    return _open_clinical_http(url), True
+
+
+def _close_if_opened(access: Any, opened: bool) -> None:
+    """End a session this call opened. Never raises, and never touches a caller-supplied object."""
+    if not opened:
+        return
+    close = getattr(access, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:  # noqa: BLE001 -- failing to log out must not mask the operation's real outcome
+            pass
+
+
 def _linked_revision_status(dao: Any, session: Any, link: Dict[str, Any]) -> ReportRevisionStatus:
     """
     The authoritative, VALIDATED revision status of a linked run's report, read
@@ -989,15 +1030,25 @@ def _linked_revision_status(dao: Any, session: Any, link: Dict[str, Any]) -> Rep
 
 
 def fetch_linked_revision_status(
-    link: Dict[str, Any], credentials: Optional[ClinicalCredentials], data_access: Any = None
+    link: Dict[str, Any],
+    credentials: Optional[ClinicalCredentials],
+    data_access: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Tuple[ReportRevisionStatus, uuid.UUID]:
     """
     (status, acting user id) for a linked run: authenticate as the sign-off tooling
     does, then read and validate the report's status. For callers (the LIMS
     export) that need the status but are not themselves a sign-off operation.
+
+    A PERSON's tool: it reaches the clinical service over HTTPS (`clinical_url` or
+    $GEPER_CLINICAL_URL) and never the database. See `_human_tool_access`.
     """
-    dao, session = _clinical_login(link, credentials, data_access)
-    return _linked_revision_status(dao, session, link), session.user_id
+    access, opened = _human_tool_access(clinical_url, data_access)
+    try:
+        dao, session = _clinical_login(link, credentials, access)
+        return _linked_revision_status(dao, session, link), session.user_id
+    finally:
+        _close_if_opened(access, opened)
 
 
 def _with_revision(document: Dict[str, Any], status: Optional[ReportRevisionStatus]) -> Dict[str, Any]:
@@ -2039,6 +2090,7 @@ def refresh_revision(
     output_dir: str,
     clinical_credentials: Optional[ClinicalCredentials] = None,
     clinical_data_access: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Regenerate a LINKED, SIGNED run's report as a CURRENT-STATUS COPY: the same
@@ -2092,7 +2144,9 @@ def refresh_revision(
             "no clinical status to refresh. Nothing has been changed."
         )
     try:
-        return _refresh_revision(output_dir, results_path, link, clinical_credentials, clinical_data_access)
+        return _refresh_revision(
+            output_dir, results_path, link, clinical_credentials, clinical_data_access, clinical_url
+        )
     except Exception as exc:
         _append_audit_log(
             output_dir,
@@ -2113,6 +2167,7 @@ def _refresh_revision(
     link: Dict[str, Any],
     clinical_credentials: Optional[ClinicalCredentials],
     clinical_data_access: Any,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     manifest_path = _manifest_path(output_dir)
     if not os.path.exists(manifest_path):
@@ -2164,8 +2219,13 @@ def _refresh_revision(
                 "which report this run is. Nothing has been changed."
             )
 
-    dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
-    status = _linked_revision_status(dao, session, link)
+    access, opened = _human_tool_access(clinical_url, clinical_data_access)
+    try:
+        dao, session = _clinical_login(link, clinical_credentials, access)
+        status = _linked_revision_status(dao, session, link)
+    finally:
+        # The status is read; nothing below talks to the clinical service. End the session promptly.
+        _close_if_opened(access, opened)
     previous = _read_previous_status(output_dir)
 
     render = copy.deepcopy(document)

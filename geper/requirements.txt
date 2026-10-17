@@ -334,7 +334,8 @@ pypdf>=4.0.0
 # httpx: starlette's TestClient (`from fastapi.testclient import TestClient`,
 # api/tests/test_interpretations_api.py and tests/test_api_structures.py)
 # imports httpx2, falls back to httpx, and raises RuntimeError at import if
-# neither is installed. geper's own code never imports httpx. Undeclared
+# neither is installed. Since the human-tool read API, review/clinical_http.py
+# ALSO imports httpx directly (the HTTPS client for the clinical service). Undeclared
 # until 2026-09-11. Before then it arrived ONLY transitively: transformers
 # 5.x pulled huggingface_hub 1.x, which depends on httpx. Pinning
 # transformers==4.56.2 (above) resolves huggingface_hub 0.36.2, which does

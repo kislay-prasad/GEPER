@@ -1009,7 +1009,9 @@ def _status_for_cli_export(run_dir: str, args: Any, credentials_of: Any, documen
         link = _read_clinical_link(run_dir)
         if link is None:
             return None
-        status, _actor = fetch_linked_revision_status(link, credentials_of(args))
+        status, _actor = fetch_linked_revision_status(
+            link, credentials_of(args), clinical_url=getattr(args, "clinical_url", None)
+        )
         return status
     except Exception as exc:
         _append_export_audit_log(
@@ -1044,9 +1046,10 @@ def _main() -> None:
     # A run linked to a clinical record (clinical_link.json beside geper_results.json) is exported with
     # its report's CURRENT clinical status, read and validated at export time; the clinical login is the
     # same one the sign-off tooling uses. Unused for an unlinked run.
-    from review.cli import _add_clinical_arguments, _clinical_credentials
+    from review.cli import _add_clinical_arguments, _add_clinical_url_argument, _clinical_credentials
 
     _add_clinical_arguments(parser)
+    _add_clinical_url_argument(parser)
     args = parser.parse_args()
 
     if not args.json_out and not args.csv_out:

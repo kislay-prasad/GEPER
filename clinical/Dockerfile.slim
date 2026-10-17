@@ -1,0 +1,107 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# clinical/Dockerfile.slim -- THE CLINICAL SERVICE IMAGE, WITHOUT THE PIPELINE
+# =============================================================================
+# `clinical/Dockerfile` (unchanged, kept) builds FROM the multi-gigabyte
+# genomic-pipeline image and inherits all of it. The clinical package needs none
+# of that: it imports fastapi, pydantic, psycopg, bcrypt, pyotp and cryptography
+# plus the standard library (measured by import census; no clinical test imports
+# geper either). This file builds the service from a plain Python base.
+#
+# TARGETS
+#   runtime  (default)  the service. Non-root, no test tools, no tests.
+#   test                runtime + pytest/httpx. Expects the repository checkout
+#                       bind-mounted at /repo (read-only is enough) and a
+#                       DISPOSABLE PostgreSQL; the suite resets its schema.
+#
+# BUILD (from the repository root; the context is filtered by
+# clinical/Dockerfile.slim.dockerignore, an allow-list, so it is a few MB):
+#   docker build -f clinical/Dockerfile.slim -t geper-clinical:slim .
+#   docker build -f clinical/Dockerfile.slim --target test -t geper-clinical:slim-test .
+#
+# WHAT IS PINNED
+#   * The Python base image, by DIGEST, so two builds start from the same bytes.
+#     The cost is that OS security updates do NOT arrive on their own: the
+#     digest must be moved deliberately (docs/CLINICAL_DEPLOYMENT.md).
+#   * Every Python package, direct and transitive, in requirements.lock. Not
+#     hash-verified; recorded as an unresolved risk.
+#
+# WHAT THIS FILE DELIBERATELY DOES NOT DO
+#   * Terminate TLS. The service speaks plain HTTP on 8000. Its session cookie
+#     is `Secure`, so a browser will only use it over HTTPS: a remote deployment
+#     needs a trusted TLS-terminating reverse proxy in front (documented, not
+#     shipped). Do not publish port 8000 on a public interface.
+#   * Trust forwarded headers. uvicorn's default trusts only 127.0.0.1, which
+#     means "nobody" for a container behind a proxy. A deployment that wants the
+#     real client address sets FORWARDED_ALLOW_IPS to its proxy's explicit
+#     address or subnet. Never `*`.
+#   * Choose a worker count beyond one (see CMD). The login throttle is
+#     per-process, so N workers multiply its limits by N.
+# =============================================================================
+
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
+
+# -- deps: build the virtualenv ------------------------------------------------
+FROM ${PYTHON_IMAGE} AS deps
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+WORKDIR /build
+COPY clinical/requirements.lock ./requirements.lock
+# --no-deps: the lock is complete, so pip resolves nothing. `pip check` then
+# fails the build if the locked set is not self-consistent.
+RUN python -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-deps -r requirements.lock \
+ && /opt/venv/bin/pip check
+
+# -- runtime: the service ------------------------------------------------------
+FROM ${PYTHON_IMAGE} AS runtime
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# A fixed, unprivileged identity with no shell and no home directory. The uid is
+# fixed so a host-side secret file or volume can be given to it deliberately.
+RUN groupadd --system --gid 10001 clinical \
+ && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin clinical
+
+COPY --from=deps /opt/venv /opt/venv
+
+WORKDIR /app
+# Explicit COPY lines, not `COPY clinical`, so the tests directory cannot be
+# copied whatever the ignore file says. The code is owned by root and not
+# writable by the service user.
+COPY clinical/*.py /app/clinical/
+COPY clinical/models /app/clinical/models
+COPY clinical/migrations /app/clinical/migrations
+COPY clinical/schema.sql /app/clinical/schema.sql
+COPY clinical/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \
+ && chmod -R go-w,a+rX /app \
+ && python -m compileall -q /app/clinical
+
+USER 10001:10001
+EXPOSE 8000
+
+# /readyz, not /healthz: a process that boots and fails every request passes a
+# liveness probe. python, not curl: curl is not installed.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import sys,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4); sys.exit(0 if r.status==200 else 1)"]
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+# ONE WORKER by decision. Raising it is a deliberate act with a cost stated above.
+CMD ["python", "-m", "uvicorn", "clinical.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-server-header"]
+
+# -- test: runtime plus the test tools -----------------------------------------
+FROM runtime AS test
+USER root
+COPY clinical/requirements-dev.lock /tmp/requirements-dev.lock
+RUN /opt/venv/bin/pip install --no-deps --no-cache-dir -r /tmp/requirements-dev.lock \
+ && /opt/venv/bin/pip check \
+ && rm /tmp/requirements-dev.lock
+USER 10001:10001
+# The suite runs against the MOUNTED checkout, never the copy baked into /app:
+# several tests read files outside clinical/ (geper/, .env.example), and
+# testing a baked copy would test something other than the commit under review.
+WORKDIR /repo
+ENV PYTHONPATH=/repo
+CMD ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rfEs", "clinical/tests"]

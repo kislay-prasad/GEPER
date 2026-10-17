@@ -423,7 +423,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
-          cache-dependency-path: clinical/requirements.txt
+          cache-dependency-path: clinical/requirements-dev.lock
 
       - name: Install shared package (subprocess-reachable import resolution)
         working-directory: .
@@ -438,8 +438,15 @@ jobs:
           # pair does -- silently, and in whichever direction nobody is looking. The
           # earlier form of this line had to be patched in a hotfix precisely because
           # it was missing fastapi and httpx while the service's real needs lived
-          # nowhere. cache-dependency-path above already points at this file.
-          pip install -r requirements.txt
+          # nowhere.
+          #
+          # Stage 4: the declaration is split. requirements.txt is what the service
+          # needs; requirements-dev.txt adds the test tools; each has a generated
+          # .lock with every package pinned. This job installs the DEV LOCK, so CI
+          # tests the same package set the service image ships (plus pytest and
+          # httpx) rather than whatever the index resolves today. cache-dependency-path
+          # above points at the same file.
+          pip install -r requirements-dev.lock
 
       - name: Run pytest
         run: python -m pytest tests/ -v -rs

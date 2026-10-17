@@ -71,6 +71,16 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Clinical deployment (docs/CLINICAL_DEPLOYMENT.md). File-based secrets live under
+# secrets/; .env.clinical is the non-secret Compose configuration a deployer fills
+# in from .env.clinical.example. Neither may ever be committed. `/secrets/**` as
+# well as `/secrets/`, because a bare directory pattern does not match a path
+# inside a directory that does not exist yet.
+/secrets/
+/secrets/**
+.env.clinical
+!.env.clinical.example
 config.yaml
 !config.yaml.example
 

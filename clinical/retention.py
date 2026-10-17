@@ -365,6 +365,15 @@ class RetentionPrincipal:
         docstring), also tombstone everything hanging off it that has no
         standing of its own:
 
+          0. report_retractions keyed directly on this report_id, and the
+             retraction_notifications debts hanging off each -- HUMAN RULING
+             E8 (w122). "No change to the retention clock; retraction rows
+             cascade-tombstone with their report." The eligibility query in
+             _purge_reports above is deliberately UNCHANGED: a retraction
+             does not shorten the window and does not block the purge the
+             way a live amendment does (D6). A retraction is an artefact of
+             a specific clinical action on a specific report, which is the
+             human's own stated category for the five tables already here.
           1. release_events keyed directly on this report_id.
           2. amendments where THIS report is the ORIGINAL
              (original_report_id) -- not the amendment side
@@ -394,6 +403,27 @@ class RetentionPrincipal:
         (or more) rows as four separate purge decisions when there was
         only ever one.
         """
+        retraction_rows = self._query(
+            "SELECT id FROM report_retractions WHERE org_id = %s AND report_id = %s AND tombstoned_at IS NULL",
+            (org_id, report_id),
+        )
+        for (retraction_id,) in retraction_rows:
+            self._execute(
+                "UPDATE report_retractions SET tombstoned_at = %s, tombstoned_by = %s WHERE org_id = %s AND id = %s",
+                (now, actor_id, org_id, retraction_id),
+            )
+            notification_debt_rows = self._query(
+                "SELECT id FROM retraction_notifications "
+                "WHERE org_id = %s AND retraction_id = %s AND tombstoned_at IS NULL",
+                (org_id, retraction_id),
+            )
+            for (debt_id,) in notification_debt_rows:
+                self._execute(
+                    "UPDATE retraction_notifications SET tombstoned_at = %s, tombstoned_by = %s "
+                    "WHERE org_id = %s AND id = %s",
+                    (now, actor_id, org_id, debt_id),
+                )
+
         release_event_rows = self._query(
             "SELECT id FROM release_events WHERE org_id = %s AND report_id = %s AND tombstoned_at IS NULL",
             (org_id, report_id),

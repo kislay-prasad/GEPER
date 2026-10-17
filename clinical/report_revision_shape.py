@@ -36,9 +36,9 @@ Names only. No types, no validation, no logic -- validation belongs to
 `normalize_report_revision`, which is the module that refuses a bad block.
 """
 
-# The four states a document may be in. Any other top-level key is a caller
+# The five states a document may be in. Any other top-level key is a caller
 # inventing a state the renderer has never heard of.
-REVISION_KEYS = frozenset({"amends", "superseded_by", "reanalysis_of", "reanalysed_since"})
+REVISION_KEYS = frozenset({"retracted", "amends", "superseded_by", "reanalysis_of", "reanalysed_since"})
 
 # Banner 1: this report IS an amendment of another one.
 AMENDS_REQUIRED = frozenset(
@@ -81,3 +81,27 @@ REANALYSED_SINCE_ITEM_REQUIRED = frozenset({"interpretation_id", "created_at"})
 
 # R2/R4: the only two things an `*_basis` value may say.
 DATE_BASES = frozenset({"released", "approved"})
+
+# Banner 0 (w122): this report HAS BEEN RETRACTED. Renders FIRST, ahead of
+# superseded -- "do not act on this document" outranks every other statement,
+# and retraction outranks supersession because a superseded report has a
+# successor to obtain and a retracted one may not.
+RETRACTED_REQUIRED = frozenset(
+    {
+        # E1: the report's own issue moment, and (the same *_basis discipline
+        # as AMENDS/SUPERSEDED_BY) whether it was RELEASED or only APPROVED.
+        # A report approved but never issued must never be described to a
+        # clinician as having been issued.
+        "issued_at",
+        "issued_basis",
+        "retracted_at",
+        "retracted_by",
+        "reason",
+    }
+)
+
+# E4: a replacement is OPTIONAL, so these two travel together or not at all.
+# `replacement_retained` is False once retention has tombstoned the
+# replacement -- R8's discipline, applied one table over: name it as gone
+# rather than sending the reader to fetch it.
+RETRACTED_REPLACEMENT_FIELDS = frozenset({"replacement_report_id", "replacement_retained"})

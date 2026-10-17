@@ -59,6 +59,7 @@ import pathlib
 import uuid
 
 import pytest
+from clinical.data_access import session_audit_ref
 
 DSN = os.getenv("CLINICAL_TEST_DSN")
 SCHEMA_PATH = pathlib.Path(__file__).resolve().parent.parent / "schema.sql"
@@ -476,7 +477,9 @@ class TestThePatientLogoutIsAuditedInItsOwnOrganisation:
         assert len(visible) == 1, visible
         org_id, user_id, details = visible[0]
         assert org_id == world["a"]["org_id"], visible
-        assert details["session_id"] == cookie, visible
+        # w173: a REFERENCE, never the session id (which is the portal cookie)
+        assert details["session_ref"] == session_audit_ref(cookie), visible
+        assert "session_id" not in details and cookie not in repr(visible), visible
 
     def test_the_row_names_no_staff_user_because_a_patient_is_not_one(self, client, dao, world):
         """
@@ -537,8 +540,9 @@ class TestThePatientLogoutIsAuditedInItsOwnOrganisation:
         a_visible = _audited_logouts(dao, world["a"]["staff"])
         b_visible = _audited_logouts(dao, world["b"]["staff"])
 
-        assert [d["session_id"] for _, _, d in a_visible] == [a_cookie], a_visible
-        assert [d["session_id"] for _, _, d in b_visible] == [b_cookie], b_visible
+        assert [d["session_ref"] for _, _, d in a_visible] == [session_audit_ref(a_cookie)], a_visible
+        assert [d["session_ref"] for _, _, d in b_visible] == [session_audit_ref(b_cookie)], b_visible
+        assert a_cookie not in repr(a_visible) and b_cookie not in repr(b_visible)
         assert all(org == world["a"]["org_id"] for org, _, _ in a_visible), a_visible
         assert all(org == world["b"]["org_id"] for org, _, _ in b_visible), b_visible
 

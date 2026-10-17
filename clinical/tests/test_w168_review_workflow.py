@@ -620,6 +620,9 @@ class TestTheReviewRoutesAreRegisteredOnceBehindTheStaffSession:
         "/review/reports/{report_id}/submission": ("POST",),
         "/review/reports/{report_id}/approval": ("POST",),
         "/review/reports/{report_id}/release": ("POST",),
+        # The human-tool read API: two role-gated GETs on the same router.
+        "/review/reports/{report_id}": ("GET",),
+        "/review/reports/{report_id}/revision": ("GET",),
     }
 
     def test_each_is_served_once_with_the_declared_method_and_the_staff_dependency(self):
@@ -643,7 +646,7 @@ class TestTheReviewRoutesAreRegisteredOnceBehindTheStaffSession:
 
         tree = ast.parse(pathlib.Path(review_endpoints.__file__).read_text(encoding="utf-8"))
         handlers = [n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)]
-        assert len(handlers) == 5
+        assert len(handlers) == 7  # five writes and the two reads
         for handler in handlers:
             calls = [
                 n

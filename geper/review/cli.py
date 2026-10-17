@@ -118,6 +118,16 @@ def _add_clinical_arguments(subparser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_clinical_url_argument(subparser: argparse.ArgumentParser) -> None:
+    """The clinical service address for the tools a PERSON runs without a database credential."""
+    subparser.add_argument(
+        "--clinical-url",
+        help="Base address of the clinical service, https:// only (default: the environment variable "
+        "GEPER_CLINICAL_URL). This tool reads the clinical record through that service's authenticated "
+        "API and never connects to the database.",
+    )
+
+
 def _clinical_credentials(args: argparse.Namespace) -> Optional[ClinicalCredentials]:
     """
     Credentials, or None when no --clinical-email was given.
@@ -250,6 +260,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--output-dir", required=True, help=f"An existing, signed, linked {SHORT_NAME} --output-dir."
     )
     _add_clinical_arguments(refresh_parser)
+    _add_clinical_url_argument(refresh_parser)
     return parser
 
 
@@ -353,6 +364,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             result = _refresh_revision(
                 output_dir=args.output_dir,
                 clinical_credentials=_clinical_credentials(args),
+                clinical_url=args.clinical_url,
             )
             print(f"Current-status copy written (signed originals untouched): {result}")
         else:  # pragma: no cover - argparse's `required=True` on the subparsers already prevents this

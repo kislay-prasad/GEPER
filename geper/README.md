@@ -1713,12 +1713,22 @@ their SHA-256s). `refresh-revision` is how a linked run's report is shown with i
 clinical status:
 
 ```bash
-python review/cli.py refresh-revision --output-dir ./out     --clinical-email you@lab.example     # password: the env var GEPER_CLINICAL_PASSWORD
+python review/cli.py refresh-revision --output-dir ./out \
+    --clinical-url https://clinical.example --clinical-email you@lab.example     # password: the env var GEPER_CLINICAL_PASSWORD
 ```
 
-It authenticates as `approve` does, checks that the link's organisation, interpretation and
-report agree with the clinical record, reads the report's revision (organisation-scoped
-`DataAccess.get_report_revision`), and writes four NEW files beside the signed ones:
+**It reaches the clinical record over the clinical service's authenticated HTTPS API and never
+connects to the database** -- no `CLINICAL_DSN`, no database credential, on the machine a person
+works at. `--clinical-url` (or the environment variable `GEPER_CLINICAL_URL`) must be an `https://`
+address; without one the command refuses and changes nothing, rather than falling back to a
+database connection. The account needs the Interpreter, Approver, Auditor or Administrator role
+(`GET /review/reports/{id}` and `GET /review/reports/{id}/revision`); the service answers only for
+the caller's own organisation. The sign-off writes (`approve`, `override`, `withdraw`) still use a
+direct connection in this phase.
+
+It logs in through that API, checks that the link's organisation, interpretation and
+report agree with the clinical record, reads the report's revision (organisation-scoped,
+the same answer `DataAccess.get_report_revision` gives), and writes four NEW files beside the signed ones:
 `report_current.pdf`, `report_short_current.pdf`, `report_current.md` and
 `report_revision_status.json` (the machine-readable `is_retracted` flag lives here, not in
 the signed `geper_results.json`). Each rendering opens with a notice, **CURRENT REPORT STATUS — NOT A NEW CLINICAL

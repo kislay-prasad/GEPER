@@ -136,7 +136,10 @@ inconsistent revision record -- the export is refused (`LIMSExportBlockedError`)
 `export_blocked` entry is written to the run's audit log. A linked report is never
 exported without its status. The review/sign-off requirement above still applies first.
 The CLI takes the same clinical flags as `geper-signoff`
-(`--clinical-email`, `--clinical-password-env`, `--clinical-totp`).
+(`--clinical-email`, `--clinical-password-env`, `--clinical-totp`) and, for a linked run,
+the clinical service's address (`--clinical-url https://...`, or `GEPER_CLINICAL_URL`): the status is
+read through the service's authenticated HTTPS API, never a database connection, and without an
+address a linked export is refused like any other unreadable status.
 
 **Known limit.** The library functions cannot tell that a document belongs to a linked
 run unless they are told where the run lives (`run_dir=`). The CLI always does. A caller

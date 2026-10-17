@@ -482,7 +482,7 @@ remove this class of problem; so would binding sessions to a client. Neither is 
 The image runs **one** uvicorn worker. Two facts from the code and a measurement bear
 on raising it:
 
-* All 36 route handlers are `async def` and call blocking database and bcrypt code
+* All route handlers (42 operations at this writing) are `async def` and call blocking database and bcrypt code
   directly, so a worker serves one request at a time; a login (bcrypt) blocks it. The
   number of workers is therefore the concurrency. Capacity has **not** been measured.
 * The login throttle (10 attempts per source per 60 seconds, counting successes) is
@@ -493,6 +493,25 @@ on raising it:
 
 Each request opens its own database connection (no pool), so connections are at most
 the worker count plus the jobs.
+
+## Tools a person runs: the read API
+
+Report-revision refresh and the LIMS export's status lookup are run by people. They hold **no database
+credential**: they log in to this service over HTTPS and call four read-only routes.
+
+| Route | Roles | Answers |
+|---|---|---|
+| `GET /auth/me` | any staff session | the caller's own `user_id` and `org_id` |
+| `GET /auth/me/signing-identity` | any staff session | the caller's OWN printed name, registration number, hospital (409 `incomplete_clinician_identity` if any is missing). No route takes another user's id. |
+| `GET /review/reports/{id}` | Interpreter, Approver, Auditor, Administrator | state, interpretation id, `is_retracted`, creation time |
+| `GET /review/reports/{id}/revision` | same | the authoritative revision block; `{}` only when the lookup succeeded and found nothing |
+
+Organisation isolation is the session's `org_id` (a report of another organisation is the same 404 as
+an absent one). An unreadable revision record is a 500 carrying `code: revision_record_unreadable`;
+an authorization refusal is 403; neither is ever returned as an empty revision. The client
+(`geper/review/clinical_http.py`) speaks `https://` only, follows no redirects, and offers none of the
+sign-off writes. **Not done in this phase:** the writes (`approve`, `override`, `withdraw`) still need a
+direct connection, and the background workers still hold the application's database credentials.
 
 ## Running the tests
 

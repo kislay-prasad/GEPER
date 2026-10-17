@@ -419,3 +419,37 @@ class TestFindInterpretationBySubmissionKey:
         found = dao.find_interpretation_by_submission_key(system, recorded.submission_key)
         assert found["report_id"] == recorded.report_id
         assert found["report_id"] != amendment_report_id
+
+
+def _audit_rows(conn, action):
+    """(resource_id, details-as-text) of every SUCCESS audit row for an action: the
+    CONTENT of the row, not a count of rows (a row of '<none>' counts the same)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT resource_id, coalesce(details::text, '') FROM audit_log "
+            "WHERE action = %s AND outcome = 'success' ORDER BY log_id",
+            (action,),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+class TestThePipelineResultAuditRowNamesTheInterpretationOnly:
+    def test_the_row_records_the_interpretation_id_and_never_the_submission_key(self, dao, conn, org_a, vcf):
+        """RecordedPipelineResult carries the interpretation, report, VCF and run ids AND
+        the submission_key. The audit subject is the interpretation: that one id, and
+        nothing else from the result."""
+        vcf_path, vcf_hash = vcf
+        system = dao._create_system_session(org_a["org_id"])
+        result = dao.record_pipeline_result(system, org_a["sample_id"], vcf_path, vcf_hash, RUN_DOCUMENT)
+
+        rows = _audit_rows(conn, "pipeline_result_recorded")
+        assert len(rows) == 1, rows
+        resource_id, details = rows[0]
+        assert resource_id == str(result.interpretation_id), rows
+        assert result.submission_key
+        assert result.submission_key not in resource_id
+        assert result.submission_key not in details
+        for sibling in (result.report_id, result.vcf_id, result.sequencing_run_id):
+            assert str(sibling) not in resource_id

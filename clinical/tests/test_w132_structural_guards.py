@@ -573,6 +573,29 @@ class TestTheRouteCensus:
             ("/clinic/patients", ("POST",)),
             ("/clinic/patients/{patient_id}/consents", ("POST",)),
             ("/clinic/consents/{consent_id}/withdrawal", ("POST",)),
+            # Stage 2 (test catalogue and order stage). The card the w157 and
+            # w162 notes above describe -- "who may define a test panel" -- was
+            # ruled: the Administrator manages a per-organisation catalogue
+            # (`create_test`, `retire_test`), the Orderer and Administrator read
+            # it, and the Orderer creates, places and cancels orders against it.
+            # Six routes; every one is a single domain call behind the staff
+            # session dependency and none takes an organisation.
+            ("/admin/tests", ("POST",)),
+            ("/admin/tests/{test_id}/retirement", ("POST",)),
+            ("/clinic/tests", ("GET",)),
+            ("/clinic/orders", ("POST",)),
+            ("/clinic/orders/{order_id}/placement", ("POST",)),
+            ("/clinic/orders/{order_id}/cancellation", ("POST",)),
+            # Stage 3. THE REVIEW SURFACE -- the fourth prefix. Five routes,
+            # each one domain call behind the staff session dependency: the
+            # Interpreter records a claim (concurrence or disagreement) and
+            # submits; the Approver approves and releases. The gates are the
+            # domain methods'; see clinical/review_endpoints.py.
+            ("/review/reports/{report_id}/concurrence", ("POST",)),
+            ("/review/reports/{report_id}/disagreement", ("POST",)),
+            ("/review/reports/{report_id}/submission", ("POST",)),
+            ("/review/reports/{report_id}/approval", ("POST",)),
+            ("/review/reports/{report_id}/release", ("POST",)),
             # w164. THE SECOND FACTOR. `enrol_totp` has been
             # Administrator-gated, audited and tenant-bound since Phase 1 and
             # had ZERO production call sites and no route -- AND it could not
@@ -617,10 +640,11 @@ class TestTheRouteCensus:
         # retraction; 23 from w157, which added the two laboratory bench
         # routes; 26 from w162, which added the three clinic routes —
         # registration, consent and withdrawal; 27 from w164, which added TOTP
-        # enrolment. The number is checked against the EXPECTED set above,
+        # enrolment; 33 from Stage 2, which added the catalogue and order
+        # routes; 38 from Stage 3, which added the five review routes. The number is checked against the EXPECTED set above,
         # which is what actually names them — this row exists only to refuse
         # the empty and wrapper-shaped answers.
-        assert len(census) == 27, census
+        assert len(census) == 38, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

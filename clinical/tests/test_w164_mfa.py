@@ -1034,10 +1034,16 @@ class TestMigration0006IsCheckable:
             migrate.migrate(connection, _migrations_below_six())
             assert _evaluate(connection, expression) is False, "the post-condition is true BEFORE 0006"
 
-            applied = migrate.migrate(connection, migrate.discover())
+            # THROUGH 0006, NOT EVERYTHING ON DISK. This row is about the step
+            # from generation 5 to generation 6; a later migration is not part of
+            # that step, and `migrate(discover())` would apply all of them (7, 8, 9
+            # and whatever follows) and make the assertion below fail every time
+            # a migration is added. The set is derived, so it needs no edit later.
+            through_six = tuple(m for m in migrate.discover() if m.version <= REPLAY_VERSION)
+            applied = migrate.migrate(connection, through_six)
             assert applied == (REPLAY_VERSION,), applied
             assert _evaluate(connection, expression) is True
-            assert migrate.inspect_state(connection, migrate.discover()).ok is True
+            assert migrate.inspect_state(connection, through_six).ok is True
 
     def test_an_existing_row_survives_the_upgrade_with_the_column_null(self):
         """

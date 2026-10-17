@@ -170,7 +170,7 @@ def _make_interpretation(dao, conn, session):
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO tests (test_id, org_id, name, assembly, status, created_at) VALUES (%s, %s, %s, %s, %s, %s)",
-            (test_id, org_id, "Panel", "GRCh38", "active", now),
+            (test_id, org_id, f"Panel {test_id}", "GRCh38", "active", now),
         )
     conn.commit()
 
@@ -605,3 +605,32 @@ class TestTwoPersonPathIsUnchanged:
         with pytest.raises(AuthorizationError):
             dao._approve_report(approver_a, report_a, actor_id=second_clinician_a.user_id)
         assert _report_row(conn, report_a)[0] == "under_review"
+
+
+def _audit_rows(conn, action):
+    """(resource_id, details-as-text) of every SUCCESS audit row for an action: the
+    CONTENT of the row, not a count of rows (a row of '<none>' counts the same)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT resource_id, coalesce(details::text, '') FROM audit_log "
+            "WHERE action = %s AND outcome = 'success' ORDER BY log_id",
+            (action,),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+class TestTheSoleSignatoryAuditRowNamesTheClaim:
+    REASON = "Distinct free-text reason 5b7a02 that must never reach the audit log."
+
+    def test_the_row_records_the_claim_id_and_not_the_reason(self, dao, conn, signatory_a, interp_a, report_a):
+        claim_id = dao.record_sole_signatory_claim(
+            signatory_a, interpretation_id=interp_a, report_id=report_a, reason=self.REASON
+        )
+        rows = _audit_rows(conn, "record_sole_signatory")
+        assert len(rows) == 1, rows
+        resource_id, details = rows[0]
+        assert resource_id == str(claim_id), rows
+        assert self.REASON not in resource_id
+        assert self.REASON not in details

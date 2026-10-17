@@ -47,6 +47,7 @@ import pathlib
 import uuid
 
 import pytest
+from clinical.data_access import session_audit_ref
 
 DSN = os.getenv("CLINICAL_TEST_DSN")
 SCHEMA_PATH = pathlib.Path(__file__).resolve().parent.parent / "schema.sql"
@@ -707,7 +708,10 @@ class TestTheTerminationIsAudited:
         dao.terminate_my_session(session)
 
         rows = _audit(conn, "session_logged_out")
-        assert [(r[0], r[1]) for r in rows] == [(str(session.session_id), "success")], rows
+        # w173: an audit row records a session REFERENCE, never the session id (the id is the
+        # cookie, and audit_log is append-only).
+        assert [(r[0], r[1]) for r in rows] == [(session_audit_ref(session.session_id), "success")], rows
+        assert str(session.session_id) not in repr(rows), rows
         assert rows[0][2] == world["plain_id"], rows
         assert rows[0][3] == world["org_a"], rows
 
@@ -725,15 +729,18 @@ class TestTheTerminationIsAudited:
 
         terminated = [r[0] for r in _audit(conn, "session_terminated")]
         logged_out = [r[0] for r in _audit(conn, "session_logged_out")]
-        assert terminated == [str(victim.session_id)], terminated
-        assert logged_out == [str(admin.session_id)], logged_out
+        assert terminated == [session_audit_ref(victim.session_id)], terminated
+        assert logged_out == [session_audit_ref(admin.session_id)], logged_out
+        assert str(victim.session_id) not in repr(terminated) + repr(logged_out)
+        assert str(admin.session_id) not in repr(terminated) + repr(logged_out)
 
     def test_the_patient_logout_records_the_session_it_ended(self, dao, conn, world):
         session = dao.patient_login("alice@a.example", world["org_a"], PASSWORD)
         dao.terminate_my_patient_session(session)
 
         rows = _audit(conn, "patient_session_logged_out")
-        assert [(r[0], r[1]) for r in rows] == [(str(session.session_id), "success")], rows
+        assert [(r[0], r[1]) for r in rows] == [(session_audit_ref(session.session_id), "success")], rows
+        assert str(session.session_id) not in repr(rows), rows
 
     def test_the_patient_logout_records_its_organisation_and_credential_in_details(self, dao, conn, world):
         """

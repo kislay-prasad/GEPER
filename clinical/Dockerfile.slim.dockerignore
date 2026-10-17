@@ -1,0 +1,23 @@
+# Build-context filter for clinical/Dockerfile.slim (BuildKit applies a
+# <Dockerfile>.dockerignore in place of the repository-root .dockerignore).
+#
+# AN ALLOW-LIST: everything is excluded, then exactly what the image needs is
+# let back in. A file added to the repository later is therefore NOT sent to the
+# builder unless someone lists it here, which is the safe default for an image
+# that handles patient records (no stray .env, secrets/, model caches or logs).
+# Last matching rule wins.
+**
+
+!clinical/*.py
+!clinical/models/*.py
+!clinical/migrations/*.sql
+!clinical/schema.sql
+!clinical/log_config.json
+!clinical/docker-entrypoint.sh
+!clinical/requirements.lock
+!clinical/requirements-dev.lock
+
+# Never in the image, whatever the rules above admit:
+**/__pycache__
+**/*.pyc
+clinical/tests

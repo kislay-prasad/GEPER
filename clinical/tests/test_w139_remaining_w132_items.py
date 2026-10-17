@@ -186,6 +186,40 @@ AUTHENTICATED_STAFF_ROUTES = (
     # cleanest demonstration that the session dependency is solved before any
     # body is looked at.
     ("POST", f"/admin/users/{_UNKNOWN_UUID}/totp", None),
+    # Stage 2. The six catalogue and order routes, here for the reason every
+    # row above is: the derived comparison below reported them as unprobed the
+    # moment they were served. Every case this class runs carries a dead or
+    # absent session, so none of these can create a test or an order; the
+    # bodies only have to be shaped well enough to reach the session
+    # dependency, which is solved before any body is looked at.
+    ("POST", "/admin/tests", {"name": "x", "assembly": "hg38", "genes": ["BRCA1"]}),
+    ("POST", f"/admin/tests/{_UNKNOWN_UUID}/retirement", None),
+    ("GET", "/clinic/tests", None),
+    (
+        "POST",
+        "/clinic/orders",
+        {
+            "patient_id": _UNKNOWN_UUID,
+            "test_id": _UNKNOWN_UUID,
+            "consent_id": _UNKNOWN_UUID,
+            "required_scope": "testing",
+        },
+    ),
+    ("POST", f"/clinic/orders/{_UNKNOWN_UUID}/placement", None),
+    ("POST", f"/clinic/orders/{_UNKNOWN_UUID}/cancellation", None),
+    # Stage 3. The five review routes, here for the reason every row above is.
+    # The cases in this class carry dead or absent sessions, so none of these
+    # can record a claim or move a report; the bodies only have to be shaped
+    # well enough to reach the session dependency, which is solved first.
+    ("POST", f"/review/reports/{_UNKNOWN_UUID}/concurrence", {"interpretation_id": _UNKNOWN_UUID, "reason": "w139"}),
+    (
+        "POST",
+        f"/review/reports/{_UNKNOWN_UUID}/disagreement",
+        {"interpretation_id": _UNKNOWN_UUID, "variant_key": "k", "new_classification": "c", "reason": "w139"},
+    ),
+    ("POST", f"/review/reports/{_UNKNOWN_UUID}/submission", None),
+    ("POST", f"/review/reports/{_UNKNOWN_UUID}/approval", None),
+    ("POST", f"/review/reports/{_UNKNOWN_UUID}/release", None),
 )
 
 # The administrative paths whose role gate is NOT Administrator. The fixture
@@ -1630,8 +1664,9 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 10 at w155; 11 from w156, which added the report-retraction route;
         # 13 from w158, which added the two laboratory-bench routes; 16 from
         # w162, which added the three clinic routes; 17 from w164, which added
-        # TOTP enrolment.
-        assert len(AUTHENTICATED_STAFF_ROUTES) == 17, "a staff route left the list without being probed"
+        # TOTP enrolment; 23 from Stage 2, which added the six catalogue and
+        # order routes; 28 from Stage 3, which added the five review routes.
+        assert len(AUTHENTICATED_STAFF_ROUTES) == 28, "a staff route left the list without being probed"
         assert any(path.startswith("/auth/logout") for _, path, _ in AUTHENTICATED_STAFF_ROUTES), (
             "the logout route left the list -- it is the entire reason this class exists"
         )
@@ -1656,9 +1691,11 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
 
         # eight cases across every staff route: 80 at w155, 88 from w156's
         # report-retraction route, 104 from w158's two bench routes, 128 from
-        # w162's three clinic routes, 136 from w164's TOTP enrolment route.
+        # w162's three clinic routes, 136 from w164's TOTP enrolment route,
+        # 184 from Stage 2's six catalogue and order routes, 224 from Stage 3's
+        # five review routes.
         # The product, not a hand-kept number.
-        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 136, observed
+        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 224, observed
         assert len(set(observed.values())) == 1, {k: (s, b[:120]) for k, (s, b) in observed.items()}
         assert set(observed.values()) == {THE_REFUSAL}, observed
 
@@ -1738,6 +1775,14 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         for method, path, body in AUTHENTICATED_STAFF_ROUTES:
             if not path.startswith("/admin/"):
                 continue
+            if (method, path) == ("POST", "/admin/tests"):
+                # Stage 2. The one /admin route in this set that names no
+                # target: with a valid body an Administrator CREATES a catalogue
+                # entry, so 201 is its success shape and 404 cannot be. Its
+                # success is asserted in the block below, which also retires
+                # the entry again -- the route is not skipped, it is held to
+                # its own shape, and "not the refusal pair" still applies.
+                continue
             response = _call(client, method, path, credential, body)
             assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
             if any(marker in path for marker in _ADMIN_ROUTES_NOT_GATED_ON_ADMINISTRATOR):
@@ -1767,6 +1812,41 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
             assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
             assert response.status_code == 403, (path, response.text)
             assert response.json() == {"detail": ADMIN_FORBIDDEN}, (path, response.text)
+            assert _UNKNOWN_UUID not in response.text, (path, response.text)
+
+        # Stage 2. THE CATALOGUE AND ORDER ROUTES, each held to its OWN
+        # success or refusal shape rather than to a shared one. `admin@a.example`
+        # holds Administrator AND Orderer (see the fixture), so: creating a test
+        # succeeds (201) and the entry can be retired (204); the catalogue read
+        # is open to it (200); and the three order routes, which name patients,
+        # tests, consents or orders that exist nowhere in this organisation,
+        # answer the one administrative 404 with `admin_endpoints`'s own
+        # constant and echo nothing -- authenticated, right role, no such
+        # target, and distinguishable from the anonymous 401. The wrong-role
+        # 403 on these routes is proved for every other role in
+        # test_w166_catalogue_and_orders.py::TestOrdersRefuseEveryoneElse.
+        created = _call(
+            client, "POST", "/admin/tests", credential, {"name": "w139 twin", "assembly": "hg38", "genes": ["BRCA1"]}
+        )
+        assert (created.status_code, created.content) != THE_REFUSAL
+        assert created.status_code == 201, created.text
+        test_id = created.json()["test_id"]
+
+        listed = _call(client, "GET", "/clinic/tests", credential, None)
+        assert (listed.status_code, listed.content) != THE_REFUSAL
+        assert listed.status_code == 200, listed.text
+        assert test_id in [entry["test_id"] for entry in listed.json()]
+
+        retired = _call(client, "POST", f"/admin/tests/{test_id}/retirement", credential, None)
+        assert retired.status_code == 204, retired.text
+
+        for method, path, body in AUTHENTICATED_STAFF_ROUTES:
+            if not path.startswith("/clinic/orders"):
+                continue
+            response = _call(client, method, path, credential, body)
+            assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
+            assert response.status_code == 404, (path, response.text)
+            assert response.json() == {"detail": ADMIN_NOT_FOUND}, (path, response.text)
             assert _UNKNOWN_UUID not in response.text, (path, response.text)
 
         logout = client.post("/auth/logout", cookies=credential)

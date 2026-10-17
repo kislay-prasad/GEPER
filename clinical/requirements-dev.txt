@@ -1,0 +1,12 @@
+# clinical/requirements-dev.txt
+# ─────────────────────────────
+# EVERYTHING THE CLINICAL TEST SUITE NEEDS: the runtime set plus the test tools.
+# Used by CI (clinical-tests job) and by the `test` target of
+# clinical/Dockerfile.slim. The service image does NOT install this file.
+#
+# httpx is required by starlette's TestClient, which raises RuntimeError --
+# not ImportError -- when it is missing, so pytest.importorskip does not catch
+# it and it surfaces as an unexplained error at setup.
+-r requirements.txt
+pytest==9.1.1
+httpx==0.28.1

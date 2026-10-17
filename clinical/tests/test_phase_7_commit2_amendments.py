@@ -733,3 +733,37 @@ class TestNotificationReadReceipts:
                 # Expected: permission denied
                 conn.rollback()
                 pass
+
+
+def _audit_rows(conn, action):
+    """(resource_id, details-as-text) of every SUCCESS audit row for an action: the
+    CONTENT of the row, not a count of rows (a row of '<none>' counts the same)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT resource_id, coalesce(details::text, '') FROM audit_log "
+            "WHERE action = %s AND outcome = 'success' ORDER BY log_id",
+            (action,),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+class TestTheAmendmentAuditRowNamesTheAmendmentReport:
+    def test_the_row_records_the_amendment_report_and_leaks_no_other_identifier(self, dao, conn, session_a, interp_a):
+        """create_amendment returns (amendment_report_id, notification_id). The subject
+        of the audit entry is the new amendment REPORT: one UUID, not the tuple, and not
+        the notification's or the original's."""
+        import uuid
+
+        original = _approved_original(dao, conn, session_a, interp_a)
+        amendment_report_id, notification_id = dao.create_amendment(session_a, original, "Updated findings")
+
+        rows = _audit_rows(conn, "amendment_created")
+        assert len(rows) == 1, rows
+        resource_id, details = rows[0]
+        assert resource_id == str(amendment_report_id), rows
+        assert uuid.UUID(resource_id) == amendment_report_id  # exactly one UUID, no tuple repr
+        assert str(notification_id) not in resource_id
+        assert str(original) not in resource_id
+        assert "Updated findings" not in resource_id

@@ -723,21 +723,25 @@ one-line fix.
   Both workers already fail closed without `CLINICAL_DSN` configured
   (confirmed by `tests/test_worker_clinical_dsn_fail_closed.py`), so
   the unlaunched state costs nothing if someone runs one by hand.
-- **`clinical/Dockerfile`** — the clinical service image (session
-  auth, exceptions worklist, `/readyz` against a bootstrapped
-  Postgres). Deliberately its own file, for the reasons in its own
-  header comment. It is real and already verified working by actually
-  starting the container and probing it (commit `1b895b3`), but
-  nothing else in this repository — no compose service, no CI job, no
-  other Dockerfile — references it. `docker-compose.yml` also
-  provisions no Postgres service at all, so wiring this in needs a
-  companion database and bootstrap step, not just one compose block.
+- **`clinical/Dockerfile`** — the clinical service image built on the
+  pipeline image (session auth, exceptions worklist, `/readyz` against a
+  bootstrapped Postgres), kept as it was. **For deployment it is superseded by
+  `clinical/Dockerfile.slim` and `docker-compose.clinical.yml`**: a
+  clinical-only, non-root image and a separate Compose project with its own
+  database, file-based secrets and an init job (roles, migrations,
+  verification). See `docs/CLINICAL_DEPLOYMENT.md`, including what that stack
+  does not do: HTTPS, automated backups, vulnerability scanning. It is not
+  production-ready.
 
 Ruled 2026-09-11 (human, via god): document this as an unstarted
 toolbox rather than add a launcher — "designing a launcher for
 something nobody starts is building a product decision into
 infrastructure." If either tier is later deployed, that deployment is
 its own decision with its own card, not an extension of this one.
+
+Update (Stage 4): the clinical service is now the exception to the above, by
+explicit decision, and has its own deployment document
+(`docs/CLINICAL_DEPLOYMENT.md`). `geper/api/` remains unlaunched.
 
 ---
 

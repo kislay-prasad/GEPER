@@ -55,6 +55,10 @@ import uuid
 
 import pytest
 
+# Stage 3 follow-up: a patient sees a report only when it was released to the
+# patient portal, so the fixtures that stand in for "released" release to it.
+from clinical.data_access import PORTAL_RELEASE_CONSUMER  # noqa: E402
+
 DSN = os.getenv("CLINICAL_TEST_DSN")
 
 APP_PASSWORD = "test-app-password"
@@ -326,7 +330,7 @@ def _advance(dao, org, patient_id, upto, vcf=None):
     if upto == "approved":
         return order_id
 
-    dao._release_report(staff, result.report_id, consumer="w134", actor_id=staff.user_id)
+    dao._release_report(staff, result.report_id, consumer=PORTAL_RELEASE_CONSUMER, actor_id=staff.user_id)
     if upto == "released":
         return order_id
 

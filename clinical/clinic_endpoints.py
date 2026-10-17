@@ -503,3 +503,174 @@ async def withdraw_consent(
     except NotFoundError:
         raise _not_found()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── the catalogue read and the order stage (stage 2) ────────────────────────
+#
+# `create_order` / `place_order` / `cancel_order` were complete, Orderer-gated
+# and unreachable for want of a test catalogue. Each route is exactly one
+# decorated call. No body carries an organisation, an actor or a state: the
+# organisation is Session.org_id, the orderer is session.user_id, and the
+# state is the domain method's.
+
+
+class TestListItem(BaseModel):
+    test_id: str
+    name: str
+    cdsco_class: Optional[str]
+    assembly: str
+    status: str
+    genes: list[str]
+
+
+class OrderRequest(BaseModel):
+    """The body of `POST /clinic/orders`. `patient_id`, `test_id` and
+    `consent_id` are strings parsed with `_target` so a malformed value takes
+    the path of one that names nothing and the role gate still runs first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    patient_id: str
+    test_id: str
+    consent_id: str
+    required_scope: str
+    # `Optional[str] = None` and NOT `str = "routine"`: this surface's rule
+    # (w162) is that no request model carries a default other than None, so
+    # that a value rule is never answered before the role gate. The default
+    # priority is `create_order`'s own and is applied by omitting the argument.
+    priority: Optional[str] = None
+    clinical_indication: Optional[str] = None
+
+
+class OrderCreated(BaseModel):
+    order_id: str
+
+
+@router.get(
+    "/tests",
+    response_model=list[TestListItem],
+    summary="The caller's organisation's active test catalogue (Orderer or Administrator)",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+    },
+)
+async def list_tests(
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> list[TestListItem]:
+    try:
+        rows = dao.list_tests(session)
+    except AuthorizationError:
+        raise _forbidden()
+    return [
+        TestListItem(
+            test_id=str(r["test_id"]),
+            name=r["name"],
+            cdsco_class=r["cdsco_class"],
+            assembly=r["assembly"],
+            status=r["status"],
+            genes=r["genes"],
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/orders",
+    status_code=status.HTTP_201_CREATED,
+    response_model=OrderCreated,
+    summary="Create a draft order for a patient of the caller's own organisation (Orderer)",
+    responses={
+        201: {"description": "The draft order is created and the ordering clinician is recorded"},
+        400: {"model": ErrorResponse, "description": "Bad priority, or consent scope does not match"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Patient, active test or active consent not found"},
+    },
+)
+async def create_order(
+    body: OrderRequest,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> OrderCreated:
+    """`DataAccess.create_order`, and nothing else."""
+    patient = _target(body.patient_id)
+    test = _target(body.test_id)
+    consent = _target(body.consent_id)
+    try:
+        optional = {} if body.priority is None else {"priority": body.priority}
+        order_id = dao.create_order(
+            session,
+            patient,
+            test,
+            body.required_scope,
+            consent,
+            clinical_indication=body.clinical_indication,
+            **optional,
+        )
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return OrderCreated(order_id=str(order_id))
+
+
+@router.post(
+    "/orders/{order_id}/placement",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Place a draft order (Orderer)",
+    responses={
+        204: {"description": "The order is placed"},
+        400: {"model": ErrorResponse, "description": "The order is not a draft"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Not found"},
+    },
+)
+async def place_order(
+    order_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> Response:
+    target = _target(order_id)
+    try:
+        dao.place_order(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/orders/{order_id}/cancellation",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cancel an order that has not been reported (Orderer)",
+    responses={
+        204: {"description": "The order is cancelled"},
+        400: {"model": ErrorResponse, "description": "The order is already reported, closed or cancelled"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Not found"},
+    },
+)
+async def cancel_order(
+    order_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> Response:
+    target = _target(order_id)
+    try:
+        dao.cancel_order(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

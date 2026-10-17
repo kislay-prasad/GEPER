@@ -76,6 +76,10 @@ import uuid
 
 import pytest
 
+# Stage 3 follow-up: a patient sees a report only when it was released to the
+# patient portal, so the fixtures that stand in for "released" release to it.
+from clinical.data_access import PORTAL_RELEASE_CONSUMER  # noqa: E402
+
 DSN = os.getenv("CLINICAL_TEST_DSN")
 
 APP_PASSWORD = "test-app-password"
@@ -317,7 +321,7 @@ def _pipeline(dao, org, patient_id, vcf, upto, tag="w136"):
     if upto == "approved":
         return out
 
-    dao._release_report(staff, result.report_id, consumer="w136-consumer", actor_id=staff.user_id)
+    dao._release_report(staff, result.report_id, consumer=PORTAL_RELEASE_CONSUMER, actor_id=staff.user_id)
     if upto == "released":
         return out
 
@@ -349,7 +353,7 @@ def _amend(dao, org, run, reason="w136 fixture: the original needed correcting",
         return amendment_report_id
     _sign_and_submit(dao, staff, run["interpretation_id"], amendment_report_id)
     dao.approve_report(staff, amendment_report_id)
-    dao._release_report(staff, amendment_report_id, consumer="w136-consumer", actor_id=staff.user_id)
+    dao._release_report(staff, amendment_report_id, consumer=PORTAL_RELEASE_CONSUMER, actor_id=staff.user_id)
     return amendment_report_id
 
 
@@ -815,7 +819,9 @@ class TestTheSupersessionEdge:
         org = world["a"]
         run = _pipeline(dao, org, org["first_patient"], vcf, "approved")
         amendment_id = _amend(dao, org, run)
-        dao._release_report(org["staff"], run["report_id"], consumer="w136-consumer", actor_id=org["staff"].user_id)
+        dao._release_report(
+            org["staff"], run["report_id"], consumer=PORTAL_RELEASE_CONSUMER, actor_id=org["staff"].user_id
+        )
         conn.commit()
 
         cookie = _portal_login(client, org["org_id"], org["first_email"])

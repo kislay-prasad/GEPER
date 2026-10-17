@@ -405,13 +405,22 @@ class TestTheSurfaceIsMounted:
         still true: at w150 zero of the seventeen served routes were
         administrative. Neither `/lab/` nor `/clinic/` is administrative
         either.
+
+        STAGE 3 ADDED THE SEVENTH FAMILY, AND THE GUARD FIRED A THIRD TIME --
+        the guard working again. `/review/` is the review surface: the
+        Interpreter's claims and submission and the Approver's approval and
+        release, every gate inside the domain method. It is declared here
+        rather than absorbed by a looser predicate, and it is not
+        administrative either.
         """
         from clinical.app import app
         from clinical.tests.test_w132_structural_guards import served_routes
 
         non_admin = {path for path, _ in served_routes(app) if not path.startswith("/admin/")}
         assert non_admin and all(
-            path.startswith(("/auth/", "/portal/", "/exceptions/", "/lab/", "/clinic/", "/healthz", "/readyz"))
+            path.startswith(
+                ("/auth/", "/portal/", "/exceptions/", "/lab/", "/clinic/", "/review/", "/healthz", "/readyz")
+            )
             for path in non_admin
         ), sorted(non_admin)
 
@@ -1012,6 +1021,10 @@ class TestNoCallerControlledOrganisationEscape:
             "PatientLoginEnrolmentRequest",
             "RetractionRequest",
             "RoleAssignmentRequest",
+            # Stage 2. `TestCreateRequest` declares `extra="forbid"` like the
+            # rest and carries no organisation, approver or actor field, so it
+            # sits inside the same "no inbound organisation" scan.
+            "TestCreateRequest",
         ], request_models
         assert offenders == [], offenders
 
@@ -1201,6 +1214,10 @@ class TestTheHandlersComposeNoDecoratedCalls:
             # nobody holds. It returns what the single domain call returns and
             # nothing else.
             "enrol_totp",
+            # Stage 2. The test catalogue's two administrative verbs. One
+            # decorated call each, same-named as the domain method.
+            "create_test",
+            "retire_test",
         }, per_handler
         for handler, calls in per_handler.items():
             assert len(calls) == 1, (handler, calls)

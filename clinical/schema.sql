@@ -524,10 +524,20 @@ CREATE TABLE tests (
     status          TEXT        NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
     approved_at     TIMESTAMPTZ,
     approved_by     UUID,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- Migration 0007. The target of orders_test_org_fk below: a foreign key
+    -- must reference a unique key, and test_id alone is the primary key.
+    CONSTRAINT tests_id_org_unique UNIQUE (test_id, org_id)
 );
 
 CREATE INDEX tests_org ON tests (org_id);
+
+-- Migration 0008. Two ACTIVE tests in one organisation may not share a name
+-- (case-insensitively); a retired test releases its name.
+CREATE UNIQUE INDEX tests_org_active_name_unique
+    ON tests (org_id, lower(name))
+    WHERE status = 'active';
 
 
 CREATE TABLE test_genes (
@@ -561,6 +571,9 @@ CREATE TABLE orders (
         FOREIGN KEY (patient_id, org_id) REFERENCES patients (patient_id, org_id),
     CONSTRAINT orders_consent_fk
         FOREIGN KEY (consent_id, org_id) REFERENCES consents (consent_id, org_id),
+    -- Migration 0007. An order may not reference another organisation's test.
+    CONSTRAINT orders_test_org_fk
+        FOREIGN KEY (test_id, org_id) REFERENCES tests (test_id, org_id),
     CONSTRAINT orders_org_unique UNIQUE (org_id, order_id)
 );
 
@@ -1197,6 +1210,13 @@ CREATE TABLE release_events (
     ),
     CONSTRAINT uk_release_org_id UNIQUE (org_id, id)
 );
+
+-- Migration 0009. A report is released to the patient portal at most once at a
+-- time; every other consumer, and re-delivery to the same one, is unconstrained.
+-- The literal is clinical.data_access.PORTAL_RELEASE_CONSUMER (tied by a test).
+CREATE UNIQUE INDEX release_events_portal_once
+    ON release_events (org_id, report_id)
+    WHERE consumer = 'patient_portal' AND tombstoned_at IS NULL;
 
 -- "What left the platform for this report, and when" -- the question asked of
 -- this table both by the audit path and by amendment (spec 15.2), which has
@@ -2349,4 +2369,7 @@ INSERT INTO schema_migrations (version, name, checksum) VALUES
     (3, 'report_retraction', 'd0e0ae8d149aa20aea64e18e47424f48efb63d0a7ccdd5cbfd9b3f8016202204'),
     (4, 'exception_amendment', 'a379abc3cf0a81da3af438f4bc092648ab196d1c53e5039cef106a02200743a0'),
     (5, 'exception_amendment_vocabulary', 'b2569f6f9927c82e8dd3c66142b053cd25efa8100abeeec607fc625fcc626de0'),
-    (6, 'totp_replay_guard', '3db752c93973912b85076708d08f120b7062dcb6e8d949720fee43ff03fead94');
+    (6, 'totp_replay_guard', '3db752c93973912b85076708d08f120b7062dcb6e8d949720fee43ff03fead94'),
+    (7, 'order_test_same_org', '848b0c0cb9a4e2c19aecd28aeea694cbdbc8eb83a3f397a2bd5502ecf3fd7c02'),
+    (8, 'active_test_name_unique', '0b8f520d74afc140175dfcd6218f8c441a1b5b80c35fe5c03cc292acf33546a1'),
+    (9, 'portal_release_once', '4110a7fe900eeac745be879280387fd6e74b96b41221d70258740e651a2aae15');

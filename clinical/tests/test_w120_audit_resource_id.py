@@ -51,6 +51,7 @@ from clinical.data_access import (
     BcryptHasher,
     DataAccess,
     SystemClock,
+    session_audit_ref,
 )
 
 DSN = os.getenv("CLINICAL_TEST_DSN")
@@ -319,7 +320,11 @@ class TestTheOtherVoidReturningMethods:
 
     def test_session_terminated_records_the_terminated_session_id(self, dao, conn, session_a, signatory_a):
         dao.terminate_session(session_a, signatory_a.session_id)
-        assert _resource_ids(conn, "session_terminated") == [str(signatory_a.session_id)]
+        # w173: the row names the terminated session by its REFERENCE, never by the id (the
+        # session id is the cookie and audit_log is append-only).
+        recorded = _resource_ids(conn, "session_terminated")
+        assert recorded == [session_audit_ref(signatory_a.session_id)]
+        assert str(signatory_a.session_id) not in recorded
 
     def test_retention_policy_set_records_the_artefact_class(self, dao, conn, session_a):
         """

@@ -146,7 +146,7 @@ def _place_order(dao, conn, staff_session, patient_id, scope="genomic-testing"):
             (
                 test_id,
                 staff_session.org_id,
-                "Whole genome",
+                f"Whole genome {test_id}",
                 "GRCh38",
                 "active",
                 dt.datetime(2026, 9, 1, tzinfo=dt.timezone.utc),

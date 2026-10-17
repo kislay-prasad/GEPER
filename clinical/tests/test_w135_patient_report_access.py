@@ -102,6 +102,10 @@ import uuid
 
 import pytest
 
+# Stage 3 follow-up: a patient sees a report only when it was released to the
+# patient portal, so the fixtures that stand in for "released" release to it.
+from clinical.data_access import PORTAL_RELEASE_CONSUMER  # noqa: E402
+
 DSN = os.getenv("CLINICAL_TEST_DSN")
 
 APP_PASSWORD = "test-app-password"
@@ -329,7 +333,7 @@ def _pipeline(dao, org, patient_id, vcf, upto):
     if upto == "approved":
         return order_id, report_id
 
-    dao._release_report(staff, report_id, consumer="w135-consumer", actor_id=staff.user_id)
+    dao._release_report(staff, report_id, consumer=PORTAL_RELEASE_CONSUMER, actor_id=staff.user_id)
     if upto == "released":
         return order_id, report_id
 
@@ -581,7 +585,9 @@ class TestOnlyAReleasedReportIsReachableByItsOwnPatient:
         before = client.get(f"/portal/me/reports/{report_id}", cookies={PATIENT_COOKIE: cookie})
         assert (before.status_code, before.content) == THE_REFUSAL, before.text
 
-        dao._release_report(world["a"]["staff"], report_id, consumer="w135-twin", actor_id=world["a"]["staff"].user_id)
+        dao._release_report(
+            world["a"]["staff"], report_id, consumer=PORTAL_RELEASE_CONSUMER, actor_id=world["a"]["staff"].user_id
+        )
         conn.commit()
 
         after = client.get(f"/portal/me/reports/{report_id}", cookies={PATIENT_COOKIE: cookie})
@@ -1220,9 +1226,7 @@ class TestTheRetractionQuestionAsItStandsAtThisSHA:
         assert _first_role_gate(late) is None, "a gate below the first statement is being credited as first"
         assert _first_role_gate(none_at_all) is None, "a method with no gate is being credited with one"
 
-        wrong_role = ast.parse(
-            "def m(self, session):\n    self._require_role(session, 'Administrator')\n"
-        ).body[0]
+        wrong_role = ast.parse("def m(self, session):\n    self._require_role(session, 'Administrator')\n").body[0]
         assert _first_role_gate(wrong_role) == "Administrator", "the helper is not reading the role it finds"
 
     def test_the_only_thing_that_hides_a_report_from_its_owner_is_release_state(self):

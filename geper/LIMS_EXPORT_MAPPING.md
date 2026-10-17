@@ -69,6 +69,80 @@ NOT themselves part of the `LIMSExport` schema below -- they gate
 whether an export happens at all, rather than being data a LIMS needs
 mapped.
 
+## Clinical report status (linked runs only; `export_format_version` 1.1.0)
+
+A report's retraction, amendment or re-analysis can be recorded in the clinical
+platform AFTER the run was signed off. The signed `geper_results.json` is never
+changed (its SHA-256 is in the signed manifest), so a stale file cannot be trusted to
+say whether the report has since been retracted. For a run linked to a clinical record
+(`clinical_link.json` beside `geper_results.json`) the export therefore reads the
+report's CURRENT status from the clinical platform at export time and carries it.
+
+**Contract change, additive only.** `export_format_version` is `"1.0.0"` for an
+unlinked run, and the export is byte-for-byte what it has always been. For a linked run
+it is `"1.1.0"` and the JSON gains one top-level object, `report_status`; the CSV gains
+the `report_*` columns after the existing ones. A consumer that ignores unknown fields is
+unaffected; a strict consumer must accept version `1.1.0`.
+
+```json
+"report_status": {
+  "source": "clinical_platform",
+  "checked_at": "2026-04-06T09:00:00+00:00",
+  "report_id": "...", "report_state": "approved",
+  "is_retracted": true,
+  "is_amendment": false, "is_superseded": false,
+  "is_reanalysis": false, "has_been_reanalysed": false,
+  "retraction": {
+    "issued_at": "...", "issued_basis": "released",
+    "retracted_at": "...", "retracted_by": "...", "reason": "...",
+    "replacement": { "report_id": "...", "retained": false }
+  },
+  "banners": ["*** THIS REPORT HAS BEEN RETRACTED. ... ***"]
+}
+```
+
+- `retraction` is `null` unless the report is retracted. `replacement` is `null` when
+  the retraction names none; `retained: false` means retention has removed the
+  replacement and it must not be looked for.
+- `banners` is the exact text the report documents print; `checked_at` is when the
+  clinical platform was asked.
+- A retracted report may still be exported (ruling E3: the retraction travels with
+  it), and `is_retracted: true` is the machine-readable form of that.
+- CSV columns: `report_status_checked_at`, `report_is_retracted`, `report_retracted_at`,
+  `report_retraction_reason`, `report_replacement_report_id`,
+  `report_replacement_retained`, `report_is_amendment`, `report_is_superseded`,
+  `report_is_reanalysis`, `report_has_been_reanalysed`, `report_revision_banners`
+  (banners joined by ` | `). Run-level, repeated in every row.
+
+**Why `1.1.0` although the change is additive.** The table below says to bump the version
+on a breaking change only. This bump is deliberate and departs from that: `report_status` carries
+a retraction, and a consumer that ignores unknown fields *and* ignores the version would drop it
+without any signal. A consumer that keys on `export_format_version` now notices; one that rejects
+`1.1.0` fails visibly instead of silently losing the status. Unlinked exports keep `1.0.0`.
+
+**Compatibility with a receiving LIMS is NOT verified.** This repository contains no consumer
+implementation, ingest specification, schema file or sample from any receiving system, and this
+document's own opening section records that no target LIMS format is known. Before a linked run is
+exported to a real system, confirm with that system's owner that it (1) accepts
+`export_format_version` `1.1.0` (or does not reject unknown versions), (2) accepts, or safely
+ignores, the `report_status` object and the extra CSV columns, (3) surfaces `is_retracted` and
+acts on it, and (4) understands `replacement.retained: false` as "the replacement no longer exists".
+GEPER's own tests prove what GEPER writes, not what a receiver does with it.
+
+**Fail closed.** If the run is linked and its status cannot be read and validated --
+no clinical credentials, a failed login, a report that is not in the link's
+organisation or does not belong to the link's interpretation, an unreadable or
+inconsistent revision record -- the export is refused (`LIMSExportBlockedError`) and an
+`export_blocked` entry is written to the run's audit log. A linked report is never
+exported without its status. The review/sign-off requirement above still applies first.
+The CLI takes the same clinical flags as `geper-signoff`
+(`--clinical-email`, `--clinical-password-env`, `--clinical-totp`).
+
+**Known limit.** The library functions cannot tell that a document belongs to a linked
+run unless they are told where the run lives (`run_dir=`). The CLI always does. A caller
+that builds an export from a bare document, with no `run_dir`, gets the unlinked
+behaviour.
+
 ## Format
 
 - **JSON** (`export_lims_json`): one file per run, nested, matches the

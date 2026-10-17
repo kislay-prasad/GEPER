@@ -1559,6 +1559,39 @@ def apply_report_revision(document: Dict[str, Any], revision: Any) -> Dict[str, 
     return document
 
 
+# A CURRENT-STATUS DOCUMENT is regenerated from a signed report to show its clinical
+# status as of a later moment (a retraction, an amendment, a re-analysis made
+# after sign-off). It must never be mistaken for the signed report itself, or for
+# a new clinical sign-off, so every renderer prints this notice on it. Its wording is
+# NOT one of the signed-off revision banners above. It is operational text written with
+# review/signoff.py::refresh_revision and HAS NOT BEEN REVIEWED OR APPROVED by whoever
+# owns this lab's report templates / document control; treat it as a proposal until
+# they have. The pages of such a document still carry the footer of the report it
+# reproduces ("reviewed by <clinician>"), which is why the last clause says that name
+# refers to the signed original.
+CURRENT_STATUS_COPY_BANNER = (
+    "CURRENT REPORT STATUS — NOT A NEW CLINICAL SIGN-OFF. This document reproduces, unchanged, the clinical "
+    "content of the report signed on {signed_at} and adds the report's status as recorded in the clinical "
+    "platform on {checked_at}. It was generated after that sign-off and has not been reviewed or signed by a "
+    "clinician; any reviewer named on its pages refers to the signed original. The signed original remains the "
+    "clinical record."
+)
+
+
+def _current_status_copy_banner(meta: Any) -> str:
+    """The banner for `document["current_status_copy"]`; ValueError (fail closed) if its facts are missing."""
+    if not isinstance(meta, dict):
+        raise ValueError(f"current_status_copy must be an object, got {type(meta).__name__}")
+    missing = [k for k in ("signed_at", "checked_at") if not str(meta.get(k) or "").strip()]
+    if missing:
+        raise ValueError(
+            f"current_status_copy is missing {missing}; refusing to render a copy that cannot say what it is"
+        )
+    return CURRENT_STATUS_COPY_BANNER.format(
+        signed_at=_revision_when(str(meta["signed_at"])), checked_at=_revision_when(str(meta["checked_at"]))
+    )
+
+
 def report_revision_banners(document: Optional[Dict[str, Any]]) -> List[str]:
     """
     The banner texts every renderer prints at the top of the document, in
@@ -1568,9 +1601,16 @@ def report_revision_banners(document: Optional[Dict[str, Any]]) -> List[str]:
     Re-derived from the block's FACTS on every render rather than trusting a
     stored `banners` list, so a hand-edited or stale document cannot print
     wording that differs from the signed-off templates above.
+
+    A document carrying `current_status_copy` (see `CURRENT_STATUS_COPY_BANNER`)
+    gets that notice AFTER the revision banners, so a retraction still leads.
     """
     normalized = normalize_report_revision((document or {}).get("report_revision"))
-    return normalized["banners"] if normalized else []
+    banners: List[str] = list(normalized["banners"]) if normalized else []
+    meta = (document or {}).get("current_status_copy")
+    if meta is not None:
+        banners.append(_current_status_copy_banner(meta))
+    return banners
 
 
 # ---------------------------------------------------------------------------

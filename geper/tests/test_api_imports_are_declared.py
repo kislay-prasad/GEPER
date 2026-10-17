@@ -38,6 +38,9 @@ _IMPORT_TO_DIST = {
     "pytest": "pytest",
     "uvicorn": "uvicorn",
     "starlette": "fastapi",  # starlette ships as fastapi's own dependency
+    # api/tests/test_report_revision_refresh.py reads back the PDFs it asserts on. pypdf is declared in
+    # geper/requirements.txt for exactly that (tests only); this guard then checks the declaration.
+    "pypdf": "pypdf",
 }
 
 # Imports that need a package they do not name. starlette.testclient (which

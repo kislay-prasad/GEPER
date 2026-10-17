@@ -43,6 +43,7 @@ from review.signoff import ClinicalCredentials
 from review.signoff import approve as _approve
 from review.signoff import list_pending as _list_pending
 from review.signoff import override as _override
+from review.signoff import refresh_revision as _refresh_revision
 from review.signoff import withdraw as _withdraw
 from utils.exceptions import SignoffError
 from utils.logger import get_logger
@@ -234,6 +235,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # do. Absent on an unlinked run, exactly as there.
     _add_clinical_arguments(withdraw_parser)
 
+    # A retraction, amendment or re-analysis made AFTER sign-off lives only in the clinical
+    # platform; the signed files cannot (and must not) change. This writes a separate,
+    # clearly labelled CURRENT-STATUS copy beside them. See review/signoff.py::refresh_revision.
+    refresh_parser = subparsers.add_parser(
+        "refresh-revision",
+        help="For a signed run linked to a clinical record: write a CURRENT-STATUS copy of its report "
+        "(report_current.pdf, report_short_current.pdf, report_current.md, report_revision_status.json) stating "
+        "its clinical status -- retracted, amended, superseded, re-analysed -- as read from the clinical platform "
+        "now. Never modifies the signed files or the manifest, and is not a new clinical sign-off. Run by an "
+        "operator: it is not triggered automatically when the status changes.",
+    )
+    refresh_parser.add_argument(
+        "--output-dir", required=True, help=f"An existing, signed, linked {SHORT_NAME} --output-dir."
+    )
+    _add_clinical_arguments(refresh_parser)
     return parser
 
 
@@ -333,6 +349,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 clinical_credentials=_clinical_credentials(args),
             )
             print(f"Withdrawn: {result}")
+        elif args.command == "refresh-revision":
+            result = _refresh_revision(
+                output_dir=args.output_dir,
+                clinical_credentials=_clinical_credentials(args),
+            )
+            print(f"Current-status copy written (signed originals untouched): {result}")
         else:  # pragma: no cover - argparse's `required=True` on the subparsers already prevents this
             parser.error(f"Unknown command '{args.command}'.")
     except SignoffError as exc:

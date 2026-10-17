@@ -93,6 +93,8 @@ from report.clinical_report_builder import (
     candidate_interpretation_of,
 )
 from report.summary import _derive_run_id, _derive_sample_id
+from review.revision_status import ReportRevisionStatus
+from review.signoff import read_clinical_link as _read_clinical_link
 from review.signoff import require_reviewed as _require_reviewed_general
 from utils.exceptions import LIMSExportBlockedError, SignoffError
 from utils.logger import get_logger
@@ -100,6 +102,11 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 EXPORT_FORMAT_VERSION = "1.0.0"
+# 1.1.0 is 1.0.0 plus ONE additive top-level object, `report_status`, present only on an
+# export of a run linked to a clinical record. An export of an unlinked run is
+# byte-for-byte what 1.0.0 produced, version string included. See LIMS_EXPORT_MAPPING.md,
+# "Clinical report status".
+EXPORT_FORMAT_VERSION_WITH_REPORT_STATUS = "1.1.0"
 
 # Same filename `review/signoff.py::AUDIT_LOG_FILENAME` already uses --
 # a blocked-export attempt is a governance event exactly like
@@ -325,6 +332,49 @@ class LIMSRun(BaseModel):
     caveats: List[str] = []
 
 
+class LIMSReplacement(BaseModel):
+    """The replacement report a retraction names. `retained` False means retention has REMOVED it:
+    the consumer must not go looking for it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    report_id: str
+    retained: bool
+
+
+class LIMSRetraction(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    issued_at: str
+    issued_basis: str  # 'released' or 'approved' -- never described as issued if it was only approved
+    retracted_at: str
+    retracted_by: str
+    reason: str
+    replacement: Optional[LIMSReplacement] = None
+
+
+class LIMSReportStatus(BaseModel):
+    """
+    The clinical platform's CURRENT status of the report this export reproduces, read and
+    validated at export time (review/revision_status.py). Present only on an export of a run
+    linked to a clinical record; its absence means "an unlinked run", never "not retracted".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source: str = "clinical_platform"
+    checked_at: str
+    report_id: str
+    report_state: str
+    is_retracted: bool
+    is_amendment: bool
+    is_superseded: bool
+    is_reanalysis: bool
+    has_been_reanalysed: bool
+    retraction: Optional[LIMSRetraction] = None
+    banners: List[str] = []
+
+
 class LIMSExport(BaseModel):
     """Top-level export document. `export_format`/`export_format_version` let a downstream LIMS (or a future migration script) detect which mapping revision produced a given file -- see LIMS_EXPORT_MAPPING.md's changelog note."""
 
@@ -337,6 +387,9 @@ class LIMSExport(BaseModel):
         bool  # True iff at least one finding carries case_prioritization -- mirrors report_generator.py's own gate
     )
     findings: List[LIMSFinding]
+    # Linked runs only (export_format_version 1.1.0). Excluded from the serialised export when None, so an
+    # unlinked run's export is unchanged.
+    report_status: Optional[LIMSReportStatus] = None
 
 
 # ---------------------------------------------------------------------------
@@ -568,7 +621,73 @@ def _build_finding(finding_number: int, variant_result: Dict[str, Any]) -> LIMSF
     )
 
 
-def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) -> LIMSExport:
+def _lims_report_status(status: ReportRevisionStatus) -> LIMSReportStatus:
+    """Map a validated `ReportRevisionStatus` onto the export's `report_status` object (no re-derivation)."""
+    revision = status.revision
+    retraction = None
+    block = revision.get("retracted")
+    if block:
+        replacement = None
+        if block.get("replacement_report_id"):
+            replacement = LIMSReplacement(
+                report_id=str(block["replacement_report_id"]), retained=bool(block["replacement_retained"])
+            )
+        retraction = LIMSRetraction(
+            issued_at=str(block["issued_at"]),
+            issued_basis=str(block.get("issued_basis") or "released"),
+            retracted_at=str(block["retracted_at"]),
+            retracted_by=str(block["retracted_by"]),
+            reason=str(block["reason"]),
+            replacement=replacement,
+        )
+    return LIMSReportStatus(
+        checked_at=status.checked_at,
+        report_id=status.report_id,
+        report_state=status.report_state,
+        is_retracted=bool(revision.get("is_retracted")),
+        is_amendment=bool(revision.get("is_amendment")),
+        is_superseded=bool(revision.get("is_superseded")),
+        is_reanalysis=bool(revision.get("is_reanalysis")),
+        has_been_reanalysed=bool(revision.get("has_been_reanalysed")),
+        retraction=retraction,
+        banners=list(revision.get("banners") or []),
+    )
+
+
+def _require_status_for_linked_run(run_dir: Optional[str], report_status: Optional[ReportRevisionStatus]) -> None:
+    """
+    FAIL CLOSED for a run linked to a clinical record. A retraction made after sign-off lives only in the
+    clinical database, never in `geper_results.json`, so an export of a linked run without the
+    clinical status read at export time could ship a retracted report with nothing to say so.
+
+    `run_dir` None means the caller did not say where the run lives (a library call with only a
+    document): nothing can be established and the legacy behaviour applies. The CLI always supplies it.
+    """
+    if run_dir is None:
+        return
+    try:
+        link = _read_clinical_link(run_dir)
+    except SignoffError as exc:
+        raise LIMSExportBlockedError(f"LIMS export refused: the run's clinical link cannot be read ({exc})") from exc
+    if link is None:
+        return
+    if report_status is None:
+        raise LIMSExportBlockedError(
+            "LIMS export refused: this run is linked to a clinical record, and the report's current clinical "
+            "status (for example a retraction) is held only there. Export a linked run with its status "
+            "read at export time (CLI: --clinical-email and the password in the environment variable named by "
+            "--clinical-password-env). Refusing rather than exporting a potentially retracted report without it."
+        )
+    if str(link.get("report_id")) != report_status.report_id or str(link.get("org_id")) != report_status.org_id:
+        raise LIMSExportBlockedError(
+            "LIMS export refused: the clinical status supplied belongs to a different report or organisation "
+            "than this run's link names."
+        )
+
+
+def build_lims_export(
+    document: Dict[str, Any], run_id: Optional[str] = None, *, report_status: Optional[ReportRevisionStatus] = None
+) -> LIMSExport:
     """
     Maps a `geper_results.json` document (already-parsed dict -- the
     same shape `report/json_builder.py::JSONResultBuilder.build()`
@@ -595,6 +714,10 @@ def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) ->
     findings = [_build_finding(i, vr) for i, vr in enumerate(variants, start=1)]
 
     return LIMSExport(
+        export_format_version=(
+            EXPORT_FORMAT_VERSION_WITH_REPORT_STATUS if report_status is not None else EXPORT_FORMAT_VERSION
+        ),
+        report_status=_lims_report_status(report_status) if report_status is not None else None,
         run=LIMSRun(
             sample_id=_derive_sample_id(document),
             run_id=_derive_run_id(document, run_id),
@@ -615,10 +738,19 @@ def build_lims_export(document: Dict[str, Any], run_id: Optional[str] = None) ->
 # ---------------------------------------------------------------------------
 
 
-def export_lims_json(document: Dict[str, Any], output_path: str, run_id: Optional[str] = None) -> str:
+def export_lims_json(
+    document: Dict[str, Any],
+    output_path: str,
+    run_id: Optional[str] = None,
+    *,
+    run_dir: Optional[str] = None,
+    report_status: Optional[ReportRevisionStatus] = None,
+) -> str:
     """Raises `LIMSExportBlockedError` (see `_require_reviewed`) when `document` is not yet reviewed -- an audit-log entry is written to `output_path`'s directory before the exception propagates, so the blocked attempt is never silently swallowed."""
     try:
-        export = build_lims_export(document, run_id=run_id)
+        _require_reviewed(document)
+        _require_status_for_linked_run(run_dir, report_status)
+        export = build_lims_export(document, run_id=run_id, report_status=report_status)
     except LIMSExportBlockedError as exc:
         _append_export_audit_log(
             os.path.dirname(output_path),
@@ -634,7 +766,7 @@ def export_lims_json(document: Dict[str, Any], output_path: str, run_id: Optiona
         logger.warning(f"LIMS JSON export to '{output_path}' blocked: {exc}")
         raise
     with open(output_path, "w", encoding="utf-8") as fh:
-        fh.write(export.model_dump_json(indent=2))
+        fh.write(export.model_dump_json(indent=2, exclude=None if export.report_status else {"report_status"}))
     logger.info(f"Wrote LIMS JSON export to '{output_path}' ({len(export.findings)} finding(s)).")
     return output_path
 
@@ -711,6 +843,41 @@ _CSV_COLUMNS = [
 ]
 
 
+# Appended to the columns above ONLY for an export of a linked run (export_format_version 1.1.0), so an
+# unlinked run's CSV keeps exactly the columns it always had. Run-level, repeated in every row like run_caveats.
+_CSV_STATUS_COLUMNS = [
+    "report_status_checked_at",
+    "report_is_retracted",
+    "report_retracted_at",
+    "report_retraction_reason",
+    "report_replacement_report_id",
+    "report_replacement_retained",
+    "report_is_amendment",
+    "report_is_superseded",
+    "report_is_reanalysis",
+    "report_has_been_reanalysed",
+    "report_revision_banners",
+]
+
+
+def _csv_status_cells(status: LIMSReportStatus) -> Dict[str, Any]:
+    r = status.retraction
+    rep_ = r.replacement if r else None
+    return {
+        "report_status_checked_at": status.checked_at,
+        "report_is_retracted": status.is_retracted,
+        "report_retracted_at": r.retracted_at if r else None,
+        "report_retraction_reason": r.reason if r else None,
+        "report_replacement_report_id": rep_.report_id if rep_ else None,
+        "report_replacement_retained": rep_.retained if rep_ else None,
+        "report_is_amendment": status.is_amendment,
+        "report_is_superseded": status.is_superseded,
+        "report_is_reanalysis": status.is_reanalysis,
+        "report_has_been_reanalysed": status.has_been_reanalysed,
+        "report_revision_banners": " | ".join(status.banners),
+    }
+
+
 def _csv_row(run: LIMSRun, finding: LIMSFinding) -> Dict[str, Any]:
     v, c, conf, p = finding.variant, finding.classification, finding.confidence, finding.priority
     cp = finding.case_prioritization
@@ -765,7 +932,14 @@ def _csv_row(run: LIMSRun, finding: LIMSFinding) -> Dict[str, Any]:
     }
 
 
-def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional[str] = None) -> str:
+def export_lims_csv(
+    document: Dict[str, Any],
+    output_path: str,
+    run_id: Optional[str] = None,
+    *,
+    run_dir: Optional[str] = None,
+    report_status: Optional[ReportRevisionStatus] = None,
+) -> str:
     """
     Flattened, one-row-per-variant CSV -- for LIMS/lab-management
     systems that ingest tabular/spreadsheet data rather than nested
@@ -786,7 +960,9 @@ def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional
     recorded and never a silent empty file.
     """
     try:
-        export = build_lims_export(document, run_id=run_id)
+        _require_reviewed(document)
+        _require_status_for_linked_run(run_dir, report_status)
+        export = build_lims_export(document, run_id=run_id, report_status=report_status)
     except LIMSExportBlockedError as exc:
         _append_export_audit_log(
             os.path.dirname(output_path),
@@ -802,10 +978,14 @@ def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional
         logger.warning(f"LIMS CSV export to '{output_path}' blocked: {exc}")
         raise
     with open(output_path, "w", encoding="utf-8", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=_CSV_COLUMNS)
+        columns = _CSV_COLUMNS + (_CSV_STATUS_COLUMNS if export.report_status else [])
+        writer = csv.DictWriter(fh, fieldnames=columns)
         writer.writeheader()
         for finding in export.findings:
-            writer.writerow(_csv_row(export.run, finding))
+            row = _csv_row(export.run, finding)
+            if export.report_status:
+                row.update(_csv_status_cells(export.report_status))
+            writer.writerow(row)
     logger.info(f"Wrote LIMS CSV export to '{output_path}' ({len(export.findings)} finding(s)).")
     return output_path
 
@@ -815,6 +995,37 @@ def export_lims_csv(document: Dict[str, Any], output_path: str, run_id: Optional
 # pipeline dependency (see module docstring, point 3: "genuinely
 # separate export step").
 # ---------------------------------------------------------------------------
+
+
+def _status_for_cli_export(run_dir: str, args: Any, credentials_of: Any, document: Dict[str, Any]):
+    """
+    The validated clinical status for a linked run, or None for an unlinked one. ANY failure to obtain
+    it -- no credentials, a failed login, an unreadable or inconsistent revision -- is an audited,
+    blocking error: a linked report is never exported without its status.
+    """
+    from review.signoff import fetch_linked_revision_status
+
+    try:
+        link = _read_clinical_link(run_dir)
+        if link is None:
+            return None
+        status, _actor = fetch_linked_revision_status(link, credentials_of(args))
+        return status
+    except Exception as exc:
+        _append_export_audit_log(
+            run_dir,
+            {
+                "action": "export_blocked",
+                "format": "linked-status",
+                "review_status": document.get("review_status"),
+                "reason": f"clinical status unavailable: {type(exc).__name__}: {str(exc)[:300]}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        raise LIMSExportBlockedError(
+            f"LIMS export refused: the report's clinical status could not be read and validated ({exc}). "
+            "A linked report is never exported without its status."
+        ) from exc
 
 
 def _main() -> None:
@@ -830,6 +1041,12 @@ def _main() -> None:
     parser.add_argument(
         "--run-id", dest="run_id", default=None, help="Override the derived run/accession ID (see LIMSRun.run_id)."
     )
+    # A run linked to a clinical record (clinical_link.json beside geper_results.json) is exported with
+    # its report's CURRENT clinical status, read and validated at export time; the clinical login is the
+    # same one the sign-off tooling uses. Unused for an unlinked run.
+    from review.cli import _add_clinical_arguments, _clinical_credentials
+
+    _add_clinical_arguments(parser)
     args = parser.parse_args()
 
     if not args.json_out and not args.csv_out:
@@ -838,10 +1055,13 @@ def _main() -> None:
     with open(args.results_json, "r", encoding="utf-8") as fh:
         document = json.load(fh)
 
+    run_dir = os.path.dirname(os.path.abspath(args.results_json))
+    report_status = _status_for_cli_export(run_dir, args, _clinical_credentials, document)
+
     if args.json_out:
-        export_lims_json(document, args.json_out, run_id=args.run_id)
+        export_lims_json(document, args.json_out, run_id=args.run_id, run_dir=run_dir, report_status=report_status)
     if args.csv_out:
-        export_lims_csv(document, args.csv_out, run_id=args.run_id)
+        export_lims_csv(document, args.csv_out, run_id=args.run_id, run_dir=run_dir, report_status=report_status)
 
 
 if __name__ == "__main__":

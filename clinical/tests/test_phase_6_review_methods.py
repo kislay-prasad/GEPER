@@ -643,3 +643,70 @@ class TestAllFourClaimTypes:
             assert cur.fetchone()[0] == 4
             cur.execute("SELECT count(*) FROM reviewer_claims WHERE org_id = %s", (session_b.org_id,))
             assert cur.fetchone()[0] == 4
+
+
+def _audit_rows(conn, action):
+    """(resource_id, details-as-text) of every SUCCESS audit row for an action: the
+    CONTENT of the row, not a count of rows (a row of '<none>' counts the same)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT resource_id, coalesce(details::text, '') FROM audit_log "
+            "WHERE action = %s AND outcome = 'success' ORDER BY log_id",
+            (action,),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return rows
+
+
+class TestTheAuditRowNamesTheClaimAndLogsNoReason:
+    """
+    The three claim methods return the new claim's UUID and opt in to having it
+    recorded (`resource_id_from_result=True`). Without the opt-in the row reads
+    '<none>': an audit entry for a clinical act that names nothing. The free-text
+    `reason` is clinical prose and must appear in NO audit column.
+    """
+
+    REASON = "Distinct free-text reason 9d1c4e that must never reach the audit log."
+
+    def _assert_named_and_clean(self, conn, action, claim_id):
+        rows = _audit_rows(conn, action)
+        assert len(rows) == 1, rows
+        resource_id, details = rows[0]
+        assert resource_id == str(claim_id), rows
+        assert self.REASON not in resource_id
+        assert self.REASON not in details
+
+    def test_accept_records_the_claim_id(self, dao, conn, session_a, interp_a, report_a):
+        claim_id = dao._record_accept(
+            session_a,
+            interpretation_id=interp_a,
+            report_id=report_a,
+            actor_id=session_a.user_id,
+            reason=self.REASON,
+        )
+        self._assert_named_and_clean(conn, "record_accept", claim_id)
+
+    def test_disagreement_records_the_claim_id(self, dao, conn, session_a, interp_a, report_a):
+        claim_id = dao._record_disagreement(
+            session_a,
+            interpretation_id=interp_a,
+            report_id=report_a,
+            variant_key="chr1-1000-A-T",
+            actor_id=session_a.user_id,
+            new_classification="Likely Benign",
+            reason=self.REASON,
+        )
+        self._assert_named_and_clean(conn, "record_disagreement", claim_id)
+
+    def test_variant_added_records_the_claim_id(self, dao, conn, session_a, interp_a, report_a):
+        claim_id = dao._add_variant_by_reviewer(
+            session_a,
+            interpretation_id=interp_a,
+            report_id=report_a,
+            variant_key="chr1-1000-A-T",
+            actor_id=session_a.user_id,
+            acmg_classification="Pathogenic",
+            reason=self.REASON,
+        )
+        self._assert_named_and_clean(conn, "add_variant_by_reviewer", claim_id)

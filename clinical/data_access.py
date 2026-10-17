@@ -5257,6 +5257,9 @@ class DataAccess:
     @auditable(
         action="pipeline_result_recorded",
         resource_type="interpretation",
+        # Returns a RecordedPipelineResult that also carries submission_key and the
+        # sibling ids. Name the ONE field that is the subject, and no other.
+        resource_id_from_result=lambda result: result.interpretation_id if result else None,
         requires_session=True,
         auditable=True,
         reason="one completed pipeline run recorded as clinical records (spec 10.1 step 7)",
@@ -7467,6 +7470,9 @@ class DataAccess:
     @auditable(
         action="record_accept",
         resource_type="reviewer_claim",
+        # Returns the new claim's UUID (from _insert_claim) and nothing else; the claim's
+        # free-text reason is deliberately in no audit column.
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="reviewer concurs with an interpretation (spec 13.2)",
@@ -7501,6 +7507,9 @@ class DataAccess:
     @auditable(
         action="record_sole_signatory",
         resource_type="reviewer_claim",
+        # Returns the new claim's UUID (from _insert_claim) and nothing else; the claim's
+        # free-text reason is deliberately in no audit column.
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="the one signatory records their own concurrence, as a single signature and not as a second one",
@@ -7744,6 +7753,9 @@ class DataAccess:
     @auditable(
         action="record_disagreement",
         resource_type="reviewer_claim",
+        # Returns the new claim's UUID (from _insert_claim) and nothing else; the claim's
+        # free-text reason is deliberately in no audit column.
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="reviewer disagrees with a variant's classification (spec 13.2)",
@@ -7785,6 +7797,9 @@ class DataAccess:
     @auditable(
         action="add_variant_by_reviewer",
         resource_type="reviewer_claim",
+        # Returns the new claim's UUID (from _insert_claim) and nothing else; the claim's
+        # free-text reason is deliberately in no audit column.
+        resource_id_from_result=True,
         requires_session=True,
         auditable=True,
         reason="reviewer names a variant the pipeline did not surface (spec 13.2)",
@@ -8782,6 +8797,9 @@ class DataAccess:
     @auditable(
         action="amendment_created",
         resource_type="report",
+        # Returns (amendment_report_id, notification_id). The audit subject is the new
+        # amendment REPORT; True would record the tuple, notification id included.
+        resource_id_from_result=lambda result: result[0] if result else None,
         requires_session=True,
         auditable=True,
         reason="Amendment creation (GEPER rule implementing ISO 15189 7.4.1.8 b)/d)): original never modified, traceability recorded",

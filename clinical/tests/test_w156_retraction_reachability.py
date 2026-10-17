@@ -725,7 +725,9 @@ class TestOnlyAnApproverMayRetract:
         assert str(row[0]) == retraction_id, (row, retraction_id)
         # E1: the row records WHICH state it was retracted from, and this one
         # was released.
-        assert row[3] == "released", row
+        assert len(row) == 5, row
+        assert row[3] == "w156 retraction", row
+        assert row[4] == "released", row
 
     def test_the_four_non_approver_roles_are_one_refusal(self, client, world, reader):
         """

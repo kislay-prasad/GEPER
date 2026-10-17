@@ -18,16 +18,15 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-import api.main as api_main
-
 _DOC_PATHS = ("/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc")
 
 
 @pytest.fixture()
 def reloaded_app(monkeypatch):
     """
-    Rebuild the module so the import-time flag is re-read, and rebuild it once
-    more on the way out so no later test in this session inherits the flag.
+    Reload the current module so the import-time flag is re-read. Other tests
+    can evict api.main from sys.modules, leaving a stale module reference;
+    resolve the live module by name before each reload.
     """
 
     def _build(enabled: bool):
@@ -35,11 +34,11 @@ def reloaded_app(monkeypatch):
             monkeypatch.setenv("GEPER_ENABLE_DOCS", "1")
         else:
             monkeypatch.delenv("GEPER_ENABLE_DOCS", raising=False)
-        return importlib.reload(api_main).app
+        return importlib.reload(importlib.import_module("api.main")).app
 
     yield _build
     monkeypatch.delenv("GEPER_ENABLE_DOCS", raising=False)
-    importlib.reload(api_main)
+    importlib.reload(importlib.import_module("api.main"))
 
 
 class TestTheDocumentationIsNotAnonymouslyServed:

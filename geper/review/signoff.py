@@ -385,7 +385,12 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system", ou
     error message so a blocked caller's error is self-explanatory (e.g.
     "LIMS export refused" rather than a bare "refused").
     `output_dir`: optional directory for audit log. If provided, verification
-    path is recorded in audit trail for compliance review.
+    path is recorded in audit trail for compliance review, and the run's
+    sign-off PUBLICATION must also be complete: the manifest has to exist and
+    every artefact it lists (both PDFs, the results JSON) has to match, else
+    this raises. A caller that passes no directory (every current caller,
+    `report/export_lims.py` included) cannot be checked for completeness and
+    keeps the earlier document-only behaviour.
     """
     status = document.get("review_status")
     if status != "reviewed":
@@ -395,6 +400,18 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system", ou
             "before this run's data may reach a downstream system."
         )
 
+    # Publication completeness (crash-safe publication): when the caller can name the run directory, the manifest must
+    # exist and every artefact it lists must still match. Checked BEFORE anything is audited, so a refused
+    # export leaves no "verified" line behind. A caller with no directory cannot be checked here (documented).
+    if output_dir:
+        problems = _publication_problems(output_dir, document)
+        if problems:
+            raise SignoffError(
+                f"{consumer} refused: this run's sign-off publication is incomplete or inconsistent "
+                f"({', '.join(problems)}). The files on disk do not match the manifest written at approval, or the "
+                "manifest is missing. Do not export this run until it has been investigated "
+                "(`status` shows where its sign-off stands)."
+            )
     # Phase 6: Verify clinical content hash (ISO 15189 7.5 nonconformance detection)
     # Distinguish between verified (hash present + matches) and not-verified (hash absent, predates Phase 6)
     stored_hash = document.get("content_hash")
@@ -486,10 +503,318 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _append_audit_log(output_dir: str, entry: Dict[str, Any]) -> None:
-    """Appends one JSON-Lines record. Never truncates/rewrites the existing log -- an append-only audit trail is the entire point."""
+def _append_audit_log(output_dir: str, entry: Dict[str, Any], durable: bool = False) -> None:
+    """
+    Appends one JSON-Lines record. Never truncates/rewrites the existing log -- an append-only audit trail is the entire point.
+
+    `durable=True` also flushes and `fsync`s the file, for the one record that must not be lost to a crash the moment it
+    has been "written": `approve`'s `approved` line (see `_publish_signoff_files`). Other callers keep the earlier
+    behaviour (buffered append, no fsync).
+    """
     with open(_audit_log_path(output_dir), "a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry) + "\n")
+        if durable:
+            fh.flush()
+            os.fsync(fh.fileno())
+
+
+# ---------------------------------------------------------------------------
+# Crash-safe local publication (used by `approve`)
+#
+# After a linked run's claim, submission and approval are on the clinical service, `approve` publishes five local
+# files. They used to be written straight onto their final paths with the reviewed results JSON FIRST, so an
+# interruption left `review_status: "reviewed"` with no manifest and possibly no or truncated PDFs, and the export gate
+# (which reads only `review_status` and the stored content hash) accepted it.
+#
+# The sequence now is:
+#   1. everything is built in a private staging directory INSIDE the run directory (same filesystem, so `os.replace`
+#      is a rename), under names that can never be mistaken for a report run;
+#   2. every staged file is flushed and fsynced; the manifest is built from the SHA-256 of the staged bytes;
+#   3. the files are published with `os.replace`, in this order: patient meta, full PDF, short PDF, manifest, and the
+#      reviewed results JSON LAST (the directory is fsynced before the JSON is published and again after, on POSIX);
+#   4. only then is the `approved` audit line appended (fsynced).
+#
+# WHAT THIS DOES NOT GIVE: atomicity of the SET. Each `os.replace` is atomic for one file; an interruption can fall
+# between any two. What the order provides is that every such state is one the status paths refuse (the JSON is not yet
+# `reviewed`), or is complete but for the audit line. Power-loss durability depends on the platform: Windows cannot
+# fsync a directory, and network or bind-mounted filesystems may reorder or lose renames. Nothing is rolled back after
+# a partial publication (a rollback could overwrite a newer or concurrent report); the state is left, detectable and
+# failing closed, for a person. A staging directory left by a killed process is never deleted automatically.
+# ---------------------------------------------------------------------------
+
+_STAGING_PREFIX = ".signoff-stage-"
+_IS_POSIX = os.name == "posix"
+_SHA256_HEX_LENGTH = 64
+
+
+class PublicationError(SignoffError):
+    """
+    Local publication of a sign-off failed. On a LINKED run this happens after the claim, the submission and the
+    approval were sent to the clinical service, so SERVER APPROVAL MAY ALREADY HAVE SUCCEEDED even though no local
+    sign-off exists (or only part of one). `published` lists the files already published (renamed into place) before
+    the failure; nothing is rolled back. The original exception is the `__cause__`.
+    """
+
+    def __init__(self, message: str, published: Optional[List[str]] = None):
+        super().__init__(message)
+        self.published: List[str] = list(published or [])
+
+
+def _publish_replace(src: str, dst: str) -> None:
+    """Publish one staged file. A seam: tests inject failures here, deterministically."""
+    os.replace(src, dst)
+
+
+def _open_directory(path: str) -> int:
+    return os.open(path, os.O_RDONLY)
+
+
+def _fsync_directory(path: str) -> None:
+    """
+    Make the renames inside `path` durable. POSIX only: Windows has no directory fsync, so there this does nothing, and a
+    filesystem that refuses it is tolerated (best effort, logged) rather than failing a sign-off.
+    """
+    if not _IS_POSIX:
+        return
+    try:
+        fd = _open_directory(path)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        logger.warning(f"Could not fsync directory '{path}' ({exc}); rename durability is not guaranteed here.")
+
+
+def _fsync_path(path: str) -> None:
+    """Flush an already-written file (one a renderer wrote through its own handle) to disk."""
+    with open(path, "r+b") as fh:
+        os.fsync(fh.fileno())
+
+
+def _stage_json(path: str, value: Any) -> None:
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(value, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _remove_staging_dir(path: str) -> None:
+    """Remove ONLY the staging directory this invocation created. A failure is reported, never raised."""
+    try:
+        shutil.rmtree(path)
+    except OSError as exc:
+        logger.warning(
+            f"Could not remove the sign-off staging directory '{path}' ({exc}); it is safe to delete by hand."
+        )
+
+
+def _is_sha256_hex(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == _SHA256_HEX_LENGTH and all(c in "0123456789abcdef" for c in value)
+
+
+def _publication_problems(output_dir: str, document: Optional[Dict[str, Any]] = None) -> List[str]:
+    """
+    Whether the run's sign-off publication is COMPLETE and consistent, judged from the manifest against the files on disk.
+    Returns the problems found; an empty list means the manifest exists, is readable, names SHA-256 values for the
+    full PDF, the short PDF and the results JSON, and every one of them matches the file now on disk (so a missing,
+    truncated or replaced file is a problem), and, when `document` is given, the manifest's content hash agrees with
+    the document's.
+
+    This is evidence of INTERNAL consistency only: it cannot show that the signed content is the content the clinical
+    service approved. Reads only.
+    """
+    manifest_path = _manifest_path(output_dir)
+    if not os.path.exists(manifest_path):
+        return ["manifest_missing"]
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError):
+        return ["manifest_unreadable"]
+    if not isinstance(manifest, dict):
+        return ["manifest_not_an_object"]
+    problems: List[str] = []
+    for key, filename, differs in (
+        ("pdf_sha256", FULL_PDF_FILENAME, f"{FULL_PDF_FILENAME}_differs_from_manifest"),
+        ("short_pdf_sha256", SHORT_PDF_FILENAME, f"{SHORT_PDF_FILENAME}_differs_from_manifest"),
+        ("results_json_sha256", RESULTS_FILENAME, "results_json_changed_since_publication"),
+    ):
+        recorded = manifest.get(key)
+        if not _is_sha256_hex(recorded):
+            problems.append(f"manifest_lacks_{key}")
+            continue
+        path = os.path.join(output_dir, filename)
+        if not os.path.exists(path):
+            problems.append(f"{filename}_missing")
+            continue
+        try:
+            actual = _sha256_file(path)
+        except OSError:
+            problems.append(f"{filename}_unreadable")
+            continue
+        if actual != recorded:
+            problems.append(differs)
+    if document is not None:
+        document_hash, manifest_hash = document.get("content_hash"), manifest.get("content_hash")
+        if document_hash and manifest_hash and document_hash != manifest_hash:
+            problems.append("manifest_content_hash_differs_from_document")
+        elif document_hash and not manifest_hash:
+            problems.append("manifest_lacks_content_hash")
+    return problems
+
+
+def _publication_failure_message(linked: bool, outcome: str, published: List[str]) -> str:
+    if linked:
+        server = (
+            "This run is linked to a clinical record and its claim, submission and approval were already sent to the "
+            "clinical service, so server approval may already have succeeded even though the local sign-off is not "
+            "complete. "
+        )
+    else:
+        server = "This run has no clinical record, so nothing was sent to a clinical service. "
+    done = ", ".join(published) if published else "none"
+    return (
+        f"Local publication failed: {outcome} Files already published: {done}. {server}"
+        "Nothing was rolled back and nothing will be repaired automatically: check the run directory, then run "
+        "`status` to see where the sign-off stands."
+    )
+
+
+def _publish_signoff_files(
+    output_dir: str,
+    document: Dict[str, Any],
+    signer: "ClinicianIdentity",
+    identity_source: str,
+    revision_status: Optional[ReportRevisionStatus],
+    clinical_record: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    The local half of `approve`: stage, fsync, publish in a deliberate order, then audit. Mutates `document` into its
+    reviewed form (as the earlier code did) and returns the manifest. Raises `PublicationError` for any failure, with
+    the original exception as its cause. See the section comment above for the guarantees and their limits.
+    """
+    linked = clinical_record is not None
+    published: List[str] = []
+    staging: Optional[str] = None
+    try:
+        # ── 1. build everything privately ──
+        try:
+            physician = signer.physician_string()
+            patient_meta_raw = _load_existing_patient_meta_raw(_patient_meta_path(output_dir))
+            patient_meta_raw["physician"] = physician
+            approved_at = datetime.now(timezone.utc).isoformat()
+            document["review_status"] = "reviewed"
+            document["reviewed_by"] = physician
+            document["reviewed_at"] = approved_at
+            # Phase 6: Compute and store content hash for later verification
+            document["content_hash"] = compute_content_hash(document)
+
+            staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=output_dir)
+            # Names deliberately unlike any report file: a staged `geper_results.json` would be found by `list_pending`
+            # as a second run.
+            staged = {
+                PATIENT_META_FILENAME: os.path.join(staging, "patient-meta.staged"),
+                FULL_PDF_FILENAME: os.path.join(staging, "full-pdf.staged"),
+                SHORT_PDF_FILENAME: os.path.join(staging, "short-pdf.staged"),
+                MANIFEST_FILENAME: os.path.join(staging, "manifest.staged"),
+                RESULTS_FILENAME: os.path.join(staging, "results.staged"),
+            }
+            _stage_json(staged[PATIENT_META_FILENAME], patient_meta_raw)
+            _stage_json(staged[RESULTS_FILENAME], document)
+            # QC needs no threading here any more: generate_pdf reads it from the document itself
+            # (report/summary.py::_document_qc_metrics).
+            rendered_document = _with_revision(document, revision_status)
+            generate_pdf(rendered_document, staged[FULL_PDF_FILENAME], patient_meta=staged[PATIENT_META_FILENAME])
+            _fsync_path(staged[FULL_PDF_FILENAME])
+            generate_short_pdf(
+                rendered_document,
+                staged[SHORT_PDF_FILENAME],
+                patient_meta=staged[PATIENT_META_FILENAME],
+                companion_filename=FULL_PDF_FILENAME,
+            )
+            _fsync_path(staged[SHORT_PDF_FILENAME])
+
+            # The manifest describes the bytes that were actually staged, not files that may not exist yet.
+            manifest = {
+                "pdf_sha256": _sha256_file(staged[FULL_PDF_FILENAME]),
+                "short_pdf_sha256": _sha256_file(staged[SHORT_PDF_FILENAME]),
+                "results_json_sha256": _sha256_file(staged[RESULTS_FILENAME]),
+                "content_hash": document.get("content_hash"),  # Phase 6: Clinical content hash
+                "clinician_name": signer.full_name,
+                "reg_number": signer.registration_number,
+                "hospital": signer.hospital,
+                # R10: WHERE the printed identity came from, recorded rather than inferred. "user_record" means it was
+                # read from the signing account and could not contradict it; "typed_in" means a human typed it at
+                # sign-off with no account behind it (the filesystem-only CLI path). An auditor reading an old
+                # manifest must be able to tell the two apart.
+                "identity_source": identity_source,
+                "clinician_user_id": signer.user_id,
+                "approved_at": approved_at,
+                "variants": [_variant_manifest_entry(vr) for vr in document.get("variants", [])],
+                # Present only on a linked run, and the key is omitted rather than set to None on an unlinked one:
+                # "there is no clinical record" and "there is one and we did not record it" must not read the same.
+                **({"clinical": clinical_record} if clinical_record else {}),
+            }
+            _stage_json(staged[MANIFEST_FILENAME], manifest)
+        except Exception as exc:
+            raise PublicationError(
+                _publication_failure_message(
+                    linked,
+                    "the files could not be prepared, so none was published and the existing files are unchanged.",
+                    [],
+                ),
+                [],
+            ) from exc
+
+        # ── 2. publish: dependencies first, the reviewed results JSON last ──
+        try:
+            for name in (PATIENT_META_FILENAME, FULL_PDF_FILENAME, SHORT_PDF_FILENAME, MANIFEST_FILENAME):
+                _publish_replace(staged[name], os.path.join(output_dir, name))
+                published.append(name)
+            _fsync_directory(output_dir)  # the manifest's rename must be durable before the JSON's can overtake it
+            _publish_replace(staged[RESULTS_FILENAME], _results_path(output_dir))
+            published.append(RESULTS_FILENAME)
+            _fsync_directory(output_dir)
+        except Exception as exc:
+            raise PublicationError(
+                _publication_failure_message(
+                    linked,
+                    "a file could not be moved into place. The files already published were not rolled back.",
+                    published,
+                ),
+                published,
+            ) from exc
+
+        # ── 3. audit, only after publication succeeded ──
+        try:
+            _append_audit_log(
+                output_dir,
+                {
+                    "action": "approved",
+                    "output_dir": os.path.abspath(output_dir),
+                    "clinician": signer.full_name,
+                    "clinician_user_id": signer.user_id,
+                    "identity_source": identity_source,
+                    "timestamp": approved_at,
+                    **({"clinical": clinical_record} if clinical_record else {}),
+                },
+                durable=True,
+            )
+        except Exception as exc:
+            raise PublicationError(
+                _publication_failure_message(
+                    linked,
+                    "every file was published, but the local audit entry could not be written. The published files were "
+                    "not rolled back; the sign-off is intact and lacks only its 'approved' audit line.",
+                    published,
+                ),
+                published,
+            ) from exc
+        return manifest
+    finally:
+        if staging is not None:
+            _remove_staging_dir(staging)
 
 
 # ---------------------------------------------------------------------------
@@ -1480,78 +1805,15 @@ def approve(
             # Nothing below talks to the clinical service. End the session promptly.
             close_clinical()
 
-    physician = signer.physician_string()
-    patient_meta_path = _patient_meta_path(output_dir)
-    patient_meta_raw = _load_existing_patient_meta_raw(patient_meta_path)
-    patient_meta_raw["physician"] = physician
-    with open(patient_meta_path, "w", encoding="utf-8") as fh:
-        json.dump(patient_meta_raw, fh, indent=2)
-
-    approved_at = datetime.now(timezone.utc).isoformat()
-    document["review_status"] = "reviewed"
-    document["reviewed_by"] = physician
-    document["reviewed_at"] = approved_at
-    # Phase 6: Compute and store content hash for later verification
-    document["content_hash"] = compute_content_hash(document)
-    _write_document(results_path, document)
-
-    pdf_path = os.path.join(output_dir, FULL_PDF_FILENAME)
-    short_pdf_path = os.path.join(output_dir, SHORT_PDF_FILENAME)
-    # QC needs no threading here any more: generate_pdf reads it from the
-    # document itself (report/summary.py::_document_qc_metrics). ae0d9f7
-    # fixed the signed-PDF-claims-no-QC defect by passing document QC
-    # through explicitly; that hand-off is now the renderer's own job, so
-    # no future re-render path can forget it.
-    rendered_document = _with_revision(document, revision_status)
-    generate_pdf(rendered_document, pdf_path, patient_meta=patient_meta_path)
-    generate_short_pdf(
-        rendered_document, short_pdf_path, patient_meta=patient_meta_path, companion_filename=FULL_PDF_FILENAME
-    )
-
-    manifest = {
-        "pdf_sha256": _sha256_file(pdf_path),
-        "short_pdf_sha256": _sha256_file(short_pdf_path),
-        "results_json_sha256": _sha256_file(results_path),
-        "content_hash": document.get("content_hash"),  # Phase 6: Clinical content hash
-        "clinician_name": signer.full_name,
-        "reg_number": signer.registration_number,
-        "hospital": signer.hospital,
-        # R10: WHERE the printed identity came from, recorded rather than
-        # inferred. "user_record" means it was read from the signing account
-        # and could not contradict it; "typed_in" means a human typed it at
-        # sign-off with no account behind it (the filesystem-only CLI path).
-        # An auditor reading an old manifest must be able to tell the two
-        # apart -- without this key every manifest looks equally attested,
-        # including the ones that are not.
-        "identity_source": identity_source,
-        "clinician_user_id": signer.user_id,
-        "approved_at": approved_at,
-        "variants": [_variant_manifest_entry(vr) for vr in document.get("variants", [])],
-        # Present only on a linked run, and the key is omitted rather than set
-        # to None on an unlinked one: "there is no clinical record" and "there
-        # is one and we did not record it" must not read the same in a manifest
-        # a forensic audit is holding.
-        **({"clinical": clinical_record} if clinical_record else {}),
-    }
-    with open(_manifest_path(output_dir), "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2)
-
-    _append_audit_log(
-        output_dir,
-        {
-            "action": "approved",
-            "output_dir": os.path.abspath(output_dir),
-            "clinician": signer.full_name,
-            "clinician_user_id": signer.user_id,
-            "identity_source": identity_source,
-            "timestamp": approved_at,
-            **({"clinical": clinical_record} if clinical_record else {}),
-        },
-    )
+    # Local publication: staged privately, fsynced, published with `os.replace` (patient meta, both PDFs, the manifest,
+    # and the reviewed results JSON LAST), then audited. See "Crash-safe local publication" above for the guarantees
+    # and their limits (not atomic across files; weaker durability on Windows and on network filesystems). Any failure
+    # here raises `PublicationError` -- on a linked run the clinical service has ALREADY been written to.
+    manifest = _publish_signoff_files(output_dir, document, signer, identity_source, revision_status, clinical_record)
 
     logger.info(
-        f"Approved run in '{output_dir}': regenerated '{pdf_path}' and '{short_pdf_path}', "
-        f"wrote '{_manifest_path(output_dir)}'."
+        f"Approved run in '{output_dir}': regenerated '{os.path.join(output_dir, FULL_PDF_FILENAME)}' and "
+        f"'{os.path.join(output_dir, SHORT_PDF_FILENAME)}', wrote '{_manifest_path(output_dir)}'."
     )
     return manifest
 
@@ -1803,9 +2065,13 @@ def override(
 def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any]]:
     """
     Recursively finds every `geper_results.json` under `search_root`
-    and reports its review status -- REVIEWED if a
-    `geper_signoff_manifest.json` sits alongside it (written only by a
-    successful `approve()`), DRAFT otherwise. By default returns only
+    and reports its review status -- REVIEWED only if a
+    `geper_signoff_manifest.json` sits alongside it AND it verifies: it
+    names SHA-256 values for both PDFs and the results JSON, every one
+    matches the file now on disk, and the results JSON says `reviewed`
+    (a mere file-exists check would call a half-published sign-off
+    reviewed). DRAFT otherwise; `manifest_problems` then says why a
+    manifest that exists did not verify. By default returns only
     DRAFT runs (the ones actually pending review, matching the command
     name); `show_all=True` returns every run found, either status.
 
@@ -1841,7 +2107,13 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
             logger.warning(f"Skipping unreadable '{results_path}': {exc}")
             continue
 
-        status = "REVIEWED" if os.path.exists(os.path.join(dirpath, MANIFEST_FILENAME)) else "DRAFT"
+        # REVIEWED only when the manifest exists AND verifies against the files on disk (a mere file-exists check
+        # would call a half-published sign-off reviewed) AND the results JSON itself says reviewed.
+        manifest_exists = os.path.exists(os.path.join(dirpath, MANIFEST_FILENAME))
+        manifest_problems = _publication_problems(dirpath, document) if manifest_exists else []
+        if manifest_exists and not manifest_problems and document.get("review_status") != "reviewed":
+            manifest_problems = ["results_json_not_reviewed"]
+        status = "REVIEWED" if manifest_exists and not manifest_problems else "DRAFT"
         if status == "REVIEWED" and not show_all:
             continue
 
@@ -1875,6 +2147,8 @@ def list_pending(search_root: str, show_all: bool = False) -> List[Dict[str, Any
                 "num_variants": document.get("variant_count", len(variants)),
                 "has_conflicting_evidence": any(has_conflicting_evidence(vr) for vr in variants),
                 "status": status,
+                # Why a manifest that EXISTS does not verify (empty when there is none, or it verifies).
+                "manifest_problems": manifest_problems,
                 # Carried verbatim, never normalised into {} -- an empty dict
                 # would read as "recorded, and there were none".
                 "model_checkpoints": checkpoints if checkpoints else None,

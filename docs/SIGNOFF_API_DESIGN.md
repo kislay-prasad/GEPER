@@ -129,13 +129,16 @@ MFA enforcement, session hardening, worker least-privilege, amendment/retraction
 
 ## Sign-off state (read-only): `GET /review/reports/{report_id}/signoff-state`
 
-> **VALIDATION STATUS: NOT YET VERIFIED AGAINST POSTGRESQL.** The SQL behind this route has been reviewed against
-> `clinical/schema.sql` and its syntax parsed, but it **has not been executed against PostgreSQL**. The
-> database-backed endpoint tests (`clinical/tests/test_w176_signoff_state.py` and the real-service tests in
-> `geper/api/tests/test_clinical_http_adapter.py`) **have not yet run**; only the tests that need no database have.
-> **PostgreSQL-enabled CI must pass before Stage 1 is considered verified.** Until then, treat every statement below
-> about runtime behaviour (the single-statement snapshot, the output format, the tombstoned-claim behaviour) as the
-> intended design, not a verified fact.
+> **VALIDATION STATUS.** The SQL behind this route and its database-backed tests have now been **exercised in
+> PostgreSQL-enabled CI and passed on commit `a4f240f`** (all 10 checks, on both the push and pull_request runs). That run
+> executed `clinical/tests/test_w176_signoff_state.py` (25 tests), the 8 real-service `TestSignoffStateReadOnly` tests in
+> `geper/api/tests/test_clinical_http_adapter.py`, the adapter validation tests, and the route-census and authorization
+> tests, with no failures and no skips among them.
+>
+> **Still NOT verified:** real TLS; production load; and **concurrent-write behaviour** (the single-statement snapshot
+> described below follows from how PostgreSQL runs one statement under READ COMMITTED, and a test pins that the report,
+> claims and retraction flag come from one statement, but nothing has exercised the route while other sessions write).
+> Passing CI does **not** establish clinical validity or production readiness.
 
 Stage 1 of recovery from interrupted sign-offs. It lets an operator **see** what an interrupted sign-off left behind. It
 resumes nothing, finalises nothing and writes nothing: no claim, no state change, no approval metadata, no hash, and no
@@ -170,10 +173,13 @@ snapshot under READ COMMITTED. The role check before it is a separate statement.
   claim that is present came from the interrupted attempt or from an earlier one by the same person.
 * A claim that has been tombstoned by the retention role is still listed, **unmarked**: there is deliberately no
   tombstone flag. `get_reviewer_claims` and the content hash also count every claim row, so this route describes the same
-  set the hash was taken over. A test (`TestATombstonedClaim`) pins this; it has not yet run (see the status above).
+  set the hash was taken over. A test (`TestATombstonedClaim`) pins this and passed in CI at `a4f240f`.
 * Because the reason is withheld, an operator cannot confirm from this response that a listed claim carries the grounds they
   gave. Whether to expose a hash or the text is an open decision for a later stage.
-* The sign-off tool does not use it yet. Recovery writes (resume, finalise) are not implemented.
+* The endpoint is read-only. The sign-off tool does not use it yet, and **automatic recovery and resume are not
+  implemented**: recovery writes (resume, finalise) do not exist.
+* Real TLS, production load and concurrent-write behaviour remain unverified (see the validation status above), and
+  clinical validity and production readiness are not established.
 * `HttpClinicalDataAccess.get_signoff_state` makes one GET and validates the answer strictly, raising
   `ClinicalServiceError` rather than returning a picture that cannot be true: every field present with the right type
   (`approver_id` and `approved_at` must be present, though they may be `null`); a state and claim types the schema allows;

@@ -36,7 +36,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
-import psutil
 import pytest
 from fastapi.testclient import TestClient
 
@@ -79,6 +78,8 @@ class Engine:
         self.rendezvous = tmp_path / "rendezvous"
         monkeypatch.setenv("BIJ_AI_CLI_PATH", str(STANDIN))
         monkeypatch.setenv("STANDIN_LOG", str(self.log))
+        self.heartbeat = tmp_path / "heartbeat"
+        monkeypatch.setenv("STANDIN_HEARTBEAT", str(self.heartbeat))
         monkeypatch.setenv("STANDIN_RENDEZVOUS_DIR", str(self.rendezvous))
         self.mode("success")
 
@@ -411,11 +412,11 @@ def test_an_engine_that_hangs_is_killed_and_the_submission_fails_as_a_timeout(
     assert done.status == "failed" and "timed out" in done.error_message
     assert exception_codes(clinical_conn, org_a["order_id"]) == ["bij_ai_timeout"]
     assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
-    pid = engine.runs()[0]["pid"]
-    deadline = time.monotonic() + 10
-    while psutil.pid_exists(pid) and time.monotonic() < deadline:
-        time.sleep(0.1)
-    assert not psutil.pid_exists(pid)  # the engine process was really terminated, not just abandoned
+    # the engine was running (it left a heartbeat) and is now really gone: the heartbeat no longer changes
+    assert engine.heartbeat.exists()
+    last = engine.heartbeat.read_text(encoding="utf-8")
+    time.sleep(1.0)
+    assert engine.heartbeat.read_text(encoding="utf-8") == last
 
 
 @xfail_defect("F2", "exit 0 plus `{}` is recorded as a completed interpretation and a draft report")
@@ -631,7 +632,7 @@ def test_a_passed_sample_is_processed_even_if_a_newer_sample_of_its_order_has_no
 # ═══ two workers (F7) ═══
 
 
-def _race(dao, clinical_conn, store, org, vcf_path, api, engine, monkeypatch):
+def _race(dao, clinical_conn, clinical_dsn, store, org, vcf_path, api, engine, monkeypatch):
     """Two workers, each on its own database connection, both holding the same QUEUED row: what two worker processes
     that polled at the same moment see. The engine waits (rendezvous) so that, if both start it, both are running."""
     import psycopg
@@ -642,7 +643,12 @@ def _race(dao, clinical_conn, store, org, vcf_path, api, engine, monkeypatch):
     monkeypatch.setenv("STANDIN_RENDEZVOUS_TIMEOUT", "6")
     engine.mode("rendezvous")
     sub_id = submit(api(org["org_id"], KEY_A), org, vcf_path)
-    second_connection = psycopg.connect(clinical_conn.info.dsn, autocommit=False)
+    # The organisation's system user is created the first time anything asks for its session, and two concurrent
+    # first requests can collide on users_org_email (observed once while writing this test: a separate defect, not
+    # what this race is about). Create it now so the race below is about the engine claim alone.
+    dao._create_system_session(uuid.UUID(str(org["org_id"])))
+    clinical_conn.commit()  # visible to the second worker's connection, not merely pending on this one
+    second_connection = psycopg.connect(clinical_dsn, autocommit=False)  # the full DSN: `info.dsn` drops the password
     try:
         second_dao = DataAccess(second_connection, clock=SystemClock(), password_hasher=_link._PlainHasher())
         workers = [InterpretationWorker(store, dao), InterpretationWorker(store, second_dao)]
@@ -659,16 +665,16 @@ def _race(dao, clinical_conn, store, org, vcf_path, api, engine, monkeypatch):
 
 
 def test_two_workers_racing_on_one_submission_never_create_two_reports(
-    api, store, dao, clinical_conn, org_a, vcf_path, engine, output_root, monkeypatch
+    api, store, dao, clinical_conn, clinical_dsn, org_a, vcf_path, engine, output_root, monkeypatch
 ):
-    sub_id = _race(dao, clinical_conn, store, org_a, vcf_path, api, engine, monkeypatch)
+    sub_id = _race(dao, clinical_conn, clinical_dsn, store, org_a, vcf_path, api, engine, monkeypatch)
     assert store.get_submission(sub_id).status == "complete"
     assert clinical_counts(clinical_conn, org_a["org_id"]) == {k: 1 for k in NOTHING_RECORDED}  # the unique key holds
 
 
 @xfail_defect("F7", "no claim: both workers run the engine for the same queued submission")
 def test_two_workers_racing_on_one_submission_run_the_engine_once(
-    api, store, dao, clinical_conn, org_a, vcf_path, engine, output_root, monkeypatch
+    api, store, dao, clinical_conn, clinical_dsn, org_a, vcf_path, engine, output_root, monkeypatch
 ):
-    _race(dao, clinical_conn, store, org_a, vcf_path, api, engine, monkeypatch)
+    _race(dao, clinical_conn, clinical_dsn, store, org_a, vcf_path, api, engine, monkeypatch)
     assert len(engine.runs()) == 1

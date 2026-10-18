@@ -21,6 +21,7 @@ BEHAVIOUR is chosen with environment variables (inherited through `spawn_tracked
                 rendezvous | fail_once
   STANDIN_LOG   a file; one JSON line per invocation (argv, mode, pid) is appended BEFORE any work, so a test can count
                 runs and read the arguments the worker actually passed
+  STANDIN_HEARTBEAT   `hang` rewrites this file every 0.1 s, so a test can show the process was really terminated
   STANDIN_RENDEZVOUS_DIR / _COUNT / _TIMEOUT   `rendezvous` writes a marker and waits until COUNT markers exist, or
                 TIMEOUT seconds pass: two engines running at the same time see each other, one engine alone just waits
 """
@@ -164,7 +165,13 @@ def main() -> int:
         _write_results(args.output_dir, "{}")
         return 0
     if mode == "hang":
-        time.sleep(300)
+        # a heartbeat a test can watch: it stops changing the moment this process is really gone
+        heartbeat = os.environ.get("STANDIN_HEARTBEAT")
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            if heartbeat:
+                Path(heartbeat).write_text(repr(time.time()), encoding="utf-8")
+            time.sleep(0.1)
         return 0
     if mode == "slow":
         time.sleep(1.0)

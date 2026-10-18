@@ -37,7 +37,7 @@ import zoneinfo
 
 import pytest
 
-from clinical.data_access import BcryptHasher, DataAccess, SystemClock
+from clinical.data_access import BcryptHasher, DataAccess, SystemClock, _claim_timestamp_utc
 from clinical.tests.test_phase_7_commit1_hash_locking import (
     _admin_session,
     _approved_report,
@@ -357,6 +357,20 @@ def _legacy_dao_on(connection):
     return LegacyDataAccess(connection, clock=SystemClock(), password_hasher=BcryptHasher(rounds=4))
 
 
+def _assert_zone_matches_the_sessions_offsets(connection, report_id, zone_name):
+    """For every claim of the report, the offset the original SESSION printed equals the offset `zone_name` gives."""
+    with connection.cursor() as cur:
+        cur.execute(
+            'SELECT "timestamp" FROM reviewer_claims WHERE report_id = %s ORDER BY "timestamp", id', (report_id,)
+        )
+        instants = [row[0] for row in cur.fetchall()]
+    connection.rollback()
+    assert instants, "the report has no claims to compare"
+    zone = zoneinfo.ZoneInfo(zone_name)
+    for ts in instants:
+        assert ts.astimezone(zone).utcoffset() == ts.utcoffset(), (zone_name, ts.isoformat())
+
+
 class TestLegacyHashesAreNotReportedAsTampering:
     @pytest.mark.parametrize("legacy_zone", ["Asia/Kolkata", "Europe/London", "America/Los_Angeles"])
     def test_a_legacy_hash_from_a_non_utc_session_is_recognised_and_distinguishable(
@@ -373,7 +387,13 @@ class TestLegacyHashesAreNotReportedAsTampering:
         # ...but it is recognised as the previous algorithm run in a named zone, never as tampering.
         outcome, zone = dao._classify_report_integrity(approver_a, report_id)
         assert outcome == "match_legacy_zone"
-        assert zone in zoneinfo.available_timezones()
+        # The returned zone must be one that renders the claim instants the way the ORIGINAL session did. The expected
+        # offsets come from PostgreSQL/psycopg's rendering in that session, not from the code under test, and not from
+        # today's date: they are read back from the stored claims.
+        _assert_zone_matches_the_sessions_offsets(legacy_conn, report_id, zone)
+        if legacy_zone == "Asia/Kolkata":
+            probe = datetime.datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc).astimezone(zoneinfo.ZoneInfo(zone))
+            assert probe.utcoffset() == datetime.timedelta(hours=5, minutes=30)
         assert dao.verify_report_integrity(approver_a, report_id) is True
 
     def test_a_tampered_legacy_report_is_no_match_and_is_not_labelled_tampered(
@@ -413,3 +433,315 @@ class TestLegacyHashesAreNotReportedAsTampering:
             after = cur.fetchone()
         conn.rollback()
         assert after == before
+
+
+# ══ edge cases and audit visibility (follow-up to the first commit) ═══════════════════════════════════════════════
+
+
+@pytest.fixture
+def require_tzdata():
+    """The DST tests need the IANA rules for these zones on the host. Fail loudly (not skip) when they are absent."""
+    for name in ("Europe/London", "America/Los_Angeles", "Asia/Kolkata"):
+        try:
+            zoneinfo.ZoneInfo(name)
+        except zoneinfo.ZoneInfoNotFoundError:  # pragma: no cover - environment problem
+            pytest.fail(f"tzdata for {name} is not available on this host; install the 'tzdata' package")
+
+
+def _utc(*args, **kwargs):
+    return datetime.datetime(*args, tzinfo=timezone.utc, **kwargs)
+
+
+def _pure_rows(instants):
+    """Claim rows in the shape `_load_report_hash_inputs` returns, for the DB-free tests."""
+    return [("accept", None, None, f"claim {i}", GOLDEN_ACTOR, ts, None, None) for i, ts in enumerate(instants)]
+
+
+def _expected_hash_from_literal_strings(instants, literal_strings):
+    """The PREVIOUS algorithm's hash for these instants, given the exact `isoformat()` text the original session printed
+    for each. The text is written out by hand below (not computed by zoneinfo), so it is independent of the code under test."""
+    by_instant = dict(zip(instants, literal_strings))
+    claims = [("accept", None, None, f"claim {i}", ts) for i, ts in enumerate(instants)]
+    return _previous_algorithm_hash(GOLDEN_RUN_DOCUMENT, claims, lambda ts: by_instant[ts])
+
+
+def _bare_dao():
+    return DataAccess.__new__(DataAccess)  # no connection: the pure helpers do not use one
+
+
+# (zone the ORIGINAL session used, instants, literal text it printed for each, expected offset in hours for each)
+DST_CASES = {
+    "london_spring_forward_at_the_gap": (
+        "Europe/London",
+        [_utc(2026, 3, 29, 0, 59, 59), _utc(2026, 3, 29, 1, 0, 0), _utc(2026, 3, 29, 12, 0, 0, 999999)],
+        ["2026-03-29T00:59:59+00:00", "2026-03-29T02:00:00+01:00", "2026-03-29T13:00:00.999999+01:00"],
+        [0, 1, 1],
+    ),
+    "london_autumn_overlap_ambiguous_local_time": (
+        "Europe/London",
+        [_utc(2026, 10, 25, 0, 30, 0), _utc(2026, 10, 25, 1, 30, 0)],
+        ["2026-10-25T01:30:00+01:00", "2026-10-25T01:30:00+00:00"],
+        [1, 0],
+    ),
+    "los_angeles_spring_forward": (
+        "America/Los_Angeles",
+        [_utc(2026, 3, 8, 9, 59, 59), _utc(2026, 3, 8, 10, 0, 0)],
+        ["2026-03-08T01:59:59-08:00", "2026-03-08T03:00:00-07:00"],
+        [-8, -7],
+    ),
+}
+
+
+class TestLegacySearchAcrossDaylightSavingPure:
+    """DB-free. Claims whose instants straddle a DST transition: the original session printed DIFFERENT offsets for them."""
+
+    @pytest.mark.parametrize("case", sorted(DST_CASES))
+    def test_a_hash_made_across_a_transition_is_recognised_with_the_right_offsets(self, require_tzdata, case):
+        _, instants, literals, offsets = DST_CASES[case]
+        expected_stored_hash = _expected_hash_from_literal_strings(instants, literals)
+        rows = _pure_rows(instants)
+
+        # the canonical (UTC) form must NOT reproduce it, otherwise the search would not be exercised
+        assert DataAccess._report_hash_digest(GOLDEN_RUN_DOCUMENT, rows, _claim_timestamp_utc) != expected_stored_hash
+
+        zone = _bare_dao()._legacy_zone_reproducing(GOLDEN_RUN_DOCUMENT, rows, expected_stored_hash)
+        assert zone is not None, "the search must recognise a hash whose offsets change within the claim set"
+        found = [ts.astimezone(zoneinfo.ZoneInfo(zone)).utcoffset() for ts in instants]
+        assert found == [datetime.timedelta(hours=h) for h in offsets]
+
+    def test_a_zone_with_a_constant_offset_cannot_reproduce_a_hash_that_straddles_a_transition(self, require_tzdata):
+        """Guards against a search that matches too loosely: Asia/Kolkata never prints +00:00 then +01:00."""
+        _, instants, literals, _ = DST_CASES["london_spring_forward_at_the_gap"]
+        zone = _bare_dao()._legacy_zone_reproducing(
+            GOLDEN_RUN_DOCUMENT, _pure_rows(instants), _expected_hash_from_literal_strings(instants, literals)
+        )
+        assert zone != "Asia/Kolkata"
+
+    def test_a_hash_that_no_zone_reproduces_is_not_recognised(self, require_tzdata):
+        _, instants, literals, _ = DST_CASES["london_spring_forward_at_the_gap"]
+        altered = list(literals)
+        altered[0] = "2026-03-29T00:59:59+05:30"  # a text no single zone prints for these instants
+        assert (
+            _bare_dao()._legacy_zone_reproducing(
+                GOLDEN_RUN_DOCUMENT, _pure_rows(instants), _expected_hash_from_literal_strings(instants, altered)
+            )
+            is None
+        )
+
+
+class TestNaiveTimestampsAreRefused:
+    def test_a_naive_datetime_is_rejected_not_read_as_local_time(self):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            _claim_timestamp_utc(datetime.datetime(2026, 9, 3, 12, 0, 0))
+
+    def test_aware_values_are_converted_to_utc_text(self, require_tzdata):
+        assert _claim_timestamp_utc(_utc(2026, 9, 3, 12, 0, 0)) == "2026-09-03T12:00:00+00:00"
+        kolkata = datetime.datetime(2026, 9, 3, 17, 30, 0, tzinfo=zoneinfo.ZoneInfo("Asia/Kolkata"))
+        assert _claim_timestamp_utc(kolkata) == "2026-09-03T12:00:00+00:00"
+        assert _claim_timestamp_utc(_utc(2026, 9, 3, 12, 0, 0, 123456)) == "2026-09-03T12:00:00.123456+00:00"
+
+    def test_the_hash_path_refuses_a_naive_claim_timestamp(self):
+        rows = [("accept", None, None, "r", GOLDEN_ACTOR, datetime.datetime(2026, 9, 3, 12, 0, 0), None, None)]
+        with pytest.raises(ValueError):
+            DataAccess._report_hash_digest(GOLDEN_RUN_DOCUMENT, rows, _claim_timestamp_utc)
+
+
+class TestLegacySearchFailsClosedWithoutTimeZoneData:
+    """If the host cannot enumerate or build zones, legacy recognition is simply unavailable: the answer is None
+    (which the classifier reports as `no_match`), never a guess and never an exception."""
+
+    def _fixture(self):
+        _, instants, literals, _ = DST_CASES["london_spring_forward_at_the_gap"]
+        return _pure_rows(instants), _expected_hash_from_literal_strings(instants, literals)
+
+    def test_enumeration_raising(self, require_tzdata, monkeypatch):
+        rows, stored = self._fixture()
+        monkeypatch.setattr(
+            zoneinfo, "available_timezones", lambda: (_ for _ in ()).throw(RuntimeError("no tz database"))
+        )
+        assert _bare_dao()._legacy_zone_reproducing(GOLDEN_RUN_DOCUMENT, rows, stored) is None
+
+    def test_no_zones_available(self, require_tzdata, monkeypatch):
+        rows, stored = self._fixture()
+        monkeypatch.setattr(zoneinfo, "available_timezones", lambda: set())
+        assert _bare_dao()._legacy_zone_reproducing(GOLDEN_RUN_DOCUMENT, rows, stored) is None
+
+    def test_every_zone_failing_to_load(self, require_tzdata, monkeypatch):
+        rows, stored = self._fixture()
+
+        def missing(key):
+            raise zoneinfo.ZoneInfoNotFoundError(key)
+
+        monkeypatch.setattr(zoneinfo, "ZoneInfo", missing)
+        assert _bare_dao()._legacy_zone_reproducing(GOLDEN_RUN_DOCUMENT, rows, stored) is None
+
+    def test_the_zoneinfo_module_being_unimportable(self, require_tzdata, monkeypatch):
+        import sys
+
+        rows, stored = self._fixture()
+        monkeypatch.setitem(sys.modules, "zoneinfo", None)  # `import zoneinfo` now raises ImportError
+        assert _bare_dao()._legacy_zone_reproducing(GOLDEN_RUN_DOCUMENT, rows, stored) is None
+
+
+# ── database-level: DST straddle, an unresolvable session zone, no tzdata, and the audit trail ─────────────────────
+
+
+def _report_with_claims_at(dao, conn, session_a, interpreter_a, instants):
+    """A report in review whose claims carry FIXED instants (written beneath the recorders)."""
+    interp = _make_interpretation(dao, conn, session_a)
+    report_id = dao.create_report(session_a, interp)
+    with conn.cursor() as cur:
+        for i, ts in enumerate(instants):
+            cur.execute(
+                "INSERT INTO reviewer_claims (org_id, id, interpretation_id, report_id, claim_type, actor_id, "
+                '"timestamp", reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)',
+                (session_a.org_id, uuid.uuid4(), interp, report_id, "accept", interpreter_a.user_id, ts, f"claim {i}"),
+            )
+    conn.commit()
+    dao.submit_for_review(interpreter_a, report_id)
+    return interp, report_id
+
+
+def _audit_rows(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT outcome, resource_id, details FROM audit_log WHERE action = 'report_integrity_verified' ORDER BY log_id"
+        )
+        rows = cur.fetchall()
+    conn.rollback()
+    return rows
+
+
+class TestLegacyHashAcrossDaylightSavingThroughTheDatabase:
+    @pytest.mark.parametrize("case", ["london_spring_forward_at_the_gap", "los_angeles_spring_forward"])
+    def test_recognised_with_the_offsets_the_original_session_printed(
+        self, dao, conn, session_a, interpreter_a, approver_a, zone_connections, require_tzdata, case
+    ):
+        zone_name, instants, literals, offsets = DST_CASES[case]
+        legacy_conn = zone_connections[zone_name]
+        interp, report_id = _report_with_claims_at(dao, conn, session_a, interpreter_a, instants)
+
+        # guard: the DATABASE really prints the hand-written text in that session (the premise of the test)
+        with legacy_conn.cursor() as cur:
+            cur.execute(
+                'SELECT "timestamp" FROM reviewer_claims WHERE report_id = %s ORDER BY "timestamp"', (report_id,)
+            )
+            printed = [row[0].isoformat() for row in cur.fetchall()]
+        legacy_conn.rollback()
+        assert printed == literals
+
+        _legacy_dao_on(legacy_conn)._approve_report(approver_a, report_id, actor_id=approver_a.user_id)
+        outcome, zone = dao._classify_report_integrity(approver_a, report_id)
+        assert outcome == "match_legacy_zone"
+        found = [ts.astimezone(zoneinfo.ZoneInfo(zone)).utcoffset() for ts in instants]
+        assert found == [datetime.timedelta(hours=h) for h in offsets]
+        assert dao.verify_report_integrity(approver_a, report_id) is True
+
+
+class TestUnresolvableSessionTimeZone:
+    UNRESOLVABLE = "ABC-5:30"  # a POSIX time zone: PostgreSQL accepts it, Python's zoneinfo has no such key
+
+    def test_hashes_made_in_such_a_session_are_the_canonical_form_because_psycopg_falls_back_to_utc(
+        self, dao, conn, session_a, interpreter_a, approver_a
+    ):
+        psycopg = pytest.importorskip("psycopg", reason="psycopg not installed")
+        odd = psycopg.connect(DSN, autocommit=False, connect_timeout=10, options=f"-c TimeZone={self.UNRESOLVABLE}")
+        try:
+            with odd.cursor() as cur:
+                cur.execute("SHOW TimeZone")
+                assert cur.fetchone()[0] == self.UNRESOLVABLE
+                cur.execute("SELECT '2026-09-03 12:00:00+00'::timestamptz::text")
+                assert cur.fetchone()[0].endswith("+05:30")  # PostgreSQL itself prints this zone's offset...
+            odd.rollback()
+            with pytest.raises((KeyError, ValueError, OSError)):
+                zoneinfo.ZoneInfo(self.UNRESOLVABLE)  # ...which Python cannot resolve
+
+            odd_dao = _legacy_dao_on(odd)  # the PREVIOUS algorithm on that session
+            interp = _make_interpretation(odd_dao, odd, session_a)
+            report_id = _approved_report(odd_dao, odd, session_a, interpreter_a, approver_a, interp)
+            # psycopg could not resolve the zone, so it handed back UTC datetimes and the old algorithm printed +00:00:
+            # that hash IS the canonical form and verifies without any zone search.
+            assert dao._classify_report_integrity(approver_a, report_id) == ("match", None)
+        finally:
+            odd.close()
+
+
+class TestNoTimeZoneDataFailsClosedThroughTheDatabase:
+    def test_a_legacy_hash_becomes_no_match_not_tampering_and_not_an_error(
+        self, dao, conn, session_a, interpreter_a, approver_a, zone_connections, monkeypatch
+    ):
+        legacy_conn = zone_connections["Asia/Kolkata"]
+        legacy_dao = _legacy_dao_on(legacy_conn)
+        interp = _make_interpretation(legacy_dao, legacy_conn, session_a)
+        report_id = _approved_report(legacy_dao, legacy_conn, session_a, interpreter_a, approver_a, interp)
+        monkeypatch.setattr(zoneinfo, "available_timezones", lambda: set())
+        assert dao._classify_report_integrity(approver_a, report_id) == ("no_match", None)
+        assert dao.verify_report_integrity(approver_a, report_id) is False
+        outcome, _, details = _audit_rows(conn)[-1]
+        assert outcome == "success"  # the verification ran; it just could not verify
+        assert details["outcome"] == "no_match" and details["matched"] is False
+
+
+class TestTheIntegrityOutcomeIsInTheAuditTrail:
+    """verify_report_integrity still returns a plain bool; the audit row says WHICH kind of match (or non-match) it was."""
+
+    def test_canonical_match(self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory):
+        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a_factory())
+        result = dao.verify_report_integrity(approver_a, report_id)
+        assert type(result) is bool and result is True
+        outcome, resource_id, details = _audit_rows(conn)[-1]
+        assert (outcome, resource_id) == ("success", str(report_id))
+        assert details == {"report_id": str(report_id), "matched": True, "outcome": "match"}
+
+    @pytest.mark.parametrize("legacy_zone", ["Asia/Kolkata", "Europe/London", "America/Los_Angeles"])
+    def test_legacy_zone_match_names_the_zone(
+        self, dao, conn, session_a, interpreter_a, approver_a, zone_connections, legacy_zone
+    ):
+        legacy_conn = zone_connections[legacy_zone]
+        legacy_dao = _legacy_dao_on(legacy_conn)
+        interp = _make_interpretation(legacy_dao, legacy_conn, session_a)
+        report_id = _approved_report(legacy_dao, legacy_conn, session_a, interpreter_a, approver_a, interp)
+
+        result = dao.verify_report_integrity(approver_a, report_id)
+        assert type(result) is bool and result is True  # the compatibility contract is unchanged
+        _, _, details = _audit_rows(conn)[-1]
+        assert set(details) == {"report_id", "matched", "outcome", "legacy_zone"}
+        assert details["outcome"] == "match_legacy_zone" and details["matched"] is True
+        _assert_zone_matches_the_sessions_offsets(legacy_conn, report_id, details["legacy_zone"])
+
+    def test_no_match_is_recorded_as_unverified_not_as_tampering(
+        self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory
+    ):
+        interp = interp_a_factory()
+        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reviewer_claims SET reason = %s WHERE interpretation_id = %s", ("CHANGED", interp))
+        conn.commit()
+        result = dao.verify_report_integrity(approver_a, report_id)
+        assert type(result) is bool and result is False
+        _, _, details = _audit_rows(conn)[-1]
+        assert details == {"report_id": str(report_id), "matched": False, "outcome": "no_match"}
+        assert "tamper" not in json.dumps(details).lower()  # the record never asserts a cause
+
+    def test_a_failed_call_records_no_outcome_and_one_calls_outcome_never_leaks_into_the_next(
+        self, dao, conn, session_a, interpreter_a, approver_a, zone_connections, interp_a_factory
+    ):
+        legacy_conn = zone_connections["Asia/Kolkata"]
+        legacy_dao = _legacy_dao_on(legacy_conn)
+        legacy_interp = _make_interpretation(legacy_dao, legacy_conn, session_a)
+        legacy_report = _approved_report(legacy_dao, legacy_conn, session_a, interpreter_a, approver_a, legacy_interp)
+        assert dao.verify_report_integrity(approver_a, legacy_report) is True  # leaves a pending detail behind...
+        unapproved = dao.create_report(session_a, interp_a_factory())
+        with pytest.raises(ValueError):
+            dao.verify_report_integrity(session_a, unapproved)  # ...which this failing call must not pick up
+        outcome, _, details = _audit_rows(conn)[-1]
+        assert outcome == "error"
+        assert details == {"report_id": str(unapproved), "matched": None}
+
+    def test_the_audit_details_carry_no_report_content(
+        self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory
+    ):
+        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a_factory())
+        dao.verify_report_integrity(approver_a, report_id)
+        _, _, details = _audit_rows(conn)[-1]
+        assert set(details) <= {"report_id", "matched", "outcome", "legacy_zone"}

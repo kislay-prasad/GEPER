@@ -39,6 +39,7 @@ through.
 from __future__ import annotations
 
 import base64
+import contextvars
 import datetime as _datetime
 import functools
 import hashlib
@@ -464,6 +465,36 @@ def _claim_timestamp_utc(ts: "_datetime.datetime") -> str:
     if ts.tzinfo is None:
         raise ValueError("a reviewer claim timestamp must be timezone-aware to be hashed")
     return ts.astimezone(_datetime.timezone.utc).isoformat()
+
+
+# The classification `verify_report_integrity` reached, handed to its audit-details builder. The decorator gives a
+# builder only (parameters, return value), and the return value must stay a plain bool, so the detail travels in a
+# ContextVar: set by the method just before it returns, consumed (and cleared) by the builder in the same call.
+_INTEGRITY_AUDIT: contextvars.ContextVar = contextvars.ContextVar("report_integrity_audit", default=None)
+
+
+def _integrity_audit_details(params: dict, result: Any) -> dict:
+    """
+    Audit `details` for `report_integrity_verified`.
+
+    Always: `report_id` and `matched` (the bool the method returned; None on a failed call). On a completed
+    verification also `outcome`: "match" (canonical UTC form reproduced the stored hash), "match_legacy_zone" (the
+    stored hash was made by the previous algorithm in a non-UTC session and the current content reproduces it; the
+    IANA zone that did so is in `legacy_zone`), or "no_match" (nothing reproduced it: integrity could NOT be verified,
+    which is not by itself a finding of tampering). Nothing from the report's content is recorded.
+
+    The pending detail is consumed here so one call's outcome can never be attached to another call's row, and a
+    failed call (result None) records no outcome.
+    """
+    pending = _INTEGRITY_AUDIT.get()
+    _INTEGRITY_AUDIT.set(None)
+    details: dict = {"report_id": str(params.get("report_id")), "matched": result}
+    if result is not None and pending is not None:
+        outcome, zone = pending
+        details["outcome"] = outcome
+        if outcome == "match_legacy_zone":
+            details["legacy_zone"] = zone
+    return details
 
 
 def interpretation_submission_key(content_hash: str, platform_sample_id: Any) -> str:
@@ -8623,7 +8654,7 @@ class DataAccess:
         requires_session=True,
         auditable=True,
         reason="ISO 15189 7.5 nonconformance detection: a mismatch is audit-relevant on its own, not only on export",
-        details_builder=lambda params, result: {"report_id": str(params.get("report_id")), "matched": result},
+        details_builder=_integrity_audit_details,
     )
     @transactional
     def verify_report_integrity(self, session: Session, report_id: uuid.UUID) -> bool:
@@ -8637,6 +8668,8 @@ class DataAccess:
         UTC form, or the previous algorithm run in some IANA zone (a hash from an approval made in a non-UTC session;
         see `_classify_report_integrity`, which says which). False means "does not verify", which is what tampering and
         an unrecognised legacy form both look like: do not report it as tampering without investigating.
+        The audit row records which it was (`outcome`: match, match_legacy_zone or no_match, plus `legacy_zone`);
+        the return value stays a bool so existing callers are unaffected.
         Deliberately a bool,
         not a raise: this is a check a caller interprets, like
         check_consent and check_order_data elsewhere in this file, not a
@@ -8649,7 +8682,9 @@ class DataAccess:
         is nothing stored to verify against, which is a different condition
         from "verified and found to differ."
         """
-        outcome, _zone = self._classify_report_integrity(session, report_id)
+        _INTEGRITY_AUDIT.set(None)  # never inherit a previous call's detail
+        outcome, zone = self._classify_report_integrity(session, report_id)
+        _INTEGRITY_AUDIT.set((outcome, zone))  # read by `_integrity_audit_details` for this call's audit row
         return outcome in ("match", "match_legacy_zone")
 
     @auditable(

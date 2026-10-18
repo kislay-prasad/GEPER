@@ -1178,6 +1178,24 @@ def _record_clinical_signoff(
     """
     org_id, interpretation_id, report_id = _link_ids(link)
 
+    # Only a DRAFT is signed off. Anything else means this run was already signed, or an earlier attempt got part
+    # of the way (the claim, the submission and the approval are three separate commits). Say so BEFORE writing
+    # anything: the clinical layer would refuse the claim on an approved report anyway, but as a bare error, and a
+    # report left under_review needs a person to look at it, not another claim. See docs/SIGNOFF_API_DESIGN.md
+    # ("When a write's outcome is unknown").
+    current = dao.get_report(session, report_id)
+    if current is None:
+        raise SignoffError(
+            f"This run's clinical report {report_id} was not found in organisation {org_id}. Nothing has been changed."
+        )
+    if current.get("state") != "draft":
+        raise SignoffError(
+            f"Refusing to sign off: this run's clinical report {report_id} is '{current.get('state')}', not a draft. "
+            "It was either signed already, or an earlier sign-off attempt completed only some of its steps. Nothing "
+            "has been changed by this command. Check the report's state and claims in the clinical service before "
+            "doing anything else (docs/SIGNOFF_API_DESIGN.md)."
+        )
+
     claim_id = dao.record_sole_signatory_claim(
         session,
         interpretation_id=interpretation_id,

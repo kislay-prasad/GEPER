@@ -66,6 +66,52 @@ raised (`SessionExpired`, `AuthorizationError`, `NotFoundError`, `ValueError`).
 Partial progress is the same as before: the three approve calls are separate commits, so a failure after the claim
 leaves a claim and a draft report. This phase does not make approve atomic.
 
+### Unknown client outcome is not a failed operation
+
+| What the tool reports | What it means | Recorded in the clinical service? |
+|---|---|---|
+| 400 / 401 / 403 / 404 / 422 (ValueError, SessionExpired, AuthorizationError, NotFoundError, `ClinicalServiceError`) | The service answered and refused. | **No** change from that call. |
+| `ClinicalWriteOutcomeUnknown` (timeout, dropped connection, 5xx, a success status that is not the contract's) | The client does not know. | **Maybe.** |
+
+A write is never retried automatically, and the tool writes no file after an unknown outcome.
+
+**Reconciliation, using only what exists today.** There is **no** command that shows a report's claims, completes an
+interrupted sign-off, or finalises the run directory afterwards; none is invented here.
+
+1. Do **not** run the tool again for that run until the state is known. (It would now refuse a report that is no longer a
+   draft, by design.)
+2. Read the authoritative state as an authenticated Interpreter, Approver, Auditor or Administrator:
+   `GET /review/reports/{report_id}` (state, interpretation, `is_retracted`) and `GET .../revision`. `refresh-revision`
+   also reads them, but only for an already-signed run.
+3. Decide from the state:
+   * `draft`: the approval and submission did not happen. The concurrence claim may or may not have been recorded; claims
+     are not served over HTTP, so someone with audit-log access must look for a `record_sole_signatory` row for that
+     report and user. A recorded claim does not block a retry (a draft accepts more claims).
+   * `under_review`: the claim and submission are recorded; only the approval is missing. An Approver can call
+     `POST /review/reports/{report_id}/approval`; **no CLI does this**, and the sign-off tool will refuse the run (it is
+     not a draft), so the run directory is **not** finalised by anything that exists. Escalate to the platform owners.
+   * `approved`: the clinical sign-off exists but the run directory is unsigned. The tool refuses to sign it again. The
+     files and the clinical record now disagree; escalate. Do not edit the signed files by hand.
+4. Record what you found and who decided what next (the clinical audit log already holds the service's side).
+
+This gap (no supported way to finish a half-completed sign-off) is a known limitation, listed in the PR as a risk.
+
+## Concurrent requests
+
+Findings, verified on PostgreSQL 16 against the code before the fix:
+* Two simultaneous approvals both read `under_review` (plain SELECT, READ COMMITTED). The loser was stopped by the
+  `enforce_content_immutability` trigger, but as an `ImmutabilityViolationError`, and only because the attempts carried
+  different `approved_at` values. Over HTTP that is a 500, which a client reads as an unknown outcome.
+* Simultaneous submissions all succeeded (N state writes, N audit rows).
+* A claim could be appended to an approved report, and one in flight during sealing slipped past the content hash, so
+  `verify_report_integrity` reported tampering.
+
+Fix, in `clinical/data_access.py`: `_approve_report` and `submit_for_review` read the report row `FOR UPDATE`; the claim
+recorders' shared precondition (`_validate_claim_inputs`) reads it `FOR SHARE` and refuses an `approved` or `released`
+report. The second approval waits, re-reads the committed row, and gets the domain's own `ValueError`. The role gates,
+organisation scoping, hash computation, audit decorators and the trigger are unchanged; the trigger remains the
+backstop. `clinical_app` has column-level `UPDATE` on `reports`, which is sufficient for row locks.
+
 ## Migration of callers
 
 `approve`, `override` and `withdraw` gain `clinical_url` (CLI `--clinical-url`, env `GEPER_CLINICAL_URL`) and use the same

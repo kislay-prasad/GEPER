@@ -256,27 +256,39 @@ class TestApproveOverHttp:
         assert _claims(clinical_conn, clinical["report_id"]) == []
         assert _report_row(clinical_conn, clinical["report_id"])[0] == "draft"
 
-    def test_a_second_approval_of_the_same_run_is_refused_and_the_first_stands(
+    def test_a_second_approval_of_the_same_run_is_refused_before_anything_is_written(
         self, linked_run_dir, clinical, clinical_conn, service, creds, dao, monkeypatch
     ):
-        """The signed state, approver, time, hash and every file are untouched by a repeat. The domain DOES append the
-        repeat's concurrence claim before the submission is refused; that is `record_sole_signatory_claim`'s own
-        behaviour on an approved report and identical on the direct path (asserted below, not assumed)."""
+        """A repeat used to append a second concurrence claim to the APPROVED report before the submission was
+        refused. The content hash covers the claims, so that read as tampering to verify_report_integrity. It is now
+        refused first, by the tool (a clear message) and, underneath, by the domain."""
         _wire(monkeypatch, service)
         s.approve(linked_run_dir, clinical_credentials=creds, clinical_reason=REASON, clinical_url=URL)
         approved = _report_row(clinical_conn, clinical["report_id"])
         files = {k: v for k, v in _directory_state(linked_run_dir).items() if k != s.AUDIT_LOG_FILENAME}
-        with pytest.raises(Exception):
-            s.approve(linked_run_dir, clinical_credentials=creds, clinical_reason="again", clinical_url=URL)
+        for kwargs in ({"clinical_url": URL}, {"clinical_data_access": dao}):
+            with pytest.raises(SignoffError, match="not a draft"):
+                s.approve(linked_run_dir, clinical_credentials=creds, clinical_reason="again", **kwargs)
         assert _report_row(clinical_conn, clinical["report_id"]) == approved
+        assert len(_claims(clinical_conn, clinical["report_id"])) == 1
         assert {k: v for k, v in _directory_state(linked_run_dir).items() if k != s.AUDIT_LOG_FILENAME} == files
-        over_http = len(_claims(clinical_conn, clinical["report_id"]))
-        with pytest.raises(Exception):
-            s.approve(linked_run_dir, clinical_credentials=creds, clinical_reason="direct", clinical_data_access=dao)
-        assert len(_claims(clinical_conn, clinical["report_id"])) == over_http + (over_http - 1), (
-            "the direct path appends the repeat's claim exactly as the HTTP path does"
+        assert dao.verify_report_integrity(clinical["admin"], clinical["report_id"]) is True
+
+    def test_a_report_left_under_review_by_an_interrupted_attempt_is_not_signed_again(
+        self, linked_run_dir, clinical, clinical_conn, service, creds, dao, monkeypatch
+    ):
+        """Claim and submission done, approval never reached: another run of the tool must not add a second claim."""
+        dao.record_sole_signatory_claim(
+            clinical["signatory"], clinical["interpretation_id"], clinical["report_id"], REASON
         )
-        assert _report_row(clinical_conn, clinical["report_id"]) == approved
+        dao.submit_for_review(clinical["signatory"], clinical["report_id"])
+        _wire(monkeypatch, service)
+        before = _directory_state(linked_run_dir)
+        with pytest.raises(SignoffError, match="'under_review', not a draft"):
+            s.approve(linked_run_dir, clinical_credentials=creds, clinical_reason=REASON, clinical_url=URL)
+        assert _directory_state(linked_run_dir) == before
+        assert len(_claims(clinical_conn, clinical["report_id"])) == 1
+        assert _report_row(clinical_conn, clinical["report_id"])[0] == "under_review"
 
     def test_the_session_is_ended_after_the_clinical_half(self, linked_run_dir, service, creds, monkeypatch):
         _wire(monkeypatch, service)

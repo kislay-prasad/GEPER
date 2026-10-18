@@ -7517,12 +7517,22 @@ class DataAccess:
         if interpretation is None:
             raise NotFoundError(f"Interpretation {interpretation_id} not found")
 
+        # FOR SHARE: any number of claims may be recorded together, but not while the report is being approved
+        # (which holds FOR UPDATE until it commits). A claim that arrived after the seal would not be in the
+        # content hash and would read as tampering to verify_report_integrity.
         report = self._query_one(
-            "SELECT interpretation_id FROM reports WHERE org_id = %s AND id = %s",
+            "SELECT interpretation_id, state FROM reports WHERE org_id = %s AND id = %s FOR SHARE",
             (session.org_id, report_id),
         )
         if report is None:
             raise NotFoundError(f"Report {report_id} not found")
+        if report[1] in ("approved", "released"):
+            raise ValueError(
+                f"Report {report_id} is '{report[1]}': a claim can only be recorded while the report is a draft "
+                "or under review. The approval sealed the claims that existed (content_hash covers them), so a "
+                "claim added now would make the sealed report look altered. A correction to an approved report "
+                "is an amendment, a second report on the same interpretation."
+            )
         if report[0] != interpretation_id:
             raise ValueError(
                 f"Report {report_id} is not a report of interpretation {interpretation_id}: a claim is "
@@ -8181,8 +8191,10 @@ class DataAccess:
         """
         self._require_role(session, "Interpreter")
 
+        # FOR UPDATE, for the same reason as in _approve_report: N simultaneous submissions moved the report N times
+        # (and wrote N audit rows); now the others wait, re-read 'under_review' and are refused.
         report = self._query_one(
-            "SELECT state FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT state FROM reports WHERE id = %s AND org_id = %s FOR UPDATE",
             (report_id, session.org_id),
         )
         if report is None:
@@ -8408,8 +8420,14 @@ class DataAccess:
                 f"User {actor_id} does not hold the Approver role and cannot be recorded as the approver."
             )
 
+        # FOR UPDATE: the row is locked from this read until the transaction commits, so a second approval of the
+        # same report WAITS here, then re-reads the committed row, finds 'approved', and is refused with the
+        # domain's own ValueError below. Without the lock both requests read 'under_review' and both went on to
+        # write; the immutability trigger refused the loser, but as a raw database error. The lock also holds
+        # claim recorders off (they take FOR SHARE on this row, see _validate_claim_inputs), so the claims the
+        # hash below covers are exactly the claims that exist when the seal commits.
         report = self._query_one(
-            "SELECT interpretation_id, state FROM reports WHERE id = %s AND org_id = %s",
+            "SELECT interpretation_id, state FROM reports WHERE id = %s AND org_id = %s FOR UPDATE",
             (report_id, session.org_id),
         )
         if report is None:

@@ -33,6 +33,7 @@ thin `main.py` itself is over `pipeline/orchestrator.py::GeperPipeline`.
 """
 
 import argparse
+import json
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -45,6 +46,8 @@ from review.signoff import list_pending as _list_pending
 from review.signoff import override as _override
 from review.signoff import refresh_revision as _refresh_revision
 from review.signoff import withdraw as _withdraw
+from review.signoff_status import format_text as format_status
+from review.signoff_status import run_status as _run_status
 from utils.exceptions import SignoffError
 from utils.logger import get_logger
 
@@ -264,6 +267,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     _add_clinical_arguments(refresh_parser)
     _add_clinical_url_argument(refresh_parser)
+
+    # READ-ONLY. Compares the clinical service's sign-off state (authenticated GETs) with the run directory and says which
+    # stage of a possibly interrupted sign-off the run is in. Changes nothing. See review/signoff_status.py.
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Read-only: classify where a run's sign-off stands by comparing the clinical service's state with the run "
+        "directory's files. Reports; never repairs, never writes a claim, submission, approval, file, log or journal. "
+        "Exit codes: 0 consistent, 10 incomplete, 20 investigate, 30 unreadable (1 = error, 2 = usage). "
+        "Content binding is NOT verified.",
+        description="Classify where a run's sign-off stands. This command changes no clinical report and writes no local "
+        "file. It does authenticate through the existing clinical adapter, which may create a server-side login session "
+        "and an authentication audit entry. Failed attempts count toward the account lockout policy. A TOTP code may be "
+        "consumed, which could affect reusing the same code in the same time window (this is a caution and is not fully "
+        "verified). The command ends the session it opened when it finishes.",
+    )
+    status_parser.add_argument("run_dir", help=f"An existing {SHORT_NAME} run directory.")
+    status_parser.add_argument("--json", action="store_true", dest="as_json", help="Print the classification as JSON.")
+    _add_clinical_arguments(status_parser)
+    _add_clinical_url_argument(status_parser)
     return parser
 
 
@@ -373,6 +395,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 clinical_url=args.clinical_url,
             )
             print(f"Current-status copy written (signed originals untouched): {result}")
+        elif args.command == "status":
+            result = _run_status(
+                args.run_dir,
+                clinical_credentials=_clinical_credentials(args),
+                clinical_url=args.clinical_url,
+            )
+            print(json.dumps(result.to_dict(), indent=2, sort_keys=True) if args.as_json else format_status(result))
+            return result.exit_code
         else:  # pragma: no cover - argparse's `required=True` on the subparsers already prevents this
             parser.error(f"Unknown command '{args.command}'.")
     except SignoffError as exc:

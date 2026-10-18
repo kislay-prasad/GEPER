@@ -922,34 +922,6 @@ def _link_ids(link: Dict[str, Any]) -> Tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
         raise SignoffError(f"'{CLINICAL_LINK_FILENAME}' contains a malformed identifier: {exc}") from exc
 
 
-def _connect_clinical_data_access() -> Any:
-    """
-    A DataAccess over CLINICAL_DSN -- the same environment variable
-    api/submission_worker.py and api/exception_retry_worker.py already refuse
-    to start without, not a second name for the same thing.
-
-    Imported here rather than at module scope on purpose: `review/signoff.py`
-    is used on runs that have no clinical record at all, and importing
-    `clinical.data_access` (and through it psycopg) at module load would make
-    a database driver a hard requirement of every unlinked sign-off.
-    """
-    dsn = os.getenv("CLINICAL_DSN")
-    if not dsn:
-        raise SignoffError(
-            "This run is linked to a clinical record but CLINICAL_DSN is not set, so the "
-            "sign-off cannot be recorded there. Refusing rather than signing the files alone: "
-            "that would leave the clinical record saying 'draft' behind a signed PDF. Set "
-            "CLINICAL_DSN to the clinical database DSN (the same one the submission worker uses)."
-        )
-    try:
-        import psycopg
-
-        from clinical.data_access import DataAccess
-    except ImportError as exc:  # pragma: no cover -- a broken install, not a code path
-        raise SignoffError(f"This run is linked to a clinical record but the clinical layer is unavailable: {exc}")
-    return DataAccess(psycopg.connect(dsn, autocommit=False))
-
-
 def _clinical_login(
     link: Dict[str, Any], credentials: Optional[ClinicalCredentials], data_access: Any
 ) -> Tuple[Any, Any]:
@@ -970,9 +942,10 @@ def _clinical_login(
             "leave the clinical record saying 'draft' behind a signed PDF."
         )
     org_id, _interpretation_id, _report_id = _link_ids(link)
-    dao = data_access if data_access is not None else _connect_clinical_data_access()
-    session = dao.login(credentials.email, org_id, credentials.password, credentials.totp_code)
-    return dao, session
+    if data_access is None:  # pragma: no cover -- every caller goes through _open_clinical, which supplies one
+        raise SignoffError("No clinical data access was supplied; refusing to open a database connection.")
+    session = data_access.login(credentials.email, org_id, credentials.password, credentials.totp_code)
+    return data_access, session
 
 
 CLINICAL_URL_ENV = "GEPER_CLINICAL_URL"
@@ -1013,6 +986,29 @@ def _close_if_opened(access: Any, opened: bool) -> None:
             close()
         except Exception:  # noqa: BLE001 -- failing to log out must not mask the operation's real outcome
             pass
+
+
+def _open_clinical(
+    link: Dict[str, Any],
+    credentials: Optional[ClinicalCredentials],
+    data_access: Any,
+    clinical_url: Optional[str],
+) -> Tuple[Any, Any, Any]:
+    """
+    (data access, session, close) for a linked run's sign-off, as a PERSON's tool: through the clinical service's
+    HTTPS API, never a database connection (see `_human_tool_access`). Credentials are checked FIRST so the
+    operator is told about the missing identity before the missing address. `close` ends a session this call
+    opened and does nothing for a caller-supplied object; the caller runs it in a `finally`.
+    """
+    if credentials is None:
+        _clinical_login(link, None, None)  # raises the established "supply credentials" refusal
+    access, opened = _human_tool_access(clinical_url, data_access)
+    try:
+        dao, session = _clinical_login(link, credentials, access)
+    except BaseException:
+        _close_if_opened(access, opened)
+        raise
+    return dao, session, (lambda: _close_if_opened(access, opened))
 
 
 def _linked_revision_status(dao: Any, session: Any, link: Dict[str, Any]) -> ReportRevisionStatus:
@@ -1209,6 +1205,7 @@ def _record_clinical_disagreement(
     reason: str,
     data_access: Any = None,
     authenticated_session: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     The clinical half of `override()` on a linked run.
@@ -1245,12 +1242,21 @@ def _record_clinical_disagreement(
     happens here, once, from the parsed components -- not by string-munging
     the CLI value -- so the two vocabularies meet in exactly one place.
     """
-    org_id, interpretation_id, report_id = _link_ids(link)
     if authenticated_session is not None:
         dao, session = data_access, authenticated_session
+        close_clinical = lambda: None  # noqa: E731 -- the caller that logged in closes it
     else:
-        dao, session = _clinical_login(link, credentials, data_access)
+        dao, session, close_clinical = _open_clinical(link, credentials, data_access, clinical_url)
+    try:
+        return _record_disagreement_with(dao, session, link, variant_key, new_classification, reason)
+    finally:
+        close_clinical()
 
+
+def _record_disagreement_with(
+    dao: Any, session: Any, link: Dict[str, Any], variant_key: str, new_classification: str, reason: str
+) -> Dict[str, Any]:
+    org_id, interpretation_id, report_id = _link_ids(link)
     report = dao.get_report(session, report_id)
     if report is None:
         raise SignoffError(
@@ -1305,6 +1311,7 @@ def approve(
     clinical_credentials: Optional[ClinicalCredentials] = None,
     clinical_reason: Optional[str] = None,
     clinical_data_access: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Moves the run in `output_dir` from DRAFT to REVIEWED: sets
@@ -1383,8 +1390,9 @@ def approve(
     and IGNORED for an unlinked one, which is the only shape that leaves
     today's behaviour untouched where there is no clinical record to keep in
     step with. `clinical_data_access` is an injection point for tests and for
-    a caller that already holds a connection; when it is None a linked run
-    connects using CLINICAL_DSN.
+    a caller that already holds a clinical data access; when it is None a linked
+    run uses the clinical service's HTTPS API at `clinical_url` / $GEPER_CLINICAL_URL
+    and refuses without one. It NEVER opens a database connection.
 
     ON A LINKED RUN THE THREE IDENTITY VALUES COME FROM THE SIGNING ACCOUNT'S
     USER RECORD, NOT FROM `clinician_name`/`reg_number`/`hospital` (the join
@@ -1433,22 +1441,26 @@ def approve(
                 "'sole_signatory' claim -- and a claim requires the signatory's stated grounds. "
                 "Supply a reason (CLI: --reason). Nothing has been changed."
             )
-        dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
-        # Read the identity BEFORE the claim, the submission and the approval:
-        # an account with no recorded identity must leave the clinical record
-        # untouched too, not approve a report it then cannot print.
-        signer, identity_source = _resolve_signing_identity(
-            clinician_name,
-            reg_number,
-            hospital,
-            _linked_signing_identity(dao, session, identity),
-        )
-        # The report's clinical status (re-analysis, amendment, retraction ...) is read
-        # and validated BEFORE the sign-off is recorded anywhere: an unreadable status
-        # refuses the whole operation, with the clinical record and the directory as
-        # they were. The signed PDFs below state it; the signed JSON does not carry it.
-        revision_status = _linked_revision_status(dao, session, link)
-        clinical_record = _record_clinical_signoff(dao, session, link, str(clinical_reason))
+        dao, session, close_clinical = _open_clinical(link, clinical_credentials, clinical_data_access, clinical_url)
+        try:
+            # Read the identity BEFORE the claim, the submission and the approval:
+            # an account with no recorded identity must leave the clinical record
+            # untouched too, not approve a report it then cannot print.
+            signer, identity_source = _resolve_signing_identity(
+                clinician_name,
+                reg_number,
+                hospital,
+                _linked_signing_identity(dao, session, identity),
+            )
+            # The report's clinical status (re-analysis, amendment, retraction ...) is read
+            # and validated BEFORE the sign-off is recorded anywhere: an unreadable status
+            # refuses the whole operation, with the clinical record and the directory as
+            # they were. The signed PDFs below state it; the signed JSON does not carry it.
+            revision_status = _linked_revision_status(dao, session, link)
+            clinical_record = _record_clinical_signoff(dao, session, link, str(clinical_reason))
+        finally:
+            # Nothing below talks to the clinical service. End the session promptly.
+            close_clinical()
 
     physician = signer.physician_string()
     patient_meta_path = _patient_meta_path(output_dir)
@@ -1539,6 +1551,7 @@ def override(
     clinician_id: str,
     clinical_credentials: Optional[ClinicalCredentials] = None,
     clinical_data_access: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Layers a clinician's classification override on top of the matching
@@ -1675,17 +1688,22 @@ def override(
         # Authenticate once, read the report's status BEFORE recording anything (an
         # unreadable status refuses the override with nothing changed), then record the
         # disagreement claim with that same session.
-        override_dao, override_session = _clinical_login(link, clinical_credentials, clinical_data_access)
-        revision_status = _linked_revision_status(override_dao, override_session, link)
-        clinical_claim = _record_clinical_disagreement(
-            link,
-            clinical_credentials,
-            variant_key,
-            new_classification,
-            reason,
-            data_access=override_dao,
-            authenticated_session=override_session,
+        override_dao, override_session, close_clinical = _open_clinical(
+            link, clinical_credentials, clinical_data_access, clinical_url
         )
+        try:
+            revision_status = _linked_revision_status(override_dao, override_session, link)
+            clinical_claim = _record_clinical_disagreement(
+                link,
+                clinical_credentials,
+                variant_key,
+                new_classification,
+                reason,
+                data_access=override_dao,
+                authenticated_session=override_session,
+            )
+        finally:
+            close_clinical()
 
     acmg = clinical_report.setdefault("acmg_classification", {})
     original_classification = acmg.get("classification") or "Not classified"
@@ -1859,6 +1877,7 @@ def withdraw(
     actor: str,
     clinical_credentials: Optional[ClinicalCredentials] = None,
     clinical_data_access: Any = None,
+    clinical_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Explicitly retracts a standing sign-off: removes
@@ -1959,7 +1978,7 @@ def withdraw(
     state is an authenticated act, and "I could not look" must not read the
     same as "there was nothing to look at". `clinical_data_access` is the
     same test/caller injection point `approve()` takes; when it is None a
-    linked run connects using CLINICAL_DSN.
+    linked run uses the clinical service's HTTPS API (`clinical_url` / $GEPER_CLINICAL_URL), never a database connection.
     """
     results_path = _require_results(output_dir)
     manifest_path = _manifest_path(output_dir)
@@ -1977,34 +1996,35 @@ def withdraw(
     revision_status: Optional[ReportRevisionStatus] = None
     if link is not None:
         _org_id, _interpretation_id, report_id = _link_ids(link)
-        dao, session = _clinical_login(link, clinical_credentials, clinical_data_access)
-        report = dao.get_report(session, report_id)
-        if report is None:
-            raise SignoffError(
-                f"This run's clinical report {report_id} was not found in organisation {_org_id}. "
-                "Refusing to withdraw the sign-off on the files of a run whose clinical record "
-                "cannot be reached -- that would leave the clinical record standing behind a "
-                "withdrawal nobody can see. Nothing on disk has been changed."
-            )
-        clinical_state = report.get("state")
-        if clinical_state in ("approved", "released"):
-            raise SignoffError(
-                f"Refusing to withdraw: this run's clinical report {report_id} is already "
-                f"'{clinical_state}', and the clinical record has no way to retract an approval. "
-                "An approved report's approver, approval time and content_hash are write-once and "
-                "its state cannot be walked back -- the database itself refuses it, because a "
-                "report walked back from 'approved' would be withdrawn from the record, which ISO "
-                "15189 does not permit. Withdrawing only the files would therefore leave the "
-                "clinical record saying 'approved' behind a retracted sign-off, which is the "
-                "contradiction this refusal exists to prevent. An approved report is corrected by "
-                "AMENDMENT -- a second report on the same interpretation, recording the change as a "
-                "new document -- and that path is NOT YET AVAILABLE from this tool; raise it with "
-                "the clinical platform's owners. Nothing on disk has been changed."
-            )
-
-    if link is not None:
-        # Read and validate the report's clinical status before any file is touched (see approve()).
-        revision_status = _linked_revision_status(dao, session, link)
+        dao, session, close_clinical = _open_clinical(link, clinical_credentials, clinical_data_access, clinical_url)
+        try:
+            report = dao.get_report(session, report_id)
+            if report is None:
+                raise SignoffError(
+                    f"This run's clinical report {report_id} was not found in organisation {_org_id}. "
+                    "Refusing to withdraw the sign-off on the files of a run whose clinical record "
+                    "cannot be reached -- that would leave the clinical record standing behind a "
+                    "withdrawal nobody can see. Nothing on disk has been changed."
+                )
+            clinical_state = report.get("state")
+            if clinical_state in ("approved", "released"):
+                raise SignoffError(
+                    f"Refusing to withdraw: this run's clinical report {report_id} is already "
+                    f"'{clinical_state}', and the clinical record has no way to retract an approval. "
+                    "An approved report's approver, approval time and content_hash are write-once and "
+                    "its state cannot be walked back -- the database itself refuses it, because a "
+                    "report walked back from 'approved' would be withdrawn from the record, which ISO "
+                    "15189 does not permit. Withdrawing only the files would therefore leave the "
+                    "clinical record saying 'approved' behind a retracted sign-off, which is the "
+                    "contradiction this refusal exists to prevent. An approved report is corrected by "
+                    "AMENDMENT -- a second report on the same interpretation, recording the change as a "
+                    "new document -- and that path is NOT YET AVAILABLE from this tool; raise it with "
+                    "the clinical platform's owners. Nothing on disk has been changed."
+                )
+            # Read and validate the report's clinical status before any file is touched (see approve()).
+            revision_status = _linked_revision_status(dao, session, link)
+        finally:
+            close_clinical()
     document = _load_document(results_path)
     previous_status = document.get("review_status")
     if previous_status == "reviewed":

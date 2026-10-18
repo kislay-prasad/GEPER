@@ -201,6 +201,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "'sole_signatory' claim's reason. Ignored for an unlinked run.",
     )
     _add_clinical_arguments(approve_parser)
+    _add_clinical_url_argument(approve_parser)
 
     override_parser = subparsers.add_parser(
         "override",
@@ -218,6 +219,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--clinician-id", required=True, help="Identifies who made the override, e.g. an email address."
     )
     _add_clinical_arguments(override_parser)
+    _add_clinical_url_argument(override_parser)
 
     list_parser = subparsers.add_parser(
         "list-pending",
@@ -244,6 +246,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     # so this subcommand takes the same clinical credentials approve/override
     # do. Absent on an unlinked run, exactly as there.
     _add_clinical_arguments(withdraw_parser)
+    _add_clinical_url_argument(withdraw_parser)
 
     # A retraction, amendment or re-analysis made AFTER sign-off lives only in the clinical
     # platform; the signed files cannot (and must not) change. This writes a separate,
@@ -337,6 +340,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 hospital=args.hospital,
                 clinical_credentials=_clinical_credentials(args),
                 clinical_reason=args.reason,
+                clinical_url=args.clinical_url,
             )
             print(f"Approved. Manifest: {manifest}")
         elif args.command == "override":
@@ -347,6 +351,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 reason=args.reason,
                 clinician_id=args.clinician_id,
                 clinical_credentials=_clinical_credentials(args),
+                clinical_url=args.clinical_url,
             )
             print(f"Override applied: {record}")
         elif args.command == "list-pending":
@@ -358,6 +363,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 reason=args.reason,
                 actor=args.actor,
                 clinical_credentials=_clinical_credentials(args),
+                clinical_url=args.clinical_url,
             )
             print(f"Withdrawn: {result}")
         elif args.command == "refresh-revision":

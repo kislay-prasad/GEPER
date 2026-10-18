@@ -494,10 +494,12 @@ on raising it:
 Each request opens its own database connection (no pool), so connections are at most
 the worker count plus the jobs.
 
-## Tools a person runs: the read API
+## Tools a person runs: the sign-off API
 
-Report-revision refresh and the LIMS export's status lookup are run by people. They hold **no database
-credential**: they log in to this service over HTTPS and call four read-only routes.
+`approve`, `override`, `withdraw`, report-revision refresh and the LIMS export's status lookup are run by people. They
+hold **no database credential** and have no `CLINICAL_DSN` fallback: they log in to this service over HTTPS
+(`--clinical-url` / `GEPER_CLINICAL_URL`, `https://` only) and call the routes below. Design and invariants:
+[SIGNOFF_API_DESIGN.md](SIGNOFF_API_DESIGN.md).
 
 | Route | Roles | Answers |
 |---|---|---|
@@ -505,13 +507,21 @@ credential**: they log in to this service over HTTPS and call four read-only rou
 | `GET /auth/me/signing-identity` | any staff session | the caller's OWN printed name, registration number, hospital (409 `incomplete_clinician_identity` if any is missing). No route takes another user's id. |
 | `GET /review/reports/{id}` | Interpreter, Approver, Auditor, Administrator | state, interpretation id, `is_retracted`, creation time |
 | `GET /review/reports/{id}/revision` | same | the authoritative revision block; `{}` only when the lookup succeeded and found nothing |
+| `POST /review/reports/{id}/concurrence` | Interpreter | records the sole-signatory claim (201 `{claim_id}`) |
+| `POST /review/reports/{id}/disagreement` | Interpreter | records a disagreement claim for one variant (201 `{claim_id}`) |
+| `POST /review/reports/{id}/submission` | Interpreter | draft to under_review (204) |
+| `POST /review/reports/{id}/approval` | Approver | under_review to approved (204) |
+
+The four POST routes pre-date the tools using them; the tools only call them now. A write whose outcome is unknown (timeout,
+5xx) is never retried by the client and writes no file; the operator is told to check the report's state first.
 
 Organisation isolation is the session's `org_id` (a report of another organisation is the same 404 as
 an absent one). An unreadable revision record is a 500 carrying `code: revision_record_unreadable`;
 an authorization refusal is 403; neither is ever returned as an empty revision. The client
-(`geper/review/clinical_http.py`) speaks `https://` only, follows no redirects, and offers none of the
-sign-off writes. **Not done in this phase:** the writes (`approve`, `override`, `withdraw`) still need a
-direct connection, and the background workers still hold the application's database credentials.
+(`geper/review/clinical_http.py`) speaks `https://` only, follows no redirects, and offers only the four sign-off writes
+above (no release, amendment or retraction). **Not done:** the background workers
+(`api/submission_worker.py`, `api/exception_retry_worker.py`) still hold the application's database credentials, and
+the three-call approve is not atomic.
 
 ## Running the tests
 

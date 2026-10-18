@@ -239,6 +239,19 @@ def _add_claim(
     )
 
 
+def _inject_claim_after_approval(dao, session, interp_id, report_id, actor_id, reason):
+    """
+    Put a claim on an APPROVED report the way a tamperer would: beneath the recorders.
+
+    These tests exist to prove that content_hash / verify_report_integrity DETECT a claim that was not there at
+    approval. Since w175 the recorders themselves refuse an approved report (a claim that arrives after the seal is
+    refused, not stored), so the only way left to get such a claim into the table is to bypass them -- which is
+    exactly the case an integrity check is for (a direct database write, or a future bug). `_insert_claim` is the
+    recorders' own insert with their validation stripped. What the tests assert is unchanged.
+    """
+    return dao._insert_claim(session, interp_id, report_id, actor_id, reason, claim_type="accept")
+
+
 def _approved_report(dao, conn, session, interpreter, approver, interp_id):
     """
     Full workflow: create -> claim -> submit_for_review (needs >=1 claim OF
@@ -339,7 +352,9 @@ class TestApprovalHashCoversReviewerClaims:
             cur.execute("SELECT content_hash FROM reports WHERE id = %s", (report_id,))
             hash_before = cur.fetchone()[0]
 
-        _add_claim(dao, session_a, interp_a, report_id, interpreter_a.user_id, reason="A later, second claim.")
+        _inject_claim_after_approval(
+            dao, session_a, interp_a, report_id, interpreter_a.user_id, reason="A later, second claim."
+        )
 
         with conn.cursor() as cur:
             cur.execute("SELECT content_hash FROM reports WHERE id = %s", (report_id,))
@@ -433,7 +448,9 @@ class TestVerifyReportIntegrityDetectsTampering:
         report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a)
         assert dao.verify_report_integrity(approver_a, report_id) is True
 
-        _add_claim(dao, session_a, interp_a, report_id, interpreter_a.user_id, reason="Added after the fact.")
+        _inject_claim_after_approval(
+            dao, session_a, interp_a, report_id, interpreter_a.user_id, reason="Added after the fact."
+        )
 
         assert dao.verify_report_integrity(approver_a, report_id) is False
 

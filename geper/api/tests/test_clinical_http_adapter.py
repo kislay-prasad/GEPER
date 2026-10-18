@@ -413,12 +413,6 @@ class TestErrorMapping:
         with pytest.raises(ClinicalServiceError):
             adapter.get_report(session, uuid.uuid4())
 
-    def test_the_sign_off_writes_are_not_offered(self):
-        adapter, session, _ = _logged_in(lambda r: httpx.Response(500))
-        for name in ("submit_for_review", "record_sole_signatory_claim", "record_disagreement_claim", "approve_report"):
-            with pytest.raises(ClinicalServiceError, match="not available through the HTTP adapter"):
-                getattr(adapter, name)(session, uuid.uuid4())
-
 
 class TestOnlyHttpsIsSpoken:
     @pytest.mark.parametrize("url", ["http://clinical.test", "ftp://x", "clinical.test", "", None])
@@ -437,10 +431,13 @@ class TestOnlyHttpsIsSpoken:
 
 
 def _no_database(monkeypatch):
-    def forbidden():
+    import psycopg
+
+    def forbidden(*args, **kwargs):
         raise AssertionError("a human-operated tool tried to open a database connection")
 
-    monkeypatch.setattr(s, "_connect_clinical_data_access", forbidden)
+    monkeypatch.setattr(psycopg, "connect", forbidden)
+    assert not hasattr(s, "_connect_clinical_data_access"), "the human tools' database connector must not exist"
     monkeypatch.delenv("CLINICAL_DSN", raising=False)
 
 

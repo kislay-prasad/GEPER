@@ -1705,6 +1705,15 @@ Phase 6) already computed for each variant — never recalculated here.
 A corrupt `geper_results.json` under the search root is skipped with a
 warning, not a fatal error.
 
+### Linked runs reach the clinical record only through the clinical service
+
+For a run linked to a clinical record (`clinical_link.json`), `approve`, `override`, `withdraw` and `refresh-revision`
+take `--clinical-url https://...` (or `GEPER_CLINICAL_URL`) plus `--clinical-email` (password in
+`GEPER_CLINICAL_PASSWORD`, or the variable named by `--clinical-password-env`). They authenticate to that service over
+HTTPS and use its role-gated, organisation-scoped routes; **they never open a database connection and `CLINICAL_DSN` is no
+longer read by them.** Without a service address a linked run is refused and nothing is changed. Unlinked runs are
+unchanged. See `docs/SIGNOFF_API_DESIGN.md`.
+
 ### What `refresh-revision` does (linked, signed runs)
 
 A retraction, amendment or re-analysis made in the clinical platform AFTER a run was
@@ -1723,8 +1732,7 @@ works at. `--clinical-url` (or the environment variable `GEPER_CLINICAL_URL`) mu
 address; without one the command refuses and changes nothing, rather than falling back to a
 database connection. The account needs the Interpreter, Approver, Auditor or Administrator role
 (`GET /review/reports/{id}` and `GET /review/reports/{id}/revision`); the service answers only for
-the caller's own organisation. The sign-off writes (`approve`, `override`, `withdraw`) still use a
-direct connection in this phase.
+the caller's own organisation.
 
 It logs in through that API, checks that the link's organisation, interpretation and
 report agree with the clinical record, reads the report's revision (organisation-scoped,

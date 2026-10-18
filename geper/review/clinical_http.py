@@ -10,8 +10,9 @@ PostgreSQL connection string on the machine a clinician sits at. That credential
 whole authority -- the database has no row-level security, the application's role may write `sessions`,
 and organisation isolation and role gates exist only in `DataAccess` -- so it must not leave the server
 network. `HttpClinicalDataAccess` offers the SAME method names those tools already call
-(`login`, `get_report`, `get_report_revision`, `get_signing_identity`), answered by the API, so it drops
-into the existing injected `data_access` parameter and the tools above it do not change.
+(`login`, `get_report`, `get_report_revision`, `get_signing_identity`, and the four sign-off writes
+`record_sole_signatory_claim`, `record_disagreement_claim`, `submit_for_review`, `approve_report`), answered by the
+API, so it drops into the existing injected `data_access` parameter and the tools above it do not change.
 
 WHAT IT REFUSES TO DO
   * It never opens a database connection and never reads a DSN.
@@ -22,13 +23,16 @@ WHAT IT REFUSES TO DO
     an authorization refusal and an unreadable revision record each raise; the caller's own fail-closed
     handling (review/revision_status.py) then refuses to produce anything.
   * It can only ask for the CALLER'S OWN signing identity -- the server has no route naming anyone else.
-  * It does not provide the sign-off WRITES (claim, submission, approval). Those still need a direct
-    connection in this phase; asking this adapter for one raises, so a sign-off operation can never
-    half-run against it.
+  * It NEVER RETRIES A WRITE. A write whose outcome is unknown (no answer, a dropped connection, a 5xx) may
+    have committed; it raises `ClinicalWriteOutcomeUnknown` and the tool above writes no file. Only a
+    definitive refusal (400/401/403/404) means "not done".
+  * It offers only the four writes a sign-off needs. Release, amendment and retraction are not reachable.
 
 ERROR MAPPING (HTTP -> the exception the direct `DataAccess` would have raised, so callers need no new cases)
   401 on login -> AuthenticationError            401 afterwards -> SessionExpired
   403          -> AuthorizationError             404 (report)   -> None from get_report, NotFoundError from revision
+  400 on a write -> ValueError(detail), as the direct DataAccess raises it; 404 on a write -> NotFoundError
+  5xx / no answer on a WRITE -> ClinicalWriteOutcomeUnknown
   409 coded `incomplete_clinician_identity` -> IncompleteClinicianIdentityError
   500 coded `revision_record_unreadable`    -> BrokenRevisionRecordError
   anything else, or no answer               -> ClinicalServiceError
@@ -46,6 +50,10 @@ from utils.exceptions import SignoffError
 
 class ClinicalServiceError(SignoffError):
     """The clinical service did not give a usable answer (transport failure, unexpected status or body)."""
+
+
+class ClinicalWriteOutcomeUnknown(ClinicalServiceError):
+    """A sign-off WRITE got no definitive answer, so it may or may not have been recorded. Never retried here."""
 
 
 @dataclass(frozen=True)
@@ -248,22 +256,99 @@ class HttpClinicalDataAccess:
         except (KeyError, ValueError) as exc:
             raise ClinicalServiceError("The clinical service's signing-identity answer is malformed.") from exc
 
-    # ── the sign-off WRITES are not offered over HTTP in this phase ─────────
+    # ── the sign-off WRITES ──────────────────────────────────────────────────
+    #
+    # Each is exactly one request to a route that is exactly one domain call. Nothing here names an actor, an
+    # organisation or a state: those are the server's (the session). The report/interpretation ids come from the
+    # signed link and are CHECKED by the domain against the session's organisation; they are not trusted.
 
-    def _not_offered(self, name: str):
-        raise ClinicalServiceError(
-            f"'{name}' is not available through the HTTP adapter in this phase: the sign-off write path still "
-            "needs direct clinical access. Nothing has been changed."
+    def _write(self, what: str, path: str, body: Optional[Dict[str, Any]], ok: int) -> Any:
+        """POST once. Returns the response on `ok`; raises the direct path's exception for a definitive refusal and
+        `ClinicalWriteOutcomeUnknown` for anything that leaves the outcome in doubt."""
+        import httpx
+
+        da = _clinical_errors()
+        unknown = (
+            f"The outcome of '{what}' is UNKNOWN: it may or may not have been recorded. It was not retried and no "
+            "file has been changed. Check the report's state in the clinical service before running this again."
         )
+        try:
+            response = (
+                self._client.request("POST", path, json=body)
+                if body is not None
+                else self._client.request("POST", path)
+            )
+        except httpx.HTTPError as exc:
+            raise ClinicalWriteOutcomeUnknown(f"{unknown} ({type(exc).__name__})") from exc
+        status = response.status_code
+        if status == ok:
+            return response
+        if status == 401:
+            raise da.SessionExpired()
+        if status == 403:
+            raise da.AuthorizationError(self._detail(response))
+        if status == 404:
+            raise da.NotFoundError(self._detail(response))
+        if status == 400:
+            raise ValueError(self._detail(response))
+        if status == 422:
+            # The service rejected the request's shape: a client defect, and the request was not processed.
+            raise ClinicalServiceError(
+                f"The clinical service rejected the request for '{what}' (422). Nothing changed."
+            )
+        raise ClinicalWriteOutcomeUnknown(f"{unknown} (HTTP {status})")
 
-    def submit_for_review(self, *args: Any, **kwargs: Any):
-        self._not_offered("submit_for_review")
+    def record_sole_signatory_claim(
+        self, session: Any, interpretation_id: uuid.UUID, report_id: uuid.UUID, reason: str
+    ) -> uuid.UUID:
+        self._own(session)
+        response = self._write(
+            "record_sole_signatory_claim",
+            f"/review/reports/{report_id}/concurrence",
+            {"interpretation_id": str(interpretation_id), "reason": reason},
+            201,
+        )
+        return self._claim_id(response, "record_sole_signatory_claim")
 
-    def record_sole_signatory_claim(self, *args: Any, **kwargs: Any):
-        self._not_offered("record_sole_signatory_claim")
+    def record_disagreement_claim(
+        self,
+        session: Any,
+        interpretation_id: uuid.UUID,
+        report_id: uuid.UUID,
+        variant_key: str,
+        new_classification: str,
+        reason: str,
+    ) -> uuid.UUID:
+        self._own(session)
+        response = self._write(
+            "record_disagreement_claim",
+            f"/review/reports/{report_id}/disagreement",
+            {
+                "interpretation_id": str(interpretation_id),
+                "variant_key": variant_key,
+                "new_classification": new_classification,
+                "reason": reason,
+            },
+            201,
+        )
+        return self._claim_id(response, "record_disagreement_claim")
 
-    def record_disagreement_claim(self, *args: Any, **kwargs: Any):
-        self._not_offered("record_disagreement_claim")
+    def submit_for_review(self, session: Any, report_id: uuid.UUID) -> None:
+        self._own(session)
+        self._write("submit_for_review", f"/review/reports/{report_id}/submission", None, 204)
 
-    def approve_report(self, *args: Any, **kwargs: Any):
-        self._not_offered("approve_report")
+    def approve_report(self, session: Any, report_id: uuid.UUID) -> None:
+        self._own(session)
+        self._write("approve_report", f"/review/reports/{report_id}/approval", None, 204)
+
+    @staticmethod
+    def _claim_id(response: Any, what: str) -> uuid.UUID:
+        """The claim was created (201); an unreadable id does not undo that, so this is an unknown OUTCOME for the
+        caller's purposes only in that the id is missing -- never treated as a refusal."""
+        try:
+            return uuid.UUID(str(response.json()["claim_id"]))
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ClinicalWriteOutcomeUnknown(
+                f"'{what}' was accepted (201) but the answer carries no usable claim id. The claim exists; "
+                "no file has been changed. Check the report's claims in the clinical service."
+            ) from exc

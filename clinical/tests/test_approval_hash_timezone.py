@@ -37,7 +37,7 @@ import zoneinfo
 
 import pytest
 
-from clinical.data_access import BcryptHasher, DataAccess, SystemClock, _claim_timestamp_utc
+from clinical.data_access import BcryptHasher, DataAccess, SystemClock, _claim_timestamp_utc, _INTEGRITY_AUDIT
 from clinical.tests.test_phase_7_commit1_hash_locking import (
     _admin_session,
     _approved_report,
@@ -730,10 +730,10 @@ class TestTheIntegrityOutcomeIsInTheAuditTrail:
         legacy_dao = _legacy_dao_on(legacy_conn)
         legacy_interp = _make_interpretation(legacy_dao, legacy_conn, session_a)
         legacy_report = _approved_report(legacy_dao, legacy_conn, session_a, interpreter_a, approver_a, legacy_interp)
-        assert dao.verify_report_integrity(approver_a, legacy_report) is True  # leaves a pending detail behind...
+        assert dao.verify_report_integrity(approver_a, legacy_report) is True  # its outcome goes to ITS audit row...
         unapproved = dao.create_report(session_a, interp_a_factory())
         with pytest.raises(ValueError):
-            dao.verify_report_integrity(session_a, unapproved)  # ...which this failing call must not pick up
+            dao.verify_report_integrity(session_a, unapproved)  # ...and a later failing call records none
         outcome, _, details = _audit_rows(conn)[-1]
         assert outcome == "error"
         assert details == {"report_id": str(unapproved), "matched": None}
@@ -745,3 +745,96 @@ class TestTheIntegrityOutcomeIsInTheAuditTrail:
         dao.verify_report_integrity(approver_a, report_id)
         _, _, details = _audit_rows(conn)[-1]
         assert set(details) <= {"report_id", "matched", "outcome", "legacy_zone"}
+
+
+class TestAStaleIntegrityDetailCannotReachAnotherAuditRecord:
+    """
+    The verify audit row takes its `outcome` from a ContextVar that `verify_report_integrity` sets just before it
+    returns and `_integrity_audit_details` consumes. The invariant these tests pin: whatever value is lying in that
+    variable when a call starts, the audit row written for THAT call reflects only that call.
+
+    Control flow relied on (clinical/data_access.py): `@auditable` wraps `@transactional` wraps the body. A call that
+    completes runs the body (clear, classify, set), then the transaction commit, then the builder with the result. A call
+    that raises goes to `@auditable`'s except branches, which call the builder with result None. The stale value is a
+    distinctive, impossible one ("Stale/Zone") so any inheritance is unmistakable, and it is always cleared afterwards.
+    """
+
+    STALE = ("match_legacy_zone", "Stale/Zone")
+
+    @pytest.fixture
+    def seed_stale_detail(self):
+        def seed():
+            _INTEGRITY_AUDIT.set(self.STALE)
+
+        try:
+            yield seed
+        finally:
+            _INTEGRITY_AUDIT.set(None)  # reset even when the test body fails
+
+    @staticmethod
+    def _assert_not_inherited(details):
+        assert "Stale/Zone" not in json.dumps(details)
+        assert "legacy_zone" not in details
+
+    def test_a_call_that_fails_in_the_classifier_records_no_outcome(
+        self, dao, conn, session_a, interp_a_factory, seed_stale_detail
+    ):
+        unapproved = dao.create_report(
+            session_a, interp_a_factory()
+        )  # no stored hash: the classifier raises ValueError
+        seed_stale_detail()
+        with pytest.raises(ValueError):
+            dao.verify_report_integrity(session_a, unapproved)
+        outcome, _, details = _audit_rows(conn)[-1]
+        assert outcome == "error"
+        assert details == {"report_id": str(unapproved), "matched": None}
+        self._assert_not_inherited(details)
+        assert _INTEGRITY_AUDIT.get() is None  # consumed by the failing call's audit row, not left for the next one
+
+    def test_a_call_for_an_unknown_report_records_no_outcome(self, dao, conn, session_a, seed_stale_detail):
+        unknown = uuid.uuid4()
+        seed_stale_detail()
+        with pytest.raises(Exception):  # NotFoundError: the exact type is not the invariant
+            dao.verify_report_integrity(session_a, unknown)
+        outcome, _, details = _audit_rows(conn)[-1]
+        assert outcome == "error"
+        assert details == {"report_id": str(unknown), "matched": None}
+        self._assert_not_inherited(details)
+
+    def test_a_successful_match_reports_its_own_outcome_not_the_stale_one(
+        self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory, seed_stale_detail
+    ):
+        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a_factory())
+        seed_stale_detail()
+        assert dao.verify_report_integrity(approver_a, report_id) is True
+        _, _, details = _audit_rows(conn)[-1]
+        assert details == {"report_id": str(report_id), "matched": True, "outcome": "match"}
+        self._assert_not_inherited(details)
+
+    def test_a_successful_no_match_reports_its_own_outcome_not_the_stale_one(
+        self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory, seed_stale_detail
+    ):
+        interp = interp_a_factory()
+        report_id = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE reviewer_claims SET reason = %s WHERE interpretation_id = %s", ("CHANGED", interp))
+        conn.commit()
+        seed_stale_detail()
+        assert dao.verify_report_integrity(approver_a, report_id) is False
+        _, _, details = _audit_rows(conn)[-1]
+        assert details == {"report_id": str(report_id), "matched": False, "outcome": "no_match"}
+        self._assert_not_inherited(details)
+
+    def test_the_stale_value_does_not_survive_into_the_following_call(
+        self, dao, conn, session_a, interpreter_a, approver_a, interp_a_factory, seed_stale_detail
+    ):
+        """One failing call consumes it; the next successful call must then report only its own outcome."""
+        unapproved = dao.create_report(session_a, interp_a_factory())
+        good = _approved_report(dao, conn, session_a, interpreter_a, approver_a, interp_a_factory())
+        seed_stale_detail()
+        with pytest.raises(ValueError):
+            dao.verify_report_integrity(session_a, unapproved)
+        assert dao.verify_report_integrity(approver_a, good) is True
+        rows = _audit_rows(conn)
+        assert rows[-2][2] == {"report_id": str(unapproved), "matched": None}
+        assert rows[-1][2] == {"report_id": str(good), "matched": True, "outcome": "match"}

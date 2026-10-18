@@ -39,6 +39,7 @@ through.
 from __future__ import annotations
 
 import base64
+import contextvars
 import datetime as _datetime
 import functools
 import hashlib
@@ -443,6 +444,57 @@ class DuplicateInterpretationError(Exception):
     def __init__(self, submission_key: str) -> None:
         super().__init__(f"An interpretation with submission key {submission_key!r} already exists")
         self.submission_key = submission_key
+
+
+def _claim_timestamp_utc(ts: "_datetime.datetime") -> str:
+    """
+    A claim timestamp as it enters the approval hash: converted to UTC first, then `isoformat()`.
+
+    WHY. psycopg returns a `timestamptz` as an aware datetime in the zone of the CONNECTION's session, and the
+    service pins no zone, so a bare `ts.isoformat()` printed the same instant with a different offset on a different
+    connection and the hash changed with it. Converting to UTC makes the hash a function of the instant alone.
+
+    COMPATIBILITY. For a session that was already UTC, `ts.astimezone(utc).isoformat()` is byte-for-byte what
+    `ts.isoformat()` printed (offset `+00:00`, the fraction omitted when the microseconds are zero), so every hash
+    computed under UTC is reproduced unchanged. A hash computed under another zone is NOT reproduced by this form;
+    `DataAccess._classify_report_integrity` recognises it separately and never calls it tampering.
+
+    A naive datetime cannot come out of a `timestamptz` column; it is refused rather than guessed, because
+    `astimezone` would silently read it as local time.
+    """
+    if ts.tzinfo is None:
+        raise ValueError("a reviewer claim timestamp must be timezone-aware to be hashed")
+    return ts.astimezone(_datetime.timezone.utc).isoformat()
+
+
+# The classification `verify_report_integrity` reached, handed to its audit-details builder. The decorator gives a
+# builder only (parameters, return value), and the return value must stay a plain bool, so the detail travels in a
+# ContextVar: set by the method just before it returns, consumed (and cleared) by the builder in the same call.
+_INTEGRITY_AUDIT: contextvars.ContextVar = contextvars.ContextVar("report_integrity_audit", default=None)
+
+
+def _integrity_audit_details(params: dict, result: Any) -> dict:
+    """
+    Audit `details` for `report_integrity_verified`.
+
+    Always: `report_id` and `matched` (the bool the method returned; None on a failed call). On a completed
+    verification also `outcome`: "match" (canonical UTC form reproduced the stored hash), "match_legacy_zone" (the
+    stored hash was made by the previous algorithm in a non-UTC session and the current content reproduces it; the
+    IANA zone that did so is in `legacy_zone`), or "no_match" (nothing reproduced it: integrity could NOT be verified,
+    which is not by itself a finding of tampering). Nothing from the report's content is recorded.
+
+    The pending detail is consumed here so one call's outcome can never be attached to another call's row, and a
+    failed call (result None) records no outcome.
+    """
+    pending = _INTEGRITY_AUDIT.get()
+    _INTEGRITY_AUDIT.set(None)
+    details: dict = {"report_id": str(params.get("report_id")), "matched": result}
+    if result is not None and pending is not None:
+        outcome, zone = pending
+        details["outcome"] = outcome
+        if outcome == "match_legacy_zone":
+            details["legacy_zone"] = zone
+    return details
 
 
 def interpretation_submission_key(content_hash: str, platform_sample_id: Any) -> str:
@@ -8387,6 +8439,11 @@ class DataAccess:
         the day it exists, without this function needing to be revisited to
         remember to include it.
 
+        TIMESTAMPS ARE HASHED IN UTC (`_claim_timestamp_utc`), so the hash does not depend on the PostgreSQL session
+        time zone of the connection that computes it. For a UTC session the text is identical to what the earlier
+        `isoformat()` produced, which is what keeps every UTC-computed hash verifiable. See
+        `_classify_report_integrity` for hashes made under another zone.
+
         Claims are ordered by (timestamp, id) for a stable serialisation --
         without a fixed order, two computations over the identical set of
         rows could serialise to different JSON and hash to different values,
@@ -8394,6 +8451,11 @@ class DataAccess:
         never changed. id is the reviewer_claims primary key, so (timestamp,
         id) is a genuine total order: id alone can never tie.
         """
+        run_document, claim_rows = self._load_report_hash_inputs(session, report_id)
+        return self._report_hash_digest(run_document, claim_rows, _claim_timestamp_utc)
+
+    def _load_report_hash_inputs(self, session: Session, report_id: uuid.UUID) -> tuple[Any, list]:
+        """The CURRENT run_document and CURRENT reviewer_claims rows that the approval hash covers (read-only)."""
         interp_row = self._query_one(
             "SELECT i.run_document FROM interpretations i "
             "JOIN reports r ON r.org_id = i.org_id AND r.interpretation_id = i.id "
@@ -8411,6 +8473,15 @@ class DataAccess:
             'ORDER BY "timestamp", id',
             (session.org_id, report_id),
         )
+        return run_document, claim_rows
+
+    @staticmethod
+    def _report_hash_digest(run_document: Any, claim_rows: Iterable[Any], render_timestamp: Any) -> str:
+        """
+        SHA-256 over the canonical JSON of the run document and the claims. `render_timestamp` turns a claim's
+        `timestamptz` into the text that enters the hash. The CANONICAL renderer is `_claim_timestamp_utc`; the
+        alternatives exist only so `_classify_report_integrity` can recognise hashes made by the previous algorithm.
+        """
         claims = []
         for row in claim_rows:
             evidence_json = row[6]
@@ -8423,7 +8494,7 @@ class DataAccess:
                     "classification": row[2],
                     "reason": row[3],
                     "actor_id": str(row[4]),
-                    "timestamp": row[5].isoformat(),
+                    "timestamp": render_timestamp(row[5]),
                     "evidence_json": evidence_json,
                     "supersedes": str(row[7]) if row[7] is not None else None,
                 }
@@ -8432,6 +8503,70 @@ class DataAccess:
         payload = {"run_document": run_document, "reviewer_claims": claims}
         serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(serialized).hexdigest()
+
+    def _classify_report_integrity(self, session: Session, report_id: uuid.UUID) -> tuple[str, Optional[str]]:
+        """
+        Recompute the stored approval hash and say HOW it relates to the current data. Read-only; never writes.
+
+        Returns (outcome, zone):
+          ("match", None)                   the canonical (UTC) recomputation equals the stored hash;
+          ("match_legacy_zone", "<zone>")   it does not, but the PREVIOUS algorithm (timestamps printed in the zone of
+                                            the computing session) run in this IANA zone does. The stored hash was made
+                                            by an approval whose session was not UTC, and the content is unchanged;
+          ("no_match", None)                no candidate reproduces it. This is NOT proof of tampering: it is exactly
+                                            what both tampering and an unrecognised legacy form look like, so callers
+                                            must report it as "does not verify" and investigate, never as "tampered".
+
+        The zone search runs only after the canonical form has failed. Matching a SHA-256 under some zone while the
+        content had changed is not feasible, so a legacy match is real evidence that the approved content is intact.
+        Raises NotFoundError / ValueError exactly as `verify_report_integrity` always has.
+        """
+        report = self._query_one(
+            "SELECT content_hash FROM reports WHERE id = %s AND org_id = %s",
+            (report_id, session.org_id),
+        )
+        if report is None:
+            raise NotFoundError(f"Report {report_id} not found")
+        stored_hash = report[0]
+
+        if stored_hash is None:
+            raise ValueError(f"Report {report_id} has not been approved and has no content_hash to verify against.")
+
+        run_document, claim_rows = self._load_report_hash_inputs(session, report_id)
+        if self._report_hash_digest(run_document, claim_rows, _claim_timestamp_utc) == stored_hash:
+            return "match", None
+        zone = self._legacy_zone_reproducing(run_document, claim_rows, stored_hash)
+        if zone is not None:
+            return "match_legacy_zone", zone
+        return "no_match", None
+
+    def _legacy_zone_reproducing(self, run_document: Any, claim_rows: list, stored_hash: str) -> Optional[str]:
+        """The first IANA zone (alphabetical, so deterministic) in which the PREVIOUS algorithm reproduces `stored_hash`,
+        or None. Zones that render every claim timestamp identically are tried once."""
+        try:
+            import zoneinfo
+
+            names = sorted(zoneinfo.available_timezones())
+        except Exception:  # no tz database available: no legacy recognition, which fails closed ("no_match")
+            return None
+        tried: set = set()
+        for name in names:
+            try:
+                zone = zoneinfo.ZoneInfo(name)
+            except Exception:
+                continue
+            rendering = tuple(row[5].astimezone(zone).isoformat() for row in claim_rows)
+            if rendering in tried:
+                continue
+            tried.add(rendering)
+            if (
+                self._report_hash_digest(
+                    run_document, claim_rows, lambda ts, zone=zone: ts.astimezone(zone).isoformat()
+                )
+                == stored_hash
+            ):
+                return name
+        return None
 
     @auditable(
         action="report_approved",
@@ -8519,7 +8654,7 @@ class DataAccess:
         requires_session=True,
         auditable=True,
         reason="ISO 15189 7.5 nonconformance detection: a mismatch is audit-relevant on its own, not only on export",
-        details_builder=lambda params, result: {"report_id": str(params.get("report_id")), "matched": result},
+        details_builder=_integrity_audit_details,
     )
     @transactional
     def verify_report_integrity(self, session: Session, report_id: uuid.UUID) -> bool:
@@ -8529,7 +8664,13 @@ class DataAccess:
         same function _approve_report used to produce the stored value --
         and compare.
 
-        Returns True on a match, False on a mismatch. Deliberately a bool,
+        Returns True when the stored hash is reproduced, and False when it is not. "Reproduced" means the canonical
+        UTC form, or the previous algorithm run in some IANA zone (a hash from an approval made in a non-UTC session;
+        see `_classify_report_integrity`, which says which). False means "does not verify", which is what tampering and
+        an unrecognised legacy form both look like: do not report it as tampering without investigating.
+        The audit row records which it was (`outcome`: match, match_legacy_zone or no_match, plus `legacy_zone`);
+        the return value stays a bool so existing callers are unaffected.
+        Deliberately a bool,
         not a raise: this is a check a caller interprets, like
         check_consent and check_order_data elsewhere in this file, not a
         hard-stop gate like require_release. A future delivery-path gate
@@ -8541,19 +8682,10 @@ class DataAccess:
         is nothing stored to verify against, which is a different condition
         from "verified and found to differ."
         """
-        report = self._query_one(
-            "SELECT content_hash FROM reports WHERE id = %s AND org_id = %s",
-            (report_id, session.org_id),
-        )
-        if report is None:
-            raise NotFoundError(f"Report {report_id} not found")
-        stored_hash = report[0]
-
-        if stored_hash is None:
-            raise ValueError(f"Report {report_id} has not been approved and has no content_hash to verify against.")
-
-        current_hash = self._compute_report_content_hash(session, report_id)
-        return current_hash == stored_hash
+        _INTEGRITY_AUDIT.set(None)  # never inherit a previous call's detail
+        outcome, zone = self._classify_report_integrity(session, report_id)
+        _INTEGRITY_AUDIT.set((outcome, zone))  # read by `_integrity_audit_details` for this call's audit row
+        return outcome in ("match", "match_legacy_zone")
 
     @auditable(
         action="report_released",

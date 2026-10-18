@@ -7,6 +7,8 @@ described as a target exists.
 Baseline: `master` at `59295f7` (PR #27 merged: the read-only `GET /review/reports/{id}/signoff-state` exists). Automatic
 recovery and resume do **not** exist. See also `docs/SIGNOFF_API_DESIGN.md`.
 
+**Update after the r1a2 experiment (2026-10-18).** Decisions 5 and 6, cases J and K, open items 18 to 24 and sections 13 and 14 were added after a throwaway-database experiment (run tag `r1a2`, section 13). Each statement in them is labelled **CONFIRMED (r1a2)**, **PROPOSED** or **OPEN**. **Everything marked PROPOSED is a design for review. None of it is implemented, and none of it settles or relaxes Decisions 1 to 4.** The 13 approvals and the S5 discrepancy described in section 13 are experimental evidence to be preserved; they are not a recovery.
+
 **Labels used on statements**
 
 | Label | Meaning |
@@ -16,10 +18,12 @@ recovery and resume do **not** exist. See also `docs/SIGNOFF_API_DESIGN.md`.
 | **PREREQUISITE** | something that must exist before the work that depends on it may be built or claimed |
 | **INTERIM (PROPOSED)** | an operational policy proposed to apply until a prerequisite or hardening work lands; **not implemented** by the repository |
 | **OPEN** | an unresolved question that needs a human or domain-expert decision; no behaviour is assumed |
+| **CONFIRMED (r1a2)** | an observation made in the r1a2 experiment (section 13): real code, real PostgreSQL 16.15, synthetic data, a throwaway cluster. Evidence about that run only; it does not show production behaviour |
+| **PROPOSED** | a design decision put forward for review after r1a2; **not settled, not built** |
 
 ## 0. Decisions
 
-Four decisions are recorded. Each states what is settled, what the code does today, and what follows. Where a settled
+Four decisions are recorded (1 to 4, settled as TARGET policy); Decisions 5 and 6, after Decision 4, are **PROPOSED** additions and are not settled. Each states what is settled, what the code does today, and what follows. Where a settled
 decision cannot be met by what exists, the gap is recorded as a **PREREQUISITE**, never worked around or described as done.
 
 ### Evidence classes (used by every decision)
@@ -190,6 +194,48 @@ No candidate is therefore presented as viable today. A mechanism needs its own d
 
 `INVESTIGATE` output: the tool writes nothing, lists the three evidence classes it saw, states exactly which fact it could not prove, and appends a local audit entry. A person decides the next action. Today the only available decisions are manual and outside the tool (see `SIGNOFF_API_DESIGN.md`, "Unknown client outcome is not a failed operation").
 
+### Decision 5 (PROPOSED): completing a partially signed report, and the aggregate acceptance verdict
+
+**Status: PROPOSED, not settled, not built.** It relaxes none of Decisions 1 to 4: completion never approves (Decision 4 ruling), never repeats a write, never re-approves an approved report (Decision 1), is same-operator (Decision 2), and creates or finalises an artefact only when binding is verified (Decision 1, consequence 2). **Until a P-BIND mechanism exists, check C3 below can only be UNKNOWN, so every completion ends in `INVESTIGATE`.** That is the intended consequence, not a gap.
+
+**What the r1a2 experiment adds (CONFIRMED (r1a2), section 13):** a sign-off can be left in the state *server approved, results JSON `reviewed`, PDFs and manifest absent*; a file/claim divergence can be sealed into an approved report; and a projection MATCH says nothing about either. The proposal below turns those observations into rules; the rules themselves are **PROPOSED**.
+
+**Proposed rules.**
+1. **Approval is final.** A partially signed report is completed by a separate operation that never calls `approve()`, never changes server state, and never resets an approved report to draft.
+2. **Aggregate verdict.** A run is declared signed off only when every check below passes, each evaluated independently and reported separately. A check that is UNKNOWN counts as not passed.
+
+| Check | Evidence | Passes when |
+|---|---|---|
+| C1 Approval | server state and revision read | `approved` or `released`; approver is the expected user and still holds the Approver role; not retracted; revision status reads and validates |
+| C2 Server hash | versioned recomputation (Decision 6) | the recomputed hash equals the stored `content_hash` |
+| C3 Binding | server-side comparison (P-BIND candidate (iii)) of the strict projection | MATCH under the strict experimental policy (section 13, fact 5). **Cannot pass until P-BIND exists** |
+| C4 Claims | file override records against the server's `disagree` claims, as multisets and by claim id | equal. Any extra or missing claim is a divergence |
+| C5 Artefacts | both PDFs and the manifest | all present; the manifest's SHA-256 of both PDFs and the results JSON match the files; its `clinical` block matches the server |
+| C6 File state | results JSON | `review_status: reviewed` and `reviewed_by` consistent with the approver's recorded identity |
+| C7 Audit | local audit log | an `approved` line exists, or a reconstructed one marked `reconstructed: true` (never backdated) |
+
+3. **Verdict values.** `COMPLETE` (all pass). `RECOVERABLE` (C1 to C4 and C6 pass; only C5 and/or C7 are missing, and no valid manifest exists). `INVESTIGATE` (anything UNKNOWN, divergent or unverifiable). `INTEGRITY_FAILURE` (C2 fails, or a valid manifest exists and a listed file is missing or changed). Only `RECOVERABLE` permits any write, and only of local artefacts.
+4. **A projection MATCH is C3 only.** No report, summary line or exit code may present it as sign-off verification. The first line of any output is the aggregate verdict, followed by each check.
+5. **S5 (claim and override divergence) always ends in `INVESTIGATE` and needs human review.** The file is never silently synchronised to the server claim, and the claim is never edited or added to. After approval the claim set is sealed into the hash, so the divergence is permanent evidence. The amendment path is not available from the sign-off tool today.
+6. **Authorization (PROPOSED, with an OPEN part).** Only the user who approved, authenticated as themselves and still holding the Approver role, may run completion (Decision 2, no takeover in V1). Whether a quality owner may complete on another person's behalf is **OPEN** (item 20).
+7. **What completion may write (PROPOSED).** Staged PDFs, then the manifest built from those files' hashes, then local audit lines; published in the section 5 order with the results JSON last. It never overwrites a verified manifest and never rewrites any existing artefact (Decision 1, consequence 3). Where the results JSON already says `reviewed` (the CURRENT order produces that state, as in r1a2), completion leaves it untouched; only a run whose JSON is not yet `reviewed` (the section 5 order) has it published last.
+8. **Idempotency and concurrency (PROPOSED).** Re-running on a `COMPLETE` run is a no-op that returns the verdict. A crash leaves only staged files, and a re-run resumes from a fresh verdict. A per-run advisory lock plus atomic publication prevent two local writers (the server needs no new lock because completion writes nothing there).
+9. **The defect that caused r1a2's PDF failures must be fixed before completion can succeed for such runs** (section 13, fact 2). Otherwise completion would fail at the same step and end in `INVESTIGATE`.
+
+### Decision 6 (PROPOSED): versioned, time-zone-independent approval hash
+
+**Status: PROPOSED, not settled, not built.** It does not change any stored hash and proposes no migration.
+
+**CONFIRMED (r1a2), see section 13, fact 4:** the server approval hash serialises each claim timestamp with `datetime.isoformat()`, in the zone of the connection that computes it. A hash computed in a UTC session did not reproduce under three other session zones, for all 13 reports, although nothing stored had changed.
+
+**Proposal.**
+1. **Version 2** serialises each claim timestamp as `ts.astimezone(timezone.utc).isoformat()`. For a hash computed in a UTC session this is byte-identical to today's output, so every hash computed in a UTC session remains verifiable without change.
+2. Every clinical connection pins its session `TimeZone` to UTC (defence in depth).
+3. The algorithm version is recorded with the hash. A hash with no recorded version is a **legacy v1** hash.
+4. **Legacy verification:** recompute with the UTC form. If it matches, it verifies. If it does not, the result is `UNVERIFIABLE_LEGACY`, meaning the approval may have been computed in another zone. It is **never** reported as tampering and maps to `INVESTIGATE`.
+5. No retroactive migration and no rewriting of stored hashes (they are write-once at the database level in any case).
+6. **OPEN (item 19):** the session zone production approvals used is not known. Until it is, "all existing hashes are UTC-computed" cannot be claimed.
+
 ## 1. What a sign-off is today - CURRENT (verified by reading the code)
 
 A linked run's sign-off is **eight separate durable steps**, in this order. No two share a transaction or an atomic filesystem operation.
@@ -327,6 +373,27 @@ Always: no writes, no file changes, journal untouched, `recovery_conflict` appen
 | local document's `content_hash` does not verify | content mismatch: stop |
 | journal chain broken (not just a torn tail) | local corruption or tampering |
 | P-BIND mechanism unavailable or answers "cannot verify" | not a conflict but an unprovable fact: `INVESTIGATE`, never "assume binding" |
+
+### J. Reviewer claims and local override records disagree (PROPOSED addition; observed as S5 in r1a2)
+- **Server:** the report carries a `disagree` claim (and, after approval, the `sole_signatory` claim) for a variant; once `approved` the whole claim set is sealed into the hash.
+- **Local:** the results JSON has no corresponding override record (the file write failed after the server claim committed), or the reverse.
+- **Determinable (CONFIRMED (r1a2)):** a reconciliation of file overrides against server claims (variant key, classification, count, claim ids) shows the divergence. The projection does **not**: it removes overrides from both sides, so it returns MATCH. The sign-off state API today does not expose variant keys or classifications (open item 21).
+- **Auto-retry safe?** No. Recovery never issues a claim write (Decision 4), and it never edits an approved report.
+- **Human?** Always. Verdict `INVESTIGATE`.
+- **Audit events:** `recovery_conflict` locally, naming the claim ids and the variant keys but not the reason text.
+- **Expected outcome:** nothing is written or synchronised. After approval the divergence is permanent and a person decides what to do, noting that the amendment path is **not available** from the sign-off tool today. Before approval, the same state should be caught by the journal (intent recorded before the claim, implementation step 6, section 14.5).
+
+### K. Approval-hash verification fails in a non-UTC session (PROPOSED addition; observed in r1a2)
+- **Server:** `approved`, hash stored.
+- **Local:** not involved.
+- **Determinable (CONFIRMED (r1a2)):** recomputation in a UTC session reproduced the stored hash; the same recomputation in three other zones did not, for all 13 reports, with the stored claims and document unchanged. This is a serialisation difference, not a content change (derived from the two facts, not from a fresh query of the claims).
+- **Auto-retry safe?** Verification is read-only and may be repeated.
+- **Human?** Only if the UTC form also fails.
+- **Audit events:** the verification read is audited like `verify_report_integrity`.
+- **Expected outcome:** verify with the Decision 6 form. A match is C2 passed. A failure of the UTC form for a legacy hash is `UNVERIFIABLE_LEGACY` and ends in `INVESTIGATE`; a failure for a hash recorded as v2 is `INTEGRITY_FAILURE`.
+
+### Amendments to cases D and E (PROPOSED)
+Cases D and E are unchanged. The r1a2 experiment **observed case D** (section 13, fact 2) and adds one requirement: finalising artefacts for such a run needs the rendering defect fixed first, or the same step fails again. Under Decision 5 the outcome stays `INVESTIGATE` until C3 can pass.
 
 ## 4. What recovery can see, and what the current state API gives - CURRENT (verified against `SignoffState`)
 
@@ -499,9 +566,103 @@ Each phase is small, independently reviewable and leaves the system working. Fai
 | 15 | Detection of reviewed-without-manifest runs across a directory tree (interim HOLD): a small read-only sweep tool, or per-run checks only | owner, quality owner |
 | 16 | Acceptance criteria for P-BIND and WI-GATE: to be defined in their own design work before any dependent path is enabled | owner, quality/domain owner |
 | 17 | Should normal sign-off also gain content binding (it has the same gap today)? | owner |
+| 18 | Numeric policy for check C3 (strict type-and-sign comparison as tested in r1a2, an agreed canonicalisation, or refuse). The r1a2 result bears on item 1 (comparability of the stored run document and the local file) but does not answer it | owner, engineer who owns the hashing |
+| 19 | Which session time zone production approvals were computed in, and whether every existing hash is therefore UTC-computed (Decision 6) | engineering, records owner |
+| 20 | Who may complete a partially signed report: the original approver only (proposed), or also a quality owner on their behalf | owner, quality/domain owner |
+| 21 | A claim-listing read exposing variant key and classification, but not reason text, so that check C4 can run (the sign-off state API does not provide them today) | engineering, owner |
+| 22 | Whether the input shapes behind r1a2's PDF failures (consent object of an unexpected shape; ACMG net points without their components) can occur in real pipeline output; only the orchestrator was found to populate `patient_consent`, and the combiner invariant for point components was not examined | engineering |
+| 23 | Which clock `reviewed_at` carries on a completed run (extends item 6) | owner |
+| 24 | Where the r1a2 evidence is archived: it currently lives in a scratchpad directory outside the repository, which is not durable | owner, records owner |
 
 ## 12. What was inspected
 
 `geper/review/signoff.py` (approve, the clinical and file phases, `_write_document`, `_append_audit_log`, `_withdraw_manifest`, `require_reviewed`, `list_pending`, `refresh_revision` staging), `geper/review/cli.py`, `geper/review/clinical_http.py`, `geper/report/models.py` (`compute_content_hash`, `verify_content_hash`), `geper/report/export_lims.py` (`_require_reviewed`, `_require_status_for_linked_run`, the CLI status lookup, CSV/JSON paths, manifest references), `geper/report/summary.py` and `summary_short.py` (the render-time stamp), `clinical/review_endpoints.py`, `clinical/data_access.py` (claim, submission, approval, state read, `verify_report_integrity`, `@auditable`/`@transactional`, hashing), `clinical/workflow_endpoints.py`, `clinical/schema.sql` (reports, reviewer_claims, immutability trigger, grants), `docs/SIGNOFF_API_DESIGN.md`, and the tests named in section 8.
 
-**Verified by reading the code or tests (CURRENT):** the tables of existing behaviour in sections 0, 1 and 4. **TARGET, PREREQUISITE and OPEN items are proposals and questions: not built, not tested, not enforced.** Nothing in this document has been executed.
+**Verified by reading the code or tests (CURRENT):** the tables of existing behaviour in sections 0, 1 and 4. **TARGET, PREREQUISITE, PROPOSED and OPEN items are proposals and questions: not built, not tested, not enforced.** Nothing in this document has been executed, **except that section 13 records the results of an experiment (run tag `r1a2`) executed against a throwaway cluster with synthetic data.** For that experiment the following were additionally read: `geper/report/summary.py` and `summary_short.py` (consent and ACMG-point rendering), `geper/pipeline/orchestrator.py` (where `patient_consent` is populated), `geper/report/clinical_report_builder.py`, `geper/review/signoff.py` (`approve`, `override`, `withdraw` and the clinical helpers), and `clinical/data_access.py` (`_compute_report_content_hash`, claim recording, approval).
+
+## 13. Evidence from the r1a2 experiment - CONFIRMED (r1a2)
+
+**Scope and limits.** One experiment on 2026-10-18: Windows Python 3.14.7 driving PostgreSQL 16.15 (PGDG packages on Ubuntu 26.04 under WSL2), an isolated cluster on `127.0.0.1:55450`, UTF8, session `TimeZone` `Etc/UTC`, the schema applied from `clinical/schema.sql`. Synthetic records only. Documents were built with the real `JSONResultBuilder` (nine cases), persisted with the real `DataAccess.record_pipeline_result`, and signed off with the real `geper/review/signoff.py` through an in-process `DataAccess` (not the HTTP API, not the submission worker, not the real pipeline). Some synthetic documents were shaped by the experiment's own harness (fact 2). It is **not** production behaviour, **not** the Linux CI container, and the comparison policy used (**STRICT EXPERIMENTAL COMPARISON**: any numeric type, sign or value mismatch is UNVERIFIED; textual form of an identical parsed value is accepted; key order is not compared) has **not been validated against real pipeline output**.
+
+**Facts.**
+1. **Order of writes (CONFIRMED FROM SOURCE and the run).** `approve()` on a linked run commits three server steps first (a `sole_signatory` claim, `submit_for_review`, `approve_report`), then writes `geper_patient_meta.json`, then the results JSON already marked `reviewed`, then the full and short PDFs, then the manifest, then the local audit line.
+2. **Three partial sign-offs.** Of the 13 approved reports, 10 completed (PDFs, manifest present) and 3 did not: `c07a_unicode_nfc`, `c07b_unicode_nfd` (both `KeyError: 'clinical_reporting'`) and `c08_numeric_edges` (`TypeError`, formatting `None`). For each, the server report is `approved` with a hash, the results JSON says `reviewed`, and the run directory holds only three files (no PDFs, no manifest, no audit line). No partial PDF can exist: the failure occurs while the document is being assembled, before the file is written. The three are exactly the *reviewed-without-manifest* state to which the interim HOLD (Decision 3) applies. **Causes, reproduced in memory against copies:** (a) the two Unicode documents carried `patient_consent` of shape `{"consent_given", "purpose"}`, which the pipeline does not produce (it passes the consent through `_parse_consent`, giving `clinical_reporting`, `research`, `timestamp`); both renderers read the document field raw and index `consent["clinical_reporting"]` for any non-empty object (`report/summary.py` line 981; `summary_short.py` line 424); the other cases had `patient_consent` null, which skips the block. (b) `c08` set `net_points` non-null with `pathogenic_points` and `benign_points` null; line 2052 of `report/summary.py` formats `acmg.get('pathogenic_points', 0)`, and the default applies only when the key is absent, so `format(None, 'g')` raises. These are inputs the experiment's harness built; whether real output can take those shapes is **OPEN** (item 22).
+3. **S5.** An override whose results-file write was made to fail after the server `disagree` claim committed left the server with one `disagree` claim and the file with no override. `approve()` then succeeded. Reconciliation reported the divergence; the projection returned MATCH, because it removes `overrides` and `clinician_override` from both sides and the claim lives only in `reviewer_claims`. The T3 report keeps projection, reconciliation, approval state and hash result as separate fields, but it has no aggregate verdict, its console summary printed only the projection verdict and the hash result, and it did not record whether PDFs or manifest existed.
+4. **Time-zone dependence of the approval hash.** `_compute_report_content_hash` serialises each claim timestamp with `datetime.isoformat()`; psycopg returns `timestamptz` in the connection's zone; nothing in `clinical/` pins the session zone. Recomputation in a UTC session reproduced the stored hash for 13 of 13 reports; in three other zones (Asia/Kolkata, Europe/London, America/Los_Angeles) it reproduced 0 of 13. The run document contains no timestamps, and the UTC match shows the claims and document were unchanged. The per-report cause was not examined with a fresh query (the cluster was not running when this was analysed).
+5. **JSONB number round trip (separate T2 run, same tag).** Eight of nine documents round-tripped with no value, type or token difference. In `c08_numeric_edges`, 13 number tokens differed: `1e+16` came back as the integer `10000000000000000` (five paths), `1.7976931348623157e308` as a 309-digit integer, `-0.0` as `0.0`, and `1e-07`/`5e-324` changed text but not type or value. JSONB does not preserve object key order. Under the strict policy, 12 of 13 signed documents compared MATCH against the stored run document, and `c08` was UNVERIFIED (6 type changes, 1 lost zero sign).
+6. **After approval.** `override` and `withdraw` were both refused with an "already approved" message; the results file and the claims were unchanged.
+
+**Preserved evidence.** The 13 approved reports, the three partial run directories, the S5 run, the saved T3 report and the launcher outputs are retained unchanged. They are in a scratchpad directory outside the repository, which is not a durable location (open item 24). Nothing in the repository records them. Completion, recovery or cleanup must be exercised on copies, never on those directories.
+
+## 14. Proposed completion operation - PROPOSED (not built)
+
+### 14.1 Local sign-off states
+
+| From | Event | To |
+|---|---|---|
+| `DRAFT` | claim, submit, approve (server) | `SERVER_APPROVED_FILES_PENDING` |
+| `SERVER_APPROVED_FILES_PENDING` | PDFs and manifest published, audit line appended | `SIGNED_OFF` |
+| `SERVER_APPROVED_FILES_PENDING` | PDF or manifest step fails | `PARTIAL` (stays; no automatic action) |
+| `PARTIAL` | completion with verdict `RECOVERABLE` | `SIGNED_OFF` |
+| `PARTIAL` or `SIGNED_OFF` | any check yields `INVESTIGATE` or `INTEGRITY_FAILURE` | `QUARANTINED` (read-only; a person decides) |
+| any approved state | override or withdraw | refused (CURRENT, fact 6) |
+
+There is no transition back to `DRAFT` and no second approval. `QUARANTINED` is a reporting state; it changes nothing on disk or in the database.
+
+### 14.2 Recovery decision table
+
+Rows that need C3 to pass are **unreachable until a P-BIND mechanism exists**; until then C3 is UNKNOWN and those rows resolve to `INVESTIGATE`.
+
+| Server (C1) | Binding (C3) | Claims (C4) | Hash (C2) | Artefacts (C5) | Verdict and action |
+|---|---|---|---|---|---|
+| approved | MATCH | equal | ok | all present and valid | `COMPLETE`; at most a reconstructed audit line (case F) |
+| approved | MATCH | equal | ok | PDF and/or manifest missing, no valid manifest | `RECOVERABLE`: stage and publish (cases D, E) |
+| approved | any | any | any | valid manifest, a listed file missing or changed | `INTEGRITY_FAILURE`: stop; never regenerate |
+| approved | any | divergent | any | any | `INVESTIGATE` (case J) |
+| approved | UNKNOWN, UNVERIFIED or mismatch | any | any | any | `INVESTIGATE` |
+| approved | any | any | mismatch for a v2 hash | any | `INTEGRITY_FAILURE` |
+| approved | any | any | legacy hash fails the UTC form | any | `INVESTIGATE` (`UNVERIFIABLE_LEGACY`, case K) |
+| retracted, released, unreadable or other approver | any | any | any | any | `INVESTIGATE` (case I rules apply) |
+| not approved | - | - | - | - | out of scope here: cases A to C |
+
+### 14.3 Operation contract
+
+| Item | Proposal |
+|---|---|
+| Names | `signoff-verify` (read-only; returns the aggregate verdict and each check) and `signoff-complete` (acts only on `RECOVERABLE`) |
+| Inputs | the run directory (its `clinical_link.json` names organisation, interpretation and report) and the operator's own authenticated session |
+| Authorization | the original approver only, authenticated as themselves, still holding the Approver role (Decision 2). Takeover: not in V1 (OPEN item 20) |
+| Server calls | reads only through the existing authenticated API, plus two that do not exist today: a server-side binding verification (P-BIND candidate (iii)) and a claim-listing read with variant key and classification but no reason text (item 21). The verification read is audited like `verify_report_integrity` |
+| Writes | local artefacts only: staged PDFs, the manifest built from their hashes, local audit lines. Never a server write, never `approve()`, never a claim |
+| Concurrency | a per-run advisory lock plus atomic publication (section 5 order, results JSON last); no new server lock is needed |
+| Idempotency | a run already `COMPLETE` is a no-op returning the verdict; a crash leaves staged files only and a re-run starts from a fresh verdict |
+| Local audit events | `completion_started`, `completion_verdict` (every check), `pdf_regenerated`, `manifest_written`, `completion_finished` or `completion_refused`; operator id and a non-backdated time; the original `approved` line, the server approval time and the approver are never altered |
+| Never | reset a state, call `approve()` again, add or edit a claim, overwrite a verified manifest, edit the file to match the server, or run unattended |
+
+### 14.4 Failure scenarios the operation must handle
+
+PDF generation fails again after the rendering defect remains (verdict stays `INVESTIGATE`); the manifest write is interrupted; two processes complete the same run (second refused by the lock); the lock is stale (person-only release, Decision 2); the server state changes between verdict and publication (re-read, abort); the approver's role is revoked meanwhile (refuse); a PDF exists but its hash differs from the journal (stop); the clock or time zone of the verifying session differs (Decision 6 form is used); the results JSON was edited after approval (C3 or C6 fails); the claim set differs from the file (case J).
+
+### 14.5 Tests required before any implementation
+
+- Renderer regression tests: consent object of the wrong shape, absent and valid; ACMG point components null while the total is set; assertion that the failure does not leave a `reviewed` JSON ahead of the PDFs once the Phase 1 order exists.
+- Hash: version 2 equals version 1 for a UTC session; stable under every session zone; a legacy hash failing the UTC form is `UNVERIFIABLE_LEGACY`, not tampering; version recorded and read back.
+- Verdict engine (offline): every row of 14.2; a projection MATCH cannot hide a C2, C4, C5 or C6 failure; UNKNOWN never counts as passed.
+- S5: the real override path with fault injection yields `INVESTIGATE` and changes nothing.
+- Completion against a real database from each interruption point; crash during completion; two processes racing; non-approver and cross-organisation attempts; a stale lock.
+- C3 with the strict policy: type change and `-0.0` yield UNVERIFIED; textual-form-only differences yield MATCH.
+- Evidence preservation: completion exercised on copies only.
+- An integration test against the real P-BIND mechanism before `signoff-complete` is enabled (Phase 5 release criterion).
+
+### 14.6 Implementation sequence (PROPOSED; none of it authorized or started)
+
+1. Review and accept (or change) this section and Decisions 5 and 6.
+2. **Renderer robustness fix** with tests. Independent of everything else; reduces how often case D occurs.
+3. **Hash version 2 and UTC session pinning**, with compatibility tests (Decision 6) and a decision on recording the version.
+4. **Verdict engine** as a pure, offline-tested module and the read-only `signoff-verify`. Until P-BIND exists it returns `INVESTIGATE` for C3. Fits with Phase 3 (`signoff-status`).
+5. **Claim-listing read** (item 21), so that C4 can run.
+6. **Journal intent before an override claim**, so that an S5-type divergence is classified when it happens rather than discovered afterwards (builds on Phases 1 and 2).
+7. **P-BIND server-side verification** (candidate (iii)), after the numeric-policy decision (item 18).
+8. **`signoff-complete`**, feature-gated off until an integration test against the real P-BIND passes. This is the P-BIND-gated part of Phase 5; Phases 1 to 4 do not wait for steps 5 to 8.
+
+**Relation to the existing phases.** Steps 4 to 6 extend Phases 1 to 3; step 8 is part of Phase 5 and inherits its release criterion. Nothing here changes Phase 0 to 6 as written.

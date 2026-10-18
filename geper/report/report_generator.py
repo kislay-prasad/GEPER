@@ -22,6 +22,9 @@ from report.clinical_report_builder import (
     EVIDENCE_COMPLETENESS_CAPTION,
     ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
+    acmg_net_points_parts,
+    _consent_field,
+    _consent_timestamp,
     _consent_value_label,
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
@@ -240,10 +243,10 @@ def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
     if not consent:
         return None
     parts = [
-        f"Clinical reporting: {_consent_value_label(consent.get('clinical_reporting'))}",
-        f"Research use: {_consent_value_label(consent.get('research'))}",
+        f"Clinical reporting: {_consent_value_label(_consent_field(consent, 'clinical_reporting'))}",
+        f"Research use: {_consent_value_label(_consent_field(consent, 'research'))}",
     ]
-    timestamp = consent.get("timestamp")
+    timestamp = _consent_timestamp(consent)
     if timestamp:
         parts.append(f"Recorded: {timestamp}")
     # Statutory citation removed pending counsel (human ruling, 2026-09-10):
@@ -788,15 +791,13 @@ class ReportGenerator:
         # discarded. `None` only for BA1's stand-alone-benign
         # short-circuit (no point tally ran) or an unclassified
         # variant -- neither fabricates a number.
-        net_points = acmg.get("net_points")
-        if net_points is not None:
+        points = acmg_net_points_parts(acmg)
+        if points is not None:
+            net_text, components_text, with_band = points
             band = acmg.get("net_points_band")
-            band_text = f" -- threshold band: {band}" if band else ""
-            lines.append(
-                f"**Net points (Tavtigian 2018):** {net_points:g} "
-                f"(pathogenic {acmg.get('pathogenic_points', 0):g} − benign {acmg.get('benign_points', 0):g})"
-                f"{band_text}"
-            )
+            band_text = f" -- threshold band: {band}" if band and with_band else ""
+            components = f" ({components_text})" if components_text else ""
+            lines.append(f"**Net points (Tavtigian 2018):** {net_text}{components}{band_text}")
             lines.append("")
         # Clinician override (geper/review/signoff.py's "override" command)
         # -- layered on top of, never substituting for, GEPER's own

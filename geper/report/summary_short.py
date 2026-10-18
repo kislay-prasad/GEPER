@@ -72,6 +72,9 @@ from report.clinical_report_builder import (
     EVIDENCE_COMPLETENESS_CAPTION,
     ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
+    _consent_field,
+    acmg_net_points_parts,
+    _consent_timestamp,
     _consent_value_label,
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
@@ -254,9 +257,9 @@ def _classification_text(clinical: Optional[Dict[str, Any]]) -> str:
     # `report/summary.py::_build_clinician_summary_table`), so the two
     # documents never disagree. Absent only for BA1's stand-alone-
     # benign short-circuit or an unclassified variant.
-    net_points = acmg.get("net_points")
-    if net_points is not None:
-        text = f"{text}<br/>net {net_points:g}"
+    points = acmg_net_points_parts(acmg)
+    if points is not None:
+        text = f"{text}<br/>net {points[0]}"
     return text
 
 
@@ -421,10 +424,13 @@ def _build_identity_block(
         # of `patient["deidentified"]`; see `_parse_consent`'s
         # docstring for why a de-identified sample can still carry a
         # real consent record).
-        pairs.append(("Consent -- Clinical Reporting", _consent_value_label(consent["clinical_reporting"])))
-        pairs.append(("Consent -- Research Use", _consent_value_label(consent["research"])))
-        if consent.get("timestamp"):
-            pairs.append(("Consent Recorded", consent["timestamp"]))
+        pairs.append(
+            ("Consent -- Clinical Reporting", _consent_value_label(_consent_field(consent, "clinical_reporting")))
+        )
+        pairs.append(("Consent -- Research Use", _consent_value_label(_consent_field(consent, "research"))))
+        recorded = _consent_timestamp(consent)
+        if recorded:
+            pairs.append(("Consent Recorded", recorded))
 
     pairs.append(("Sample ID", sample_id))
     pairs.append(("Run ID", run_id))

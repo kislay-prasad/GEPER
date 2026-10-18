@@ -65,6 +65,96 @@ class HttpSession:
     user_id: uuid.UUID
 
 
+# What the schema allows (clinical/schema.sql: reports.state CHECK, reviewer_claims.claim_type CHECK). `returned`
+# is permitted by the schema although no current code path sets it; it is accepted, not invented.
+_SIGNOFF_STATES = frozenset({"draft", "under_review", "approved", "released", "returned"})
+_CLAIM_TYPES = frozenset({"accept", "disagree", "variant_added", "variant_not_relevant", "sole_signatory"})
+
+
+def _text(mapping: Any, key: str) -> str:
+    """A required string field. A missing key, a null or any other type is refused (no str() coercion)."""
+    if not isinstance(mapping, dict):
+        raise TypeError(f"expected an object, got {type(mapping).__name__}")
+    value = mapping[key]
+    if not isinstance(value, str):
+        raise TypeError(f"{key} is not a string")
+    return value
+
+
+def _uuid_field(mapping: Any, key: str) -> uuid.UUID:
+    return uuid.UUID(_text(mapping, key))
+
+
+def _utc_aware(text: str, what: str) -> datetime.datetime:
+    value = datetime.datetime.fromisoformat(text)
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{what} has no timezone")
+    return value
+
+
+def _parse_signoff_state(body: Dict[str, Any], report_id: uuid.UUID) -> Dict[str, Any]:
+    """Validate and convert the sign-off state answer. Raises KeyError / ValueError / TypeError on any defect."""
+    if _uuid_field(body, "report_id") != report_id:
+        raise ValueError("the answer names a different report")
+    interpretation_id = _uuid_field(body, "interpretation_id")
+    state = _text(body, "state")
+    if state not in _SIGNOFF_STATES:
+        raise ValueError(f"unsupported state {state!r}")
+    for flag in ("is_retracted", "has_content_hash"):
+        if not isinstance(body[flag], bool):
+            raise ValueError(f"{flag} is not a boolean")
+
+    # `approver_id` and `approved_at` must be PRESENT (null is a legitimate value), not merely defaulted.
+    raw_approver, raw_approved_at = body["approver_id"], body["approved_at"]
+    approver = _uuid_field(body, "approver_id") if raw_approver is not None else None
+    approved_at = _utc_aware(_text(body, "approved_at"), "approved_at") if raw_approved_at is not None else None
+    has_hash = body["has_content_hash"]
+    # reports_approval_complete: approver, time and hash are all set together or not at all.
+    if not ((approver is None) == (approved_at is None) == (not has_hash)):
+        raise ValueError("approver_id, approved_at and has_content_hash disagree about whether the report is approved")
+    # reports_released_states_need_approval: an approved or released report has an approver.
+    if state in ("approved", "released") and approver is None:
+        raise ValueError(f"a report in state {state!r} carries no approval")
+
+    claims_raw = body["claims"]
+    if not isinstance(claims_raw, list):
+        raise ValueError("claims is not a list")
+    claims = []
+    seen_ids = set()
+    previous = None
+    for entry in claims_raw:
+        claim_id = _uuid_field(entry, "claim_id")
+        claim_type = _text(entry, "claim_type")
+        if claim_type not in _CLAIM_TYPES:
+            raise ValueError(f"unsupported claim type {claim_type!r}")
+        recorded_at = _utc_aware(_text(entry, "recorded_at"), "recorded_at")
+        if claim_id in seen_ids:
+            raise ValueError("a claim is listed twice")
+        if previous is not None and recorded_at < previous:
+            raise ValueError("claims are not in oldest-first order")
+        seen_ids.add(claim_id)
+        previous = recorded_at
+        claims.append(
+            {
+                "id": claim_id,
+                "claim_type": claim_type,
+                "actor_id": _uuid_field(entry, "actor_id"),
+                "recorded_at": recorded_at,
+            }
+        )
+
+    return {
+        "id": report_id,
+        "interpretation_id": interpretation_id,
+        "state": state,
+        "is_retracted": body["is_retracted"],
+        "approver_id": approver,
+        "approved_at": approved_at,
+        "has_content_hash": has_hash,
+        "claims": claims,
+    }
+
+
 def _clinical_errors():
     from clinical import data_access as da
 
@@ -225,6 +315,34 @@ class HttpClinicalDataAccess:
                 "the same report is a successful answer."
             )
         return revision
+
+    def get_signoff_state(self, session: Any, report_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+        """
+        Where a report's sign-off stands (`GET /review/reports/{id}/signoff-state`), or None when the service has
+        no such report in the caller's organisation. READ-ONLY: exactly one GET. Claims come back without their
+        reasons.
+
+        NOTHING MALFORMED OR SELF-CONTRADICTORY IS ACCEPTED. The answer must carry every promised field with the
+        right type, a state the schema allows, claim types the schema allows, UTC-aware timestamps, no repeated
+        claim, claims oldest first, and an approval that agrees with itself (approver, time and hash all present or
+        all absent, and present for an approved or released report). Anything else raises `ClinicalServiceError`
+        rather than handing an operator a picture that cannot be true. A draft or a report under review with no
+        approval is legitimate and is accepted.
+        """
+        self._own(session)
+        response = self._request("GET", f"/review/reports/{report_id}/signoff-state")
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            self._refuse(response, f"the sign-off state read of report {report_id}")
+        body = self._json(response)
+        try:
+            return _parse_signoff_state(body, report_id)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise ClinicalServiceError(
+                f"The clinical service's sign-off state answer for {report_id} is malformed or inconsistent "
+                f"({type(exc).__name__}: {exc})."
+            ) from exc
 
     def get_signing_identity(self, session: Any, user_id: uuid.UUID) -> Dict[str, Any]:
         da = _clinical_errors()

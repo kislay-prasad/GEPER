@@ -414,6 +414,437 @@ class TestErrorMapping:
             adapter.get_report(session, uuid.uuid4())
 
 
+def _signoff_body(report, **over):
+    body = {
+        "report_id": str(report),
+        "interpretation_id": str(uuid.uuid4()),
+        "state": "draft",
+        "is_retracted": False,
+        "approver_id": None,
+        "approved_at": None,
+        "has_content_hash": False,
+        "claims": [],
+    }
+    body.update(over)
+    return body
+
+
+class TestSignoffStateReadOnly:
+    """`get_signoff_state`: where a report's sign-off stands. Read-only; claims come back without their reasons."""
+
+    def _both(self, service, clinical, creds, dao, report=None):
+        adapter = _adapter(service)
+        session = _login(adapter, creds, clinical)
+        report = report or clinical["report_id"]
+        over_http = adapter.get_signoff_state(session, report)
+        direct = dao.read_signoff_state(clinical["signatory"], report)
+        return over_http, direct
+
+    @staticmethod
+    def _same(over_http, direct):
+        import datetime
+
+        assert over_http["id"] == direct["id"] and over_http["interpretation_id"] == direct["interpretation_id"]
+        assert over_http["state"] == direct["state"] and over_http["is_retracted"] == direct["is_retracted"]
+        assert over_http["approver_id"] == direct["approver_id"]
+        assert over_http["has_content_hash"] == direct["has_content_hash"]
+        assert over_http["approved_at"] == direct["approved_at"]
+        assert [(c["id"], c["claim_type"], c["actor_id"]) for c in over_http["claims"]] == [
+            (c["id"], c["claim_type"], c["actor_id"]) for c in direct["claims"]
+        ]
+        for http_claim, direct_claim in zip(over_http["claims"], direct["claims"]):
+            assert http_claim["recorded_at"] == datetime.datetime.fromisoformat(direct_claim["recorded_at"])
+
+    def test_a_draft_with_no_claim_matches_the_database(self, service, clinical, creds, dao):
+        over_http, direct = self._both(service, clinical, creds, dao)
+        self._same(over_http, direct)
+        assert over_http["state"] == "draft" and over_http["claims"] == []
+
+    def test_a_recorded_claim_and_each_later_state_match_the_database(self, service, clinical, creds, dao):
+        signatory = clinical["signatory"]
+        dao.record_sole_signatory_claim(signatory, clinical["interpretation_id"], clinical["report_id"], "the reason")
+        claim_only, direct = self._both(service, clinical, creds, dao)
+        self._same(claim_only, direct)
+        assert claim_only["state"] == "draft" and [c["claim_type"] for c in claim_only["claims"]] == ["sole_signatory"]
+        assert claim_only["claims"][0]["actor_id"] == signatory.user_id
+
+        dao.submit_for_review(signatory, clinical["report_id"])
+        under_review, direct = self._both(service, clinical, creds, dao)
+        self._same(under_review, direct)
+        assert under_review["state"] == "under_review" and under_review["approver_id"] is None
+
+        dao.approve_report(signatory, clinical["report_id"])
+        approved, direct = self._both(service, clinical, creds, dao)
+        self._same(approved, direct)
+        assert approved["state"] == "approved" and approved["approver_id"] == signatory.user_id
+        assert approved["approved_at"] is not None and approved["has_content_hash"] is True
+
+    def test_a_retraction_is_flagged_and_the_state_is_unchanged(self, signed, service, clinical, creds, dao):
+        _r._retract(clinical, dao)
+        over_http, direct = self._both(service, clinical, creds, dao)
+        self._same(over_http, direct)
+        assert over_http["is_retracted"] is True and over_http["state"] == "approved"
+
+    def test_no_reason_or_clinical_text_is_exposed_in_the_result(self, service, clinical, creds, dao):
+        dao.record_sole_signatory_claim(
+            clinical["signatory"], clinical["interpretation_id"], clinical["report_id"], "PRIVATE-REASON-TEXT"
+        )
+        over_http, _direct = self._both(service, clinical, creds, dao)
+        assert set(over_http["claims"][0]) == {"id", "claim_type", "actor_id", "recorded_at"}
+        assert "PRIVATE-REASON-TEXT" not in repr(over_http)
+
+    def test_an_unknown_report_and_another_organisations_report_are_none(
+        self, service, clinical, creds, dao, clinical_conn
+    ):
+        other = _r._second_organisation(dao, clinical_conn)
+        adapter = _adapter(service)
+        session = _login(adapter, creds, clinical)
+        assert adapter.get_signoff_state(session, uuid.uuid4()) is None
+        assert adapter.get_signoff_state(session, other["report_id"]) is None
+
+    def test_a_caller_without_a_reading_role_is_refused(self, service, clinical, dao, clinical_conn):
+        _base._login_with_roles(
+            dao, clinical_conn, clinical["org_id"], clinical["admin"], "orderer@org-a.test", ("Orderer",)
+        )
+        adapter = _adapter(service)
+        session = adapter.login("orderer@org-a.test", clinical["org_id"], "password")
+        with pytest.raises(AuthorizationError):
+            adapter.get_signoff_state(session, clinical["report_id"])
+
+    def test_it_changes_nothing_in_the_database(self, service, clinical, creds, dao, clinical_conn):
+        dao.record_sole_signatory_claim(
+            clinical["signatory"], clinical["interpretation_id"], clinical["report_id"], "r"
+        )
+
+        def snapshot():
+            return (
+                _base._report_row(clinical_conn, clinical["report_id"]),
+                _base._claims(clinical_conn, clinical["report_id"]),
+            )
+
+        adapter = _adapter(service)
+        session = _login(adapter, creds, clinical)
+        before = snapshot()
+        for _ in range(3):
+            adapter.get_signoff_state(session, clinical["report_id"])
+        assert snapshot() == before
+
+    def test_a_session_the_adapter_did_not_open_is_refused(self, service, clinical, creds):
+        adapter = _adapter(service)
+        _login(adapter, creds, clinical)
+        with pytest.raises(ClinicalServiceError, match="not opened by this adapter"):
+            adapter.get_signoff_state(clinical["signatory"], clinical["report_id"])
+
+
+class TestSignoffStateAgainstAStandIn:
+    def test_it_makes_exactly_one_get_and_no_other_request(self):
+        report = uuid.uuid4()
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=_signoff_body(report)))
+        seen = []
+        original = adapter._client.request
+
+        def spy(method, path, **kwargs):
+            seen.append((method, path, kwargs.get("json"), kwargs.get("content")))
+            return original(method, path, **kwargs)
+
+        adapter._client.request = spy
+        adapter.get_signoff_state(session, report)
+        assert seen == [("GET", f"/review/reports/{report}/signoff-state", None, None)]
+
+    @pytest.mark.parametrize(
+        "status, exception",
+        [(401, SessionExpired), (403, AuthorizationError), (500, ClinicalServiceError), (502, ClinicalServiceError)],
+    )
+    def test_statuses(self, status, exception):
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(status, json={"detail": "x"}))
+        with pytest.raises(exception):
+            adapter.get_signoff_state(session, uuid.uuid4())
+
+    def test_a_404_is_none_and_not_an_error(self):
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(404, json={"detail": "x"}))
+        assert adapter.get_signoff_state(session, uuid.uuid4()) is None
+
+    def test_a_well_formed_answer_with_an_approval_and_claims_is_parsed(self):
+        report, actor, claim = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        body = _signoff_body(
+            report,
+            state="approved",
+            approver_id=str(actor),
+            approved_at="2026-09-13T12:00:00+00:00",
+            has_content_hash=True,
+            claims=[
+                {
+                    "claim_id": str(claim),
+                    "claim_type": "sole_signatory",
+                    "actor_id": str(actor),
+                    "recorded_at": "2026-09-13T11:59:00.123456+00:00",
+                }
+            ],
+        )
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=body))
+        result = adapter.get_signoff_state(session, report)
+        assert result["approver_id"] == actor and result["has_content_hash"] is True
+        assert result["claims"][0]["id"] == claim and result["claims"][0]["actor_id"] == actor
+
+    def test_a_reason_in_the_answer_is_never_passed_on(self):
+        report = uuid.uuid4()
+        claim = {
+            "claim_id": str(uuid.uuid4()),
+            "claim_type": "sole_signatory",
+            "actor_id": str(uuid.uuid4()),
+            "recorded_at": "2026-09-13T11:59:00+00:00",
+            "reason": "SHOULD-NOT-SURVIVE",
+        }
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=_signoff_body(report, claims=[claim])))
+        assert "SHOULD-NOT-SURVIVE" not in repr(adapter.get_signoff_state(session, report))
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            {"is_retracted": "no"},
+            {"has_content_hash": 1},
+            {"claims": {}},
+            {"claims": [{"claim_id": "x"}]},
+            {
+                "claims": [
+                    {
+                        "claim_id": str(uuid.uuid4()),
+                        "claim_type": "t",
+                        "actor_id": "not-a-uuid",
+                        "recorded_at": "2026-01-01T00:00:00+00:00",
+                    }
+                ]
+            },
+            {"approved_at": "yesterday"},
+            {"approver_id": "not-a-uuid"},
+            {"interpretation_id": "nope"},
+            {"report_id": str(uuid.uuid4())},
+        ],
+    )
+    def test_a_malformed_answer_is_an_error_not_a_partial_picture(self, mutate):
+        report = uuid.uuid4()
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=_signoff_body(report, **mutate)))
+        with pytest.raises(ClinicalServiceError):
+            adapter.get_signoff_state(session, report)
+
+    @pytest.mark.parametrize("missing", ["state", "claims", "is_retracted", "has_content_hash", "interpretation_id"])
+    def test_a_missing_field_is_an_error(self, missing):
+        report = uuid.uuid4()
+        body = _signoff_body(report)
+        body.pop(missing)
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=body))
+        with pytest.raises(ClinicalServiceError):
+            adapter.get_signoff_state(session, report)
+
+    def test_a_non_json_body_is_an_error(self):
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, text="<html>"))
+        with pytest.raises(ClinicalServiceError):
+            adapter.get_signoff_state(session, uuid.uuid4())
+
+
+def _approval(**over):
+    """A complete, consistent approval block (approver, time and hash all present)."""
+    block = {
+        "approver_id": str(uuid.uuid4()),
+        "approved_at": "2026-09-13T12:00:00+00:00",
+        "has_content_hash": True,
+    }
+    block.update(over)
+    return block
+
+
+def _claim(**over):
+    claim = {
+        "claim_id": str(uuid.uuid4()),
+        "claim_type": "sole_signatory",
+        "actor_id": str(uuid.uuid4()),
+        "recorded_at": "2026-09-13T11:00:00+00:00",
+    }
+    claim.update(over)
+    return claim
+
+
+class TestSignoffStateValidation:
+    """What `get_signoff_state` accepts and what it refuses, against a stand-in (no database)."""
+
+    @staticmethod
+    def _read(**over):
+        report = uuid.uuid4()
+        adapter, session, seen = _logged_in(lambda r: httpx.Response(200, json=_signoff_body(report, **over)))
+        return adapter.get_signoff_state(session, report), seen
+
+    @staticmethod
+    def _refused(**over):
+        report = uuid.uuid4()
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=_signoff_body(report, **over)))
+        with pytest.raises(ClinicalServiceError, match="malformed or inconsistent"):
+            adapter.get_signoff_state(session, report)
+
+    # ── legitimate answers are accepted, including incomplete ones ───────────────────────────
+    @pytest.mark.parametrize("state", ["draft", "under_review", "returned"])
+    def test_a_report_with_no_approval_is_legitimate_in_every_unapproved_state(self, state):
+        result, _ = self._read(state=state)
+        assert result["state"] == state and result["approver_id"] is None and result["approved_at"] is None
+        assert result["has_content_hash"] is False
+
+    def test_a_draft_with_a_claim_and_no_approval_is_legitimate(self):
+        result, _ = self._read(claims=[_claim()])
+        assert len(result["claims"]) == 1 and result["approver_id"] is None
+
+    @pytest.mark.parametrize("state", ["approved", "released"])
+    def test_an_approved_or_released_report_with_a_complete_approval_is_accepted(self, state):
+        result, _ = self._read(state=state, **_approval())
+        assert result["state"] == state and result["approver_id"] is not None
+        assert result["approved_at"].utcoffset() is not None and result["has_content_hash"] is True
+
+    def test_a_retracted_report_keeps_its_state(self):
+        result, _ = self._read(state="approved", is_retracted=True, **_approval())
+        assert result["is_retracted"] is True and result["state"] == "approved"
+
+    @pytest.mark.parametrize(
+        "claim_type", ["accept", "disagree", "variant_added", "variant_not_relevant", "sole_signatory"]
+    )
+    def test_every_claim_type_the_schema_allows_is_accepted(self, claim_type):
+        result, _ = self._read(claims=[_claim(claim_type=claim_type)])
+        assert result["claims"][0]["claim_type"] == claim_type
+
+    def test_claims_in_order_including_equal_timestamps_are_accepted(self):
+        stamps = ["2026-09-13T10:00:00+00:00", "2026-09-13T10:00:00+00:00", "2026-09-13T10:00:01.5+00:00"]
+        result, _ = self._read(claims=[_claim(recorded_at=t) for t in stamps])
+        assert [c["recorded_at"].isoformat() for c in result["claims"]][0] == "2026-09-13T10:00:00+00:00"
+
+    def test_a_non_utc_offset_is_accepted_when_it_is_explicit(self):
+        result, _ = self._read(claims=[_claim(recorded_at="2026-09-13T15:30:00+05:30")])
+        assert result["claims"][0]["recorded_at"].utcoffset() is not None
+
+    # ── unsupported or missing values ────────────────────────────────────────────────────────
+    @pytest.mark.parametrize("state", ["archived", "", "APPROVED", "retracted", None, 3])
+    def test_an_unsupported_state_is_refused(self, state):
+        self._refused(state=state)
+
+    @pytest.mark.parametrize("claim_type", ["", "concur", "SOLE_SIGNATORY", None, 7])
+    def test_an_unsupported_claim_type_is_refused(self, claim_type):
+        self._refused(claims=[_claim(claim_type=claim_type)])
+
+    @pytest.mark.parametrize(
+        "missing",
+        [
+            "report_id",
+            "interpretation_id",
+            "state",
+            "is_retracted",
+            "approver_id",
+            "approved_at",
+            "has_content_hash",
+            "claims",
+        ],
+    )
+    def test_every_top_level_field_is_required_even_when_null_is_legitimate(self, missing):
+        report = uuid.uuid4()
+        body = _signoff_body(report)
+        body.pop(missing)
+        adapter, session, _ = _logged_in(lambda r: httpx.Response(200, json=body))
+        with pytest.raises(ClinicalServiceError):
+            adapter.get_signoff_state(session, report)
+
+    @pytest.mark.parametrize("missing", ["claim_id", "claim_type", "actor_id", "recorded_at"])
+    def test_every_claim_field_is_required(self, missing):
+        claim = _claim()
+        claim.pop(missing)
+        self._refused(claims=[claim])
+
+    # ── identifiers and timestamps ───────────────────────────────────────────────────────────
+    @pytest.mark.parametrize("bad", ["", "not-a-uuid", "1234", None, 5, ["x"]])
+    def test_an_invalid_identifier_is_refused_everywhere_one_appears(self, bad):
+        self._refused(interpretation_id=bad)
+        self._refused(claims=[_claim(claim_id=bad)])
+        self._refused(claims=[_claim(actor_id=bad)])
+        if bad is not None:
+            self._refused(**_approval(approver_id=bad))
+
+    @pytest.mark.parametrize(
+        "bad", ["yesterday", "", "2026-13-45T00:00:00+00:00", 20260913, ["2026-09-13T12:00:00+00:00"]]
+    )
+    def test_an_invalid_timestamp_is_refused(self, bad):
+        self._refused(**_approval(approved_at=bad))
+        self._refused(claims=[_claim(recorded_at=bad)])
+
+    def test_a_timestamp_without_a_timezone_is_refused(self):
+        self._refused(**_approval(approved_at="2026-09-13T12:00:00"))
+        self._refused(claims=[_claim(recorded_at="2026-09-13T11:00:00")])
+
+    # ── contradictions ───────────────────────────────────────────────────────────────────────
+    @pytest.mark.parametrize("state", ["approved", "released"])
+    def test_an_approved_or_released_report_without_approval_metadata_is_refused(self, state):
+        self._refused(state=state)
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            {"approver_id": str(uuid.uuid4())},  # approver but no time and no hash
+            {"approved_at": "2026-09-13T12:00:00+00:00"},  # time but no approver and no hash
+            {"has_content_hash": True},  # hash but no approver and no time
+            {"approver_id": str(uuid.uuid4()), "approved_at": "2026-09-13T12:00:00+00:00"},  # no hash
+            {"approver_id": str(uuid.uuid4()), "has_content_hash": True},  # no time
+            {"approved_at": "2026-09-13T12:00:00+00:00", "has_content_hash": True},  # no approver
+        ],
+    )
+    def test_a_partial_approval_is_refused_in_any_state(self, block):
+        for state in ("draft", "under_review", "approved"):
+            self._refused(state=state, **block)
+
+    def test_approved_with_an_approver_and_time_but_no_hash_is_refused(self):
+        self._refused(state="approved", **_approval(has_content_hash=False))
+
+    def test_a_repeated_claim_id_is_refused(self):
+        claim = _claim()
+        self._refused(claims=[claim, dict(claim, recorded_at="2026-09-13T11:00:05+00:00")])
+
+    def test_claims_out_of_order_are_refused(self):
+        self._refused(
+            claims=[_claim(recorded_at="2026-09-13T11:00:05+00:00"), _claim(recorded_at="2026-09-13T11:00:00+00:00")]
+        )
+
+    @pytest.mark.parametrize("claims", [None, "x", {}, 3, [None], ["x"], [[]]])
+    def test_claims_that_are_not_a_list_of_objects_are_refused(self, claims):
+        self._refused(claims=claims)
+
+    @pytest.mark.parametrize("flag", ["is_retracted", "has_content_hash"])
+    @pytest.mark.parametrize("bad", ["true", 1, 0, None, "no"])
+    def test_flags_must_be_booleans(self, flag, bad):
+        self._refused(**{flag: bad})
+
+    def test_the_answer_must_name_the_report_asked_about(self):
+        self._refused(report_id=str(uuid.uuid4()))
+
+    def test_a_refusal_never_returns_a_partial_result(self):
+        report = uuid.uuid4()
+        adapter, session, _ = _logged_in(
+            lambda r: httpx.Response(200, json=_signoff_body(report, claims=[_claim(), _claim(claim_type="nope")]))
+        )
+        with pytest.raises(ClinicalServiceError):
+            adapter.get_signoff_state(session, report)
+
+    # ── still one read-only GET ──────────────────────────────────────────────────────────────
+    def test_it_performs_exactly_one_get_and_no_write_whatever_the_answer(self):
+        for answer in (_signoff_body(uuid.uuid4()), {"junk": 1}):
+            report = uuid.uuid4()
+            requests = []
+
+            def handler(request, report=report, answer=answer):
+                requests.append((request.method, request.url.path))
+                return httpx.Response(
+                    200, json=dict(answer, report_id=str(report)) if "report_id" in answer else answer
+                )
+
+            adapter, session, _ = _logged_in(handler)
+            try:
+                adapter.get_signoff_state(session, report)
+            except ClinicalServiceError:
+                pass
+            assert requests == [("GET", f"/review/reports/{report}/signoff-state")]
+
+
 class TestOnlyHttpsIsSpoken:
     @pytest.mark.parametrize("url", ["http://clinical.test", "ftp://x", "clinical.test", "", None])
     def test_a_non_https_address_is_refused(self, url):

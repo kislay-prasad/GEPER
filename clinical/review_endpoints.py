@@ -11,6 +11,7 @@ released one, over HTTP, and the FOURTH prefix this service serves.
     POST /review/reports/{report_id}/release        Approver     release_report  (to the patient portal)
     GET  /review/reports/{report_id}                Interpreter, Approver, Auditor, Administrator   read_report_status
     GET  /review/reports/{report_id}/revision       (same roles)                                    read_report_revision
+    GET  /review/reports/{report_id}/signoff-state  (same roles)                                    read_signoff_state
 
 EVERY ROUTE IS ONE DOMAIN CALL. `@auditable` commits after each audit row it
 writes, so a handler that called two decorated methods ("record the claim, then
@@ -60,7 +61,7 @@ that does not exist: 404, same body.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.encoders import jsonable_encoder
@@ -297,6 +298,28 @@ class ReportRevision(BaseModel):
     revision: dict[str, Any]
 
 
+class SignoffClaim(BaseModel):
+    """One claim on the report, WITHOUT its reason, variant, classification or evidence."""
+
+    claim_id: str
+    claim_type: str
+    actor_id: str
+    recorded_at: str
+
+
+class SignoffState(BaseModel):
+    """Where a report's sign-off stands. Facts only: no claim text, no report content, no hash value."""
+
+    report_id: str
+    interpretation_id: str
+    state: str
+    is_retracted: bool
+    approver_id: Optional[str] = None
+    approved_at: Optional[str] = None
+    has_content_hash: bool
+    claims: list[SignoffClaim]
+
+
 class CodedErrorResponse(BaseModel):
     detail: str
     code: str
@@ -372,3 +395,44 @@ async def read_report_revision(
             content={"detail": str(exc), "code": REVISION_UNREADABLE},
         )
     return JSONResponse(content=jsonable_encoder({"report_id": str(target), "revision": revision}))
+
+
+@router.get(
+    "/reports/{report_id}/signoff-state",
+    response_model=SignoffState,
+    summary="Where a report's sign-off stands, in the CALLER'S OWN organisation (read-only)",
+    responses=_COMMON,
+)
+async def read_signoff_state(
+    report_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> SignoffState:
+    """`DataAccess.read_signoff_state`, and nothing else. READ-ONLY: it records no claim, moves no report and
+    writes no audit row. The organisation is `Session.org_id`; another organisation's report is the same 404 as
+    one that does not exist, and a caller without a reading role gets the uniform 403 before any lookup."""
+    target = _target(report_id)
+    try:
+        sign_off = dao.read_signoff_state(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if sign_off is None:
+        raise _not_found()
+    return SignoffState(
+        report_id=str(sign_off["id"]),
+        interpretation_id=str(sign_off["interpretation_id"]),
+        state=str(sign_off["state"]),
+        is_retracted=bool(sign_off["is_retracted"]),
+        approver_id=str(sign_off["approver_id"]) if sign_off["approver_id"] is not None else None,
+        approved_at=sign_off["approved_at"].isoformat() if sign_off["approved_at"] is not None else None,
+        has_content_hash=bool(sign_off["has_content_hash"]),
+        claims=[
+            SignoffClaim(
+                claim_id=str(c["id"]),
+                claim_type=str(c["claim_type"]),
+                actor_id=str(c["actor_id"]),
+                recorded_at=str(c["recorded_at"]),
+            )
+            for c in sign_off["claims"]
+        ],
+    )

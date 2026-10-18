@@ -5809,6 +5809,69 @@ class DataAccess:
         return self.get_report_revision(session, report_id)
 
     @auditable(
+        action="signoff_state_read",
+        resource_type="report",
+        requires_session=True,
+        auditable=False,
+        reason="read is not a resource action; it writes nothing, and recovery from an interrupted sign-off "
+        "is itself audited when it acts",
+    )
+    @transactional
+    def read_signoff_state(self, session: Session, report_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """
+        Where a report's sign-off stands, for an operator working out what an interrupted sign-off left behind.
+        READ-ONLY: it writes nothing (no audit row either: `auditable=False`), and it does not call
+        `verify_report_integrity`, which does write one.
+
+        Returns None for an unknown or cross-organisation report (the usual meaning throughout this file).
+        Raises AuthorizationError without a reading role (REPORT_READ_ROLES, the same set as the other staff
+        reads); the role gate runs first, so a caller without one learns nothing about existence.
+
+        ONE STATEMENT, ONE SNAPSHOT. The report row, the retraction flag and the claim summary are read in a
+        single SELECT, so under READ COMMITTED they are one consistent view: a claim recorded or an approval
+        committed by someone else cannot appear in one part and not in another. (Two statements would each get
+        their own snapshot.)
+
+        WHAT IT RETURNS, AND WHAT IT DOES NOT. The report's state, interpretation, approver and approval time,
+        whether an approval hash exists (the hash itself is not returned), the retraction flag, and for each
+        claim on THIS report: its id, type, actor and time. NOT the claim's reason, variant, classification or
+        evidence, and nothing from the report's content or any patient record.
+        """
+        self._require_any_role(session, REPORT_READ_ROLES)
+        row = self._query_one(
+            "SELECT r.id, r.interpretation_id, r.state, r.approver_id, r.approved_at, "
+            "(r.content_hash IS NOT NULL), "
+            "EXISTS (SELECT 1 FROM report_retractions x WHERE x.org_id = r.org_id AND x.report_id = r.id), "
+            "COALESCE((SELECT json_agg(json_build_object("
+            "'id', c.id, 'claim_type', c.claim_type, 'actor_id', c.actor_id, "
+            "'recorded_at', to_char(c.\"timestamp\" AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"+00:00\"')"
+            ') ORDER BY c."timestamp", c.id) '
+            "FROM reviewer_claims c WHERE c.org_id = r.org_id AND c.report_id = r.id), '[]'::json) "
+            "FROM reports r WHERE r.id = %s AND r.org_id = %s",
+            (report_id, session.org_id),
+        )
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "interpretation_id": row[1],
+            "state": row[2],
+            "approver_id": row[3],
+            "approved_at": row[4],
+            "has_content_hash": bool(row[5]),
+            "is_retracted": bool(row[6]),
+            "claims": [
+                {
+                    "id": uuid.UUID(str(claim["id"])),
+                    "claim_type": claim["claim_type"],
+                    "actor_id": uuid.UUID(str(claim["actor_id"])),
+                    "recorded_at": claim["recorded_at"],
+                }
+                for claim in (row[7] or [])
+            ],
+        }
+
+    @auditable(
         action="signing_identity_read",
         resource_type="user",
         requires_session=True,

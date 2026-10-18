@@ -238,6 +238,12 @@ No candidate is therefore presented as viable today. A mechanism needs its own d
 
 ## 1. What a sign-off is today - CURRENT (verified by reading the code)
 
+> **Update: crash-safe local publication is IMPLEMENTED (CURRENT).** The file steps F1 to F5 below describe the order
+> that existed when this section was written. `review/signoff.py::approve` no longer writes them in that order: see
+> section 1A. Steps S1 to S3 (the three server writes) and facts 1, 3 to 7 and 9 to 10 are unchanged. Fact 2 (the
+> results JSON written before the PDFs and the manifest) no longer holds for runs approved with this change; runs
+> approved before it may still be in that state (interim HOLD, Decision 3).
+
 A linked run's sign-off is **eight separate durable steps**, in this order. No two share a transaction or an atomic filesystem operation.
 
 | # | Step | Where | Durable boundary |
@@ -263,6 +269,73 @@ Facts that shape the design:
 8. **Precedent for safe publishing:** `refresh_revision` stages files privately and publishes with `os.replace`, the three renderings first and the status record (which lists their hashes) last. Each `os.replace` is atomic for one file; the set is not published atomically.
 9. **Callers:** only `review/cli.py` and `report/export_lims.py` use `review/signoff.py`.
 10. **Server audit:** `audit_log` is append-only; a success row is written *after* the data commit, so a failure there leaves committed data with an `error`-outcome row (or none).
+
+## 1A. Crash-safe local publication - CURRENT (implemented; tested without a database)
+
+**What changed.** After the claim, the submission and the approval, and after the clinical session is closed, `approve`
+publishes its five local files through `_publish_signoff_files` in `geper/review/signoff.py`:
+
+1. a private staging directory is created **inside the run directory** (`.signoff-stage-<random>`), so it is on the same
+   filesystem as the destination;
+2. patient meta, the reviewed results JSON, the full PDF, the short PDF and the manifest are built there, under names that
+   can never be taken for a report run (`*.staged`; never `geper_results.json`, so `list_pending` cannot see a leftover
+   staging directory as a second run). The PDFs are rendered from the staged patient meta. The manifest is built from the
+   SHA-256 of the **staged bytes**. Every staged file is flushed and `fsync`ed;
+3. publication with `os.replace`, in this order: `geper_patient_meta.json`, the full PDF, the short PDF,
+   `geper_signoff_manifest.json`, then **`geper_results.json` last**. On POSIX the directory is `fsync`ed before the JSON
+   is published (so its rename cannot become durable ahead of the manifest's) and again after;
+4. only then the `approved` audit line is appended and `fsync`ed;
+5. the staging directory **this call created** is removed. A staging directory left by an earlier, killed process is
+   never touched. A failure to remove it is logged as a warning and never masks the result.
+
+**Failure behaviour.** Any failure raises `PublicationError` (a `SignoffError`) with the original exception as its
+`__cause__` and `published`, the files already renamed into place. On a linked run its message says that server approval
+may already have succeeded. Nothing is rolled back (a rollback could overwrite a newer or concurrent report) and nothing
+is repaired automatically.
+
+| Interrupted | On disk | `require_reviewed(…, output_dir)` | `list_pending` | `status` (server approved) |
+|---|---|---|---|---|
+| while staging or rendering | destination unchanged; a staging directory remains if the process was killed | refuses (JSON not `reviewed`) | DRAFT | `APPROVED_NO_LOCAL_SIGNOFF` (INVESTIGATE) |
+| after meta / full PDF / short PDF | those new files; JSON still the draft | refuses | DRAFT | same |
+| after the manifest, before the JSON | manifest whose results hash does not match the draft JSON | refuses | **DRAFT** (the manifest does not verify; the earlier disagreement with the gate is closed) | same |
+| after the JSON, before the audit line | complete | accepts | REVIEWED | `SIGNED_OFF_AUDIT_ENTRY_MISSING` (INCOMPLETE) |
+| after the audit line | complete | accepts | REVIEWED | CONSISTENT |
+
+**What "complete" means now.** `list_pending` reports REVIEWED only if the manifest exists **and verifies**
+(`_publication_problems`: it names SHA-256 values for both PDFs and the results JSON, each matches the file on disk, so a
+missing, truncated or replaced file is a problem, and its content hash agrees with the results JSON) **and** the results
+JSON says `reviewed`. `manifest_problems` on each entry says why a manifest that exists did not verify.
+`require_reviewed(document, consumer, output_dir)` applies the same check when it is given the directory and refuses
+before it writes any audit line. This is evidence of internal consistency only; **content binding is still not verified**.
+
+**Limitations (stated, not hidden).**
+- **Not atomic across the file set.** Each `os.replace` is atomic for one file only. The order makes every interrupted
+  state one that the status paths refuse, or a complete sign-off missing only its audit line.
+- **Durability depends on the platform.** Windows cannot `fsync` a directory (this step is skipped there), and a filesystem
+  that refuses it is tolerated with a warning. Network and bind-mounted filesystems may reorder or lose renames. Power loss
+  is not covered by the process-kill tests.
+- **Server approval comes first.** If local publication fails, the clinical service may already say `approved`; nothing
+  here resumes or repairs that (that is the later recovery work).
+- **Completeness is checked only for a caller that gives the run directory.** The LIMS exporters
+  (`export_lims_json`, `export_lims_csv`, `build_lims_export`) now pass their `run_dir` to the gate
+  (`review/signoff.py::require_complete_publication`, read-only, no audit entry of its own), and the CLI always supplies it
+  (the directory of the results JSON). A library call holding only a document (`run_dir=None`) cannot be checked and keeps
+  the earlier document-only behaviour. **Intentional behaviour change:** a LIMS export given a `run_dir` is refused
+  (`LIMSExportBlockedError`, with an `export_blocked` audit line as before) unless the manifest exists and the full PDF,
+  short PDF and results JSON it lists still match, the document's content hash agrees with the manifest's, and the
+  document equals the signed results file (`document_differs_from_results_json` otherwise); callers that export a
+  reviewed document from a directory that holds no manifest are now refused. **Why equality with the file and not a run
+  identifier:** GEPER assigns no run identifier (`report/summary.py::_derive_run_id` derives a display ID from
+  `generated_at`), the manifest carries none (a linked run's `clinical` block names the clinical report, but the document
+  does not carry it), and the content hash excludes workflow state and timestamps, so two runs with identical clinical
+  content share one. The manifest's SHA-256 of `geper_results.json` is the only existing binding to the run. **Limit:** this
+  proves the document is the file the manifest signed, not that the directory is the run it claims to be (a whole signed
+  directory copied elsewhere verifies as itself); no identifier exists to check that, and none is invented here. A reviewed JSON with no
+  manifest, which the old order could leave behind, is refused and is reported by `status`.
+- **Runs approved before this change** keep whatever state they have. A manifest that lacks the three SHA-256 keys (all
+  three have been written since the first sign-off command) is reported as not verifying, which fails closed.
+- **`override` and `withdraw`** still write the results JSON, remove the manifest and re-render PDFs directly; they are not
+  covered here.
 
 ## 2. Safety rules - TARGET (the contract every phase must meet)
 
@@ -483,6 +556,7 @@ Each phase is small, independently reviewable and leaves the system working. Fai
 - *Dependencies:* none.
 
 **Phase 1: make the file phase crash-safe** (tool only; no server change; **no export-gate change**).
+- *Status:* **implemented** for `approve` (section 1A). `list_pending` now verifies the manifest (open item 14, resolved in that direction); `override` and `withdraw` are not covered; the LIMS export still passes no directory to `require_reviewed`.
 - *Scope:* stage files privately, `fsync`, and publish with `os.replace` in the single order of section 5 (patient meta, PDFs, manifest, **results JSON last**); same contents and names. **No atomic multi-file publication is claimed.** Decide `list_pending`'s treatment of the manifest-present/JSON-not-yet-reviewed state (OPEN 14). The export gate is **not** changed.
 - *Tests:* a crash-point test at every boundary of the section 5 table, asserting the directory state and the current gate's and `list_pending`'s outcome for each row; a successful sign-off yields files and a manifest equivalent to today's (hashes recomputed; PDFs are not compared byte-for-byte because they stamp the render time).
 - *Failure injection:* raise between each pair of publications; truncate each file; simulate a full disk; one real process-kill test.

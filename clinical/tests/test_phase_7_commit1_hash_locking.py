@@ -293,7 +293,9 @@ def _expected_hash(conn, interp_id, report_id):
                     "classification": row[2],
                     "reason": row[3],
                     "actor_id": str(row[4]),
-                    "timestamp": row[5].isoformat(),
+                    # UTC, whatever zone this connection's session uses: the hash must not depend on it
+                    # (test_approval_hash_timezone.py). Identical to plain isoformat() under a UTC session.
+                    "timestamp": row[5].astimezone(timezone.utc).isoformat(),
                     "evidence_json": evidence_json,
                     "supersedes": str(row[7]) if row[7] is not None else None,
                 }

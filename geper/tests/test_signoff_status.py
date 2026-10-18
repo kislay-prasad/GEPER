@@ -818,3 +818,97 @@ def test_the_status_help_documents_the_authentication_side_effects(capsys):
         "changes no clinical report",
     ):
         assert phrase in text, phrase
+
+
+# ══ damaged local evidence: an unreadable audit log or file is reported, never read as "no approval" ══
+
+UNREADABLE_AUDIT_CONTENT = {
+    "invalid_utf8": b"\xff\xfe",
+    "invalid_utf8_after_an_approved_line": b'{"action": "approved"}\n\xff\xfe\n',
+}
+
+
+def _damage_audit_log(run, content):
+    path = run / st.AUDIT_LOG_FILENAME
+    path.write_bytes(content)
+    return path
+
+
+@pytest.mark.parametrize("case", sorted(UNREADABLE_AUDIT_CONTENT))
+def test_an_audit_log_that_is_not_utf8_does_not_crash_the_inspection(tmp_path, case):
+    run = build_run(tmp_path, **SIGNED)
+    _damage_audit_log(run, UNREADABLE_AUDIT_CONTENT[case])
+    facts = local_of(run)  # must not raise
+    assert facts.audit_unreadable is True
+    assert facts.audit_has_approved is False  # an unreadable log is never read as an approval...
+
+
+@pytest.mark.parametrize("case", sorted(UNREADABLE_AUDIT_CONTENT))
+@pytest.mark.parametrize(
+    "server_kwargs",
+    [dict(state="approved", approver=ME), dict(state="released", approver=ME), dict(), dict(state="under_review")],
+)
+def test_an_unreadable_audit_log_is_investigate_whatever_the_server_state(tmp_path, case, server_kwargs):
+    run = build_run(tmp_path, **SIGNED)
+    _damage_audit_log(run, UNREADABLE_AUDIT_CONTENT[case])
+    result = st.classify(LINK_IDS, server(**server_kwargs), local_of(run), ME)
+    assert (result.group, result.code, result.exit_code) == ("INVESTIGATE", "LOCAL_AUDIT_LOG_UNREADABLE", 20)
+
+
+def test_an_unreadable_audit_log_is_not_the_same_as_a_missing_one(tmp_path):
+    """...and it must not be softened to the INCOMPLETE a genuinely missing 'approved' line gets."""
+    missing = build_run(tmp_path, name="m", **dict(SIGNED, audit=False))
+    damaged = build_run(tmp_path, name="d", **SIGNED)
+    _damage_audit_log(damaged, b"\xff\xfe")
+    facts = server("approved", approver=ME)
+    assert st.classify(LINK_IDS, facts, local_of(missing), ME).code == "SIGNED_OFF_AUDIT_ENTRY_MISSING"
+    assert st.classify(LINK_IDS, facts, local_of(damaged), ME).code == "LOCAL_AUDIT_LOG_UNREADABLE"
+
+
+def test_an_audit_log_that_is_a_directory_is_unreadable_not_absent(tmp_path):
+    run = build_run(tmp_path, link=True)
+    (run / st.AUDIT_LOG_FILENAME).mkdir()
+    facts = local_of(run)
+    assert facts.audit_unreadable is True
+    assert st.classify(LINK_IDS, server(), facts, ME).code == "LOCAL_AUDIT_LOG_UNREADABLE"
+
+
+def test_an_unlinked_signed_run_with_an_unreadable_audit_log_is_not_consistent(tmp_path):
+    run = build_run(tmp_path, status="reviewed", manifest="valid", audit=True, link=False, manifest_clinical=False)
+    assert st.run_status(str(run)).code == "UNLINKED_SIGNED_OFF"  # control: intact log, still consistent
+    _damage_audit_log(run, b"\xff\xfe")
+    result = st.run_status(str(run))
+    assert (result.group, result.code, result.exit_code) == ("INVESTIGATE", "UNLINKED_AUDIT_LOG_UNREADABLE", 20)
+
+
+def test_the_cli_reports_an_unreadable_audit_log_instead_of_a_traceback(tmp_path, capsys):
+    run = build_run(tmp_path, status="reviewed", manifest="valid", audit=True, link=False, manifest_clinical=False)
+    _damage_audit_log(run, b"\xff\xfe")
+    assert cli.main(["status", str(run)]) == 20
+    assert "UNLINKED_AUDIT_LOG_UNREADABLE" in capsys.readouterr().out
+
+
+def test_an_intact_audit_log_is_unchanged(tmp_path):
+    run = build_run(tmp_path, **SIGNED)
+    facts = local_of(run)
+    assert (facts.audit_has_approved, facts.audit_unreadable) == (True, False)
+    assert st.classify(LINK_IDS, server("approved", approver=ME), facts, ME).code == "SIGNED_OFF_BY_YOU"
+
+
+@pytest.mark.parametrize("target", ["pdf", "short_pdf", "results_json"])
+def test_a_file_that_cannot_be_hashed_makes_the_manifest_invalid_not_a_crash(tmp_path, monkeypatch, target):
+    run = build_run(tmp_path, **SIGNED)
+    names = {"pdf": st.FULL_PDF_FILENAME, "short_pdf": st.SHORT_PDF_FILENAME, "results_json": st.RESULTS_FILENAME}
+    real = st._sha256_file
+
+    def refuse(path):
+        if os.path.basename(path) == names[target]:
+            raise PermissionError("denied")
+        return real(path)
+
+    monkeypatch.setattr(st, "_sha256_file", refuse)
+    facts = local_of(run)  # must not raise
+    assert facts.manifest == "invalid"
+    assert any("unreadable" in problem for problem in facts.manifest_problems)
+    result = st.classify(LINK_IDS, server("approved", approver=ME), facts, ME)
+    assert result.group != "CONSISTENT"

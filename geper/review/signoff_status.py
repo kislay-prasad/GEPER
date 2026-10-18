@@ -116,6 +116,9 @@ class LocalFacts:
     full_pdf_present: bool = False
     short_pdf_present: bool = False
     audit_has_approved: bool = False
+    audit_unreadable: bool = (
+        False  # the audit log exists but could not be read in full: NOT evidence that it holds no approval
+    )
     journal_present: bool = False
 
     @property
@@ -186,6 +189,13 @@ def _load_json(path: str) -> Any:
         return json.load(fh)
 
 
+def _sha256_or_none(path: str) -> Optional[str]:
+    try:
+        return _sha256_file(path)
+    except OSError:
+        return None
+
+
 def _inspect_manifest(output_dir: str, document: Dict[str, Any], facts: LocalFacts) -> None:
     path = os.path.join(output_dir, MANIFEST_FILENAME)
     if not os.path.exists(path):
@@ -212,13 +222,21 @@ def _inspect_manifest(output_dir: str, document: Dict[str, Any], facts: LocalFac
         file_path = os.path.join(output_dir, filename)
         if not os.path.exists(file_path):
             problems.append(missing)
-        elif _sha256_file(file_path) != recorded:
-            problems.append(differs)
+        else:
+            actual = _sha256_or_none(file_path)
+            if actual is None:
+                problems.append(f"{filename}_unreadable")
+            elif actual != recorded:
+                problems.append(differs)
     recorded_results = manifest.get("results_json_sha256")
     if not isinstance(recorded_results, str) or not _HEX64.match(recorded_results):
         problems.append("manifest_lacks_results_json_sha256")
-    elif _sha256_file(os.path.join(output_dir, RESULTS_FILENAME)) != recorded_results:
-        problems.append("results_json_changed_since_signoff")
+    else:
+        actual_results = _sha256_or_none(os.path.join(output_dir, RESULTS_FILENAME))
+        if actual_results is None:
+            problems.append(f"{RESULTS_FILENAME}_unreadable")
+        elif actual_results != recorded_results:
+            problems.append("results_json_changed_since_signoff")
     manifest_hash, document_hash = manifest.get("content_hash"), document.get("content_hash")
     if manifest_hash and document_hash and manifest_hash != document_hash:
         problems.append("manifest_hash_differs_from_document")
@@ -274,10 +292,12 @@ def _override_claim_ids(document: Dict[str, Any]) -> Tuple[Set[str], int, int]:
     return ids, count, invalid
 
 
-def _audit_has_approved(output_dir: str) -> bool:
+def _read_audit(output_dir: str) -> Tuple[bool, bool]:
+    """(has an `approved` entry, could not be read). A log that cannot be read in full is never taken to hold no approval."""
     path = os.path.join(output_dir, AUDIT_LOG_FILENAME)
-    if not os.path.exists(path):
-        return False
+    if not os.path.lexists(path):
+        return False, False
+    approved = False
     try:
         with open(path, "r", encoding="utf-8") as fh:
             for line in fh:
@@ -286,10 +306,10 @@ def _audit_has_approved(output_dir: str) -> bool:
                 except ValueError:
                     continue  # a torn or foreign line is not an `approved` entry
                 if isinstance(entry, dict) and entry.get("action") == "approved":
-                    return True
-    except OSError:
-        return False
-    return False
+                    approved = True
+    except (OSError, ValueError):  # ValueError includes UnicodeDecodeError
+        return False, True
+    return approved, False
 
 
 def inspect_local(output_dir: str) -> LocalFacts:
@@ -320,7 +340,7 @@ def inspect_local(output_dir: str) -> LocalFacts:
     facts.override_claim_ids, facts.override_count, facts.override_invalid = _override_claim_ids(document)
     facts.full_pdf_present = os.path.exists(os.path.join(output_dir, FULL_PDF_FILENAME))
     facts.short_pdf_present = os.path.exists(os.path.join(output_dir, SHORT_PDF_FILENAME))
-    facts.audit_has_approved = _audit_has_approved(output_dir)
+    facts.audit_has_approved, facts.audit_unreadable = _read_audit(output_dir)
     facts.journal_present = os.path.exists(os.path.join(output_dir, JOURNAL_FILENAME))
     _inspect_manifest(output_dir, document, facts)
     return facts
@@ -338,6 +358,7 @@ def _local_summary(local: LocalFacts) -> Dict[str, Any]:
         "full_pdf_present": local.full_pdf_present,
         "short_pdf_present": local.short_pdf_present,
         "local_audit_has_approved_entry": local.audit_has_approved,
+        "local_audit_log_unreadable": local.audit_unreadable,
         "override_records": local.override_count,
         "recovery_journal_present": local.journal_present,
     }
@@ -400,6 +421,14 @@ def classify_unlinked(local: LocalFacts) -> StatusResult:
     summary = _local_summary(local)
     base: Dict[str, Any] = {"local": summary}
     reasons: List[str] = []
+    if local.audit_unreadable:
+        return _result(
+            INVESTIGATE,
+            "UNLINKED_AUDIT_LOG_UNREADABLE",
+            "The local audit log exists but could not be read in full, so whether it records an approval is unknown.",
+            hold=local.hold,
+            **base,
+        )
     if local.manifest_clinical:
         # A manifest's `clinical` block exists only for a sign-off recorded through the clinical record. If it is here but
         # clinical_link.json is not, the link file was removed (or never copied): the run is not safely "unlinked".
@@ -527,7 +556,15 @@ def classify(
             hold=hold,
             **common,
         )
-    # 3. Local document integrity.
+    # 3. Local document integrity. An audit log that cannot be read is damaged evidence, not an absent approval line.
+    if local.audit_unreadable:
+        return _result(
+            INVESTIGATE,
+            "LOCAL_AUDIT_LOG_UNREADABLE",
+            "The local audit log exists but could not be read in full, so whether it records an approval is unknown.",
+            hold=hold,
+            **common,
+        )
     if local.reviewed and local.document_hash == "inconsistent":
         return _result(
             INVESTIGATE,

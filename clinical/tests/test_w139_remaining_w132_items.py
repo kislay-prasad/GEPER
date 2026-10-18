@@ -221,6 +221,7 @@ AUTHENTICATED_STAFF_ROUTES = (
     # The human-tool read API.
     ("GET", f"/review/reports/{_UNKNOWN_UUID}", None),
     ("GET", f"/review/reports/{_UNKNOWN_UUID}/revision", None),
+    ("GET", f"/review/reports/{_UNKNOWN_UUID}/signoff-state", None),
     ("GET", "/auth/me", None),
     ("GET", "/auth/me/signing-identity", None),
     ("POST", f"/review/reports/{_UNKNOWN_UUID}/approval", None),
@@ -1671,7 +1672,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # w162, which added the three clinic routes; 17 from w164, which added
         # TOTP enrolment; 23 from Stage 2, which added the six catalogue and
         # order routes; 28 from Stage 3, which added the five review routes.
-        assert len(AUTHENTICATED_STAFF_ROUTES) == 32, "a staff route left the list without being probed"
+        # 33: the read-only sign-off state route joined the 32 (see the "human-tool read API" rows above).
+        assert len(AUTHENTICATED_STAFF_ROUTES) == 33, "a staff route left the list without being probed"
         assert any(path.startswith("/auth/logout") for _, path, _ in AUTHENTICATED_STAFF_ROUTES), (
             "the logout route left the list -- it is the entire reason this class exists"
         )
@@ -1700,7 +1702,7 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 184 from Stage 2's six catalogue and order routes, 224 from Stage 3's
         # five review routes.
         # The product, not a hand-kept number.
-        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 256, observed
+        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 264, observed
         assert len(set(observed.values())) == 1, {k: (s, b[:120]) for k, (s, b) in observed.items()}
         assert set(observed.values()) == {THE_REFUSAL}, observed
 

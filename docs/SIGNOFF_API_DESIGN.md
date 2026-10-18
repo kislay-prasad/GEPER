@@ -81,12 +81,14 @@ interrupted sign-off, or finalises the run directory afterwards; none is invente
 1. Do **not** run the tool again for that run until the state is known. (It would now refuse a report that is no longer a
    draft, by design.)
 2. Read the authoritative state as an authenticated Interpreter, Approver, Auditor or Administrator:
-   `GET /review/reports/{report_id}` (state, interpretation, `is_retracted`) and `GET .../revision`. `refresh-revision`
-   also reads them, but only for an already-signed run.
+   `GET /review/reports/{report_id}/signoff-state` (see "Sign-off state" below: state, approver, approval time, whether a
+   hash exists, retraction flag and the claims' ids, types, actors and times), and, for the revision, `GET .../revision`.
+   `refresh-revision` also reads the revision, but only for an already-signed run. There is still no CLI command that
+   prints this; use an authenticated HTTP client (or `HttpClinicalDataAccess.get_signoff_state`).
 3. Decide from the state:
    * `draft`: the approval and submission did not happen. The concurrence claim may or may not have been recorded; claims
-     are not served over HTTP, so someone with audit-log access must look for a `record_sole_signatory` row for that
-     report and user. A recorded claim does not block a retry (a draft accepts more claims).
+     are listed (without their reasons) by `signoff-state`, so look for a `sole_signatory` claim by the same actor. A
+     recorded claim does not block a retry (a draft accepts more claims), but the tool will add a second one.
    * `under_review`: the claim and submission are recorded; only the approval is missing. An Approver can call
      `POST /review/reports/{report_id}/approval`; **no CLI does this**, and the sign-off tool will refuse the run (it is
      not a draft), so the run directory is **not** finalised by anything that exists. Escalate to the platform owners.
@@ -124,3 +126,58 @@ that is a separate decision (worker identity).
 ## Not done here
 
 MFA enforcement, session hardening, worker least-privilege, amendment/retraction-from-tool, and atomic approve.
+
+## Sign-off state (read-only): `GET /review/reports/{report_id}/signoff-state`
+
+> **VALIDATION STATUS: NOT YET VERIFIED AGAINST POSTGRESQL.** The SQL behind this route has been reviewed against
+> `clinical/schema.sql` and its syntax parsed, but it **has not been executed against PostgreSQL**. The
+> database-backed endpoint tests (`clinical/tests/test_w176_signoff_state.py` and the real-service tests in
+> `geper/api/tests/test_clinical_http_adapter.py`) **have not yet run**; only the tests that need no database have.
+> **PostgreSQL-enabled CI must pass before Stage 1 is considered verified.** Until then, treat every statement below
+> about runtime behaviour (the single-statement snapshot, the output format, the tombstoned-claim behaviour) as the
+> intended design, not a verified fact.
+
+Stage 1 of recovery from interrupted sign-offs. It lets an operator **see** what an interrupted sign-off left behind. It
+resumes nothing, finalises nothing and writes nothing: no claim, no state change, no approval metadata, no hash, and no
+audit row (it does not call `verify_report_integrity`, which writes one).
+
+**Who:** Interpreter, Approver, Auditor, Administrator (`REPORT_READ_ROLES`, the same set as the other staff reads). The
+role gate runs before the lookup. Anyone else on the staff gets the uniform 403; anonymous and patient sessions get the staff
+401. Another organisation's report, an absent report and a malformed id are the same 404.
+
+**Returns** (`SignoffState`):
+
+| Field | Meaning |
+|---|---|
+| `report_id`, `interpretation_id` | the report and its interpretation |
+| `state` | one of the schema's states: `draft`, `under_review`, `approved`, `released` or `returned` (`returned` is permitted by the schema; no current code path sets it) |
+| `is_retracted` | a retraction exists (the state is not moved by it) |
+| `approver_id`, `approved_at` | present once approved, else `null` |
+| `has_content_hash` | whether the approval hash exists. **The hash value is not returned.** |
+| `claims[]` | for claims on THIS report, oldest first: `claim_id`, `claim_type`, `actor_id`, `recorded_at` (UTC ISO-8601) |
+
+**Never returned:** a claim's reason, variant, classification or evidence; report content; patient data; the hash value.
+
+**How the stages read:** no claim yet = `draft` and `claims: []`; claim recorded = `draft` with a claim; under review =
+`under_review`; approved = `approved` with `approver_id`, `approved_at`, `has_content_hash: true`; released = `released`;
+retracted = `is_retracted: true`.
+
+**Consistency:** the report row, the retraction flag and the claim list are read in a single SQL statement, so they are one
+snapshot under READ COMMITTED. The role check before it is a separate statement.
+
+**Limitations (stated, not hidden):**
+* It reports what is committed. It cannot tell you whether a request that timed out is still in flight, or whether a
+  claim that is present came from the interrupted attempt or from an earlier one by the same person.
+* A claim that has been tombstoned by the retention role is still listed, **unmarked**: there is deliberately no
+  tombstone flag. `get_reviewer_claims` and the content hash also count every claim row, so this route describes the same
+  set the hash was taken over. A test (`TestATombstonedClaim`) pins this; it has not yet run (see the status above).
+* Because the reason is withheld, an operator cannot confirm from this response that a listed claim carries the grounds they
+  gave. Whether to expose a hash or the text is an open decision for a later stage.
+* The sign-off tool does not use it yet. Recovery writes (resume, finalise) are not implemented.
+* `HttpClinicalDataAccess.get_signoff_state` makes one GET and validates the answer strictly, raising
+  `ClinicalServiceError` rather than returning a picture that cannot be true: every field present with the right type
+  (`approver_id` and `approved_at` must be present, though they may be `null`); a state and claim types the schema allows;
+  UTC-aware timestamps; no repeated claim; claims oldest first; and an approval that agrees with itself (approver, time and
+  hash all present or all absent, as `reports_approval_complete` requires, and present for an `approved` or `released`
+  report, as `reports_released_states_need_approval` requires). A draft or `under_review` report with no approval is
+  legitimate and accepted. These checks run against a stand-in server and need no database.

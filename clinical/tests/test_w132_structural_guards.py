@@ -602,6 +602,8 @@ class TestTheRouteCensus:
             # the last two answer about the session's own user only.
             ("/review/reports/{report_id}", ("GET",)),
             ("/review/reports/{report_id}/revision", ("GET",)),
+            # Interrupted-sign-off recovery, stage 1: the read-only state of a report's sign-off.
+            ("/review/reports/{report_id}/signoff-state", ("GET",)),
             ("/auth/me", ("GET",)),
             ("/auth/me/signing-identity", ("GET",)),
             # w164. THE SECOND FACTOR. `enrol_totp` has been
@@ -654,7 +656,8 @@ class TestTheRouteCensus:
         # the empty and wrapper-shaped answers.
         # 42 from the human-tool read API, which added `GET /auth/me`,
         # `GET /auth/me/signing-identity` and the two `GET /review/reports/...` reads.
-        assert len(census) == 42, census
+        # 43 from the read-only sign-off state route (`GET /review/reports/{id}/signoff-state`).
+        assert len(census) == 43, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

@@ -1759,7 +1759,8 @@ class TestTheRouteCensusGrewByExactlyTwo:
         # 38 from Stage 3, whose five routes are on `review_endpoints.py`.
         # 42 from the human-tool read API: four GETs, on `endpoints.py` and `review_endpoints.py`,
         # both already in the set above, so the needle's search is not narrowed.
-        assert len(served_routes(app)) == 42, served_routes(app)
+        # 43 from the read-only sign-off state route, on `review_endpoints.py`, already in the set above.
+        assert len(served_routes(app)) == 43, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

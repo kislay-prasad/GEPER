@@ -19,6 +19,7 @@ repeatedly."
 """
 
 import json
+import math
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from config import CONFIG
@@ -1944,6 +1945,69 @@ def _consent_value_label(value: Optional[bool]) -> str:
     if value is None:
         return "Not stated"
     return "Yes" if value else "No"
+
+
+def _consent_field(consent: Any, key: str) -> Optional[bool]:
+    """
+    One consent permission as a tri-state, read defensively. Anything that is not exactly a bool -- a missing key, a
+    `None`, a string such as "no" (which `_consent_value_label` would print as "Yes"), or a consent value that is not
+    an object at all -- is `None`, i.e. "Not stated". The renderers sit AFTER the clinical sign-off, so a document
+    shape they cannot read must show as unstated, never raise.
+    """
+    value = consent.get(key) if isinstance(consent, dict) else None
+    return value if isinstance(value, bool) else None
+
+
+def _consent_timestamp(consent: Any) -> Optional[str]:
+    """The consent-recorded timestamp, only when it is a non-blank string; otherwise no row."""
+    value = consent.get("timestamp") if isinstance(consent, dict) else None
+    return value if isinstance(value, str) and value.strip() else None
+
+
+ACMG_POINTS_UNAVAILABLE = "Not available"
+ACMG_COMPONENTS_UNAVAILABLE = "components not available"
+
+
+def _acmg_number_text(value: Any) -> Optional[str]:
+    """
+    A Tavtigian point value for display, or `None` when it is not a usable number. `:g` for a real finite number
+    (exactly the earlier output; a genuine 0 or 0.0 prints `0`). Strings, lists, objects, bools (a bool is an `int`
+    in Python, but `True` is not a point total), NaN and infinities are NOT numbers here and are never coerced.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return f"{value:g}"
+
+
+def acmg_net_points_parts(acmg: Dict[str, Any]) -> Optional[Tuple[str, Optional[str], bool]]:
+    """
+    How every renderer states the Tavtigian point total, so the four places that show it cannot disagree.
+
+    Returns `None` when there is no point total to state: `net_points` absent or `None`, which is the documented
+    "no tally ran" case (BA1's stand-alone-benign short-circuit, or an unclassified variant). No line is shown, as
+    before; nothing is fabricated.
+
+    Otherwise `(net, components, with_band)`:
+      * `net` is the number as `:g`, or "Not available" when `net_points` is present but not a usable number.
+      * `components` is `"pathogenic P − benign B"` (the earlier wording) only when `net` is usable and BOTH
+        components are usable numbers; "components not available" when `net` is usable and either component is not;
+        and `None` when `net` itself is unavailable (nothing is built on an unusable total).
+      * `with_band` is False exactly when `net` is unavailable. The threshold band is a label for the CLASSIFICATION,
+        but beside "Not available" it would read as the band an unusable total landed in, so it is left off that line
+        (human ruling). The classification itself is stated elsewhere in the report, unchanged.
+    An unavailable component is never replaced by 0, and no subtraction is shown unless both components are real.
+    """
+    raw = acmg.get("net_points")
+    if raw is None:
+        return None
+    net = _acmg_number_text(raw)
+    if net is None:
+        return ACMG_POINTS_UNAVAILABLE, None, False
+    pathogenic = _acmg_number_text(acmg.get("pathogenic_points"))
+    benign = _acmg_number_text(acmg.get("benign_points"))
+    if pathogenic is None or benign is None:
+        return net, ACMG_COMPONENTS_UNAVAILABLE, True
+    return net, f"pathogenic {pathogenic} − benign {benign}", True
 
 
 # ---------------------------------------------------------------------------

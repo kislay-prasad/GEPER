@@ -316,10 +316,22 @@ before it writes any audit line. This is evidence of internal consistency only; 
   is not covered by the process-kill tests.
 - **Server approval comes first.** If local publication fails, the clinical service may already say `approved`; nothing
   here resumes or repairs that (that is the later recovery work).
-- **`require_reviewed` only checks completeness for a caller that gives it the directory.** `report/export_lims.py`
-  passes none, so the LIMS export gate still checks only `review_status` and the content hash; wiring the run directory
-  through is a separate, deliberate change. A reviewed JSON with no manifest, which the old order could leave behind, is
-  refused by the directory-aware gate and is reported by `status`.
+- **Completeness is checked only for a caller that gives the run directory.** The LIMS exporters
+  (`export_lims_json`, `export_lims_csv`, `build_lims_export`) now pass their `run_dir` to the gate
+  (`review/signoff.py::require_complete_publication`, read-only, no audit entry of its own), and the CLI always supplies it
+  (the directory of the results JSON). A library call holding only a document (`run_dir=None`) cannot be checked and keeps
+  the earlier document-only behaviour. **Intentional behaviour change:** a LIMS export given a `run_dir` is refused
+  (`LIMSExportBlockedError`, with an `export_blocked` audit line as before) unless the manifest exists and the full PDF,
+  short PDF and results JSON it lists still match, the document's content hash agrees with the manifest's, and the
+  document equals the signed results file (`document_differs_from_results_json` otherwise); callers that export a
+  reviewed document from a directory that holds no manifest are now refused. **Why equality with the file and not a run
+  identifier:** GEPER assigns no run identifier (`report/summary.py::_derive_run_id` derives a display ID from
+  `generated_at`), the manifest carries none (a linked run's `clinical` block names the clinical report, but the document
+  does not carry it), and the content hash excludes workflow state and timestamps, so two runs with identical clinical
+  content share one. The manifest's SHA-256 of `geper_results.json` is the only existing binding to the run. **Limit:** this
+  proves the document is the file the manifest signed, not that the directory is the run it claims to be (a whole signed
+  directory copied elsewhere verifies as itself); no identifier exists to check that, and none is invented here. A reviewed JSON with no
+  manifest, which the old order could leave behind, is refused and is reported by `status`.
 - **Runs approved before this change** keep whatever state they have. A manifest that lacks the three SHA-256 keys (all
   three have been written since the first sign-off command) is reported as not verifying, which fails closed.
 - **`override` and `withdraw`** still write the results JSON, remove the manifest and re-render PDFs directly; they are not

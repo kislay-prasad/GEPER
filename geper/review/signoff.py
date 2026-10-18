@@ -404,14 +404,7 @@ def require_reviewed(document: Dict[str, Any], consumer: str = "This system", ou
     # exist and every artefact it lists must still match. Checked BEFORE anything is audited, so a refused
     # export leaves no "verified" line behind. A caller with no directory cannot be checked here (documented).
     if output_dir:
-        problems = _publication_problems(output_dir, document)
-        if problems:
-            raise SignoffError(
-                f"{consumer} refused: this run's sign-off publication is incomplete or inconsistent "
-                f"({', '.join(problems)}). The files on disk do not match the manifest written at approval, or the "
-                "manifest is missing. Do not export this run until it has been investigated "
-                "(`status` shows where its sign-off stands)."
-            )
+        require_complete_publication(document, output_dir, consumer)
     # Phase 6: Verify clinical content hash (ISO 15189 7.5 nonconformance detection)
     # Distinguish between verified (hash present + matches) and not-verified (hash absent, predates Phase 6)
     stored_hash = document.get("content_hash")
@@ -661,7 +654,37 @@ def _publication_problems(output_dir: str, document: Optional[Dict[str, Any]] = 
             problems.append("manifest_content_hash_differs_from_document")
         elif document_hash and not manifest_hash:
             problems.append("manifest_lacks_content_hash")
+        # BINDING OF THE DOCUMENT TO THIS DIRECTORY. GEPER assigns no run identifier, and the content hash excludes
+        # workflow state and timestamps, so two runs with identical clinical content share one. What identifies the
+        # run is the signed results file, whose SHA-256 the manifest records (checked above): the document handed in
+        # must be that file's content. A mismatch means it came from somewhere else, or was altered after loading.
+        # (If the file cannot be read, that is already a problem above.)
+        try:
+            with open(_results_path(output_dir), "r", encoding="utf-8") as fh:
+                on_disk = json.load(fh)
+        except (OSError, ValueError):
+            on_disk = None
+        if on_disk is not None and on_disk != document:
+            problems.append("document_differs_from_results_json")
     return problems
+
+
+def require_complete_publication(document: Dict[str, Any], output_dir: str, consumer: str = "This system") -> None:
+    """
+    Raises `SignoffError` unless the run in `output_dir` has a COMPLETE, consistent sign-off publication (see
+    `_publication_problems`): the manifest exists, and the full PDF, the short PDF and the results JSON it lists still
+    match; `document`'s content hash must agree with the manifest's. READ-ONLY: it writes no audit entry, so a caller
+    that refuses on this leaves no trace that looks like a success. It checks the files' internal consistency only; it
+    cannot show that the signed content is the content the clinical service approved.
+    """
+    problems = _publication_problems(output_dir, document)
+    if problems:
+        raise SignoffError(
+            f"{consumer} refused: this run's sign-off publication is incomplete or inconsistent "
+            f"({', '.join(problems)}). The files on disk do not match the manifest written at approval, or the "
+            "manifest is missing. Do not export this run until it has been investigated "
+            "(`status` shows where its sign-off stands)."
+        )
 
 
 def _publication_failure_message(linked: bool, outcome: str, published: List[str]) -> str:

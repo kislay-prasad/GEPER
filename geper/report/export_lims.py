@@ -95,6 +95,7 @@ from report.clinical_report_builder import (
 from report.summary import _derive_run_id, _derive_sample_id
 from review.revision_status import ReportRevisionStatus
 from review.signoff import read_clinical_link as _read_clinical_link
+from review.signoff import require_complete_publication as _require_complete_publication
 from review.signoff import require_reviewed as _require_reviewed_general
 from utils.exceptions import LIMSExportBlockedError, SignoffError
 from utils.logger import get_logger
@@ -124,7 +125,7 @@ def _append_export_audit_log(directory: str, entry: Dict[str, Any]) -> None:
         fh.write(json.dumps(entry) + "\n")
 
 
-def _require_reviewed(document: Dict[str, Any]) -> None:
+def _require_reviewed(document: Dict[str, Any], run_dir: Optional[str] = None) -> None:
     """
     Governance gate (round 30 part 2): refuses to build a LIMS export
     unless `document["review_status"] == "reviewed"` (see
@@ -150,6 +151,13 @@ def _require_reviewed(document: Dict[str, Any]) -> None:
     `tests/test_review_status_governance.py` both catch
     `LIMSExportBlockedError` specifically).
 
+    `run_dir`, when given, is the directory the document was read from (the CLI always supplies it): the run's sign-off
+    PUBLICATION must then also be complete and consistent -- the manifest exists and the full PDF, the short PDF and
+    the results JSON it lists still match (`review/signoff.py::require_complete_publication`, read-only, no audit
+    entry of its own). A reviewed results JSON alone is not enough: an interrupted or damaged publication can leave
+    `review_status: "reviewed"` behind. With `run_dir=None` (a library call holding only a document) nothing on disk can
+    be checked and the earlier document-only behaviour applies -- an intentional compatibility limit.
+
     Raises `LIMSExportBlockedError` (never returns a value) -- callers
     with a directory to log to should catch this, write an audit entry
     via `_append_export_audit_log`, then re-raise (see
@@ -158,6 +166,8 @@ def _require_reviewed(document: Dict[str, Any]) -> None:
     """
     try:
         _require_reviewed_general(document, consumer="LIMS export")
+        if run_dir is not None:
+            _require_complete_publication(document, run_dir, consumer="LIMS export")
     except SignoffError as exc:
         raise LIMSExportBlockedError(str(exc)) from exc
 
@@ -686,7 +696,11 @@ def _require_status_for_linked_run(run_dir: Optional[str], report_status: Option
 
 
 def build_lims_export(
-    document: Dict[str, Any], run_id: Optional[str] = None, *, report_status: Optional[ReportRevisionStatus] = None
+    document: Dict[str, Any],
+    run_id: Optional[str] = None,
+    *,
+    report_status: Optional[ReportRevisionStatus] = None,
+    run_dir: Optional[str] = None,
 ) -> LIMSExport:
     """
     Maps a `geper_results.json` document (already-parsed dict -- the
@@ -708,8 +722,12 @@ def build_lims_export(
     of the mapping below runs, so this function stays a genuine single
     choke point regardless of which of its callers (JSON export, CSV
     export, or a caller using this function directly) reaches it.
+
+    `run_dir` (the directory the document was read from) additionally requires that run's sign-off publication to be
+    complete and consistent -- see `_require_reviewed`. `export_lims_json` / `export_lims_csv` have already checked it
+    and call this without it; a caller using this function directly should pass it.
     """
-    _require_reviewed(document)
+    _require_reviewed(document, run_dir)
     variants = document.get("variants") or []
     findings = [_build_finding(i, vr) for i, vr in enumerate(variants, start=1)]
 
@@ -748,7 +766,7 @@ def export_lims_json(
 ) -> str:
     """Raises `LIMSExportBlockedError` (see `_require_reviewed`) when `document` is not yet reviewed -- an audit-log entry is written to `output_path`'s directory before the exception propagates, so the blocked attempt is never silently swallowed."""
     try:
-        _require_reviewed(document)
+        _require_reviewed(document, run_dir)
         _require_status_for_linked_run(run_dir, report_status)
         export = build_lims_export(document, run_id=run_id, report_status=report_status)
     except LIMSExportBlockedError as exc:
@@ -960,7 +978,7 @@ def export_lims_csv(
     recorded and never a silent empty file.
     """
     try:
-        _require_reviewed(document)
+        _require_reviewed(document, run_dir)
         _require_status_for_linked_run(run_dir, report_status)
         export = build_lims_export(document, run_id=run_id, report_status=report_status)
     except LIMSExportBlockedError as exc:

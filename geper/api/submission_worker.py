@@ -65,6 +65,9 @@ from .vcf_paths import VcfPathError, resolve_vcf_path
 
 logger = logging.getLogger("geper.api.submission_worker")
 
+# Consecutive polls with the clinical database unreachable before the loop gives up (and the process exits 1).
+_DB_LOSS_LIMIT = 3
+
 # Timeout for a single interpretation run (30 minutes)
 INTERPRETATION_TIMEOUT_SECONDS = 1800
 
@@ -302,6 +305,9 @@ class InterpretationWorker:
         # called on every pass of the loop so a supervisor can tell a live loop from a stuck process.
         self._stop = threading.Event()
         self.heartbeat = None
+        # Set to 1 when the loop ends because the clinical database was lost (see run_loop); main() exits with it so the
+        # supervisor starts a fresh process, which reconnects.
+        self.exit_code = 0
 
     def _create_submission_failure_exception(self, submission, reason_code: str, error_message: str) -> None:
         """
@@ -936,7 +942,21 @@ class InterpretationWorker:
         except Exception as e:
             logger.exception(f"Startup reconciliation failed: {e}")
 
+        lost = 0
         while not self._stop.is_set():
+            # Look at the clinical database BEFORE claiming anything. With it gone, a claimed job would run the engine
+            # for nothing or fail for a reason that is not its own, and a heartbeat would say all was well. So: no
+            # beat and no claim while it is unreachable, and after _DB_LOSS_LIMIT passes in a row the loop ends with a
+            # non-zero exit code (the connection object is dead for good; a new process reconnects).
+            if self.data_access is not None and not self.data_access.ping():
+                lost += 1
+                logger.error(f"Clinical database unreachable ({lost}/{_DB_LOSS_LIMIT}); not claiming work")
+                if lost >= _DB_LOSS_LIMIT:
+                    self.exit_code = 1
+                    break
+                self._stop.wait(poll_interval)
+                continue
+            lost = 0
             self._beat()
             try:
                 queued = self.store.get_queued_submissions(limit=batch_size)
@@ -1014,7 +1034,7 @@ def main():
     try:
         import psycopg
 
-        connection = psycopg.connect(dsn, autocommit=False)
+        connection = psycopg.connect(dsn, autocommit=False, connect_timeout=10)
         from clinical.data_access import DataAccess
 
         data_access = DataAccess(connection)
@@ -1035,6 +1055,8 @@ def main():
     worker.heartbeat = make_heartbeat("submission_worker")
     install_stop_handlers(worker)
     worker.run_loop(poll_interval=poll_interval(5))
+    if worker.exit_code:
+        sys.exit(worker.exit_code)
 
 
 if __name__ == "__main__":

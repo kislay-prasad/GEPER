@@ -7588,6 +7588,33 @@ class DataAccess:
         return requeued
 
     @auditable(
+        action="ping",
+        resource_type="database",
+        requires_session=False,
+        auditable=False,
+        reason="connection liveness probe for a background worker; reads no data and takes no tenant input",
+    )
+    def ping(self) -> bool:
+        """
+        Whether this DataAccess's connection can still run a statement. A connection left in a failed transaction is
+        rolled back and tried once more (that is recoverable); one that is closed or lost is not, and the caller should
+        stop and let its supervisor start a fresh process. Never raises.
+        """
+        try:
+            self._query_one("SELECT 1")
+        except Exception:
+            try:
+                self.__connection.rollback()
+                self._query_one("SELECT 1")
+            except Exception:
+                return False
+        try:
+            self.__connection.rollback()  # end the probe's transaction: no snapshot is held while the worker sleeps
+        except Exception:
+            return False
+        return True
+
+    @auditable(
         action="list_active_organisation_ids",
         resource_type="organisation",
         requires_session=False,

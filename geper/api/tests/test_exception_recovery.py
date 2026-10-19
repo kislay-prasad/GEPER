@@ -384,7 +384,7 @@ def test_the_retry_worker_opens_the_store_without_touching_rows_that_are_running
         seen.update(kwargs)
         return real(path, **kwargs)
 
-    fake_psycopg = types.SimpleNamespace(connect=lambda dsn, autocommit=False: object())
+    fake_psycopg = types.SimpleNamespace(connect=lambda dsn, **kwargs: object())
     monkeypatch.setitem(sys.modules, "psycopg", fake_psycopg)
     monkeypatch.setenv("CLINICAL_DSN", "postgresql://example.invalid/none")
     monkeypatch.setenv("GEPER_SUBMISSION_STORE_PATH", str(store_path))

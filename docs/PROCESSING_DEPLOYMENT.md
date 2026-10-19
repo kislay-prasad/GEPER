@@ -61,6 +61,17 @@ docker compose -f docker-compose.processing.yml --env-file .env.processing stop 
   Workers: each rewrites a heartbeat file on every pass of its loop; the container health check fails when it is stale
   (retry worker 300 s; submission worker 1800 s engine timeout + 300 s, because it does not loop during an engine run).
   A crashed worker is restarted by `restart: unless-stopped`.
+- **Liveness vs readiness (API).** `/healthz` only says the process answers. `/readyz` says the API can take a submission
+  safely: it fails (503, problem codes only) when `GEPER_VCF_ROOT` is missing, unreadable or world-writable, when the store
+  directory is not writable, or when a store file exists but cannot be opened as a SQLite database
+  (`store_unreadable`). `/readyz` does **not** check PostgreSQL: the API itself reads and writes only the SQLite store and the
+  VCF root; the clinical database is the workers' dependency. The compose health check uses `/readyz`.
+- **Clinical database loss (workers).** Each pass the worker first checks the database connection. While it is unreachable
+  the worker claims nothing and stops beating its heartbeat; after 3 failed checks in a row it exits 1 and the supervisor
+  restarts it (a lost connection does not recover in place). Start-up connection attempts time out after 10 s. A job that
+  is **already running** when the database disappears is not protected by this: it fails with an unexpected-error message
+  and, because the exception cannot be written either, has no worklist entry. It must be re-queued by hand once the database
+  is back (`SubmissionStore.requeue`), so check the worker log after any database outage.
 - **Shutdown.** On SIGTERM/SIGINT a worker finishes the job it is on and claims no more. The submission worker's
   grace period is 120 s; a job still running then is killed. Its row stays `running`, becomes `interrupted` at the next
   start, and is completed only if its clinical record had already been written. Partial output is never published: the

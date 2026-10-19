@@ -215,6 +215,24 @@ def test_the_api_refuses_to_start_without_a_vcf_root_and_serves_probes_with_one(
         assert str(good_config) not in response.text  # codes only: the route is unauthenticated
 
 
+def test_readiness_notices_a_store_that_exists_but_cannot_be_opened_and_accepts_one_not_yet_created(
+    good_config, monkeypatch
+):
+    monkeypatch.setattr("api.main._DEV_INSECURE", False)
+    store_file = Path(os.environ["GEPER_SUBMISSION_STORE_PATH"])
+    with TestClient(app) as client:
+        assert client.get("/readyz").status_code == 200  # no store yet: the first use creates it
+        store_file.write_bytes(b"this is not a sqlite database" * 50)
+        response = client.get("/readyz")
+        assert response.status_code == 503 and response.json()["problems"] == ["store_unreadable"]
+        assert str(store_file) not in response.text
+        store_file.unlink()
+        from api.submission_store import SubmissionStore
+
+        SubmissionStore(store_file, reconcile_on_open=False)
+        assert client.get("/readyz").status_code == 200  # a real store is fine
+
+
 # ═══ heartbeat and stop ═══
 
 
@@ -257,6 +275,9 @@ def run_in_thread(target):
 def test_the_retry_worker_loop_beats_and_stops_when_asked():
     class NoOrganisations:
         passes = 0
+
+        def ping(self):
+            return True
 
         def list_active_organisation_ids(self):
             NoOrganisations.passes += 1
@@ -463,3 +484,91 @@ def test_the_submission_worker_command_runs_a_job_and_stops_cleanly_on_request(
             proc.communicate()
     assert len(draft_report_chain(clinical_conn, org_a["org_id"])) == 1
     assert uuid.UUID(str(org_a["org_id"]))
+
+
+# ═══ the clinical database going away ═══
+
+
+class FakeDao:
+    def __init__(self, alive):
+        self.alive = alive
+        self.pings = 0
+
+    def ping(self):
+        self.pings += 1
+        return self.alive
+
+    def list_active_organisation_ids(self):
+        return []
+
+
+class FakeStore:
+    claimed = 0
+
+    def get_queued_submissions(self, limit=10):
+        FakeStore.claimed += 1
+        return []
+
+    def get_submissions_with_status(self, status, limit=100):
+        return []
+
+
+def test_the_submission_worker_gives_up_without_claiming_or_beating_when_the_database_is_gone():
+    FakeStore.claimed = 0
+    beats = []
+    lost = InterpretationWorker(FakeStore(), FakeDao(alive=False))
+    lost.heartbeat = lambda: beats.append(1)
+    lost.run_loop(poll_interval=0.01)
+    assert lost.exit_code == 1 and beats == [1]  # only the start-up beat: none once the database was unreachable
+    assert FakeStore.claimed == 0  # nothing was claimed while it was gone
+
+
+def test_the_submission_worker_keeps_going_while_the_database_answers():
+    well = InterpretationWorker(FakeStore(), FakeDao(alive=True))
+    beats = []
+    well.heartbeat = lambda: beats.append(1)
+    thread = run_in_thread(lambda: well.run_loop(poll_interval=0.02))
+    deadline = time.time() + 20
+    while len(beats) < 4 and time.time() < deadline:
+        time.sleep(0.02)
+    well.request_stop()
+    thread.join(timeout=20)
+    assert well.exit_code == 0 and len(beats) >= 4
+
+
+def test_the_retry_worker_gives_up_without_beating_when_the_database_is_gone():
+    beats = []
+    lost = exception_retry_worker.ExceptionRetryWorker(FakeDao(alive=False), None)
+    lost.heartbeat = lambda: beats.append(1)
+    lost.run_loop(poll_interval=0.01)
+    assert lost.exit_code == 1 and beats == []
+
+
+def test_ping_is_true_on_a_working_connection_true_after_a_failed_statement_and_false_when_the_connection_is_gone(
+    dao, clinical_conn
+):
+    assert dao.ping() is True
+    with pytest.raises(Exception):  # noqa: B017 -- any database error: it leaves the transaction failed
+        with clinical_conn.cursor() as cur:
+            cur.execute("SELECT * FROM a_table_that_does_not_exist")
+    assert dao.ping() is True  # a failed transaction is recoverable, not a lost connection
+    clinical_conn.close()
+    assert dao.ping() is False
+
+
+@pytest.mark.parametrize("module", [submission_worker, exception_retry_worker])
+def test_a_worker_connects_to_the_database_with_a_timeout(module, tmp_path, monkeypatch, good_config):
+    """Without one, a database that does not answer hangs the start-up forever instead of failing it."""
+    import types
+
+    seen = {}
+
+    def connect(dsn, **kwargs):
+        seen.update(kwargs)
+        raise OSError("unreachable")
+
+    monkeypatch.setitem(sys.modules, "psycopg", types.SimpleNamespace(connect=connect))
+    monkeypatch.setenv("BIJ_AI_CLI_PATH", str(Path(submission_worker.__file__).resolve().parent.parent / "main.py"))
+    with pytest.raises(SystemExit) as exit_info:
+        module.main()
+    assert exit_info.value.code == 1 and seen.get("connect_timeout")

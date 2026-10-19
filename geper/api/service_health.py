@@ -27,9 +27,11 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import sqlite3
 import stat
 import sys
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -67,9 +69,18 @@ def _check_vcf_root() -> List[Problem]:
 
 
 def _check_store() -> List[Problem]:
-    parent = _store_path().parent
+    store = _store_path()
+    parent = store.parent
     if not parent.is_dir() or not os.access(parent, os.W_OK | os.X_OK):
         return [("store_dir_not_writable", "The directory for GEPER_SUBMISSION_STORE_PATH is missing or not writable.")]
+    if store.exists():
+        # A store that exists must open and answer. Read-only, so a probe never creates or changes anything. (A store
+        # that does not exist yet is fine: the first use creates it.)
+        try:
+            with closing(sqlite3.connect(f"file:{store.resolve().as_posix()}?mode=ro", uri=True, timeout=5)) as conn:
+                conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        except sqlite3.Error:
+            return [("store_unreadable", "The submission store exists but cannot be opened as a SQLite database.")]
     return []
 
 

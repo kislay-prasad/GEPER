@@ -305,12 +305,15 @@ class InterpretationWorker:
         Only called if data_access is available and submission has order_id.
         If either is missing, logs a warning but continues (doesn't block).
         """
-        if not self.data_access or not submission.order_id:
-            logger.warning(
-                f"[{submission.id}] Cannot create exception: "
-                f"data_access={'available' if self.data_access else 'unavailable'}, "
-                f"order_id={submission.order_id}"
-            )
+        if not self.data_access:
+            logger.warning(f"[{submission.id}] Cannot create exception: data_access unavailable")
+            return
+        if not submission.order_id:
+            try:
+                session = self.data_access._create_system_session(uuid.UUID(submission.org_id))
+                self.data_access.record_unlinked_submission_failure(session, submission.id, reason_code, None)
+            except Exception as e:
+                logger.error(f"[{submission.id}] Failed with {reason_code}; no order and no audit record: {e}")
             return
 
         try:
@@ -321,6 +324,21 @@ class InterpretationWorker:
 
             # Get system session for this org
             system_session = self.data_access._create_system_session(uuid.UUID(submission.org_id))
+
+            # An exception hangs off an order IN THIS ORGANISATION. If the order is not there (never named, unknown,
+            # or another organisation's) there is nothing to attach it to, and trying would be refused by the database
+            # and abort the transaction. Leave the organisation's operators an audit record instead, and never write
+            # anything onto an order that is not this organisation's.
+            order = self.data_access.get_order(system_session, uuid.UUID(submission.order_id))
+            if order is None:
+                self.data_access.record_unlinked_submission_failure(
+                    system_session, submission.id, reason_code, submission.order_id
+                )
+                logger.error(
+                    f"[{submission.id}] Failed with {reason_code} and has no order in its organisation; "
+                    "recorded in the audit log as submission_failed_unlinked"
+                )
+                return
 
             # Create exception
             self.data_access.create_or_reopen_exception(
@@ -449,7 +467,7 @@ class InterpretationWorker:
         if order is None:
             # No exception: exceptions hang off an order, and this
             # organisation has none by that id.
-            self._fail(submission, f"Order {order_id} not found in this submission's organisation.")
+            self._fail(submission, f"Order {order_id} not found in this submission's organisation.", "order_not_found")
             return None
 
         sample = self.data_access.get_sample(session, sample_id)
@@ -474,10 +492,19 @@ class InterpretationWorker:
         if not passed:
             # validate_order_for_submission has already recorded its own
             # exception, with the precise reason code.
+            # The failure code is the reason of the exception just recorded, so that when an operator resolves that
+            # exception the recovery step can find this submission again.
+            reason = None
+            try:
+                recorded = self.data_access.get_exception_by_id(session, exception_id)
+                reason = recorded.reason_code if recorded else None
+            except Exception as e:
+                logger.warning(f"[{submission.id}] Could not read back exception {exception_id}: {e}")
             self.store.update_status(
                 submission.id,
                 "failed",
                 error_message=f"Submission preconditions not met; see clinical exception {exception_id}.",
+                failure_code=reason,
             )
             return None
 
@@ -593,8 +620,11 @@ class InterpretationWorker:
             org_id, order_id, sample_id = identity
             try:
                 submission.vcf_path = str(resolve_vcf_path(submission.vcf_path, org_id))
-            except VcfPathError:
-                continue  # left interrupted for an operator, as for any other file it cannot use
+            except VcfPathError as exc:
+                # No longer left interrupted and silent: it fails with the policy's reason, opens an exception for the
+                # operator, and is then recoverable like any failed row (resolve the exception with retry_check).
+                self._fail(submission, f"vcf_path rejected ({exc.code}); the file was not read.", exc.code)
+                continue
             if not os.path.isfile(submission.vcf_path):
                 continue
             try:

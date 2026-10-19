@@ -448,6 +448,8 @@ class DuplicateInterpretationError(Exception):
 
 _TRANSIENT_CATEGORY = "transient_submission_failure"  # ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE's value
 _MAX_RETRY_ATTEMPTS = 6
+# How far back `requeue_resolved_exceptions` looks for an operator's retry_check resolutions.
+_RECOVERY_WINDOW_DAYS = 30
 
 
 def _retry_backoff_seconds(attempt_count: int) -> int:
@@ -7508,6 +7510,136 @@ class DataAccess:
         except Exception as e:
             # Log error but don't fail the scheduler
             logger.warning(f"Failed to re-queue submission for order {order_id}: {e}")
+
+    @transactional
+    @auditable(
+        action="requeue_resolved_exceptions",
+        resource_type="exception",
+        requires_session=True,
+        auditable=True,
+        reason="re-queue failed submissions whose exception an operator resolved with retry_check",
+    )
+    def requeue_resolved_exceptions(self, session: Session, submission_store=None) -> int:
+        """
+        Act on the operator's `retry_check` resolutions: put the FAILED submissions each one speaks for back in the queue.
+
+        The resolve endpoint only records the decision (it runs in the clinical service, which has no access to the
+        submission store). This is the other half, run by the retry worker next to `retry_scheduler`. It decides nothing
+        about whether the submission is now fit to run: the re-queued row goes through the worker's full preflight again
+        (path policy, order / sample linkage, consent, QC, VCF checks), and a row that still fails there records a
+        fresh exception for the operator instead of running.
+
+        A resolution acts on exactly the failures that PRECEDED it: the exception's order and reason code select the
+        order's failed submissions with that failure code recorded before `last_resolved_at`. So:
+          - `accept_failure` re-queues nothing (the operator decided the failure stands);
+          - running this twice, or from two workers at once, re-queues a row once (`SubmissionStore.requeue` moves only
+            a row that is still `failed`, atomically, and the worker's claim is atomic too);
+          - a row that was re-queued and failed AGAIN is newer than the resolution and waits for a new one, so a
+            resolution can never turn into an unattended retry loop;
+          - another organisation's exceptions and submissions are never matched (every query is bound to the session's).
+
+        Only resolutions from the last `_RECOVERY_WINDOW_DAYS` days are considered; an older one can be resolved again.
+        Returns how many submissions were re-queued.
+        """
+        import logging
+
+        logger = logging.getLogger("clinical.data_access")
+        if submission_store is None:
+            return 0
+        now = self._clock.now()
+        since = now - _datetime.timedelta(days=_RECOVERY_WINDOW_DAYS)
+        resolved = self._query(
+            "SELECT id, order_id, reason_code, last_resolved_at FROM exceptions "
+            "WHERE org_id = %s AND status = 'resolved' AND resolution_action = 'retry_check' "
+            "  AND last_resolved_at IS NOT NULL AND last_resolved_at >= %s "
+            "ORDER BY last_resolved_at ASC",
+            (session.org_id, since),
+        )
+        requeued = 0
+        for exc_id, order_id, reason_code, resolved_at in resolved:
+            cutoff = resolved_at.astimezone(_datetime.timezone.utc).replace(tzinfo=None).isoformat()
+            try:
+                candidates = submission_store.failed_submission_ids(
+                    str(session.org_id), str(order_id), reason_code, failed_before=cutoff
+                )
+            except Exception as e:  # the store is another system: a failure here must not stop the other organisations
+                logger.warning(f"Could not read failed submissions for order {order_id}: {e}")
+                continue
+            for submission_id in candidates:
+                if not submission_store.requeue(submission_id):
+                    continue  # someone else moved it first
+                requeued += 1
+                self._write_audit_entry(
+                    action="submission_requeued_after_resolution",
+                    resource_type="submission",
+                    resource_id=str(submission_id),
+                    outcome="queued",
+                    org_id=session.org_id,
+                    user_id=session.user_id,
+                    actor_role="System",
+                    details={"exception_id": str(exc_id), "order_id": str(order_id), "reason_code": reason_code},
+                )
+                logger.info(
+                    "requeued_after_resolution submission_id=%s exception_id=%s reason_code=%s",
+                    submission_id,
+                    exc_id,
+                    reason_code,
+                )
+        return requeued
+
+    @auditable(
+        action="list_active_organisation_ids",
+        resource_type="organisation",
+        requires_session=False,
+        auditable=False,
+        reason="lists organisation ids so a background worker can sweep each; returns no tenant data and takes no tenant input",
+    )
+    def list_active_organisation_ids(self) -> list:
+        """
+        The ids of every organisation that is not disabled, for the background workers that sweep each in turn
+        (no session: it names no organisation's data, only which organisations exist). Ordered, so a pass is repeatable.
+        """
+        return [
+            row[0] for row in self._query("SELECT org_id FROM organisations WHERE disabled = false ORDER BY org_id")
+        ]
+
+    @auditable(
+        action="record_unlinked_submission_failure",
+        resource_type="submission",
+        requires_session=True,
+        auditable=False,
+        reason="this method IS the audit record (submission_failed_unlinked), written once per submission and reason",
+    )
+    def record_unlinked_submission_failure(
+        self, session: Session, submission_id: str, reason_code: str, order_id: Optional[str] = None
+    ) -> bool:
+        """
+        Leave an organisation-scoped, operator-findable record of a submission that failed but cannot carry a clinical
+        exception because it has no order in this organisation (`exceptions.order_id` is NOT NULL and keyed to the
+        organisation's orders, and changing that is a schema decision, not made here).
+
+        Written to the audit log, once per submission and reason: action `submission_failed_unlinked`, resource the
+        submission id, outcome the reason code. Carries no path and no patient data. Returns whether a new record was
+        written.
+        """
+        already = self._query_one(
+            "SELECT 1 FROM audit_log WHERE org_id = %s AND action = 'submission_failed_unlinked' "
+            "AND resource_id = %s AND outcome = %s LIMIT 1",
+            (session.org_id, submission_id, reason_code),
+        )
+        if already:
+            return False
+        self._write_audit_entry(
+            action="submission_failed_unlinked",
+            resource_type="submission",
+            resource_id=str(submission_id),
+            outcome=reason_code,
+            org_id=session.org_id,
+            user_id=session.user_id,
+            actor_role="System",
+            details={"reason_code": reason_code, "order_id_named": str(order_id) if order_id else None},
+        )
+        return True
 
     @auditable(
         action="list_open_exceptions",

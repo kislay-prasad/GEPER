@@ -1,0 +1,120 @@
+# GEPER processing services: the interpretation API, the submission worker and the exception retry worker.
+#
+# FOR A CONTROLLED STAGING ENVIRONMENT. Procedure, configuration and limits: docs/PROCESSING_DEPLOYMENT.md
+#
+# All three run from the ONE image the root Dockerfile builds (`geper:latest`, see docker-compose.yml): the worker
+# launches the engine (geper/main.py) in a subprocess, and all three import the clinical package. Build it first:
+#
+#     docker compose -f docker-compose.yml build
+#     docker compose -f docker-compose.processing.yml --env-file .env.processing up -d
+#
+# This file does NOT start the clinical database or the clinical service (docker-compose.clinical.yml does). Point
+# CLINICAL_DSN at a clinical database that is already provisioned.
+#
+# SINGLE HOST ONLY. The three services share one SQLite submission store on one volume; its processing claim is not safe
+# across hosts. Do not scale `processing-worker` beyond one container per store, and do not split them across machines.
+#
+# Required values come from the environment (`${VAR:?message}` stops `up` with the message when one is missing); real
+# values live only in your own, untracked .env.processing. Nothing secret is written in this file.
+
+x-processing-service: &processing-service
+  image: ${GEPER_IMAGE:-geper:latest}
+  working_dir: /app/geper
+  restart: unless-stopped
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  environment: &processing-env
+    CLINICAL_DSN: ${CLINICAL_DSN:?set CLINICAL_DSN to the clinical database DSN (see .env.processing.example)}
+    GEPER_SUBMISSION_STORE_PATH: /data/state/submissions.db
+    GEPER_VCF_ROOT: /data/vcf
+    GEPER_SUBMISSION_OUTPUT_ROOT: /data/output
+    PYTHONUNBUFFERED: "1"
+  volumes:
+    - geper_state:/data/state
+    # VCFs are read-only to every processing service. Whatever places a lab's files writes them from outside, into
+    # /data/vcf/<organisation UUID>/ (docs/VCF_STORAGE.md). The API key holder cannot create files.
+    - ${GEPER_VCF_HOST_DIR:?set GEPER_VCF_HOST_DIR to the host directory that holds the per-organisation VCF folders}:/data/vcf:ro
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  processing-api:
+    <<: *processing-service
+    command: ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *processing-env
+      GEPER_API_KEYS: ${GEPER_API_KEYS:?set GEPER_API_KEYS as key:organisation-uuid,key2:organisation-uuid2}
+      GEPER_CORS_ORIGINS: ${GEPER_CORS_ORIGINS:?set GEPER_CORS_ORIGINS to the origins allowed to call the API}
+    ports:
+      # Loopback by default: put a TLS-terminating proxy in front of it rather than publishing it directly.
+      - "127.0.0.1:${GEPER_API_PORT:-8100}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 40s
+
+  processing-worker:
+    <<: *processing-service
+    command: ["python", "-m", "api.submission_worker"]
+    environment:
+      <<: *processing-env
+      GEPER_HEARTBEAT_FILE: /tmp/geper-submission_worker.heartbeat
+      # Optional engine settings are passed straight through (see .env.processing.example).
+      BIJ_AI_CLI_PATH: ${BIJ_AI_CLI_PATH:-/app/geper/main.py}
+      GEPER_NCBI_EMAIL: ${GEPER_NCBI_EMAIL:-}
+      GEPER_NCBI_API_KEY: ${GEPER_NCBI_API_KEY:-}
+      GEPER_BLAST_DATABASE: ${GEPER_BLAST_DATABASE:-}
+      GEPER_ALPHAMISSENSE_HG38_LOCAL: ${GEPER_ALPHAMISSENSE_HG38_LOCAL:-}
+      GEPER_ALPHAMISSENSE_HG19_LOCAL: ${GEPER_ALPHAMISSENSE_HG19_LOCAL:-}
+    volumes:
+      - geper_state:/data/state
+      - ${GEPER_VCF_HOST_DIR:?set GEPER_VCF_HOST_DIR to the host directory that holds the per-organisation VCF folders}:/data/vcf:ro
+      - geper_output:/data/output
+      - geper_model_cache:/app/geper/model_cache
+      - geper_hf_cache:/root/.cache/huggingface
+    # A job in progress is finished on a stop request. The grace period is how long `docker compose stop` waits for it
+    # before killing the container; a job still running then is left `running`, marked `interrupted` on the next start,
+    # and completed only if its clinical record had already been written. Nothing partial is ever published.
+    stop_grace_period: 120s
+    healthcheck:
+      # The worker does not loop while an engine run is in progress, so the limit is one full engine timeout (1800 s)
+      # plus 300 s.
+      test: ["CMD", "python", "-m", "api.service_health", "heartbeat", "submission_worker"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  processing-retry-worker:
+    <<: *processing-service
+    command: ["python", "-m", "api.exception_retry_worker"]
+    environment:
+      <<: *processing-env
+      GEPER_HEARTBEAT_FILE: /tmp/geper-retry_worker.heartbeat
+      EXCEPTION_RETRY_POLL_INTERVAL: ${EXCEPTION_RETRY_POLL_INTERVAL:-30}
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-m", "api.service_health", "heartbeat", "retry_worker"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  # The SQLite submission store (single host).
+  geper_state:
+  # Per-submission engine output.
+  geper_output:
+  geper_model_cache:
+  geper_hf_cache:

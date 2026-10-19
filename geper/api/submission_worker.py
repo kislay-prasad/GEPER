@@ -47,6 +47,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -192,7 +193,7 @@ def _hpo_terms_to_cli_arg(hpo_terms) -> str:
     hpo_terms as an OBJECT -- `"hpo_terms": { ... }`
     (GEPER_CLINICAL_PLATFORM_SPEC.md:526, in the POST /interpretations
     contract block) -- and the implemented request model
-    (geper/api/main.py:311) agrees: Optional[Dict[str, Any]]. The one
+    (geper/api/main.py:326) agrees: Optional[Dict[str, Any]]. The one
     concrete shape attested anywhere in this repo
     (geper/api/tests/test_interpretations_api.py:197,
     geper/api/tests/test_submission_worker.py) is {"terms": [...]}.
@@ -297,6 +298,10 @@ class InterpretationWorker:
         self.output_root = os.getenv("GEPER_SUBMISSION_OUTPUT_ROOT", _DEFAULT_OUTPUT_ROOT)
         # Names this worker on the jobs it claims (a record of who held a job; the claim itself is the store's).
         self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        # Set by a stop signal: the loop finishes the job it is on and takes no more. `heartbeat` (set by main) is
+        # called on every pass of the loop so a supervisor can tell a live loop from a stuck process.
+        self._stop = threading.Event()
+        self.heartbeat = None
 
     def _create_submission_failure_exception(self, submission, reason_code: str, error_message: str) -> None:
         """
@@ -902,14 +907,23 @@ class InterpretationWorker:
             self._fail_engine(submission, "bij_ai_error_other", error_msg)
             return True
 
+    def request_stop(self) -> None:
+        """Ask the loop to stop: the job in progress is finished, no new one is claimed."""
+        self._stop.set()
+
+    def _beat(self) -> None:
+        if self.heartbeat is not None:
+            self.heartbeat()
+
     def run_loop(self, poll_interval: int = 5, batch_size: int = 10) -> None:
-        """Run the main worker loop.
+        """Run the main worker loop until `request_stop` (or Ctrl-C).
 
         Args:
             poll_interval: Seconds between polls for queued submissions
             batch_size: Max submissions to process per poll
         """
         logger.info("Starting interpretation worker loop")
+        self._beat()
 
         # Before taking new work: complete any submission a dead worker left
         # interrupted AFTER its clinical record was already written.
@@ -922,24 +936,29 @@ class InterpretationWorker:
         except Exception as e:
             logger.exception(f"Startup reconciliation failed: {e}")
 
-        while True:
+        while not self._stop.is_set():
+            self._beat()
             try:
                 queued = self.store.get_queued_submissions(limit=batch_size)
                 if not queued:
                     logger.debug(f"No queued submissions (sleeping {poll_interval}s)")
-                    time.sleep(poll_interval)
+                    self._stop.wait(poll_interval)
                     continue
 
                 logger.info(f"Processing {len(queued)} queued submission(s)")
                 for submission in queued:
+                    if self._stop.is_set():
+                        break  # asked to stop: what is not started stays queued
                     self.process_queued_submission(submission)
+                    self._beat()
 
             except KeyboardInterrupt:
                 logger.info("Worker interrupted by user")
                 break
             except Exception as e:
                 logger.exception(f"Worker loop error: {e}")
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
+        logger.info("Interpretation worker stopped")
 
 
 def main():
@@ -948,6 +967,11 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # Refuse to start on bad configuration BEFORE touching the store or the database (api/service_health.py).
+    from .service_health import install_stop_handlers, make_heartbeat, poll_interval, require_valid
+
+    require_valid("submission_worker")
 
     # Get store path from env var or default
     store_path = os.getenv(
@@ -1008,7 +1032,9 @@ def main():
         sys.exit(1)
 
     worker = InterpretationWorker(store, data_access)
-    worker.run_loop()
+    worker.heartbeat = make_heartbeat("submission_worker")
+    install_stop_handlers(worker)
+    worker.run_loop(poll_interval=poll_interval(5))
 
 
 if __name__ == "__main__":

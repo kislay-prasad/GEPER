@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import time
+import threading
 from pathlib import Path
 
 logger = logging.getLogger("geper.api.exception_retry_worker")
@@ -38,6 +38,11 @@ class ExceptionRetryWorker:
         """
         self.data_access = data_access
         self.submission_store = submission_store
+        self._stop = threading.Event()  # set by a stop signal: the loop ends after the pass it is on
+        self.heartbeat = None  # called on every pass so a supervisor can tell a live loop from a stuck process
+
+    def request_stop(self) -> None:
+        self._stop.set()
 
     def run_loop(self, poll_interval: int = 30) -> None:
         """Run the main worker loop.
@@ -49,21 +54,24 @@ class ExceptionRetryWorker:
         """
         logger.info("Starting exception retry worker loop")
 
-        while True:
+        while not self._stop.is_set():
+            if self.heartbeat is not None:
+                self.heartbeat()
             try:
                 # Run retry scheduler for all organisations
                 # Note: In a multi-tenant deployment, this should iterate over
                 # organisations or use a system-level session
                 self._process_all_orgs()
 
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
 
             except KeyboardInterrupt:
                 logger.info("Worker interrupted by user")
                 break
             except Exception as e:
                 logger.exception(f"Worker loop error: {e}")
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
+        logger.info("Exception retry worker stopped")
 
     def _process_all_orgs(self) -> None:
         """Process retryable exceptions for all organisations.
@@ -106,6 +114,11 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # Refuse to start on bad configuration before connecting to anything (api/service_health.py).
+    from .service_health import install_stop_handlers, make_heartbeat, require_valid
+
+    require_valid("retry_worker")
 
     # Initialize DataAccess from environment
     data_access = None
@@ -156,6 +169,8 @@ def main():
 
     # Run the worker
     worker = ExceptionRetryWorker(data_access, submission_store)
+    worker.heartbeat = make_heartbeat("retry_worker")
+    install_stop_handlers(worker)
     poll_interval = int(os.getenv("EXCEPTION_RETRY_POLL_INTERVAL", "30"))
     worker.run_loop(poll_interval=poll_interval)
 

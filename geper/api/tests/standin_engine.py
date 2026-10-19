@@ -18,7 +18,10 @@ WHAT IT HONOURS, AND HOW THAT IS KEPT HONEST
 
 BEHAVIOUR is chosen with environment variables (inherited through `spawn_tracked`):
   STANDIN_MODE  success (default) | exit1 | exit130 | no_output | malformed_json | empty_object | hang | slow |
-                rendezvous | fail_once
+                rendezvous | fail_once | partial_fail | incomplete | count_mismatch | claims_review | wrong_vcf |
+                variants_not_a_list | modify_vcf | replace_vcf | delete_vcf
+  (modify_vcf appends a line to --vcf, replace_vcf swaps another file in under the same name, delete_vcf removes it;
+   each then writes a perfectly valid result, so only the worker's post-run check can catch it)
   STANDIN_LOG   a file; one JSON line per invocation (argv, mode, pid) is appended BEFORE any work, so a test can count
                 runs and read the arguments the worker actually passed
   STANDIN_HEARTBEAT   `hang` rewrites this file every 0.1 s, so a test can show the process was really terminated
@@ -108,12 +111,47 @@ def _success_document(args: argparse.Namespace) -> Dict[str, Any]:
         "variant_count": len(parsed["variants"]),
         "variants": parsed["variants"],
         "review_status": "draft",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        # the keys the worker's output validation reads (see report/json_builder.py::JSONResultBuilder.build)
+        "input_vcf_absolute_path": os.path.abspath(args.vcf),
+        "run_complete": True,
         # what the worker actually passed, for the test to read back from the recorded interpretation
         "standin": {
             "argv": sys.argv[1:],
             "hpo_terms": getattr(args, "hpo_terms", None),
             "qc_metrics": qc_metrics,
         },
+    }
+
+
+def valid_engine_document(vcf_path: str, variants: int = 1) -> Dict[str, Any]:
+    """
+    A document that satisfies the worker's output contract (`submission_worker.validate_engine_output`) for a run of
+    `vcf_path`, for tests that stand in for the engine without launching it. The shape is the real builder's
+    (report/json_builder.py::JSONResultBuilder.build): `run_complete` true, `variant_count` equal to the variants
+    listed, a draft, and the absolute path of the VCF analysed.
+    """
+    entries = [
+        {
+            "variant": {"chrom": "1", "pos": 1000 + n, "ref": "A", "alt": "T"},
+            "interpretation_result": {"gene_symbol": "STANDIN"},
+        }
+        for n in range(variants)
+    ]
+    return {
+        "geper_version": "standin",
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "input_vcf": vcf_path,
+        "input_vcf_absolute_path": os.path.abspath(vcf_path),
+        "assembly": "GRCh38",
+        "vcf_samples": [],
+        "variant_count": len(entries),
+        "variants": entries,
+        "review_status": "draft",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "run_complete": True,
     }
 
 
@@ -163,6 +201,41 @@ def main() -> int:
         return 0
     if mode == "empty_object":
         _write_results(args.output_dir, "{}")
+        return 0
+    if mode in ("partial_fail", "incomplete", "count_mismatch", "claims_review", "wrong_vcf", "variants_not_a_list"):
+        document = _success_document(args)
+        if mode in ("partial_fail", "incomplete"):
+            document["run_complete"] = False  # what the engine's periodic checkpoint looks like
+            document["variants"] = document["variants"][:1]
+            document["variant_count"] = len(document["variants"])
+            document["partial_marker"] = "written-by-an-attempt-that-did-not-finish"
+        elif mode == "count_mismatch":
+            document["variant_count"] = document["variant_count"] + 5
+        elif mode == "claims_review":
+            document["review_status"] = "reviewed"
+            document["reviewed_by"] = "Dr. Somebody"
+        elif mode == "wrong_vcf":
+            document["input_vcf_absolute_path"] = os.path.abspath(args.vcf) + ".other"
+        elif mode == "variants_not_a_list":
+            document["variants"] = {"not": "a list"}
+        _write_results(args.output_dir, json.dumps(document))
+        if mode == "partial_fail":
+            sys.stderr.write("PipelineError: stand-in engine failed after writing a checkpoint\n")
+            return 1
+        return 0
+    if mode in ("modify_vcf", "replace_vcf", "delete_vcf"):
+        vcf = Path(args.vcf)
+        document = _success_document(args)  # read the VCF as it was, before it is touched
+        if mode == "modify_vcf":
+            with open(vcf, "a", encoding="utf-8") as fh:
+                fh.write("17\t43093450\t.\tC\tT\t60\tPASS\t.\tGT\t0/1\n")
+        elif mode == "replace_vcf":
+            other = vcf.with_name(vcf.name + ".replacement")
+            other.write_text(vcf.read_text(encoding="utf-8") + "# a different file\n", encoding="utf-8")
+            os.replace(other, vcf)
+        else:
+            vcf.unlink()
+        _write_results(args.output_dir, json.dumps(document))
         return 0
     if mode == "hang":
         # a heartbeat a test can watch: it stops changing the moment this process is really gone

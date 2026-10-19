@@ -446,6 +446,15 @@ class DuplicateInterpretationError(Exception):
         self.submission_key = submission_key
 
 
+_TRANSIENT_CATEGORY = "transient_submission_failure"  # ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE's value
+_MAX_RETRY_ATTEMPTS = 6
+
+
+def _retry_backoff_seconds(attempt_count: int) -> int:
+    """Seconds to wait before the next retry after `attempt_count` attempts: 30 s doubling, capped at 15 minutes."""
+    return min(2**attempt_count * 30, 900)
+
+
 def _claim_timestamp_utc(ts: "_datetime.datetime") -> str:
     """
     A claim timestamp as it enters the approval hash: converted to UTC first, then `isoformat()`.
@@ -6405,21 +6414,37 @@ class DataAccess:
         resource_type="sample",
         reason="precondition results are recorded in the submission audit entry",
     )
-    def check_qc_passed(self, session: Session, order_id: uuid.UUID) -> str:
+    def check_qc_passed(self, session: Session, order_id: uuid.UUID, sample_id: Optional[uuid.UUID] = None) -> str:
         """
         Check sample QC status.
 
         Per §10.1: "Sample QC passed" means samples.qc_status = 'passed'.
 
+        WHICH SAMPLE. With `sample_id` (every submission names one) the verdict is THAT sample's, and only if it is a
+        sample of THIS order in THIS organisation: a sample that is not is "sample_unresolved", never another sample's
+        result. An order can hold several samples (a re-collection after a failed QC), so reading "the order's latest
+        sample" lets an older failed sample ride on a newer one's pass, or a passed sample be blocked by a newer one
+        that has not. Without `sample_id` the earlier order-level behaviour (the latest sample) is kept for callers that
+        cannot name one.
+
         Returns a reason string (enum):
           - "qc_ok": qc_status = 'passed'
           - "qc_pending": qc_status = 'pending'
           - "qc_failed": qc_status = 'failed'
+          - "sample_unresolved": `sample_id` given and not a sample of this order
         """
-        sample = self._query_one(
-            "SELECT qc_status FROM samples WHERE org_id = %s AND order_id = %s ORDER BY created_at DESC LIMIT 1",
-            (session.org_id, order_id),
-        )
+        if sample_id is not None:
+            sample = self._query_one(
+                "SELECT qc_status FROM samples WHERE org_id = %s AND order_id = %s AND sample_id = %s",
+                (session.org_id, order_id, sample_id),
+            )
+            if sample is None:
+                return "sample_unresolved"
+        else:
+            sample = self._query_one(
+                "SELECT qc_status FROM samples WHERE org_id = %s AND order_id = %s ORDER BY created_at DESC LIMIT 1",
+                (session.org_id, order_id),
+            )
 
         if sample is None:
             return "qc_pending"
@@ -6747,7 +6772,7 @@ class DataAccess:
             return False, exc_id
 
         # 4. Check QC
-        qc_result = self.check_qc_passed(session, order_id)
+        qc_result = self.check_qc_passed(session, order_id, sample_id)
         if qc_result != "qc_ok":
             reason_code = qc_result
             exc_id = self.create_or_reopen_exception(
@@ -6905,46 +6930,38 @@ class DataAccess:
         now = self._clock.now()
         system_email = f"system+{org_id}@platform"
 
-        # Fetch or create system principal for this org
-        user = self._query_one(
-            "SELECT user_id FROM users WHERE org_id = %s AND email = %s AND is_system_account = true",
-            (org_id, system_email),
-        )
-
+        # Fetch or create the system principal for this org. Two workers making their first request for an organisation at the
+        # same moment both see no row; a plain SELECT-then-INSERT lets the loser hit users_org_email_unique and fail its job.
+        # So the INSERT yields to an existing row (ON CONFLICT DO NOTHING on the same unique constraint, which exists in every
+        # schema) and the principal is read back afterwards: whichever INSERT won, both callers get the one row.
+        select_user = "SELECT user_id FROM users WHERE org_id = %s AND email = %s AND is_system_account = true"
+        user = self._query_one(select_user, (org_id, system_email))
         if user is None:
-            # Create system principal
-            user_id = uuid.uuid4()
-            dummy_password_hash = _DUMMY_HASH
             self._execute(
                 "INSERT INTO users (user_id, org_id, email, password_hash, password_changed_at, "
                 "                   is_system_account, disabled, created_at, updated_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    user_id,
-                    org_id,
-                    system_email,
-                    dummy_password_hash,
-                    now,
-                    True,
-                    False,
-                    now,
-                    now,
-                ),
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT ON CONSTRAINT users_org_email_unique DO NOTHING",
+                (uuid.uuid4(), org_id, system_email, _DUMMY_HASH, now, True, False, now, now),
             )
+            user = self._query_one(select_user, (org_id, system_email))
+            if user is None:
+                # The address is taken by something that is not this organisation's system principal. Never adopt it.
+                raise RuntimeError(f"system principal for organisation {org_id} could not be created or found")
+        user_id = user[0]
 
-            # Assign System role if not already present
-            role_check = self._query_one(
-                "SELECT 1 FROM role_assignments WHERE user_id = %s AND org_id = %s AND role = 'System'",
-                (user_id, org_id),
+        # The System role, ensured on every call rather than only by the caller that created the user: the caller that lost
+        # the race above must not mint a session for a principal whose creator has not yet granted the role.
+        role_check = self._query_one(
+            "SELECT 1 FROM role_assignments WHERE user_id = %s AND org_id = %s AND role = 'System'",
+            (user_id, org_id),
+        )
+        if role_check is None:
+            self._execute(
+                "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
+                "VALUES (%s, %s, 'System', %s, %s)",
+                (user_id, org_id, user_id, now),
             )
-            if role_check is None:
-                self._execute(
-                    "INSERT INTO role_assignments (user_id, org_id, role, assigned_by, assigned_at) "
-                    "VALUES (%s, %s, 'System', %s, %s)",
-                    (user_id, org_id, user_id, now),
-                )
-        else:
-            user_id = user[0]
 
         # Mint a session for the system principal
         session_id = uuid.uuid4()
@@ -7320,14 +7337,26 @@ class DataAccess:
                     f"Reopen: {error_message}",
                 ),
             )
+            if category == _TRANSIENT_CATEGORY:  # an exception recorded before scheduling existed has no schedule yet
+                self._execute(
+                    "UPDATE exceptions SET next_retry_at = %s "
+                    "WHERE id = %s AND org_id = %s AND next_retry_at IS NULL AND status = 'open'",
+                    (now + _datetime.timedelta(seconds=_retry_backoff_seconds(0)), exc_id, session.org_id),
+                )
             return exc_id
 
-        # Create new exception
+        # Create new exception. A TRANSIENT submission failure is scheduled for its first retry here, with the same
+        # backoff `retry_scheduler` applies afterwards (attempt 0); any other category has no schedule and is never
+        # retried automatically. Without this the scheduler (which selects only a non-NULL, due `next_retry_at`) could
+        # never pick up a new failure.
+        next_retry_at = (
+            now + _datetime.timedelta(seconds=_retry_backoff_seconds(0)) if category == _TRANSIENT_CATEGORY else None
+        )
         exc_id = uuid.uuid4()
         self._execute(
             "INSERT INTO exceptions "
-            "(id, org_id, order_id, category, reason_code, error_message, status, owner, created_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            "(id, org_id, order_id, category, reason_code, error_message, status, owner, created_at, next_retry_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 exc_id,
                 session.org_id,
@@ -7338,6 +7367,7 @@ class DataAccess:
                 ExceptionStatus.OPEN.value,
                 owner,
                 now,
+                next_retry_at,
             ),
         )
 
@@ -7386,12 +7416,10 @@ class DataAccess:
         """
         now = self._clock.now()
 
-        def backoff_seconds(attempt_count: int) -> int:
-            base = min(2**attempt_count * 30, 900)
-            return base
+        backoff_seconds = _retry_backoff_seconds
 
         exceptions_to_retry = self._query(
-            "SELECT id, attempt_count, order_id "
+            "SELECT id, attempt_count, order_id, reason_code "
             "FROM exceptions "
             "WHERE org_id = %s AND status = 'open' "
             "  AND category = 'transient_submission_failure' "
@@ -7399,12 +7427,37 @@ class DataAccess:
             (session.org_id, now),
         )
 
-        for exc_id, attempt_count, order_id in exceptions_to_retry:
-            if attempt_count >= 6:
-                self._execute(
-                    "UPDATE exceptions SET status = 'escalated' WHERE id = %s AND org_id = %s AND status = 'open'",
-                    (exc_id, session.org_id),
+        for exc_id, attempt_count, order_id, reason_code in exceptions_to_retry:
+            if attempt_count >= _MAX_RETRY_ATTEMPTS:
+                # Escalation and its audit record are ONE statement: the row that changes state is the row that is recorded,
+                # so a crash cannot escalate silently and a second pass (the exception is no longer 'open') records nothing
+                # more. Only identifiers and codes go in the record, never the error text, which can carry a path.
+                escalated = self._query(
+                    "WITH esc AS ("
+                    "  UPDATE exceptions SET status = 'escalated' "
+                    "  WHERE id = %s AND org_id = %s AND status = 'open' "
+                    "  RETURNING id, org_id, order_id, category, reason_code, attempt_count"
+                    ") "
+                    'INSERT INTO audit_log (org_id, user_id, "timestamp", actor_role, action, resource_type, '
+                    "                       resource_id, outcome, details) "
+                    "SELECT org_id, %s, %s, 'System', 'exception_retry_escalated', 'exception', id::text, "
+                    "       'escalated', jsonb_build_object('order_id', order_id::text, 'category', category, "
+                    "                                       'reason_code', reason_code, 'attempt_count', attempt_count) "
+                    "FROM esc RETURNING resource_id",
+                    (exc_id, session.org_id, session.user_id, now),
                 )
+                if escalated:
+                    import logging
+
+                    logging.getLogger("clinical.data_access").error(
+                        "retry_escalated exception_id=%s org_id=%s order_id=%s reason_code=%s attempts=%s: "
+                        "automatic retries are exhausted; an operator must act (see the worklist)",
+                        exc_id,
+                        session.org_id,
+                        order_id,
+                        reason_code,
+                        attempt_count,
+                    )
             else:
                 new_attempt_count = attempt_count + 1
                 next_retry_seconds = backoff_seconds(new_attempt_count)
@@ -7419,50 +7472,41 @@ class DataAccess:
 
                 # Re-queue the associated submission if submission_store is provided
                 if submission_store:
-                    self._requeue_failed_submission_for_order(submission_store, session.org_id, order_id)
+                    self._requeue_failed_submission_for_order(submission_store, session.org_id, order_id, reason_code)
 
-    def _requeue_failed_submission_for_order(self, submission_store, org_id: uuid.UUID, order_id: uuid.UUID) -> None:
+    def _requeue_failed_submission_for_order(
+        self, submission_store, org_id: uuid.UUID, order_id: uuid.UUID, reason_code: Optional[str] = None
+    ) -> None:
         """
-        Find failed submissions for an order and re-queue them.
+        Re-queue the FAILED submissions of one order that failed for the reason this exception records.
 
-        This is called by retry_scheduler when an exception is ready for retry.
-        Searches for submissions associated with the order_id that are marked 'failed'
-        and re-queues them by changing status to 'queued'.
+        An exception is keyed by (order, reason code), so the submissions it speaks for are exactly the order's failed
+        submissions whose own failure code is that reason. A submission that failed for any other reason (a missing
+        VCF, a failed QC, a clinical-record refusal) is not this exception's to retry and stays failed. The row keeps
+        its error message when it moves back to the queue (`SubmissionStore.requeue`), so the reason survives the retry.
 
-        Args:
-            submission_store: SubmissionStore instance
-            org_id: Organisation ID (UUID)
-            order_id: Order ID (UUID)
+        `reason_code` None keeps the earlier behaviour of re-queueing every failed submission of the order, for a caller
+        that cannot name one.
         """
-        import sqlite3
+        import logging
 
+        logger = logging.getLogger("clinical.data_access")
         try:
-            # Convert UUIDs to strings for store query
-            org_id_str = str(org_id)
-            order_id_str = str(order_id)
+            if reason_code is not None and hasattr(submission_store, "failed_submission_ids"):
+                for submission_id in submission_store.failed_submission_ids(str(org_id), str(order_id), reason_code):
+                    submission_store.requeue(submission_id)
+                return
+            import sqlite3
 
-            # Query the submission store for failed submissions for this order
-            # We query all failed submissions (not just recent ones) to catch
-            # any that were previously failed and not yet retried
             with sqlite3.connect(submission_store.db_path) as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT id
-                    FROM submissions
-                    WHERE org_id = ? AND order_id = ? AND status = 'failed'
-                    """,
-                    (org_id_str, order_id_str),
-                )
-                failed_submissions = cursor.fetchall()
-
-            # Re-queue each failed submission
+                failed_submissions = conn.execute(
+                    "SELECT id FROM submissions WHERE org_id = ? AND order_id = ? AND status = 'failed'",
+                    (str(org_id), str(order_id)),
+                ).fetchall()
             for (submission_id,) in failed_submissions:
                 submission_store.update_status(submission_id, "queued")
         except Exception as e:
             # Log error but don't fail the scheduler
-            import logging
-
-            logger = logging.getLogger("clinical.data_access")
             logger.warning(f"Failed to re-queue submission for order {order_id}: {e}")
 
     @auditable(

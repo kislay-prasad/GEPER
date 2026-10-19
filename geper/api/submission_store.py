@@ -79,16 +79,20 @@ class SubmissionStore:
     - No in-memory cache divergence: load from store at startup, don't cache
     """
 
-    def __init__(self, db_path: Path | str):
+    def __init__(self, db_path: Path | str, *, reconcile_on_open: bool = True):
         """Initialize the submission store.
 
         Args:
             db_path: Path to SQLite database file (created if not exists)
+            reconcile_on_open: mark rows left 'running' as 'interrupted' (see `_reconcile_interrupted`). True for the
+                one process that OWNS execution (the worker). The HTTP API passes False: it never runs a job, and
+                opening the store there must not reclassify a job a live worker is in the middle of.
         """
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
-        self._reconcile_interrupted()
+        if reconcile_on_open:
+            self._reconcile_interrupted()
 
     def _init_schema(self) -> None:
         """Create the submissions table if it doesn't exist."""
@@ -126,6 +130,17 @@ class SubmissionStore:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(submissions)")}
             if "sample_id" not in columns:
                 conn.execute("ALTER TABLE submissions ADD COLUMN sample_id TEXT")
+            # Retry/claim bookkeeping (added in place, like sample_id; older rows read as NULL / 0):
+            #   failure_code  the clinical exception reason code of the last failure (what makes a retry eligible)
+            #   claimed_by    the worker that holds (or last held) the job
+            #   attempts      how many times a worker has claimed it
+            for name, ddl in (
+                ("failure_code", "TEXT"),
+                ("claimed_by", "TEXT"),
+                ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in columns:
+                    conn.execute(f"ALTER TABLE submissions ADD COLUMN {name} {ddl}")
             conn.commit()
 
     def _reconcile_interrupted(self) -> None:
@@ -401,8 +416,10 @@ class SubmissionStore:
         interpretation_id: Optional[str] = None,
         run_document_ref: Optional[str] = None,
         error_message: Optional[str] = None,
+        failure_code: Optional[str] = None,
     ) -> None:
-        """Update submission status and related fields."""
+        """Update submission status and related fields. `failure_code` is the reason code of a failure (None for any
+        other transition)."""
         now = datetime.utcnow().isoformat()
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
@@ -412,9 +429,59 @@ class SubmissionStore:
                     interpretation_id = ?,
                     run_document_ref = ?,
                     error_message = ?,
+                    failure_code = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (status, interpretation_id, run_document_ref, error_message, now, submission_id),
+                (status, interpretation_id, run_document_ref, error_message, failure_code, now, submission_id),
             )
             conn.commit()
+
+    def claim(self, submission_id: str, worker_id: str) -> Optional[int]:
+        """
+        Atomically take a QUEUED submission for execution: one compare-and-set UPDATE (`status` queued -> running), so
+        of any number of workers racing for the same row exactly one succeeds. Returns the new attempt number (1 for
+        the first run) when this caller won, None when the row was not queued (already claimed, finished, or gone).
+        The guarantee is the database's: it holds across threads and across processes sharing the store file.
+        """
+        now = datetime.utcnow().isoformat()
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as conn, conn:
+            cursor = conn.execute(
+                """
+                UPDATE submissions
+                SET status = 'running', claimed_by = ?, attempts = attempts + 1, updated_at = ?
+                WHERE id = ? AND status = 'queued'
+                """,
+                (worker_id, now, submission_id),
+            )
+            won = cursor.rowcount == 1
+            attempts = None
+            if won:
+                attempts = conn.execute("SELECT attempts FROM submissions WHERE id = ?", (submission_id,)).fetchone()[0]
+            conn.commit()
+        return attempts
+
+    def requeue(self, submission_id: str) -> bool:
+        """
+        Put a FAILED submission back in the queue for another attempt. Only a failed row moves, and nothing else about
+        it changes: its error message and failure code stay, so the record of why it failed survives the retry (they
+        are replaced when the next attempt succeeds or fails). Returns whether a row was re-queued.
+        """
+        now = datetime.utcnow().isoformat()
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as conn, conn:
+            cursor = conn.execute(
+                "UPDATE submissions SET status = 'queued', updated_at = ? WHERE id = ? AND status = 'failed'",
+                (now, submission_id),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def failed_submission_ids(self, org_id: str, order_id: str, failure_code: str) -> list[str]:
+        """Ids of this organisation's FAILED submissions of one order that failed for exactly `failure_code`."""
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            rows = conn.execute(
+                "SELECT id FROM submissions WHERE org_id = ? AND order_id = ? AND status = 'failed' "
+                "AND failure_code = ? ORDER BY created_at ASC",
+                (org_id, order_id, failure_code),
+            ).fetchall()
+        return [row[0] for row in rows]

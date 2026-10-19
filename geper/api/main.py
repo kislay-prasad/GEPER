@@ -75,6 +75,7 @@ from component_identity import COMPONENT_NAME, SHORT_NAME
 from pipeline.alphafold.lookup import AlphaFoldLookup
 
 from .submission_store import SubmissionStore
+from .vcf_paths import VcfPathError, resolve_vcf_path
 
 logger = logging.getLogger("geper.structures_api")
 
@@ -374,7 +375,8 @@ def get_submission_store() -> SubmissionStore:
     """FastAPI dependency, overridable in tests via `app.dependency_overrides`."""
     global _submission_store
     if _submission_store is None:
-        _submission_store = SubmissionStore(_get_submission_store_path())
+        # The API never executes a job, so opening the store here must not reclassify a job a worker is running.
+        _submission_store = SubmissionStore(_get_submission_store_path(), reconcile_on_open=False)
     return _submission_store
 
 
@@ -536,12 +538,20 @@ def post_interpretation(
     idempotency key is UNIQUE(org_id, submission_key), so that request creates
     its own submission and gets its own 202.
     """
+    try:
+        approved_vcf = resolve_vcf_path(req.vcf_path, org_id)
+    except VcfPathError as exc:
+        # Refused before anything is stored: a row for a path outside the approved directory is never created.
+        raise HTTPException(
+            status_code=503 if exc.code == "vcf_root_not_configured" else 400, detail=exc.public_message
+        ) from None
+
     submission, replayed = store.create_or_replay_submission(
         org_id=str(org_id),
         order_id=str(req.order_id),
         sample_id=str(req.sample_id),
         submission_key=req.submission_key,
-        vcf_path=req.vcf_path,
+        vcf_path=str(approved_vcf),
         assembly=req.assembly,
         sample_ref=req.sample_ref,
         consent_ref=req.consent_ref,

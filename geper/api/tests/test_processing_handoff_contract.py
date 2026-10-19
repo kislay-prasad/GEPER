@@ -16,6 +16,7 @@ SYNTHETIC FIXTURES ONLY. Nothing here says anything about the genomic pipeline's
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -65,7 +66,7 @@ def _worker_command(tmp_path, vcf, *, hpo_terms, qc_metrics, monkeypatch):
         qc_metrics=qc_metrics,
     )
     worker = InterpretationWorker(store, data_access=MagicMock())
-    worker._clinical_preflight = lambda sub: SimpleNamespace()
+    worker._clinical_preflight = lambda sub: SimpleNamespace(vcf_hash="0" * 64)
     worker._adopt_existing_record = lambda *a, **k: False
     worker._record_run = lambda *a, **k: True
     captured = {}
@@ -105,6 +106,7 @@ def test_the_worker_command_is_one_the_real_cli_declares(tmp_path, vcf, monkeypa
     # and the whole command parses under the parser built from the real CLI's declarations
     args = standin_engine.build_parser().parse_args(cmd[2:])
     assert args.vcf == str(vcf) and args.assembly == "GRCh38"
+    assert args.no_resume is True  # an earlier attempt's checkpoint is never resumed
     if COMMANDS[case]["hpo_terms"]:
         assert args.hpo_terms == "HP:0001250,HP:0002011"
     if COMMANDS[case]["qc_metrics"]:
@@ -201,3 +203,83 @@ def test_fail_once_fails_the_first_invocation_and_succeeds_afterwards(tmp_path, 
     assert _run_standin(tmp_path, *args, mode="fail_once").returncode == 1
     assert _run_standin(tmp_path, *args, mode="fail_once").returncode == 0
     assert (tmp_path / "o" / "geper_results.json").exists()
+
+
+# ── F2: what counts as a finished engine output (no database) ──
+
+
+@pytest.fixture
+def good_document(tmp_path, vcf):
+    out = tmp_path / "good-out"
+    result = _run_standin(tmp_path, "--vcf", str(vcf), "--assembly", "GRCh38", "--output-dir", str(out))
+    assert result.returncode == 0
+    return json.loads((out / "geper_results.json").read_text(encoding="utf-8"))
+
+
+def test_the_document_the_standin_writes_satisfies_the_worker_contract(good_document, vcf):
+    assert submission_worker.validate_engine_output(good_document, str(vcf)) == []
+
+
+def _mutate(**changes):
+    def apply(document):
+        document = dict(document)
+        for key, value in changes.items():
+            if value is _MISSING:
+                document.pop(key, None)
+            else:
+                document[key] = value
+        return document
+
+    return apply
+
+
+_MISSING = object()
+
+INVALID_DOCUMENTS = {
+    "empty_object": (
+        lambda d: {},
+        {"run_incomplete", "variants_not_a_list", "engine_output_claims_review", "input_vcf_missing"},
+    ),
+    "not_an_object_list": (lambda d: [], {"output_not_an_object"}),
+    "not_an_object_null": (lambda d: None, {"output_not_an_object"}),
+    "not_an_object_string": (lambda d: "done", {"output_not_an_object"}),
+    "checkpoint_run_complete_false": (_mutate(run_complete=False), {"run_incomplete"}),
+    "run_complete_missing": (_mutate(run_complete=_MISSING), {"run_incomplete"}),
+    "run_complete_truthy_not_true": (_mutate(run_complete="true"), {"run_incomplete"}),
+    "variants_missing": (_mutate(variants=_MISSING, variant_count=0), {"variants_not_a_list"}),
+    "variants_a_dict": (_mutate(variants={"a": 1}), {"variants_not_a_list"}),
+    "variant_entry_not_an_object": (_mutate(variants=["x", "y"], variant_count=2), {"variant_entry_malformed"}),
+    "variant_entry_without_variant": (
+        _mutate(variants=[{"nope": 1}, {"nope": 2}], variant_count=2),
+        {"variant_entry_malformed"},
+    ),
+    "count_too_high": (_mutate(variant_count=99), {"variant_count_inconsistent"}),
+    "count_missing": (_mutate(variant_count=_MISSING), {"variant_count_inconsistent"}),
+    "count_a_string": (_mutate(variant_count="2"), {"variant_count_inconsistent"}),
+    "count_a_bool": (_mutate(variant_count=True), {"variant_count_inconsistent"}),
+    "claims_reviewed": (_mutate(review_status="reviewed"), {"engine_output_claims_review"}),
+    "carries_a_reviewer": (_mutate(reviewed_by="Dr. A"), {"engine_output_claims_review"}),
+    "carries_a_review_time": (_mutate(reviewed_at="2026-01-01T00:00:00+00:00"), {"engine_output_claims_review"}),
+    "vcf_path_missing": (_mutate(input_vcf_absolute_path=_MISSING), {"input_vcf_missing"}),
+    "vcf_path_empty": (_mutate(input_vcf_absolute_path=""), {"input_vcf_missing"}),
+    "vcf_path_not_a_string": (_mutate(input_vcf_absolute_path=7), {"input_vcf_missing"}),
+    "output_for_a_different_vcf": (
+        _mutate(input_vcf_absolute_path="/somewhere/else.vcf"),
+        {"output_is_for_a_different_vcf"},
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(INVALID_DOCUMENTS))
+def test_invalid_engine_output_is_named_and_rejected(good_document, vcf, case):
+    mutate, expected = INVALID_DOCUMENTS[case]
+    problems = submission_worker.validate_engine_output(mutate(good_document), str(vcf))
+    assert expected <= set(problems), problems
+    assert problems  # never an empty list for an invalid document
+
+
+def test_a_relative_or_differently_spelled_path_to_the_same_vcf_is_accepted(good_document, vcf, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    relative = os.path.relpath(str(vcf), tmp_path)
+    document = dict(good_document, input_vcf_absolute_path=str(vcf))
+    assert submission_worker.validate_engine_output(document, relative) == []

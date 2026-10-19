@@ -30,6 +30,8 @@ import pytest
 
 from api.submission_store import SubmissionStore
 from api.submission_worker import InterpretationWorker
+from api.tests.standin_engine import valid_engine_document
+from api.tests.conftest import place_vcf
 from clinical.data_access import DataAccess, SystemClock
 
 VCF_TEXT = (
@@ -38,7 +40,8 @@ VCF_TEXT = (
     "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1\n"
     "chr1\t1000\t.\tA\tT\t30\tPASS\t.\tGT\t0/1\n"
 )
-RUN_DOCUMENT = {"variants": [{"chrom": "1", "pos": 1000, "ref": "A", "alt": "T"}], "run_complete": True}
+# The engine stand-in below writes, for the VCF it was given, a document of the shape the real engine writes and the
+# worker's output validation requires (see standin_engine.valid_engine_document).
 
 
 class _PlainHasher:
@@ -141,10 +144,9 @@ def worker(store, dao, output_root):
 
 
 @pytest.fixture
-def vcf_path(tmp_path):
-    path = tmp_path / "input.vcf"
-    path.write_text(VCF_TEXT, encoding="utf-8")
-    return str(path)
+def vcf_path(vcf_root, org_a):
+    """The VCF, in org_a's directory under the approved root (the only place the worker will read it from)."""
+    return place_vcf(vcf_root, org_a["org_id"], VCF_TEXT)
 
 
 def _submit(store, org, vcf_path, *, org_id=None, key="key-1"):
@@ -167,12 +169,14 @@ class _Engine:
     def __init__(self, on_run=None):
         self.runs = 0
         self.on_run = on_run
+        self.last_document = None
 
     def __call__(self, cmd, **kwargs):
         self.runs += 1
         out_dir = Path(cmd[cmd.index("--output-dir") + 1])
         out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "geper_results.json").write_text(json.dumps(RUN_DOCUMENT), encoding="utf-8")
+        self.last_document = valid_engine_document(cmd[cmd.index("--vcf") + 1])
+        (out_dir / "geper_results.json").write_text(json.dumps(self.last_document), encoding="utf-8")
         if self.on_run:
             self.on_run()
         proc = MagicMock()
@@ -222,7 +226,7 @@ def test_completed_run_becomes_a_clinical_interpretation_and_draft_report(
     interpretation_id, run_document, report_id, state = rows[0]
     run_document = json.loads(run_document) if isinstance(run_document, str) else run_document
     assert updated.interpretation_id == str(interpretation_id)
-    assert run_document == RUN_DOCUMENT
+    assert run_document == engine.last_document
     assert state == "draft"
 
     link = json.loads((output_root / sub.id / "clinical_link.json").read_text(encoding="utf-8"))
@@ -275,12 +279,17 @@ def test_concurrent_duplicate_is_reconciled_not_failed(worker, store, dao, clini
 
 
 def test_record_failure_leaves_no_clinical_rows_and_raises_its_own_exception(
-    worker, store, clinical_conn, org_a, vcf_path
+    worker, store, clinical_conn, org_a, vcf_path, monkeypatch
 ):
     """The VCF is rewritten while the engine runs: the record is refused
     (the run analysed other bytes), the submission fails, nothing is in the
     clinical record, and the lab gets a clinical_record_write_failed
-    exception on the order."""
+    exception on the order.
+
+    This is the DATABASE's own refusal, the second line of defence. The worker's post-run check now catches this
+    change first (test_processing_hardening.py, vcf_changed_during_run), so that check is switched off here to keep
+    the second line under test."""
+    monkeypatch.setattr(InterpretationWorker, "_vcf_changed_since_preflight", lambda *args, **kwargs: None)
 
     def vcf_changes_during_the_run():
         Path(vcf_path).write_text(VCF_TEXT + "chr1\t2000\t.\tG\tC\t30\tPASS\t.\tGT\t0/1\n", encoding="utf-8")
@@ -345,11 +354,11 @@ def test_interrupted_row_with_no_record_stays_interrupted(store_path, store, dao
     assert restarted_store.get_submission(sub.id).status == "interrupted"
 
 
-def test_failed_precondition_blocks_the_run(worker, store, dao, clinical_conn, vcf_path):
+def test_failed_precondition_blocks_the_run(worker, store, dao, clinical_conn, vcf_root):
     """QC not yet passed: validate_order_for_submission refuses and records
     its own exception; the engine never runs; nothing is recorded."""
     org = _organisation(dao, clinical_conn, "Org Pending", qc="pending")
-    sub = _submit(store, org, vcf_path)
+    sub = _submit(store, org, place_vcf(vcf_root, org["org_id"], VCF_TEXT))
     engine = _Engine()
     with patch("api.submission_worker.spawn_tracked", engine):
         worker.process_queued_submission(sub)
@@ -362,12 +371,13 @@ def test_failed_precondition_blocks_the_run(worker, store, dao, clinical_conn, v
 
 
 def test_another_organisations_order_is_refused_and_nothing_is_written(
-    worker, store, clinical_conn, org_a, org_b, vcf_path
+    worker, store, clinical_conn, org_a, org_b, vcf_root
 ):
     """A submission owned by Org B that names Org A's order and sample:
     Org B's system principal cannot see them, so the run is refused before
     the engine starts, and neither organisation gains a row."""
-    sub = _submit(store, org_a, vcf_path, org_id=org_b["org_id"])
+    # the file is Org B's own (the path policy would refuse Org A's), so what is refused is the order, not the file
+    sub = _submit(store, org_a, place_vcf(vcf_root, org_b["org_id"], VCF_TEXT), org_id=org_b["org_id"])
     engine = _Engine()
     with patch("api.submission_worker.spawn_tracked", engine):
         worker.process_queued_submission(sub)

@@ -17,20 +17,23 @@ WHAT THE ENGINE IS. `geper/main.py` is not run. The stand-in obeys its command-l
 the hand-off: identities, relationships, failure handling, idempotency. It proves NOTHING about the pipeline's
 biological output, its accuracy, or clinical validity. All fixtures are synthetic.
 
-DEFECTS PINNED AS STRICT xfail (PR A changes no production code). Each test states the behaviour that SHOULD hold and
-fails today for the stated reason; `strict=True` makes the fix PR remove the marker (an unexpected pass fails the run).
-  F1  the QC gate reads the order's LATEST sample, not the sample that was submitted
-  F2  an engine that exits 0 and writes `{}` is recorded as a completed interpretation and a draft report
-  F3  a stale `geper_results.json` from an earlier attempt satisfies the "engine wrote output" check
-  F6  a retry re-queues EVERY failed submission of the order and clears the submission's own failure message
-  F7  nothing stops two workers from running the engine for the same queued submission
-  F9  a failure that should be retried never gets a `next_retry_at`, so the retry worker never selects it
+DEFECTS FOUND BY THE FIRST VERSION OF THIS MODULE (PR A pinned each as a strict xfail; each is now fixed and its
+test is an ordinary regression test)
+  F1  the QC gate read the order's LATEST sample, not the sample that was submitted
+  F2  an engine that exits 0 and writes `{}` was recorded as a completed interpretation and a draft report
+  F3  a stale `geper_results.json` from an earlier attempt satisfied the "engine wrote output" check
+  F6  a retry re-queued EVERY failed submission of the order and cleared the submission's own failure message
+  F7  nothing stopped two workers from running the engine for the same queued submission
+  F9  a failure that should be retried never got a `next_retry_at`, so the retry worker never selected it
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
+import sqlite3
 import time
 import uuid
 from pathlib import Path
@@ -44,6 +47,7 @@ from api import submission_worker
 from api.main import app, get_submission_store
 from api.submission_worker import InterpretationWorker
 from api.tests import standin_engine
+from api.tests.conftest import place_vcf
 from api.tests import test_clinical_http_adapter as _http
 from api.tests import test_worker_clinical_link as _link
 from clinical.data_access import DataAccess, SystemClock
@@ -54,16 +58,19 @@ dao = _link.dao
 store = _link.store
 store_path = _link.store_path
 output_root = _link.output_root
-vcf_path = _link.vcf_path
 service = _http.service
 URL = _http.URL
 
 STANDIN = Path(standin_engine.__file__)
+
+
+@pytest.fixture
+def vcf_path(vcf_root, org_a):
+    """The VCF, in org_a's directory under the approved root (the only place it will be accepted from)."""
+    return place_vcf(vcf_root, org_a["org_id"], _link.VCF_TEXT)
+
+
 KEY_A, KEY_B = "handoff-key-a", "handoff-key-b"
-
-
-def xfail_defect(code: str, why: str):
-    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{code}: {why}")
 
 
 # ═══ rig ═══
@@ -118,7 +125,9 @@ def api(store, monkeypatch):
 
     def make(org_id, key):
         keys[key] = uuid.UUID(str(org_id))
-        return TestClient(app, headers={"X-Api-Key": key})
+        client = TestClient(app, headers={"X-Api-Key": key})
+        client.org_id = keys[key]
+        return client
 
     return make
 
@@ -153,7 +162,22 @@ def org_b(dao, clinical_conn):
     return make_org(dao, clinical_conn, "Org B")
 
 
+def _in_callers_directory(client, vcf):
+    """
+    A submitted VCF is only accepted from inside the submitting organisation's directory under the approved root. A test
+    that built its file elsewhere (or for another organisation) gets it copied there, so what it exercises is the
+    hand-off and not the path policy (test_vcf_paths.py and the API path tests own that).
+    """
+    root = Path(os.environ["GEPER_VCF_ROOT"]) / str(client.org_id)
+    vcf = Path(vcf)
+    if not vcf.is_file() or root.resolve() in vcf.resolve().parents:
+        return vcf
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(shutil.copyfile(vcf, root / vcf.name))
+
+
 def submit(client, org, vcf, *, key="k-1", sample_id=None, order_id=None, **extra) -> str:
+    vcf = _in_callers_directory(client, vcf)
     body = {
         "submission_key": key,
         "vcf_path": str(vcf),
@@ -359,11 +383,12 @@ def test_an_unknown_order_is_refused(api, worker, store, clinical_conn, org_a, v
 
 
 def test_another_organisations_order_and_sample_are_not_reachable_with_a_valid_key(
-    api, worker, store, clinical_conn, org_a, org_b, vcf_path, engine
+    api, worker, store, clinical_conn, org_a, org_b, vcf_root, engine
 ):
     """Organisation B holds a REAL key and names organisation A's real order and sample."""
     before = {org["name"]: clinical_counts(clinical_conn, org["org_id"]) for org in (org_a, org_b)}
-    done = process(worker, store, submit(api(org_b["org_id"], KEY_B), org_a, vcf_path))
+    own_vcf = place_vcf(vcf_root, org_b["org_id"], _link.VCF_TEXT)  # B's own file: the order is what is refused
+    done = process(worker, store, submit(api(org_b["org_id"], KEY_B), org_a, own_vcf))
     assert done.status == "failed" and engine.runs() == []
     assert "not found in this submission's organisation" in done.error_message
     after = {org["name"]: clinical_counts(clinical_conn, org["org_id"]) for org in (org_a, org_b)}
@@ -371,8 +396,10 @@ def test_another_organisations_order_and_sample_are_not_reachable_with_a_valid_k
     assert exception_codes(clinical_conn, org_a["order_id"]) == []  # nothing is written onto the other tenant's order
 
 
-def test_a_vcf_that_is_missing_is_refused_and_recorded(api, worker, store, clinical_conn, org_a, tmp_path, engine):
-    done = process(worker, store, submit(api(org_a["org_id"], KEY_A), org_a, tmp_path / "no-such.vcf"))
+def test_a_vcf_that_is_missing_is_refused_and_recorded(api, worker, store, clinical_conn, org_a, vcf_root, engine):
+    done = process(
+        worker, store, submit(api(org_a["org_id"], KEY_A), org_a, vcf_root / str(org_a["org_id"]) / "no-such.vcf")
+    )
     _assert_refused_before_the_engine(done, engine, clinical_conn, org_a)
     assert exception_codes(clinical_conn, org_a["order_id"]) == ["vcf_missing"]
 
@@ -383,7 +410,7 @@ FAILURES = {
     "exit_1": ("exit1", "exit code 1", "bij_ai_error_other"),
     "interrupted_130": ("exit130", "exit code 130", "bij_ai_error_other"),
     "no_output_file": ("no_output", "did not write", "bij_ai_error_other"),
-    "malformed_json": ("malformed_json", "Unexpected error", "bij_ai_error_other"),
+    "malformed_json": ("malformed_json", "not valid JSON", "bij_ai_error_other"),
 }
 
 
@@ -419,7 +446,6 @@ def test_an_engine_that_hangs_is_killed_and_the_submission_fails_as_a_timeout(
     assert engine.heartbeat.read_text(encoding="utf-8") == last
 
 
-@xfail_defect("F2", "exit 0 plus `{}` is recorded as a completed interpretation and a draft report")
 def test_an_engine_that_writes_an_empty_document_is_not_a_completed_run(
     api, worker, store, clinical_conn, org_a, vcf_path, engine
 ):
@@ -429,7 +455,6 @@ def test_an_engine_that_writes_an_empty_document_is_not_a_completed_run(
     assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
 
 
-@xfail_defect("F3", "a stale geper_results.json from an earlier attempt satisfies the 'engine wrote output' check")
 def test_an_engine_that_exits_zero_without_writing_cannot_borrow_an_earlier_attempts_results(
     api, worker, store, clinical_conn, org_a, vcf_path, engine, output_root
 ):
@@ -561,7 +586,6 @@ def test_a_retry_after_success_does_not_make_a_second_report(
     assert len(engine.runs()) == 2  # the failure and the one success; the late retry adopted the record
 
 
-@xfail_defect("F9", "next_retry_at is never initialised, so the retry worker never selects a new failure")
 def test_a_transient_engine_failure_is_scheduled_for_retry(
     api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch
 ):
@@ -570,17 +594,16 @@ def test_a_transient_engine_failure_is_scheduled_for_retry(
     assert next_retry_at is not None
 
 
-@xfail_defect(
-    "F6", "the scheduler re-queues every failed submission of the order, including ones that failed for another reason"
-)
 def test_a_retry_requeues_only_the_submission_the_exception_belongs_to(
-    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch, tmp_path
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch, vcf_root
 ):
     transient = _make_transient_failure(
         api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch, key="transient"
     )
     unrelated = process(
-        worker, store, submit(api(org_a["org_id"], KEY_A), org_a, tmp_path / "no-such.vcf", key="unrelated")
+        worker,
+        store,
+        submit(api(org_a["org_id"], KEY_A), org_a, vcf_root / str(org_a["org_id"]) / "no-such.vcf", key="unrelated"),
     )
     assert unrelated.status == "failed"  # failed for a different, non-transient reason (the VCF is missing)
     _make_retry_due(clinical_conn, org_a["order_id"])
@@ -589,7 +612,6 @@ def test_a_retry_requeues_only_the_submission_the_exception_belongs_to(
     assert store.get_submission(unrelated.id).status == "failed"
 
 
-@xfail_defect("F6", "re-queueing clears the submission's own error_message; only the exception row keeps the reason")
 def test_a_requeued_submission_keeps_the_reason_it_failed(
     api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch
 ):
@@ -604,7 +626,6 @@ def test_a_requeued_submission_keeps_the_reason_it_failed(
 # ═══ the QC gate follows the submitted sample (F1) ═══
 
 
-@xfail_defect("F1", "the gate reads the order's latest sample: an older, failed sample rides on a newer sample's pass")
 def test_a_failed_sample_is_not_processed_because_a_newer_sample_of_its_order_passed(
     api, worker, store, dao, clinical_conn, vcf_path, engine
 ):
@@ -616,9 +637,6 @@ def test_a_failed_sample_is_not_processed_because_a_newer_sample_of_its_order_pa
     assert clinical_counts(clinical_conn, org["org_id"]) == NOTHING_RECORDED
 
 
-@xfail_defect(
-    "F1", "the gate reads the order's latest sample: a passed sample is blocked by a newer sample that has not"
-)
 def test_a_passed_sample_is_processed_even_if_a_newer_sample_of_its_order_has_not_passed(
     api, worker, store, dao, clinical_conn, vcf_path, engine
 ):
@@ -640,7 +658,7 @@ def _race(dao, clinical_conn, clinical_dsn, store, org, vcf_path, api, engine, m
 
     monkeypatch.setattr(submission_worker, "INTERPRETATION_TIMEOUT_SECONDS", 60)
     monkeypatch.setenv("STANDIN_RENDEZVOUS_COUNT", "2")
-    monkeypatch.setenv("STANDIN_RENDEZVOUS_TIMEOUT", "6")
+    monkeypatch.setenv("STANDIN_RENDEZVOUS_TIMEOUT", "3")
     engine.mode("rendezvous")
     sub_id = submit(api(org["org_id"], KEY_A), org, vcf_path)
     # The organisation's system user is created the first time anything asks for its session, and two concurrent
@@ -653,7 +671,10 @@ def _race(dao, clinical_conn, clinical_dsn, store, org, vcf_path, api, engine, m
         second_dao = DataAccess(second_connection, clock=SystemClock(), password_hasher=_link._PlainHasher())
         workers = [InterpretationWorker(store, dao), InterpretationWorker(store, second_dao)]
         row = store.get_submission(sub_id)  # both read the queue before either has claimed the row
-        threads = [threading.Thread(target=w.process_queued_submission, args=(row,)) for w in workers]
+        outcomes = []
+        threads = [
+            threading.Thread(target=lambda w=w: outcomes.append(w.process_queued_submission(row))) for w in workers
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -661,20 +682,315 @@ def _race(dao, clinical_conn, clinical_dsn, store, org, vcf_path, api, engine, m
         assert not any(t.is_alive() for t in threads)
     finally:
         second_connection.close()
-    return sub_id
+    return sub_id, outcomes
 
 
 def test_two_workers_racing_on_one_submission_never_create_two_reports(
     api, store, dao, clinical_conn, clinical_dsn, org_a, vcf_path, engine, output_root, monkeypatch
 ):
-    sub_id = _race(dao, clinical_conn, clinical_dsn, store, org_a, vcf_path, api, engine, monkeypatch)
+    sub_id, outcomes = _race(dao, clinical_conn, clinical_dsn, store, org_a, vcf_path, api, engine, monkeypatch)
+    assert sorted(outcomes) == [False, True]  # one worker ran the job; the other found it claimed and did nothing
     assert store.get_submission(sub_id).status == "complete"
     assert clinical_counts(clinical_conn, org_a["org_id"]) == {k: 1 for k in NOTHING_RECORDED}  # the unique key holds
 
 
-@xfail_defect("F7", "no claim: both workers run the engine for the same queued submission")
 def test_two_workers_racing_on_one_submission_run_the_engine_once(
     api, store, dao, clinical_conn, clinical_dsn, org_a, vcf_path, engine, output_root, monkeypatch
 ):
     _race(dao, clinical_conn, clinical_dsn, store, org_a, vcf_path, api, engine, monkeypatch)
+    assert len(engine.runs()) == 1  # not merely one record: the ENGINE ran once
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+# Regression tests added with the fixes (F1, F2, F3, F6, F7, F9)
+# ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+
+def _system_session(dao, org):
+    return dao._create_system_session(uuid.UUID(str(org["org_id"])))
+
+
+# ── F1: the QC verdict is the named sample's ──
+
+
+def test_the_qc_verdict_is_the_named_samples_whatever_else_the_order_holds(dao, clinical_conn):
+    org = make_org(dao, clinical_conn, "Org Qc Direct", qc="passed")
+    failed = add_sample(dao, org, "failed")
+    pending = add_sample(dao, org, None)  # the latest sample has no verdict yet
+    other = make_org(dao, clinical_conn, "Org Qc Elsewhere", qc="passed")
+    session = _system_session(dao, org)
+
+    def verdict(sample_id):
+        return dao.check_qc_passed(session, org["order_id"], sample_id)
+
+    assert verdict(org["sample_id"]) == "qc_ok"
+    assert verdict(failed) == "qc_failed"
+    assert verdict(pending) == "qc_pending"
+    # a sample that is not this order's: unknown, or another organisation's real one, is never another sample's result
+    assert verdict(uuid.uuid4()) == "sample_unresolved"
+    assert verdict(other["sample_id"]) == "sample_unresolved"
+    # asked about another organisation's order with this organisation's session: nothing resolves
+    assert dao.check_qc_passed(session, other["order_id"], other["sample_id"]) == "sample_unresolved"
+    # and without a sample the earlier order-level answer (the latest sample) is unchanged
+    assert dao.check_qc_passed(session, org["order_id"]) == "qc_pending"
+
+
+def test_a_sample_of_a_different_order_in_the_same_organisation_is_not_resolved(dao, clinical_conn):
+    org = make_org(dao, clinical_conn, "Org Two Orders", qc="passed")
+    admin = admin_session(dao, org)
+    (patient_id, test_id, scope, consent_id) = q(
+        clinical_conn,
+        "SELECT patient_id, test_id, required_scope, consent_id FROM orders WHERE order_id = %s",
+        (org["order_id"],),
+    )[0]
+    second = dao.create_order(
+        admin,
+        patient_id=patient_id,
+        test_id=test_id,
+        required_scope=scope,
+        consent_id=consent_id,
+        priority="routine",
+        clinical_indication="Second order",
+    )
+    dao.place_order(admin, second)
+    second_sample = dao.receive_sample(admin, second, "blood")
+    dao.record_qc(admin, second_sample, "passed")
+    session = _system_session(dao, org)
+    assert dao.check_qc_passed(session, org["order_id"], second_sample) == "sample_unresolved"
+    assert dao.check_qc_passed(session, second, second_sample) == "qc_ok"
+
+
+# ── F2: an engine output is accepted only if it is a finished run of THIS submission ──
+
+INVALID_OUTPUT_MODES = {
+    "empty_object": "run_incomplete",
+    "incomplete": "run_incomplete",
+    "count_mismatch": "variant_count_inconsistent",
+    "claims_review": "engine_output_claims_review",
+    "wrong_vcf": "output_is_for_a_different_vcf",
+    "variants_not_a_list": "variants_not_a_list",
+}
+
+
+@pytest.mark.parametrize("mode", sorted(INVALID_OUTPUT_MODES))
+def test_invalid_engine_output_is_rejected_before_any_clinical_record_exists(
+    api, worker, store, clinical_conn, org_a, vcf_path, engine, output_root, mode
+):
+    engine.mode(mode)
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    done = process(worker, store, sub_id)
+    assert done.status == "failed" and done.interpretation_id is None
+    assert "failed validation" in done.error_message and INVALID_OUTPUT_MODES[mode] in done.error_message
     assert len(engine.runs()) == 1
+    assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
+    assert exception_codes(clinical_conn, org_a["order_id"]) == ["bij_ai_error_other"]
+    assert not (output_root / sub_id / "clinical_link.json").exists()
+
+
+# ── F3: an attempt owns its output directory ──
+
+
+def test_files_an_earlier_attempt_left_are_set_aside_and_kept_never_reused(
+    api, worker, store, clinical_conn, org_a, vcf_path, engine, output_root
+):
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    run_dir = output_root / sub_id
+    run_dir.mkdir(parents=True)
+    leftovers = {
+        "geper_results.json": json.dumps({"variants": [], "stale": True}),
+        "clinical_link.json": json.dumps({"interpretation_id": "left-over", "report_id": "left-over"}),
+        "geper_report.md": "# an earlier attempt's report",
+    }
+    for name, text in leftovers.items():
+        (run_dir / name).write_text(text, encoding="utf-8")
+
+    done = process(worker, store, sub_id)
+    assert done.status == "complete", done.error_message
+
+    recorded = json.loads((run_dir / "geper_results.json").read_text(encoding="utf-8"))
+    assert "stale" not in recorded and recorded["run_complete"] is True  # this attempt's document
+    link = json.loads((run_dir / "clinical_link.json").read_text(encoding="utf-8"))
+    assert link["interpretation_id"] == done.interpretation_id  # and this attempt's link
+    for name, text in leftovers.items():
+        (kept,) = [p for p in run_dir.iterdir() if p.name.startswith(f"{name}.stale-before-attempt1-")]
+        assert kept.read_text(encoding="utf-8") == text  # set aside intact, not deleted
+    attempt = json.loads((run_dir / "attempt.json").read_text(encoding="utf-8"))
+    assert attempt["submission_id"] == sub_id and attempt["attempt"] == 1
+    assert attempt["vcf_sha256"] == sha256(vcf_path) and attempt["worker_id"] == worker.worker_id
+    assert "--no-resume" in engine.runs()[0]["argv"]
+    # review discovery sees one run in the directory, not one per leftover
+    from review import signoff
+
+    assert [row["output_dir"] for row in signoff.list_pending(str(output_root), show_all=True)] == [str(run_dir)]
+
+
+# ── F6: each attempt is isolated from the one before ──
+
+
+def test_a_retry_after_a_partial_failure_does_not_resume_or_inherit_the_partial_output(
+    api, worker, store, clinical_conn, org_a, vcf_path, engine, output_root
+):
+    engine.mode("partial_fail")  # writes a checkpoint (run_complete false) and then fails
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    first = process(worker, store, sub_id)
+    run_dir = output_root / sub_id
+    assert first.status == "failed" and "exit code 1" in first.error_message
+    assert "partial_marker" in json.loads((run_dir / "geper_results.json").read_text(encoding="utf-8"))
+    assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
+
+    assert store.requeue(sub_id) is True
+    engine.mode("success")
+    second = process(worker, store, sub_id)
+    assert second.status == "complete", second.error_message
+
+    (document,) = [
+        row[0]
+        for row in q(clinical_conn, "SELECT run_document FROM interpretations WHERE org_id = %s", (org_a["org_id"],))
+    ]
+    document = json.loads(document) if isinstance(document, str) else document
+    assert "partial_marker" not in document and document["run_complete"] is True and document["variant_count"] == 1
+    (kept,) = [p for p in run_dir.iterdir() if p.name.startswith("geper_results.json.stale-before-attempt2-")]
+    assert "partial_marker" in json.loads(kept.read_text(encoding="utf-8"))  # the failed attempt's output is kept
+    assert json.loads((run_dir / "attempt.json").read_text(encoding="utf-8"))["attempt"] == 2
+    assert all("--no-resume" in run["argv"] for run in engine.runs()) and len(engine.runs()) == 2
+    assert clinical_counts(clinical_conn, org_a["org_id"]) == {k: 1 for k in NOTHING_RECORDED}
+
+
+def test_repeated_failures_reopen_one_exception_and_keep_its_history(
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch
+):
+    sub_id = _make_transient_failure(api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch)
+    assert store.requeue(sub_id) is True
+    assert process(worker, store, sub_id).status == "failed"  # fails the same way again
+    ((exception_id, reason, status),) = q(
+        clinical_conn, "SELECT id, reason_code, status FROM exceptions WHERE order_id = %s", (org_a["order_id"],)
+    )
+    assert (reason, status) == ("bij_ai_timeout", "open")  # one exception, not two
+    events = [
+        row[0]
+        for row in q(
+            clinical_conn,
+            "SELECT action FROM exception_events WHERE exception_id = %s ORDER BY timestamp, id",
+            (exception_id,),
+        )
+    ]
+    assert events.count("open") + events.count("OPEN") == 1 and len(events) == 2  # opened once, reopened once
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT attempts FROM submissions WHERE id = ?", (sub_id,)).fetchone() == (2,)
+
+
+# ── F7: one worker per job ──
+
+
+def test_a_submission_a_worker_has_already_claimed_is_skipped_by_another(
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine
+):
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    row = store.get_submission(sub_id)  # both workers read the queue while it is still queued
+    assert store.claim(sub_id, "another-worker") == 1
+    assert worker.process_queued_submission(row) is False  # this worker lost the claim: it does nothing
+    assert engine.runs() == [] and store.get_submission(sub_id).status == "running"
+    assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
+
+
+# ── F9: transient failures are scheduled, permanent ones are not ──
+
+
+def schedule_rows(conn, order_id):
+    return q(
+        conn,
+        "SELECT reason_code, category, status, attempt_count, next_retry_at, created_at FROM exceptions "
+        "WHERE order_id = %s ORDER BY created_at",
+        (order_id,),
+    )
+
+
+def test_a_transient_failure_is_scheduled_with_the_first_backoff(
+    api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch
+):
+    _make_transient_failure(api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch)
+    ((reason, category, status, attempts, next_retry_at, created_at),) = schedule_rows(clinical_conn, org_a["order_id"])
+    assert (reason, category, status, attempts) == ("bij_ai_timeout", "transient_submission_failure", "open", 0)
+    assert (next_retry_at - created_at).total_seconds() == 30
+
+
+PERMANENT_FAILURES = {
+    "engine_exit_1": "exit1",
+    "invalid_output": "empty_object",
+    "missing_vcf": "missing_vcf",
+    "qc_failed": "qc_failed",
+}
+
+
+@pytest.mark.parametrize("case", sorted(PERMANENT_FAILURES))
+def test_permanent_failures_are_never_scheduled_or_retried(
+    api, worker, store, dao, clinical_conn, vcf_path, engine, vcf_root, case
+):
+    kind = PERMANENT_FAILURES[case]
+    org = make_org(dao, clinical_conn, f"Org Perm {case}", qc="failed" if kind == "qc_failed" else "passed")
+    if kind in ("exit1", "empty_object"):
+        engine.mode(kind)
+    path = vcf_root / str(org["org_id"]) / "absent.vcf" if kind == "missing_vcf" else vcf_path
+    sub_id = submit(api(org["org_id"], KEY_A), org, path)
+    assert process(worker, store, sub_id).status == "failed"
+    rows = schedule_rows(clinical_conn, org["order_id"])
+    assert rows and all(r[1] != "transient_submission_failure" and r[4] is None for r in rows)
+    # even if something mis-scheduled one, a non-transient exception is outside the scheduler's selection
+    with clinical_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE exceptions SET next_retry_at = now() - interval '1 hour' WHERE order_id = %s", (org["order_id"],)
+        )
+    clinical_conn.commit()
+    _run_retry_scheduler(dao, store, org)
+    assert store.get_submission(sub_id).status == "failed"
+
+
+def test_the_scheduler_retries_once_per_due_time_never_twice_in_a_row(
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch
+):
+    sub_id = _make_transient_failure(api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch)
+    _make_retry_due(clinical_conn, org_a["order_id"])
+    _run_retry_scheduler(dao, store, org_a)
+    _run_retry_scheduler(dao, store, org_a)  # a second tick straight away must find nothing due
+    ((_r, _c, status, attempts, next_retry_at, _created),) = schedule_rows(clinical_conn, org_a["order_id"])
+    assert (status, attempts) == ("open", 1)
+    assert (next_retry_at - q(clinical_conn, "SELECT now()")[0][0]).total_seconds() > 0  # rescheduled into the future
+    assert store.get_submission(sub_id).status == "queued"
+
+
+def test_retries_are_bounded_and_end_in_escalation_without_another_requeue(
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch
+):
+    sub_id = _make_transient_failure(api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch)
+    with clinical_conn.cursor() as cur:  # the sixth retry is the last
+        cur.execute("UPDATE exceptions SET attempt_count = 5 WHERE order_id = %s", (org_a["order_id"],))
+    clinical_conn.commit()
+    _make_retry_due(clinical_conn, org_a["order_id"])
+    _run_retry_scheduler(dao, store, org_a)
+    assert store.get_submission(sub_id).status == "queued"
+    assert process(worker, store, sub_id).status == "failed"  # the sixth retry fails as well
+
+    _make_retry_due(clinical_conn, org_a["order_id"])
+    _run_retry_scheduler(dao, store, org_a)
+    ((_r, _c, status, attempts, _n, _created),) = schedule_rows(clinical_conn, org_a["order_id"])
+    assert (status, attempts) == ("escalated", 6)  # terminal: a person decides
+    assert store.get_submission(sub_id).status == "failed"
+    _make_retry_due(clinical_conn, org_a["order_id"])
+    _run_retry_scheduler(dao, store, org_a)
+    assert store.get_submission(sub_id).status == "failed"  # an escalated exception is never retried again
+
+
+def test_the_retry_schedule_survives_a_restart_of_the_retry_worker(
+    api, worker, store, dao, clinical_conn, clinical_dsn, org_a, vcf_path, engine, monkeypatch
+):
+    import psycopg
+
+    sub_id = _make_transient_failure(api, worker, store, clinical_conn, org_a, vcf_path, engine, monkeypatch)
+    _make_retry_due(clinical_conn, org_a["order_id"])
+    restarted = psycopg.connect(clinical_dsn, autocommit=False)  # a new process: nothing in memory
+    try:
+        fresh = DataAccess(restarted, clock=SystemClock(), password_hasher=_link._PlainHasher())
+        fresh.retry_scheduler(fresh._create_system_session(uuid.UUID(str(org_a["org_id"]))), store)
+    finally:
+        restarted.close()
+    assert store.get_submission(sub_id).status == "queued"

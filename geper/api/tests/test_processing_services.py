@@ -194,11 +194,24 @@ def test_a_worker_process_with_missing_configuration_exits_1_naming_the_problem_
     assert secret not in result.stdout + result.stderr
 
 
+def set_dev_insecure(monkeypatch, value):
+    """
+    Set the API's dev-mode flag on the module that THE `app` OBJECT came from. Patching the name `api.main._DEV_INSECURE`
+    patches whatever `sys.modules` holds now, and in a long session (CI runs the whole geper suite in one process, with
+    GEPER_DEV_INSECURE=1 in its environment) another test may have imported the module afresh, leaving this `app`
+    reading its own, older, flag.
+    """
+    import inspect
+
+    lifespan = inspect.unwrap(app.router.lifespan_context)
+    monkeypatch.setitem(lifespan.__globals__, "_DEV_INSECURE", value)
+
+
 # ═══ the API's startup and probes ═══
 
 
 def test_the_api_refuses_to_start_without_a_vcf_root_and_serves_probes_with_one(good_config, monkeypatch):
-    monkeypatch.setattr("api.main._DEV_INSECURE", False)
+    set_dev_insecure(monkeypatch, False)
     monkeypatch.delenv("GEPER_VCF_ROOT")
     with pytest.raises(RuntimeError, match="vcf_root_not_configured"):
         with TestClient(app):
@@ -218,7 +231,7 @@ def test_the_api_refuses_to_start_without_a_vcf_root_and_serves_probes_with_one(
 def test_readiness_notices_a_store_that_exists_but_cannot_be_opened_and_accepts_one_not_yet_created(
     good_config, monkeypatch
 ):
-    monkeypatch.setattr("api.main._DEV_INSECURE", False)
+    set_dev_insecure(monkeypatch, False)
     store_file = Path(os.environ["GEPER_SUBMISSION_STORE_PATH"])
     with TestClient(app) as client:
         assert client.get("/readyz").status_code == 200  # no store yet: the first use creates it

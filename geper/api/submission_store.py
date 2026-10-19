@@ -476,12 +476,20 @@ class SubmissionStore:
             conn.commit()
             return cursor.rowcount == 1
 
-    def failed_submission_ids(self, org_id: str, order_id: str, failure_code: str) -> list[str]:
-        """Ids of this organisation's FAILED submissions of one order that failed for exactly `failure_code`."""
+    def failed_submission_ids(
+        self, org_id: str, order_id: str, failure_code: str, failed_before: Optional[str] = None
+    ) -> list[str]:
+        """
+        Ids of this organisation's FAILED submissions of one order that failed for exactly `failure_code`. With
+        `failed_before` (a naive-UTC ISO timestamp, the form `updated_at` is stored in) only rows whose failure was
+        recorded earlier than that: the way a resolution is matched to the failures it came after, and not to a later
+        failure of the same kind that nobody has looked at.
+        """
+        sql = "SELECT id FROM submissions WHERE org_id = ? AND order_id = ? AND status = 'failed' AND failure_code = ?"
+        params: list = [org_id, order_id, failure_code]
+        if failed_before is not None:
+            sql += " AND updated_at < ?"
+            params.append(failed_before)
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            rows = conn.execute(
-                "SELECT id FROM submissions WHERE org_id = ? AND order_id = ? AND status = 'failed' "
-                "AND failure_code = ? ORDER BY created_at ASC",
-                (org_id, order_id, failure_code),
-            ).fetchall()
+            rows = conn.execute(sql + " ORDER BY created_at ASC", params).fetchall()
         return [row[0] for row in rows]

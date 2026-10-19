@@ -731,9 +731,10 @@ async def resolve_exception(
             str(session.user_id),
         )
 
-        # TODO: After resolution, re-run preconditions or submission
-        # depending on the resolution_action. This is a separate workflow
-        # that may trigger a retry or may mark the order as closed.
+        # Nothing is re-run from here, deliberately: this service has no access to the submission store, and a
+        # re-run must go through the worker's full preflight. The decision recorded above is acted on by
+        # DataAccess.requeue_resolved_exceptions (run by the exception retry worker): `retry_check` re-queues the
+        # failures that preceded this resolution, `accept_failure` leaves them failed.
 
         # Retrieve updated exception to return
         resolved_exc = dao.get_exception_by_id(session, exc_uuid)

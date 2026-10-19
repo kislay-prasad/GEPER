@@ -73,9 +73,9 @@ class ExceptionRetryWorker:
 
         # Query all organisations
         try:
-            with self.data_access._conn.cursor() as cur:
-                cur.execute("SELECT id FROM organisations ORDER BY id")
-                orgs = [row[0] for row in cur.fetchall()]
+            # (This used to read `data_access._conn` and a column called `id`; neither exists, so the query failed on
+            # every pass, was logged, and the whole retry lifecycle -- retries, escalation, recovery -- never ran.)
+            orgs = self.data_access.list_active_organisation_ids()
         except Exception as e:
             logger.error(f"Failed to list organisations: {e}")
             return
@@ -92,6 +92,8 @@ class ExceptionRetryWorker:
 
                 # Run retry scheduler for this organisation
                 self.data_access.retry_scheduler(system_session, self.submission_store)
+                # And act on any failure an operator has resolved with retry_check since the last pass.
+                self.data_access.requeue_resolved_exceptions(system_session, self.submission_store)
 
                 logger.debug(f"Processed retry queue for org {org_id}")
             except Exception as e:
@@ -139,7 +141,9 @@ def main():
         )
         from .submission_store import SubmissionStore
 
-        submission_store = SubmissionStore(store_path)
+        submission_store = SubmissionStore(
+            store_path, reconcile_on_open=False
+        )  # only the interpretation worker reconciles
         logger.info("SubmissionStore initialized")
 
     except Exception as e:

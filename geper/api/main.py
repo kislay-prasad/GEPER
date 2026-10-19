@@ -60,6 +60,7 @@ stayed the non-None value, never collapsed to `None`). See
 from __future__ import annotations
 
 import enum
+from contextlib import asynccontextmanager
 import logging
 import os
 import sys
@@ -74,6 +75,7 @@ from pydantic import BaseModel
 from component_identity import COMPONENT_NAME, SHORT_NAME
 from pipeline.alphafold.lookup import AlphaFoldLookup
 
+from . import service_health
 from .submission_store import SubmissionStore
 from .vcf_paths import VcfPathError, resolve_vcf_path
 
@@ -247,7 +249,20 @@ async def _require_organisation(x_api_key: str = Header(default="")) -> uuid.UUI
 _DOCS_ENV = "GEPER_ENABLE_DOCS"
 _DOCS_ENABLED = os.environ.get(_DOCS_ENV, "").strip().lower() in {"1", "true", "yes"}
 
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Refuse to start serving with a configuration that would silently weaken the storage policy
+    (api/service_health.py). Not applied in explicit dev mode (GEPER_DEV_INSECURE=1)."""
+    if not _DEV_INSECURE:
+        problems = service_health.validate("api")
+        if problems:
+            raise RuntimeError("; ".join(f"{code}: {message}" for code, message in problems))
+    yield
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title=f"{COMPONENT_NAME} Structures API",
     docs_url="/docs" if _DOCS_ENABLED else None,
     redoc_url="/redoc" if _DOCS_ENABLED else None,
@@ -474,6 +489,22 @@ def _map_to_response(raw: Dict[str, Any]) -> StructureAnnotationResponse:
         mapping_status=mapping_status,
         mapping_unavailable_reason=raw.get("mapping_unavailable_reason"),
     )
+
+
+@app.get("/healthz", tags=["health"], summary="Liveness probe", include_in_schema=False)
+def healthz() -> Dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.get("/readyz", tags=["health"], summary="Readiness probe", include_in_schema=False)
+def readyz(response: Response) -> Dict[str, Any]:
+    """200 only when the configuration the API needs to take a submission safely is in place. Reports problem CODES
+    only: this route is unauthenticated, and the messages name paths."""
+    problems = service_health.validate("api")
+    if problems:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "not_ready", "problems": [code for code, _message in problems]}
+    return {"status": "ready"}
 
 
 @app.get(

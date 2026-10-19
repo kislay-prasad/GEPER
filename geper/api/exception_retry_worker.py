@@ -19,10 +19,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
-import time
+import threading
 from pathlib import Path
 
 logger = logging.getLogger("geper.api.exception_retry_worker")
+
+# Consecutive passes with the clinical database unreachable before the loop gives up (the process then exits 1).
+_DB_LOSS_LIMIT = 3
 
 
 class ExceptionRetryWorker:
@@ -38,6 +41,12 @@ class ExceptionRetryWorker:
         """
         self.data_access = data_access
         self.submission_store = submission_store
+        self._stop = threading.Event()  # set by a stop signal: the loop ends after the pass it is on
+        self.exit_code = 0  # 1 when the loop ended because the clinical database was lost
+        self.heartbeat = None  # called on every pass so a supervisor can tell a live loop from a stuck process
+
+    def request_stop(self) -> None:
+        self._stop.set()
 
     def run_loop(self, poll_interval: int = 30) -> None:
         """Run the main worker loop.
@@ -49,21 +58,36 @@ class ExceptionRetryWorker:
         """
         logger.info("Starting exception retry worker loop")
 
-        while True:
+        lost = 0
+        while not self._stop.is_set():
+            # No beat while the clinical database is unreachable, and after _DB_LOSS_LIMIT passes in a row the loop
+            # ends non-zero so the supervisor starts a process that reconnects (see submission_worker.run_loop).
+            if not self.data_access.ping():
+                lost += 1
+                logger.error(f"Clinical database unreachable ({lost}/{_DB_LOSS_LIMIT})")
+                if lost >= _DB_LOSS_LIMIT:
+                    self.exit_code = 1
+                    break
+                self._stop.wait(poll_interval)
+                continue
+            lost = 0
+            if self.heartbeat is not None:
+                self.heartbeat()
             try:
                 # Run retry scheduler for all organisations
                 # Note: In a multi-tenant deployment, this should iterate over
                 # organisations or use a system-level session
                 self._process_all_orgs()
 
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
 
             except KeyboardInterrupt:
                 logger.info("Worker interrupted by user")
                 break
             except Exception as e:
                 logger.exception(f"Worker loop error: {e}")
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
+        logger.info("Exception retry worker stopped")
 
     def _process_all_orgs(self) -> None:
         """Process retryable exceptions for all organisations.
@@ -107,6 +131,11 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    # Refuse to start on bad configuration before connecting to anything (api/service_health.py).
+    from .service_health import install_stop_handlers, make_heartbeat, require_valid
+
+    require_valid("retry_worker")
+
     # Initialize DataAccess from environment
     data_access = None
     submission_store = None
@@ -128,7 +157,7 @@ def main():
 
         import psycopg
 
-        connection = psycopg.connect(dsn, autocommit=False)
+        connection = psycopg.connect(dsn, autocommit=False, connect_timeout=10)
         from clinical.data_access import DataAccess
 
         data_access = DataAccess(connection)
@@ -156,8 +185,12 @@ def main():
 
     # Run the worker
     worker = ExceptionRetryWorker(data_access, submission_store)
+    worker.heartbeat = make_heartbeat("retry_worker")
+    install_stop_handlers(worker)
     poll_interval = int(os.getenv("EXCEPTION_RETRY_POLL_INTERVAL", "30"))
     worker.run_loop(poll_interval=poll_interval)
+    if worker.exit_code:
+        sys.exit(worker.exit_code)
 
 
 if __name__ == "__main__":

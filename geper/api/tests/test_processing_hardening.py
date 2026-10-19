@@ -552,3 +552,120 @@ def test_a_link_retargeted_during_the_run_is_caught_by_the_path_check(
     assert done.status == "failed" and "storage policy" in done.error_message
     assert exception_codes(clinical_conn, org_a["order_id"]) == ["vcf_changed_during_run"]
     _assert_nothing_published(clinical_conn, org_a, store, sub_id, output_root)
+
+
+# ═══ 5. a refused vcf_path reaches the operator ═══
+
+
+def _rejected_path_cases(vcf_root, org_a, tmp_path):
+    org_dir = vcf_root / str(org_a["org_id"])
+    org_dir.mkdir(parents=True, exist_ok=True)
+    (org_dir / "folder.vcf").mkdir()
+    outside = tmp_path / "elsewhere" / "private.vcf"
+    outside.parent.mkdir()
+    outside.write_text(VCF_TEXT, encoding="utf-8")
+    return {
+        "vcf_path_outside_organisation_directory": str(outside),
+        "vcf_path_traversal": "../sibling.vcf",
+        "vcf_path_invalid": "   ",
+        "vcf_path_not_a_vcf": "notes.txt",
+        "vcf_path_not_a_file": "folder.vcf",
+    }
+
+
+REJECTED = [
+    "vcf_path_outside_organisation_directory",
+    "vcf_path_traversal",
+    "vcf_path_invalid",
+    "vcf_path_not_a_vcf",
+    "vcf_path_not_a_file",
+]
+
+
+def _exceptions(conn, order_id):
+    return q(
+        conn,
+        "SELECT reason_code, category, status, owner, next_retry_at, error_message FROM exceptions WHERE order_id = %s",
+        (order_id,),
+    )
+
+
+@pytest.mark.parametrize("code", REJECTED)
+def test_a_refused_path_fails_the_row_and_gives_the_operator_an_exception_they_can_act_on(
+    worker, store, dao, clinical_conn, org_a, org_b, vcf_root, engine, tmp_path, code
+):
+    path = _rejected_path_cases(vcf_root, org_a, tmp_path)[code]
+    done = process(worker, store, _direct_submission(store, org_a, path).id)
+    assert done.status == "failed" and engine.runs() == []
+    assert clinical_counts(clinical_conn, org_a["org_id"]) == NOTHING_RECORDED
+
+    ((reason, category, status, owner, next_retry_at, message),) = _exceptions(clinical_conn, org_a["order_id"])
+    assert (reason, category, status, owner) == (code, "validation_failure", "open", "lab_operator")
+    assert next_retry_at is None  # nothing retries a path that is wrong
+    assert (not path.strip() or path.strip() not in message) and str(
+        tmp_path
+    ) not in message  # the message does not echo the path
+
+    # the operator finds it on the worklist, with the reason that tells them what to fix
+    worklist = dao.list_open_exceptions(dao._create_system_session(uuid.UUID(str(org_a["org_id"]))))
+    assert [(e.reason_code, e.status, e.owner) for e in worklist] == [(code, "open", "lab_operator")]
+    # and the opening is in the exception's own history
+    assert [
+        row[0] for row in q(clinical_conn, "SELECT action FROM exception_events WHERE org_id = %s", (org_a["org_id"],))
+    ] == ["open"]
+    # no other organisation sees anything
+    assert _exceptions(clinical_conn, org_b["order_id"]) == []
+
+
+@pytest.mark.parametrize("code", REJECTED)
+def test_processing_the_same_refused_path_again_reopens_nothing_new(
+    worker, store, clinical_conn, org_a, vcf_root, engine, tmp_path, code
+):
+    path = _rejected_path_cases(vcf_root, org_a, tmp_path)[code]
+    sub_id = _direct_submission(store, org_a, path).id
+    process(worker, store, sub_id)
+    assert store.requeue(sub_id)  # an operator (or anything else) puts it back
+    process(worker, store, sub_id)
+    rows = _exceptions(clinical_conn, org_a["order_id"])
+    assert len(rows) == 1 and rows[0][0] == code and rows[0][2] == "open"
+
+
+def test_an_unconfigured_root_is_an_operator_visible_deployment_fault(
+    worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch
+):
+    row = _direct_submission(store, org_a, vcf_path)
+    monkeypatch.delenv("GEPER_VCF_ROOT")
+    done = process(worker, store, row.id)
+    assert done.status == "failed" and engine.runs() == []
+    ((reason, category, status, owner, next_retry_at, _m),) = _exceptions(clinical_conn, org_a["order_id"])
+    assert (reason, category, status, owner, next_retry_at) == (
+        "vcf_root_not_configured",
+        "validation_failure",
+        "open",
+        "lab_operator",
+        None,
+    )
+
+
+def test_a_refused_path_is_never_picked_up_by_the_retry_scheduler(
+    worker, store, dao, clinical_conn, org_a, vcf_root, engine, tmp_path
+):
+    sub_id = _direct_submission(store, org_a, "notes.txt").id
+    process(worker, store, sub_id)
+    with clinical_conn.cursor() as cur:
+        cur.execute(
+            "UPDATE exceptions SET next_retry_at = now() - interval '1 hour' WHERE order_id = %s", (org_a["order_id"],)
+        )
+    clinical_conn.commit()
+    _h._run_retry_scheduler(dao, store, org_a)
+    assert store.get_submission(sub_id).status == "failed" and engine.runs() == []
+
+
+def test_every_path_policy_code_has_an_owner_and_a_non_transient_category():
+    from api.vcf_paths import _PUBLIC_MESSAGES
+    from clinical.models.exception import REASON_CODE_TO_CATEGORY, REASON_CODE_TO_OWNER, ExceptionReasonCode
+
+    for code in _PUBLIC_MESSAGES:
+        member = ExceptionReasonCode(code)  # raises if the policy grows a code the clinical vocabulary lacks
+        assert REASON_CODE_TO_OWNER[member] == "lab_operator"
+        assert REASON_CODE_TO_CATEGORY[member].value == "validation_failure"

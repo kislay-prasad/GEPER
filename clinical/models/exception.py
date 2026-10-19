@@ -117,6 +117,10 @@ class ExceptionReasonCode(str, enum.Enum):
     # clinical records (2026-09-12, D0). Not a Bij AI error: reporting it as
     # bij_ai_error_other would send the lab looking at the engine.
     CLINICAL_RECORD_WRITE_FAILED = "clinical_record_write_failed"
+    # The VCF's content differed after the engine ran from what the worker hashed before it (or the file could no
+    # longer be read from its approved path). The result describes bytes we cannot vouch for, so nothing is recorded
+    # and nothing retries it: a person looks at who touched the file.
+    VCF_CHANGED_DURING_RUN = "vcf_changed_during_run"
 
 
 # Reason code to owner mapping (immutable after creation)
@@ -151,6 +155,7 @@ REASON_CODE_TO_OWNER = {
     ExceptionReasonCode.BIJ_AI_TIMEOUT: "lab_operator",
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: "lab_operator",
     ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: "lab_operator",
+    ExceptionReasonCode.VCF_CHANGED_DURING_RUN: "lab_operator",
 }
 
 # Reason code to category mapping (immutable after creation)
@@ -195,6 +200,8 @@ REASON_CODE_TO_CATEGORY = {
     # fresh record) is safe -- the worker's idempotency lookup makes a
     # retry that finds an earlier record adopt it instead of duplicating.
     ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
+    # Not transient: re-running on a file someone is changing would not make the record trustworthy.
+    ExceptionReasonCode.VCF_CHANGED_DURING_RUN: ExceptionCategory.INTERPRETATION_FAILURE,
 }
 
 

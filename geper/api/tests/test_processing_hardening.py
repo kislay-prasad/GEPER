@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from api import submission_worker
 from api.tests import test_processing_handoff as _h
 from api.tests import test_vcf_paths as _paths
 from api.tests.conftest import place_vcf
@@ -465,3 +466,89 @@ def test_escalation_in_one_organisation_is_recorded_only_there(
     _escalate(api, worker, store, dao, clinical_conn, org_a, vcf_path, engine, monkeypatch)
     assert len(_escalation_records(clinical_conn, org_a["org_id"])) == 1
     assert _escalation_records(clinical_conn, org_b["org_id"]) == []
+
+
+# ═══ 4. the VCF is the file that was hashed (post-run verification) ═══
+
+
+def _assert_nothing_published(conn, org, store, sub_id, output_root):
+    assert clinical_counts(conn, org["org_id"]) == NOTHING_RECORDED
+    assert not (output_root / sub_id / submission_worker.CLINICAL_LINK_FILENAME).exists()
+    assert store.get_submission(sub_id).interpretation_id is None
+
+
+def test_an_unchanged_vcf_passes_the_post_run_check(api, worker, store, clinical_conn, org_a, vcf_path, engine):
+    done = process(worker, store, submit(api(org_a["org_id"], KEY_A), org_a, vcf_path))
+    assert done.status == "complete", done.error_message
+    assert "vcf_changed_during_run" not in exception_codes(clinical_conn, org_a["order_id"])
+
+
+@pytest.mark.parametrize("mode", ["modify_vcf", "replace_vcf", "delete_vcf"])
+def test_a_vcf_changed_replaced_or_removed_while_the_engine_runs_fails_the_submission_and_publishes_nothing(
+    api, worker, store, clinical_conn, org_a, org_b, vcf_path, engine, output_root, mode
+):
+    engine.mode(mode)
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    done = process(worker, store, sub_id)
+    assert done.status == "failed" and len(engine.runs()) == 1
+    assert "changed while" in done.error_message and "nothing was recorded" in done.error_message
+    assert exception_codes(clinical_conn, org_a["order_id"]) == ["vcf_changed_during_run"]
+    _assert_nothing_published(clinical_conn, org_a, store, sub_id, output_root)
+    assert clinical_counts(clinical_conn, org_b["org_id"]) == NOTHING_RECORDED  # no other organisation is touched
+
+
+def test_the_message_names_no_path_and_no_file_content(api, worker, store, org_a, vcf_path, engine):
+    engine.mode("modify_vcf")
+    done = process(worker, store, submit(api(org_a["org_id"], KEY_A), org_a, vcf_path))
+    assert str(vcf_path) not in done.error_message and "43093450" not in done.error_message
+    assert "##fileformat" not in done.error_message
+
+
+def test_a_changed_vcf_is_an_operator_matter_and_is_never_retried_automatically(
+    api, worker, store, dao, clinical_conn, org_a, vcf_path, engine
+):
+    engine.mode("modify_vcf")
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, vcf_path)
+    assert process(worker, store, sub_id).status == "failed"
+    ((reason, category, status, attempts, next_retry_at, _created),) = schedule_rows(clinical_conn, org_a["order_id"])
+    assert (reason, category, status, attempts) == ("vcf_changed_during_run", "interpretation_failure", "open", 0)
+    assert next_retry_at is None  # nothing is scheduled
+    with clinical_conn.cursor() as cur:  # even if something marked it due, it is outside the scheduler's selection
+        cur.execute(
+            "UPDATE exceptions SET next_retry_at = now() - interval '1 hour' WHERE order_id = %s", (org_a["order_id"],)
+        )
+    clinical_conn.commit()
+    for _ in range(2):
+        _h._run_retry_scheduler(dao, store, org_a)
+    assert store.get_submission(sub_id).status == "failed" and len(engine.runs()) == 1
+
+
+def test_a_link_retargeted_during_the_run_is_caught_by_the_path_check(
+    api, worker, store, clinical_conn, org_a, vcf_root, engine, output_root, tmp_path, monkeypatch
+):
+    """The VCF's path stays the same but now resolves outside the organisation's directory (a directory swapped for a
+    link while the engine runs): the post-run check re-applies the path policy before it hashes anything."""
+    org_dir = vcf_root / str(org_a["org_id"])
+    (org_dir / "batch").mkdir(parents=True)
+    path = org_dir / "batch" / "x.vcf"
+    path.write_text(VCF_TEXT, encoding="utf-8")
+    sub_id = submit(api(org_a["org_id"], KEY_A), org_a, path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "x.vcf").write_text(VCF_TEXT, encoding="utf-8")  # identical bytes: only the path policy can object
+
+    real_spawn = submission_worker.spawn_tracked
+
+    def swap_during_run(*args, **kwargs):
+        proc = real_spawn(*args, **kwargs)
+        proc.wait()
+        path.unlink()
+        (org_dir / "batch").rmdir()
+        _paths._link_directory(org_dir / "batch", elsewhere)
+        return proc
+
+    monkeypatch.setattr(submission_worker, "spawn_tracked", swap_during_run)
+    done = process(worker, store, sub_id)
+    assert done.status == "failed" and "storage policy" in done.error_message
+    assert exception_codes(clinical_conn, org_a["order_id"]) == ["vcf_changed_during_run"]
+    _assert_nothing_published(clinical_conn, org_a, store, sub_id, output_root)

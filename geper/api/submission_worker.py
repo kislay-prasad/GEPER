@@ -362,6 +362,26 @@ class InterpretationWorker:
         self.store.update_status(submission.id, "failed", error_message=error_msg, failure_code=reason_code)
         self._create_submission_failure_exception(submission, reason_code, error_msg)
 
+    def _vcf_changed_since_preflight(self, submission, link: "_ClinicalLink") -> Optional[str]:
+        """
+        None when the submitted VCF is still the file preflight hashed; otherwise a short reason (no file content, no
+        path). The path policy is applied again first, so a link retargeted during the run is caught as well as a
+        content change, and the hash is taken from the same validated path preflight used.
+        """
+        try:
+            resolved = str(resolve_vcf_path(submission.vcf_path, link.org_id))
+        except VcfPathError as exc:
+            return f"its path no longer passes the storage policy: {exc.code}"
+        if os.path.normcase(resolved) != os.path.normcase(submission.vcf_path):
+            return "its path now resolves somewhere else"
+        try:
+            now_hash = _sha256_file(resolved)
+        except OSError as exc:
+            return f"it could not be read again: {type(exc).__name__}"
+        if now_hash != link.vcf_hash:
+            return "its content differs from the content hashed before the run"
+        return None
+
     def _set_aside_stale_outputs(self, output_dir: str, attempt: int) -> list:
         """
         Make this attempt's output directory its own. Anything an earlier attempt left under the names the engine and
@@ -776,6 +796,17 @@ class InterpretationWorker:
                     error_msg += f": {stderr[:500]}"
                 logger.error(f"[{submission.id}] {error_msg}")
                 self._fail_engine(submission, "bij_ai_error_other", error_msg)
+                return True
+
+            # The engine read the VCF at some point during the run; the record will say it analysed the file whose hash
+            # was taken before it started. Check that it still is that file, from the same approved path, before any
+            # output is read or accepted. This DETECTS a change that is still in place now; it cannot prove which
+            # bytes the engine itself read (a file changed and restored mid-run is not seen).
+            changed = self._vcf_changed_since_preflight(submission, link)
+            if changed:
+                error_msg = f"The VCF changed while {SHORT_NAME} was running ({changed}); nothing was recorded."
+                logger.error(f"[{submission.id}] {error_msg}")
+                self._fail_engine(submission, "vcf_changed_during_run", error_msg)
                 return True
 
             # The run document is a FILE geper/main.py already writes

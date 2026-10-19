@@ -279,12 +279,17 @@ def test_concurrent_duplicate_is_reconciled_not_failed(worker, store, dao, clini
 
 
 def test_record_failure_leaves_no_clinical_rows_and_raises_its_own_exception(
-    worker, store, clinical_conn, org_a, vcf_path
+    worker, store, clinical_conn, org_a, vcf_path, monkeypatch
 ):
     """The VCF is rewritten while the engine runs: the record is refused
     (the run analysed other bytes), the submission fails, nothing is in the
     clinical record, and the lab gets a clinical_record_write_failed
-    exception on the order."""
+    exception on the order.
+
+    This is the DATABASE's own refusal, the second line of defence. The worker's post-run check now catches this
+    change first (test_processing_hardening.py, vcf_changed_during_run), so that check is switched off here to keep
+    the second line under test."""
+    monkeypatch.setattr(InterpretationWorker, "_vcf_changed_since_preflight", lambda *args, **kwargs: None)
 
     def vcf_changes_during_the_run():
         Path(vcf_path).write_text(VCF_TEXT + "chr1\t2000\t.\tG\tC\t30\tPASS\t.\tGT\t0/1\n", encoding="utf-8")

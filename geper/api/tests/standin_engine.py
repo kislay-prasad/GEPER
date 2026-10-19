@@ -19,7 +19,9 @@ WHAT IT HONOURS, AND HOW THAT IS KEPT HONEST
 BEHAVIOUR is chosen with environment variables (inherited through `spawn_tracked`):
   STANDIN_MODE  success (default) | exit1 | exit130 | no_output | malformed_json | empty_object | hang | slow |
                 rendezvous | fail_once | partial_fail | incomplete | count_mismatch | claims_review | wrong_vcf |
-                variants_not_a_list
+                variants_not_a_list | modify_vcf | replace_vcf | delete_vcf
+  (modify_vcf appends a line to --vcf, replace_vcf swaps another file in under the same name, delete_vcf removes it;
+   each then writes a perfectly valid result, so only the worker's post-run check can catch it)
   STANDIN_LOG   a file; one JSON line per invocation (argv, mode, pid) is appended BEFORE any work, so a test can count
                 runs and read the arguments the worker actually passed
   STANDIN_HEARTBEAT   `hang` rewrites this file every 0.1 s, so a test can show the process was really terminated
@@ -220,6 +222,20 @@ def main() -> int:
         if mode == "partial_fail":
             sys.stderr.write("PipelineError: stand-in engine failed after writing a checkpoint\n")
             return 1
+        return 0
+    if mode in ("modify_vcf", "replace_vcf", "delete_vcf"):
+        vcf = Path(args.vcf)
+        document = _success_document(args)  # read the VCF as it was, before it is touched
+        if mode == "modify_vcf":
+            with open(vcf, "a", encoding="utf-8") as fh:
+                fh.write("17\t43093450\t.\tC\tT\t60\tPASS\t.\tGT\t0/1\n")
+        elif mode == "replace_vcf":
+            other = vcf.with_name(vcf.name + ".replacement")
+            other.write_text(vcf.read_text(encoding="utf-8") + "# a different file\n", encoding="utf-8")
+            os.replace(other, vcf)
+        else:
+            vcf.unlink()
+        _write_results(args.output_dir, json.dumps(document))
         return 0
     if mode == "hang":
         # a heartbeat a test can watch: it stops changing the moment this process is really gone

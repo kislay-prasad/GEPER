@@ -79,6 +79,56 @@ docker compose -f docker-compose.processing.yml --env-file .env.processing stop 
 - **Logs.** json-file, rotated (20 MB x 5). Worker logs include failure messages and engine stderr, which can contain
   file paths: treat them as sensitive and restrict who can read them. This change did not audit them for patient data.
 
+## Local smoke test on Windows (Docker Desktop)
+
+**Status: the steps below have NOT been run.** The override file has been checked with `docker compose config` only and has
+not been validated against a running Docker engine; the image has not been built here. Treat it as the intended
+procedure, and record what actually happens the first time.
+
+- **Two separate Compose projects.** `docker-compose.clinical.yml` is the project `geper-clinical` (database, one-shot
+  `clinical-init`, clinical API). `docker-compose.processing.yml` is a second project: run it with `-p geper-processing`.
+  They share no network, and neither file refers to the other.
+- **A local-only network override is needed to use the bundled clinical database.** The bundled database sits on the
+  clinical project's `db` network, which is `internal: true` and publishes no port; the processing project's default network
+  cannot reach it. Join the two workers (not the API, which does not use the database) to that network from a file kept
+  **outside the repository** (for example `C:\geper-local\processing.local.override.yml`):
+
+  ```yaml
+  services:
+    processing-worker:
+      networks: [default, clinical_db]
+    processing-retry-worker:
+      networks: [default, clinical_db]
+  networks:
+    clinical_db:
+      external: true
+      name: geper-clinical_db      # confirm with `docker network ls` once the clinical project exists
+  ```
+
+  Pass it as a second `-f`. The connection string written by `scripts/clinical-secrets.sh` already uses the host
+  `clinical-db`, which resolves on that network. The workers read `CLINICAL_DSN` (not a `_FILE` secret), so copy the value
+  from `secrets/clinical_dsn` into `.env.processing` without printing it.
+- **Use a named volume for the VCF root in the first Docker Desktop test.** The services refuse a `GEPER_VCF_ROOT` that is
+  world-writable, and a bind mount of a Windows folder is expected to be presented to the container with open permissions
+  (not yet confirmed here). In the same override file, mount a Docker named volume over `/data/vcf` instead (compose merges
+  by container path, so it replaces the bind mount), and copy the synthetic VCFs into `<org-uuid>/` in it with a one-off
+  container. `GEPER_VCF_HOST_DIR` must still be set to any value, because the base file requires it.
+
+  ```yaml
+  services:
+    processing-api:         { volumes: ["geper_vcf:/data/vcf:ro"] }
+    processing-worker:      { volumes: ["geper_vcf:/data/vcf:ro"] }
+    processing-retry-worker: { volumes: ["geper_vcf:/data/vcf:ro"] }
+  volumes:
+    geper_vcf:
+  ```
+- **Keep secrets out of the build context.** Generate them outside the repository (`CLINICAL_SECRETS_DIR`, set in
+  `.env.clinical`). `.dockerignore` excludes `secrets/`, nested `.env*` files, keys, SQLite databases and the local
+  `data/`, `output/` and submission-state folders, because the root image is built with `COPY . /app`.
+- **First engine: the stand-in.** To exercise the plumbing without model downloads, set
+  `BIJ_AI_CLI_PATH=/app/geper/api/tests/standin_engine.py` in `.env.processing` (the image is expected to contain the test
+  files; unverified). The real engine needs the models and outbound network access.
+
 ## Limitations
 
 - **Single host.** The processing claim is an atomic update in a SQLite file. Run one `processing-worker` per store and

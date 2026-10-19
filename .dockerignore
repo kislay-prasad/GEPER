@@ -69,6 +69,33 @@ docker-compose.yml
 .env.*
 geper/config.yaml
 !geper/config.yaml.example
+# A pattern WITHOUT `**/` matches only the context ROOT (see the `*.log` note above), so `.env` / `.env.*` miss a nested
+# `geper/.env`. The `**/` forms are listed beside the root ones, as for `*.log`.
+**/.env
+**/.env.*
+# scripts/clinical-secrets.sh writes the clinical database passwords, both connection strings and the TOTP keys to
+# ./secrets by default. `COPY . /app` would put them into an image layer readable by anyone who can pull the image.
+secrets/
+**/secrets/
+*.pem
+**/*.pem
+*.key
+**/*.key
+
+# --- Local run state: patient-linked data that is not source ------------------
+# The SQLite submission store and the engine's per-submission output (the API's defaults sit INSIDE the tree, under
+# geper/api/), and the host folders docker-compose.yml bind-mounts for VCFs and results (./data, ./output). Databases
+# are .gitignored (`*.db`, `*.sqlite`), so a fresh clone has none and no build can depend on one.
+# Checked against `git ls-files`: nothing tracked matches any rule in this block or the one above, so none of them can
+# omit a file the build needs.
+data/
+output/
+geper/api/.submissions.db*
+geper/api/.submission_outputs/
+*.db
+**/*.db
+*.sqlite
+**/*.sqlite
 
 # --- Offline model-cache seed ------------------------------------------
 # NOT an optimisation, and do not remove it to "let the image carry the

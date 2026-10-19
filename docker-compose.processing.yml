@@ -9,7 +9,7 @@
 #     docker compose -f docker-compose.processing.yml --env-file .env.processing up -d
 #
 # This file does NOT start the clinical database or the clinical service (docker-compose.clinical.yml does). Point
-# CLINICAL_DSN at a clinical database that is already provisioned.
+# CLINICAL_DSN at a clinical database that is already provisioned. Only the two workers receive it.
 #
 # SINGLE HOST ONLY. The three services share one SQLite submission store on one volume; its processing claim is not safe
 # across hosts. Do not scale `processing-worker` beyond one container per store, and do not split them across machines.
@@ -25,8 +25,9 @@ x-processing-service: &processing-service
     - ALL
   security_opt:
     - no-new-privileges:true
+  # Settings all three services share. CLINICAL_DSN is deliberately NOT here: only the two workers talk to the clinical
+  # database, and the API (the one network-facing service) has no use for its credential.
   environment: &processing-env
-    CLINICAL_DSN: ${CLINICAL_DSN:?set CLINICAL_DSN to the clinical database DSN (see .env.processing.example)}
     GEPER_SUBMISSION_STORE_PATH: /data/state/submissions.db
     GEPER_VCF_ROOT: /data/vcf
     GEPER_SUBMISSION_OUTPUT_ROOT: /data/output
@@ -69,6 +70,7 @@ services:
     command: ["python", "-m", "api.submission_worker"]
     environment:
       <<: *processing-env
+      CLINICAL_DSN: ${CLINICAL_DSN:?set CLINICAL_DSN to the clinical database DSN (see .env.processing.example)}
       GEPER_HEARTBEAT_FILE: /tmp/geper-submission_worker.heartbeat
       # Optional engine settings are passed straight through (see .env.processing.example).
       BIJ_AI_CLI_PATH: ${BIJ_AI_CLI_PATH:-/app/geper/main.py}
@@ -101,6 +103,7 @@ services:
     command: ["python", "-m", "api.exception_retry_worker"]
     environment:
       <<: *processing-env
+      CLINICAL_DSN: ${CLINICAL_DSN:?set CLINICAL_DSN to the clinical database DSN (see .env.processing.example)}
       GEPER_HEARTBEAT_FILE: /tmp/geper-retry_worker.heartbeat
       EXCEPTION_RETRY_POLL_INTERVAL: ${EXCEPTION_RETRY_POLL_INTERVAL:-30}
     stop_grace_period: 30s

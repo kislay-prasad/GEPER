@@ -96,6 +96,28 @@ def test_the_compose_file_holds_no_secret_and_requires_the_ones_it_needs(compose
         assert re.search(rf"\$\{{{variable}:\?", text), f"{variable} is not required"
 
 
+def test_only_the_two_workers_receive_the_clinical_database_credential(compose):
+    """The API is the network-facing service and neither reads nor writes the clinical database (it uses the SQLite
+    store and the VCF root), so it must not be handed the DSN."""
+    services = compose["services"]
+    assert "CLINICAL_DSN" not in services["processing-api"]["environment"]
+    for name in ("processing-worker", "processing-retry-worker"):
+        assert services[name]["environment"]["CLINICAL_DSN"].startswith("${CLINICAL_DSN:?"), name
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert len(re.findall(r"^\s+CLINICAL_DSN:", text, re.MULTILINE)) == 2  # exactly the two workers set it as a key
+
+
+def test_the_api_starts_and_is_ready_without_the_clinical_database_setting(good_config, monkeypatch):
+    """What makes removing it safe: nothing the API runs reads CLINICAL_DSN."""
+    set_dev_insecure(monkeypatch, False)
+    monkeypatch.delenv("CLINICAL_DSN")
+    assert service_health.validate("api") == []
+    with TestClient(app) as client:
+        assert client.get("/readyz").json() == {"status": "ready"}
+    # and the workers still refuse without it
+    assert "clinical_dsn_missing" in codes("submission_worker") and "clinical_dsn_missing" in codes("retry_worker")
+
+
 def test_the_compose_file_keeps_the_storage_and_exposure_policy(compose):
     services = compose["services"]
     for name, service in services.items():

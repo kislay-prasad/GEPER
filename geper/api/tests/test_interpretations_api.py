@@ -35,7 +35,7 @@ SAMPLE = uuid.UUID("5a5a5a5a-0000-4000-8000-000000000004")
 def _body(**overrides):
     body = {
         "submission_key": "key-1",
-        "vcf_path": "/path/to/vcf",
+        "vcf_path": "input.vcf",
         "assembly": "hg38",
         "sample_ref": "sample-1",
         "consent_ref": "consent-1",
@@ -203,13 +203,13 @@ class TestPostInterpretations:
 
     def test_post_idempotency_returns_existing_queued(self, client, store):
         """POST with same submission_key returns existing submission."""
-        response1 = client.post("/interpretations", json=_body(submission_key="key-3", vcf_path="/path/1"))
+        response1 = client.post("/interpretations", json=_body(submission_key="key-3", vcf_path="one.vcf"))
         assert response1.status_code == 202
         id1 = response1.json()["id"]
 
         response2 = client.post(
             "/interpretations",
-            json=_body(submission_key="key-3", vcf_path="/path/2", sample_ref="sample-2", consent_ref="consent-2"),
+            json=_body(submission_key="key-3", vcf_path="two.vcf", sample_ref="sample-2", consent_ref="consent-2"),
         )
         assert response2.status_code == 200
         assert response2.json()["id"] == id1
@@ -268,7 +268,7 @@ class TestReplayIsAnsweredWith200NotAnother202:
         first = client.post("/interpretations", json=_body(submission_key="replayed-key"))
         second = client.post(
             "/interpretations",
-            json=_body(submission_key="replayed-key", vcf_path="/a/different/path"),
+            json=_body(submission_key="replayed-key", vcf_path="different.vcf"),
         )
 
         assert second.json()["id"] == first.json()["id"]

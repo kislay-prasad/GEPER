@@ -28,6 +28,27 @@ import pytest
 from clinical.tests import db_guard
 
 
+@pytest.fixture(autouse=True)
+def vcf_root(tmp_path, monkeypatch):
+    """
+    The one approved VCF root (`GEPER_VCF_ROOT`, see api/vcf_paths.py), fresh per test. A submitted VCF is only accepted
+    from inside its organisation's directory below it, so tests put theirs there with `place_vcf`.
+    """
+    root = tmp_path / "vcf-root"
+    root.mkdir()
+    monkeypatch.setenv("GEPER_VCF_ROOT", str(root))
+    return root
+
+
+def place_vcf(root, org_id, text, name="input.vcf"):
+    """Write a VCF into `org_id`'s directory under the approved root and return its path as a string."""
+    directory = root / str(org_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
 @pytest.fixture(scope="session")
 def clinical_dsn() -> str:
     dsn = os.getenv(db_guard.DSN_ENV)

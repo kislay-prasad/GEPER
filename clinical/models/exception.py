@@ -122,6 +122,16 @@ class ExceptionReasonCode(str, enum.Enum):
     # and nothing retries it: a person looks at who touched the file.
     VCF_CHANGED_DURING_RUN = "vcf_changed_during_run"
 
+    # The submitted vcf_path was refused by the storage policy (geper/api/vcf_paths.py) when the worker re-checked it
+    # before touching the file. The path is deliberately NOT in the exception text. VCF_ROOT_NOT_CONFIGURED is the
+    # deployment's fault (GEPER_VCF_ROOT unset or not a directory), the rest are the submission's.
+    VCF_ROOT_NOT_CONFIGURED = "vcf_root_not_configured"
+    VCF_PATH_INVALID = "vcf_path_invalid"
+    VCF_PATH_TRAVERSAL = "vcf_path_traversal"
+    VCF_PATH_OUTSIDE_ORGANISATION_DIRECTORY = "vcf_path_outside_organisation_directory"
+    VCF_PATH_NOT_A_VCF = "vcf_path_not_a_vcf"
+    VCF_PATH_NOT_A_FILE = "vcf_path_not_a_file"
+
 
 # Reason code to owner mapping (immutable after creation)
 REASON_CODE_TO_OWNER = {
@@ -156,6 +166,12 @@ REASON_CODE_TO_OWNER = {
     ExceptionReasonCode.BIJ_AI_ERROR_OTHER: "lab_operator",
     ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: "lab_operator",
     ExceptionReasonCode.VCF_CHANGED_DURING_RUN: "lab_operator",
+    ExceptionReasonCode.VCF_ROOT_NOT_CONFIGURED: "lab_operator",
+    ExceptionReasonCode.VCF_PATH_INVALID: "lab_operator",
+    ExceptionReasonCode.VCF_PATH_TRAVERSAL: "lab_operator",
+    ExceptionReasonCode.VCF_PATH_OUTSIDE_ORGANISATION_DIRECTORY: "lab_operator",
+    ExceptionReasonCode.VCF_PATH_NOT_A_VCF: "lab_operator",
+    ExceptionReasonCode.VCF_PATH_NOT_A_FILE: "lab_operator",
 }
 
 # Reason code to category mapping (immutable after creation)
@@ -202,6 +218,13 @@ REASON_CODE_TO_CATEGORY = {
     ExceptionReasonCode.CLINICAL_RECORD_WRITE_FAILED: ExceptionCategory.TRANSIENT_SUBMISSION_FAILURE,
     # Not transient: re-running on a file someone is changing would not make the record trustworthy.
     ExceptionReasonCode.VCF_CHANGED_DURING_RUN: ExceptionCategory.INTERPRETATION_FAILURE,
+    # Permanent until a person fixes the file's location or the deployment: never scheduled for automatic retry.
+    ExceptionReasonCode.VCF_ROOT_NOT_CONFIGURED: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_PATH_INVALID: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_PATH_TRAVERSAL: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_PATH_OUTSIDE_ORGANISATION_DIRECTORY: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_PATH_NOT_A_VCF: ExceptionCategory.VALIDATION_FAILURE,
+    ExceptionReasonCode.VCF_PATH_NOT_A_FILE: ExceptionCategory.VALIDATION_FAILURE,
 }
 
 

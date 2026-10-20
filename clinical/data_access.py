@@ -7630,6 +7630,7 @@ class DataAccess:
             row[0] for row in self._query("SELECT org_id FROM organisations WHERE disabled = false ORDER BY org_id")
         ]
 
+    @transactional
     @auditable(
         action="record_unlinked_submission_failure",
         resource_type="submission",

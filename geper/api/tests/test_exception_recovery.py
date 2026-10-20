@@ -258,6 +258,52 @@ def test_a_submission_with_no_order_at_all_is_recorded_too(worker, store, dao, c
     assert store.get_submission(row.id).status == "failed" and engine.runs() == []
 
 
+def committed_unlinked_records(clinical_dsn, org_id, submission_id):
+    """
+    The `submission_failed_unlinked` rows for one submission as ANOTHER database connection sees them. A row the worker
+    wrote but did not commit is invisible here; the tests above read through the worker's own connection, which sees
+    its own uncommitted writes, and so could not tell.
+    """
+    import psycopg
+
+    with psycopg.connect(clinical_dsn, connect_timeout=10) as other:
+        return other.execute(
+            "SELECT outcome, actor_role FROM audit_log WHERE org_id = %s AND action = 'submission_failed_unlinked' "
+            "AND resource_id = %s",
+            (org_id, submission_id),
+        ).fetchall()
+
+
+@pytest.mark.parametrize(
+    "scenario,expected_outcome",
+    [("order_does_not_exist", "order_not_found"), ("path_refused_with_a_foreign_order", "vcf_path_not_a_vcf")],
+)
+def test_the_unlinked_failure_record_is_committed_not_just_written_by_the_worker(
+    worker, store, dao, clinical_dsn, org_a, org_b, engine, scenario, expected_outcome
+):
+    """
+    The worker logs "recorded in the audit log as submission_failed_unlinked". That must be true for anyone else reading
+    the database, and it must survive what the worker loop does next (`DataAccess.ping()` rolls back whatever is pending).
+    Found on a real stack: the row was written, never committed, and rolled back by the next ping.
+    """
+    if scenario == "order_does_not_exist":
+        sub_id = direct_submission(store, org_a, "synthetic.vcf", order_id=uuid.uuid4()).id
+    else:
+        sub_id = direct_submission(store, org_a, "notes.txt", order_id=org_b["order_id"]).id
+    assert process(worker, store, sub_id).status == "failed" and engine.runs() == []
+
+    assert committed_unlinked_records(clinical_dsn, org_a["org_id"], sub_id) == [(expected_outcome, "System")]
+
+    assert dao.ping() is True  # what the worker loop does before its next pass
+    assert committed_unlinked_records(clinical_dsn, org_a["org_id"], sub_id) == [(expected_outcome, "System")]
+
+    assert store.requeue(sub_id)  # processing the same failure again records nothing more
+    process(worker, store, sub_id)
+    assert dao.ping() is True
+    assert committed_unlinked_records(clinical_dsn, org_a["org_id"], sub_id) == [(expected_outcome, "System")]
+    assert committed_unlinked_records(clinical_dsn, org_b["org_id"], sub_id) == []  # and nothing leaks to the other org
+
+
 # ═══ D: interrupted rows ═══
 
 

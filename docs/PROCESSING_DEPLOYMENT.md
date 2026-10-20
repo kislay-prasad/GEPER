@@ -29,15 +29,61 @@ Copy `.env.processing.example` to `.env.processing` (untracked) and fill it in. 
 | `BIJ_AI_CLI_PATH` | worker | The engine entry point; default `/app/geper/main.py` |
 | `EXCEPTION_RETRY_POLL_INTERVAL` | retry worker | Seconds between passes (default 30) |
 | `GEPER_WORKER_POLL_INTERVAL` | worker | Seconds between queue polls (default 5) |
+| `GEPER_AI_ONLY` | worker | BLAST policy. Compose default **`true`**: BLAST is disabled (see "BLAST policy and internet access"). `0`, `false`, `no` or `off` re-enable it |
 | `GEPER_NCBI_EMAIL`, `GEPER_NCBI_API_KEY`, `GEPER_BLAST_DATABASE`, `GEPER_ALPHAMISSENSE_*` | worker | Engine settings, as in `.env.example` |
 
 **VCF storage.** Create `<GEPER_VCF_HOST_DIR>/<organisation UUID>/` for each organisation. The platform writes files there
 from outside; the services mount it read-only. The directory must be readable by the container user (root in the image)
 and **not world-writable** — a world-writable root is refused at startup.
 
-**External dependencies.** The engine calls third-party services (Ensembl, NCBI, ClinVar and others) and downloads model
-weights on first use into the `geper_model_cache` and `geper_hf_cache` volumes; allow the worker outbound access, or
-pre-populate those volumes. The API and the retry worker need only the clinical database.
+## BLAST policy and internet access
+
+**BLAST is off by default in this deployment.** `docker-compose.processing.yml` gives the submission worker
+`GEPER_AI_ONLY=${GEPER_AI_ONLY:-true}`. In AI-only mode the engine makes no NCBI BLAST submission, no local `blastn` call
+and no BLAST cache lookup, and relies on the DNA/RNA/protein models plus the evidence databases below. The engine's own
+default is the opposite (`false`), so research use of the engine outside this compose file is unchanged. It is a setting,
+not a code change: put `GEPER_AI_ONLY=false` in `.env.processing` to turn BLAST back on. Only `0`, `false`, `no` and `off`
+mean "off"; any other value, including a typo, leaves AI-only on.
+
+**Why this is the default.** With no local BLAST database the engine's default (`auto`) submits **remote NCBI BLAST**. That
+call has no deadline of its own: in a trial run it was still waiting after 20 minutes. The only bound is the worker's
+30-minute kill, which is recorded as a transient failure (`bij_ai_timeout`) and **retried automatically, up to 6 times**,
+so one VCF could cause up to seven runs, each submitting its remote BLAST queries again. If you set `GEPER_AI_ONLY=false`,
+provide a local database (`GEPER_BLAST_DATABASE`; the image contains `blastn`) so BLAST runs locally, where the engine
+puts a time limit on each search.
+
+**Which services still need the internet.** AI-only mode removes only BLAST. The submission worker still calls out to the
+sources below (hosts as written in `geper/config.py`; which are contacted depends on the enabled sources and the variant).
+The API and the retry worker need only the clinical database and the local volumes.
+
+| Purpose | Hosts |
+|---|---|
+| Reference sequence and annotation | `rest.ensembl.org`, `ftp.ensembl.org` |
+| ClinVar, dbSNP | `eutils.ncbi.nlm.nih.gov`, `api.ncbi.nlm.nih.gov`, `ftp.ncbi.nlm.nih.gov` |
+| Population frequency | `gnomad.broadinstitute.org` |
+| Gene-disease validity, variant curation | `erepo.clinicalgenome.org`, `search.clinicalgenome.org`, `ftp.clinicalgenome.org`, `clingen.igib.res.in` |
+| Functional assays | `api.mavedb.org` |
+| Conservation | `api.genome.ucsc.edu` (PhyloP, PhastCons), `myvariant.info` (GERP) |
+| Protein and structure context | `rest.uniprot.org`, `ftp.uniprot.org`, `www.ebi.ac.uk` (InterPro), `alphafold.ebi.ac.uk` |
+| Phenotype and disease datasets (cached after the first download) | `purl.obolibrary.org` (HPO), `www.orphadata.com` (Orphanet), `ontology.jax.org` |
+| AlphaMissense catalogue (multi-GB, unless `GEPER_ALPHAMISSENSE_*_LOCAL` is set) | `storage.googleapis.com` |
+| Model weights on first use (unless the cache volume is pre-seeded) | Hugging Face for ESM2, RNA-FM, HyenaDNA and the plugin models (named in the model loaders, not `config.py`), and `github.com` |
+| Only with `GEPER_AI_ONLY=false` and no local database | NCBI remote BLAST |
+
+Model weights are downloaded into the `geper_model_cache` and `geper_hf_cache` volumes; allow the worker outbound access,
+or pre-populate those volumes. A source that cannot be reached is **recorded, not hidden**: the variant's entry carries the
+error text, the scores are `null` (never 0), and the report says the most recent query failed. Read the document's `errors`
+and the report's provenance section before relying on a result.
+
+**Known issue: UCSC conservation fails TLS verification in the image (investigated, not fixed here).** In the image built
+for this deployment, every request to `api.genome.ucsc.edu` failed with `CERTIFICATE_VERIFY_FAILED: unable to get local
+issuer certificate` (3 of 3 attempts; the engine retries each of its two conservation queries 3 times per variant). UCSC's
+certificate is issued by InCommon and chains to eMudhra's *emSign* root. The CA bundle that Python's `requests` uses
+(`certifi`, 117 roots) does not trust it; the container's system bundle (`/etc/ssl/certs/ca-certificates.crt`, 150 roots)
+does, and a request using that bundle succeeded. Other services verified normally. Until this is resolved, PhyloP and
+PhastCons evidence is missing (recorded as an error, as above). Verification must stay on; the likely remedy is to point
+`REQUESTS_CA_BUNDLE` at the system bundle for the worker, which widens the trust set for every `requests` call and so
+needs a deliberate decision and a test. It has not been applied.
 
 ## Start and stop
 

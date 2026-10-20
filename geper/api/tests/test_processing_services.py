@@ -118,6 +118,40 @@ def test_the_api_starts_and_is_ready_without_the_clinical_database_setting(good_
     assert "clinical_dsn_missing" in codes("submission_worker") and "clinical_dsn_missing" in codes("retry_worker")
 
 
+def test_the_blast_policy_reaches_only_the_submission_worker_defaults_on_and_stays_configurable(compose):
+    """Clinical workflow = AI-only (no BLAST). The engine's own default is untouched; the setting can be turned off."""
+    services = compose["services"]
+    assert services["processing-worker"]["environment"]["GEPER_AI_ONLY"] == "${GEPER_AI_ONLY:-true}"
+    for name in ("processing-api", "processing-retry-worker"):
+        assert "GEPER_AI_ONLY" not in services[name]["environment"], f"{name} does not run the engine"
+    assert "GEPER_AI_ONLY" in (REPO / ".env.processing.example").read_text(encoding="utf-8")
+    deployment_doc = (REPO / "docs" / "PROCESSING_DEPLOYMENT.md").read_text(encoding="utf-8")
+    assert "GEPER_AI_ONLY" in deployment_doc and "api.genome.ucsc.edu" in deployment_doc
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(None, False), ("true", True), ("1", True), ("yes", True), ("on", True)]
+    + [("false", False), ("0", False), ("no", False), ("off", False), ("FALSE", False), ("bogus", True)],
+)
+def test_the_engines_ai_only_switch_defaults_off_and_only_the_documented_values_turn_it_off(value, expected):
+    """The deployment docs say: only 0/false/no/off mean off, anything else (even a typo) means AI-only; unset = off."""
+    env = {k: v for k, v in os.environ.items() if k != "GEPER_AI_ONLY"}
+    if value is not None:
+        env["GEPER_AI_ONLY"] = value
+    env["PYTHONPATH"] = os.pathsep.join([str(REPO), str(GEPER_DIR)])
+    result = subprocess.run(
+        [sys.executable, "-c", "from config import CONFIG; print(CONFIG.AI_ONLY_MODE)"],
+        cwd=GEPER_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stderr[-400:]
+    assert result.stdout.strip().splitlines()[-1] == str(expected)
+
+
 def test_the_compose_file_keeps_the_storage_and_exposure_policy(compose):
     services = compose["services"]
     for name, service in services.items():

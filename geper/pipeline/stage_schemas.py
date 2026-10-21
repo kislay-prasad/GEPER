@@ -217,6 +217,27 @@ class StageEvidence(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _protein_stage_found(raw: Dict[str, Any]) -> bool:
+    """
+    `found_when` for the protein/ESM-2 stage (reached only when the stage is neither errored nor
+    top-level `skipped`).
+
+    - An `esm2` result is present                       -> FOUND (ESM-2 ran on a variant-specific peptide).
+    - A new-shape result whose `esm2_input.status` is
+      "skipped" and which has no `esm2` result           -> NOT FOUND: the legacy-window translation may
+      exist, but ESM-2 produced no evidence (see `pipeline/variant_peptides.py` skip codes).
+    - Anything else, including old results that predate
+      `esm2_input`                                       -> FOUND, exactly as before ("not skipped already
+      means real translation data exists").
+    """
+    if raw.get("esm2") is not None:
+        return True
+    esm2_input = raw.get("esm2_input")
+    if isinstance(esm2_input, dict) and esm2_input.get("status") == "skipped":
+        return False
+    return True
+
+
 class RawEvidenceBundle(BaseModel):
     """
     The validated form of what `report/json_builder.py
@@ -272,7 +293,7 @@ class RawEvidenceBundle(BaseModel):
             clinvar=StageEvidence.from_raw(clinvar_result),
             dbsnp=StageEvidence.from_raw(dbsnp_result),
             # Not a lookup -- see StageEvidence.from_raw's docstring.
-            protein=StageEvidence.from_raw(protein_result, found_when=lambda r: True),
+            protein=StageEvidence.from_raw(protein_result, found_when=_protein_stage_found),
             blast=StageEvidence.from_raw(blast_result, found_when=lambda r: (r.get("hit_count") or 0) > 0),
             alphamissense=StageEvidence.from_raw(alphamissense_result),
             mmsplice=StageEvidence.from_raw(mmsplice_result, found_key="predicted"),

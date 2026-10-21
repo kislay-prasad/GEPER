@@ -1581,8 +1581,16 @@ class ReportGenerator:
                 f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._"
             )
         elif protein_result.get("skipped"):
-            lines.append(f"_Skipped: {protein_result.get('reason', 'not applicable')}._")
-        else:
+            # New-shape skip reasons are full sentences ending in "."; drop it so the closing "._" below
+            # does not double it. Old-shape reasons carry no trailing period, so their output is unchanged.
+            reason = str(protein_result.get("reason", "not applicable")).rstrip()
+            if reason.endswith("."):
+                reason = reason[:-1]
+            lines.append(f"_Skipped: {reason}._")
+        elif protein_result.get("esm2_input") is None:
+            # Result file written before ESM-2 was given a transcript-derived input (no `esm2_input`
+            # key): in those runs the local-window translation below WAS what ESM-2 received, so the
+            # original wording is kept verbatim and must not claim otherwise.
             translation = protein_result.get("translation", {})
             lines.append(f"- **Reference protein (local window):** `{translation.get('ref_protein') or 'n/a'}`")
             lines.append(f"- **Alternate protein (local window):** `{translation.get('alt_protein') or 'n/a'}`")
@@ -1593,6 +1601,37 @@ class ReportGenerator:
                 "criteria (BP7/BP1/PS1/PM5/PVS1) in the Clinical Report above for that._"
             )
             esm = protein_result.get("esm2", {})
+            if esm:
+                lines.append(f"- Embedding dim: {esm.get('embedding_dim', 'n/a')}")
+        else:
+            esm_input = protein_result.get("esm2_input") or {}
+            esm = protein_result.get("esm2", {})
+            if esm_input.get("basis") == "transcript_cds":
+                # Variant-specific ESM-2 input, built from the transcript's coding sequence.
+                if esm_input.get("status") == "used":
+                    lines.append(
+                        f"- **ESM-2 input (transcript {esm_input.get('transcript_id', 'n/a')}, "
+                        f"codon {esm_input.get('codon_number', 'n/a')}, "
+                        f"{esm_input.get('ref_aa', '?')}>{esm_input.get('alt_aa', '?')}, "
+                        f"residues {esm_input.get('window_start', '?')}-{esm_input.get('window_end', '?')}):** "
+                        f"`{esm_input.get('alt_peptide') or 'n/a'}`"
+                    )
+                else:
+                    lines.append(
+                        f"_ESM-2 was not run for this variant ({esm_input.get('skip_code', 'unknown')}): "
+                        f"{esm_input.get('skip_reason', protein_result.get('reason', 'not applicable'))}_"
+                    )
+            elif not esm:
+                lines.append(f"_ESM-2 was not run: {protein_result.get('reason', 'not applicable')}_")
+            translation = protein_result.get("translation", {})
+            lines.append(f"- **Reference protein (legacy local window):** `{translation.get('ref_protein') or 'n/a'}`")
+            lines.append(f"- **Alternate protein (legacy local window):** `{translation.get('alt_protein') or 'n/a'}`")
+            lines.append(
+                "  - _Translated from the first start codon found in a short flanking DNA window "
+                "(no exon/splicing/strand awareness); retained only for the PVS1 fallback and NOT "
+                "given to ESM-2. It is NOT the transcript-verified consequence -- see the ACMG "
+                "criteria (BP7/BP1/PS1/PM5/PVS1) in the Clinical Report above for that._"
+            )
             if esm:
                 lines.append(f"- Embedding dim: {esm.get('embedding_dim', 'n/a')}")
         lines.append("")

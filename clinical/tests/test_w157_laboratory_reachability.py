@@ -1748,6 +1748,10 @@ class TestTheRouteCensusGrewByExactlyTwo:
             # Stage 3. THE EIGHTH MODULE -- the review surface. Added for the
             # same reason: the set is what keeps the needle honest.
             "clinical/review_endpoints.py",
+            # Genome Analysis, Phase 1. THE NINTH MODULE -- two read-only staff
+            # routes. Added for the same reason as every module above: the set is
+            # what keeps the needle honest.
+            "clinical/genome_endpoints.py",
         }
         # The route census keeps that list honest: every served route is
         # defined in one of those eight. 23 at 44d624b; 26 from w162, which
@@ -1760,7 +1764,8 @@ class TestTheRouteCensusGrewByExactlyTwo:
         # 42 from the human-tool read API: four GETs, on `endpoints.py` and `review_endpoints.py`,
         # both already in the set above, so the needle's search is not narrowed.
         # 43 from the read-only sign-off state route, on `review_endpoints.py`, already in the set above.
-        assert len(served_routes(app)) == 43, served_routes(app)
+        # 45 from Genome Analysis Phase 1: two read-only staff GETs, on `genome_endpoints.py`, added to the set above.
+        assert len(served_routes(app)) == 45, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

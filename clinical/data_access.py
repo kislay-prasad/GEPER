@@ -4082,6 +4082,121 @@ class DataAccess:
             raise NotFoundError(REPORT_NOT_FOUND)
         return {"report_id": row[0], "order_id": row[1], "released_at": row[2], "is_retracted": row[4]}
 
+    # ── Genome Analysis, Phase 1: chromosome-level read of small variants ────
+    #
+    # TWO READERS, TWO TRUST MODELS. Both return the raw `run_document`; neither
+    # summarises. The pure summariser in clinical/genome_analysis does that in
+    # the handler, so this layer decides only WHO MAY SEE WHICH DOCUMENT.
+
+    GENOME_READ_ROLES = ("Orderer", "Interpreter", "Approver")
+
+    @auditable(
+        action="portal_genome_read",
+        resource_type="report",
+        requires_session=False,
+        auditable=False,
+        reason="see get_my_patient_record -- the same open ruling covers this method",
+    )
+    @transactional
+    def list_my_genome_analyses(self, patient_session: "PatientSession") -> list[dict[str, Any]]:
+        """
+        The run documents behind the authenticated patient's own RELEASED,
+        NOT-RETRACTED reports, one entry per interpretation. TAKES NO
+        IDENTIFIER OF ANY KIND, and issues ONE statement.
+
+        THE STATEMENT IS THE SHARED RELEASED-REPORTS ONE (patient and
+        organisation bound at the `patients` anchor, state 'released' AND a
+        patient_portal release_events row), so this and the report readers
+        cannot disagree about "released" and "mine". The document arrives in
+        the same row as the release facts; there is no second lookup keyed on
+        an interpretation id. The anchor patient is selected back and checked
+        against the session, so a row that is not the caller's own raises
+        instead of being returned.
+
+        A retracted report contributes nothing. An interpretation reached
+        through several released reports (an amendment shares it) appears once.
+
+        THE DOCUMENT IS RAW PIPELINE OUTPUT, and the HTTP layer MUST NOT hand
+        it, or counts or coordinates derived from it, to a patient: report
+        release authorises the report document, not this. See
+        clinical/genome_endpoints.py.
+        """
+        self._require_patient_session(patient_session)
+        rows = self._query(
+            self._MY_RELEASED_REPORTS_SQL + " ORDER BY rel.first_released_at, rep.id",
+            (patient_session.patient_id, patient_session.org_id),
+        )
+        grouped: dict[Any, dict[str, Any]] = {}
+        for r in rows:
+            if r[7] != patient_session.patient_id:
+                raise AuthorizationError("Not permitted.")
+            if r[4]:  # is_retracted
+                continue
+            document = json.loads(r[6]) if isinstance(r[6], str) else r[6]
+            entry = grouped.setdefault(r[5], {"report_ids": [], "released_at": r[2], "run_document": document})
+            entry["report_ids"].append(r[0])
+        return list(grouped.values())
+
+    @auditable(
+        action="genome_read",
+        resource_type="patient",
+        requires_session=True,
+        resource_id_param="patient_id",
+    )
+    @transactional
+    def list_patient_genome_analyses(self, session: Session, patient_id: uuid.UUID) -> list[dict[str, Any]]:
+        """
+        Staff read: every non-tombstoned interpretation reachable from a patient
+        IN THE CALLER'S ORGANISATION, whatever the state of its reports, each
+        with the report states and whether it has been released (and not
+        retracted) to the patient portal.
+
+        AUDITED (spec 17.1: every read of a patient record). The row records
+        actor, organisation, action, the patient id and the outcome -- including
+        a refusal -- and NO `details`: nothing about the genome is written to an
+        append-only log.
+
+        The role gate is the FIRST statement, so a 403 is a function of the
+        caller's roles alone and says nothing about whether the patient exists.
+        Every miss -- no such patient, another organisation's patient -- is the
+        same NotFoundError. Administrator, Lab technician and Auditor are not in
+        `GENOME_READ_ROLES`: genomic content is clinical, and none of those
+        roles is (spec: a technician sees samples and QC, an auditor the audit
+        trail, not clinical content).
+        """
+        self._require_any_role(session, self.GENOME_READ_ROLES)
+        exists = self._query_one(
+            "SELECT 1 FROM patients WHERE patient_id = %s AND org_id = %s", (patient_id, session.org_id)
+        )
+        if exists is None:
+            raise NotFoundError(PATIENT_NOT_FOUND)
+        rows = self._query(
+            "SELECT i.id, i.run_document, i.created_at, "
+            "       COALESCE(array_agg(DISTINCT rep.state) FILTER (WHERE rep.id IS NOT NULL), '{}'), "
+            "       COALESCE(bool_or(rep.state = 'released' "
+            "                        AND EXISTS (SELECT 1 FROM release_events re "
+            "                                     WHERE re.org_id = rep.org_id AND re.report_id = rep.id "
+            "                                       AND re.consumer = 'patient_portal') "
+            "                        AND NOT EXISTS (SELECT 1 FROM report_retractions rr "
+            "                                         WHERE rr.org_id = rep.org_id AND rr.report_id = rep.id)), "
+            "                FALSE) "
+            + self._PATIENT_INTERPRETATION_CHAIN
+            + "LEFT JOIN reports rep  ON rep.org_id = i.org_id AND rep.interpretation_id = i.id "
+            "WHERE p.patient_id = %s AND p.org_id = %s AND i.tombstoned_at IS NULL "
+            "GROUP BY i.id ORDER BY i.created_at, i.id",
+            (patient_id, session.org_id),
+        )
+        return [
+            {
+                "interpretation_id": r[0],
+                "run_document": json.loads(r[1]) if isinstance(r[1], str) else r[1],
+                "created_at": r[2],
+                "report_states": sorted(r[3]),
+                "released_to_patient": bool(r[4]),
+            }
+            for r in rows
+        ]
+
     # ── w136: the patient's own released reports, AS A SERIES ────────────────
     #
     # WHAT A PATIENT TREND IS IN THIS MODEL, AND WHAT IT IS NOT. The held
@@ -4230,17 +4345,32 @@ class DataAccess:
     # therefore the FIRST PORTAL release, which is what the patient is told. The
     # retention clock (first delivery of ANY kind) and the retraction debts
     # (one per distinct consumer) deliberately still read every release.
-    _MY_RELEASED_REPORTS_SQL = (
-        "SELECT rep.id, o.order_id, rel.first_released_at, sup.amends_report_id, "
-        "       EXISTS (SELECT 1 FROM report_retractions rr "
-        "                WHERE rr.org_id = rep.org_id AND rr.report_id = rep.id) AS is_retracted "
+    # THE patient -> order -> sample -> run -> vcf -> interpretation join chain,
+    # written ONCE. Both the patient's released-report statement below and the
+    # staff genome reader build on it, so an organisation predicate cannot be
+    # dropped from one copy and not the other. It carries no SELECT and no WHERE:
+    # each caller binds its own anchor.
+    _PATIENT_INTERPRETATION_CHAIN = (
         "FROM patients p "
         "JOIN orders o          ON o.org_id = p.org_id  AND o.patient_id = p.patient_id "
         "JOIN samples s         ON s.org_id = o.org_id  AND s.order_id = o.order_id "
         "JOIN sequencing_runs r ON r.org_id = s.org_id  AND r.sample_id = s.sample_id "
         "JOIN vcfs v            ON v.org_id = r.org_id  AND v.sequencing_run_id = r.id "
         "JOIN interpretations i ON i.org_id = v.org_id  AND i.vcf_id = v.id "
-        "JOIN reports rep       ON rep.org_id = i.org_id AND rep.interpretation_id = i.id "
+    )
+
+    _MY_RELEASED_REPORTS_SQL = (
+        "SELECT rep.id, o.order_id, rel.first_released_at, sup.amends_report_id, "
+        "       EXISTS (SELECT 1 FROM report_retractions rr "
+        "                WHERE rr.org_id = rep.org_id AND rr.report_id = rep.id) AS is_retracted, "
+        # APPENDED LAST (Genome Analysis) so every existing reader's positional
+        # r[0]..r[4] is untouched. The report readers never copy these into what
+        # they return; only the genome reader uses them. The anchor patient is
+        # selected so that reader can assert each row is the session's own.
+        "       i.id AS interpretation_id, i.run_document AS run_document, "
+        "       p.patient_id AS anchor_patient_id "
+        + _PATIENT_INTERPRETATION_CHAIN
+        + "JOIN reports rep       ON rep.org_id = i.org_id AND rep.interpretation_id = i.id "
         "JOIN LATERAL ("
         "    SELECT min(re.released_at) AS first_released_at, count(*) AS deliveries "
         "      FROM release_events re "

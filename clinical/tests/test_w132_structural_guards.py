@@ -573,6 +573,14 @@ class TestTheRouteCensus:
             ("/clinic/patients", ("POST",)),
             ("/clinic/patients/{patient_id}/consents", ("POST",)),
             ("/clinic/consents/{consent_id}/withdrawal", ("POST",)),
+            # Genome Analysis, Phase 1. Two READ-ONLY staff routes on
+            # `clinical/genome_endpoints.py`, behind `_get_session`, role-gated
+            # and audited in the data layer. The PATIENT genome routes are
+            # deliberately NOT declared: they are mounted only when
+            # CLINICAL_ENABLE_PATIENT_GENOME is set, so the default served surface
+            # does not contain them, and this equality row proves it.
+            ("/clinic/patients/{patient_id}/genome/chromosomes", ("GET",)),
+            ("/clinic/patients/{patient_id}/genome/chromosomes/{name}", ("GET",)),
             # Stage 2 (test catalogue and order stage). The card the w157 and
             # w162 notes above describe -- "who may define a test panel" -- was
             # ruled: the Administrator manages a per-organisation catalogue
@@ -657,7 +665,8 @@ class TestTheRouteCensus:
         # 42 from the human-tool read API, which added `GET /auth/me`,
         # `GET /auth/me/signing-identity` and the two `GET /review/reports/...` reads.
         # 43 from the read-only sign-off state route (`GET /review/reports/{id}/signoff-state`).
-        assert len(census) == 43, census
+        # 45 from Genome Analysis Phase 1: two read-only staff GETs on `genome_endpoints.py`.
+        assert len(census) == 45, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

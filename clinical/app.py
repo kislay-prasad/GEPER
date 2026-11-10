@@ -73,6 +73,7 @@ from clinical.admin_endpoints import router as admin_router
 from clinical.clinic_endpoints import router as clinic_router
 from clinical.auth_endpoints import router as auth_router
 from clinical.endpoints import router, session_router
+from clinical.genome_endpoints import clinic_genome_router, patient_routes_enabled, portal_genome_router
 from clinical.portal_endpoints import router as portal_router
 from clinical.review_endpoints import router as review_router
 from clinical.workflow_endpoints import router as workflow_router
@@ -228,6 +229,14 @@ app.include_router(clinic_router)
 # there is no second security policy and no second refusal vocabulary. The
 # gates are the domain methods'. See clinical/review_endpoints.py.
 app.include_router(review_router)
+
+# Genome Analysis, Phase 1. The CLINICIAN router is always mounted (staff
+# dependency, role-gated and audited in the data layer). The PATIENT router is
+# mounted ONLY when CLINICAL_ENABLE_PATIENT_GENOME is explicitly set, and even
+# then serves no patient genomic data -- see clinical/genome_endpoints.py.
+app.include_router(clinic_genome_router)
+if patient_routes_enabled():
+    app.include_router(portal_genome_router)
 
 
 @app.get("/healthz", tags=["health"], summary="Liveness probe")

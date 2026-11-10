@@ -605,3 +605,16 @@ because a run that started at 13:00 and finished at 15:00 is indistinguishable
 from one that overlapped the outage window and one that did not. Anyone
 building an impact query on `service_health` must restrict it to run
 granularity, or add a wall-clock stamp at the point of failure first.
+
+## Genome Analysis chromosome reference (Phase 1)
+
+Embedded in code (`clinical/genome_analysis/reference.py`), not fetched at runtime.
+Source: NCBI assembly reports `GCF_000001405.25_GRCh37.p13_assembly_report.txt`
+(2013-06-28, sha256 `0097e6b2...e4a17`) and
+`GCF_000001405.40_GRCh38.p14_assembly_report.txt` (2022-02-03, sha256
+`04e40091...da989`), retrieved 2026-11-10 from
+`https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/`. Full hashes and
+accessions are in the module's header. Regenerate by re-downloading those two
+files and re-extracting the 25 primary-sequence rows; `test_genome_analysis.py`
+pins known lengths for both builds. No cytogenetic band or centromere data is
+included (licence not established).

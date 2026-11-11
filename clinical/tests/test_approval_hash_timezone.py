@@ -349,12 +349,28 @@ def _previous_algorithm_from_the_database(connection, report_id):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+class _NorthernSummerClock:
+    """A fixed instant in northern-hemisphere summer, for the DAO that manufactures a LEGACY approval.
+
+    WHY NOT THE WALL CLOCK. These tests need the previous algorithm's hash to differ from the canonical (UTC) one, which
+    holds only if the claim instants print with a non-zero offset in the legacy session's zone. With the real clock that
+    is true for Europe/London only while it is on BST: from the end of October to the end of March London is on GMT
+    (+00:00), the legacy and canonical forms are then byte-identical, and the tests failed for no reason in the code. The
+    instant below is in BST (+01:00), IST (+05:30) and PDT (-07:00) alike, so the premise holds on every date.
+    """
+
+    _INSTANT = datetime.datetime(2026, 9, 3, 12, 0, 0, tzinfo=timezone.utc)
+
+    def now(self):
+        return self._INSTANT
+
+
 def _legacy_dao_on(connection):
     class LegacyDataAccess(DataAccess):
         def _compute_report_content_hash(self, session, report_id):
             return _previous_algorithm_from_the_database(connection, report_id)
 
-    return LegacyDataAccess(connection, clock=SystemClock(), password_hasher=BcryptHasher(rounds=4))
+    return LegacyDataAccess(connection, clock=_NorthernSummerClock(), password_hasher=BcryptHasher(rounds=4))
 
 
 def _assert_zone_matches_the_sessions_offsets(connection, report_id, zone_name):

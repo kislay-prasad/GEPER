@@ -44,10 +44,13 @@ import hashlib
 import json
 import logging
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -58,8 +61,12 @@ from report.clinical_report_builder import _QC_METRIC_ORDER
 from shared.process_control import spawn_tracked, kill_process_tree_now
 
 from .submission_store import SubmissionStore
+from .vcf_paths import VcfPathError, resolve_vcf_path
 
 logger = logging.getLogger("geper.api.submission_worker")
+
+# Consecutive polls with the clinical database unreachable before the loop gives up (and the process exits 1).
+_DB_LOSS_LIMIT = 3
 
 # Timeout for a single interpretation run (30 minutes)
 INTERPRETATION_TIMEOUT_SECONDS = 1800
@@ -87,6 +94,65 @@ _DEFAULT_OUTPUT_ROOT = str(Path(__file__).parent / ".submission_outputs")
 # this file alone. (Nothing reads it yet: how review/signoff.py should treat
 # a linked run is a separate, pending design.)
 CLINICAL_LINK_FILENAME = "clinical_link.json"
+
+# Provenance of the attempt that owns the files in an output directory.
+ATTEMPT_FILENAME = "attempt.json"
+
+# Files an earlier attempt may have left in a submission's output directory that a later attempt must NOT be able to
+# mistake for its own. Before an engine run they are renamed aside (never deleted: they are the record of what the
+# earlier attempt produced); the renamed names are not `geper_results.json`, so `review list-pending` cannot find them.
+_STALE_OUTPUT_NAMES = (
+    "geper_results.json",
+    "geper_report.md",
+    "geper_report_full.pdf",
+    "geper_report_short.pdf",
+    "qc_metrics.json",
+    CLINICAL_LINK_FILENAME,
+)
+
+
+def validate_engine_output(document, vcf_path: str) -> list:
+    """
+    The problems with an engine's `geper_results.json`, as stable codes; an empty list means the document satisfies the
+    contract `geper/main.py` produces (report/json_builder.py::JSONResultBuilder.build). The existence of the file is not
+    evidence of a finished run: the engine writes the same file as a periodic CHECKPOINT while it works, and an empty
+    or partial document must never become an accepted interpretation and a draft report.
+
+      output_not_an_object          the JSON is not an object
+      run_incomplete                `run_complete` is not exactly true (a mid-run checkpoint, or a file from before the key)
+      variants_not_a_list           `variants` missing or not a list
+      variant_entry_malformed       an entry that is not an object carrying a `variant` object
+      variant_count_inconsistent    `variant_count` missing, not an integer, or not the number of variants listed
+      engine_output_claims_review   the document says it was reviewed: an engine run is always a draft
+      input_vcf_missing             no `input_vcf_absolute_path`
+      output_is_for_a_different_vcf `input_vcf_absolute_path` is not the VCF this submission named
+    """
+    if not isinstance(document, dict):
+        return ["output_not_an_object"]
+    problems = []
+    if document.get("run_complete") is not True:
+        problems.append("run_incomplete")
+    variants = document.get("variants")
+    if not isinstance(variants, list):
+        problems.append("variants_not_a_list")
+    else:
+        if any(not (isinstance(v, dict) and isinstance(v.get("variant"), dict)) for v in variants):
+            problems.append("variant_entry_malformed")
+        count = document.get("variant_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count != len(variants):
+            problems.append("variant_count_inconsistent")
+    if (
+        document.get("review_status") != "draft"
+        or document.get("reviewed_by") is not None
+        or document.get("reviewed_at") is not None
+    ):
+        problems.append("engine_output_claims_review")
+    named = document.get("input_vcf_absolute_path")
+    if not isinstance(named, str) or not named:
+        problems.append("input_vcf_missing")
+    elif os.path.normcase(os.path.abspath(named)) != os.path.normcase(os.path.abspath(vcf_path)):
+        problems.append("output_is_for_a_different_vcf")
+    return problems
 
 
 @dataclass(frozen=True)
@@ -130,7 +196,7 @@ def _hpo_terms_to_cli_arg(hpo_terms) -> str:
     hpo_terms as an OBJECT -- `"hpo_terms": { ... }`
     (GEPER_CLINICAL_PLATFORM_SPEC.md:526, in the POST /interpretations
     contract block) -- and the implemented request model
-    (geper/api/main.py:310) agrees: Optional[Dict[str, Any]]. The one
+    (geper/api/main.py:326) agrees: Optional[Dict[str, Any]]. The one
     concrete shape attested anywhere in this repo
     (geper/api/tests/test_interpretations_api.py:197,
     geper/api/tests/test_submission_worker.py) is {"terms": [...]}.
@@ -233,6 +299,15 @@ class InterpretationWorker:
         self.data_access = data_access
         self.geper_main_path = os.getenv("BIJ_AI_CLI_PATH", _DEFAULT_GEPER_MAIN_PATH)
         self.output_root = os.getenv("GEPER_SUBMISSION_OUTPUT_ROOT", _DEFAULT_OUTPUT_ROOT)
+        # Names this worker on the jobs it claims (a record of who held a job; the claim itself is the store's).
+        self.worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        # Set by a stop signal: the loop finishes the job it is on and takes no more. `heartbeat` (set by main) is
+        # called on every pass of the loop so a supervisor can tell a live loop from a stuck process.
+        self._stop = threading.Event()
+        self.heartbeat = None
+        # Set to 1 when the loop ends because the clinical database was lost (see run_loop); main() exits with it so the
+        # supervisor starts a fresh process, which reconnects.
+        self.exit_code = 0
 
     def _create_submission_failure_exception(self, submission, reason_code: str, error_message: str) -> None:
         """
@@ -241,12 +316,15 @@ class InterpretationWorker:
         Only called if data_access is available and submission has order_id.
         If either is missing, logs a warning but continues (doesn't block).
         """
-        if not self.data_access or not submission.order_id:
-            logger.warning(
-                f"[{submission.id}] Cannot create exception: "
-                f"data_access={'available' if self.data_access else 'unavailable'}, "
-                f"order_id={submission.order_id}"
-            )
+        if not self.data_access:
+            logger.warning(f"[{submission.id}] Cannot create exception: data_access unavailable")
+            return
+        if not submission.order_id:
+            try:
+                session = self.data_access._create_system_session(uuid.UUID(submission.org_id))
+                self.data_access.record_unlinked_submission_failure(session, submission.id, reason_code, None)
+            except Exception as e:
+                logger.error(f"[{submission.id}] Failed with {reason_code}; no order and no audit record: {e}")
             return
 
         try:
@@ -257,6 +335,21 @@ class InterpretationWorker:
 
             # Get system session for this org
             system_session = self.data_access._create_system_session(uuid.UUID(submission.org_id))
+
+            # An exception hangs off an order IN THIS ORGANISATION. If the order is not there (never named, unknown,
+            # or another organisation's) there is nothing to attach it to, and trying would be refused by the database
+            # and abort the transaction. Leave the organisation's operators an audit record instead, and never write
+            # anything onto an order that is not this organisation's.
+            order = self.data_access.get_order(system_session, uuid.UUID(submission.order_id))
+            if order is None:
+                self.data_access.record_unlinked_submission_failure(
+                    system_session, submission.id, reason_code, submission.order_id
+                )
+                logger.error(
+                    f"[{submission.id}] Failed with {reason_code} and has no order in its organisation; "
+                    "recorded in the audit log as submission_failed_unlinked"
+                )
+                return
 
             # Create exception
             self.data_access.create_or_reopen_exception(
@@ -288,9 +381,51 @@ class InterpretationWorker:
 
     def _fail(self, submission, message: str, reason_code: Optional[str] = None) -> None:
         logger.error(f"[{submission.id}] {message}")
-        self.store.update_status(submission.id, "failed", error_message=message)
+        self.store.update_status(submission.id, "failed", error_message=message, failure_code=reason_code)
         if reason_code:
             self._create_submission_failure_exception(submission, reason_code, message)
+
+    def _fail_engine(self, submission, reason_code: str, error_msg: str) -> None:
+        """An engine-side failure: the submission fails WITH its reason code (which is what decides whether a retry
+        is ever eligible) and the order gets the matching clinical exception."""
+        self.store.update_status(submission.id, "failed", error_message=error_msg, failure_code=reason_code)
+        self._create_submission_failure_exception(submission, reason_code, error_msg)
+
+    def _vcf_changed_since_preflight(self, submission, link: "_ClinicalLink") -> Optional[str]:
+        """
+        None when the submitted VCF is still the file preflight hashed; otherwise a short reason (no file content, no
+        path). The path policy is applied again first, so a link retargeted during the run is caught as well as a
+        content change, and the hash is taken from the same validated path preflight used.
+        """
+        try:
+            resolved = str(resolve_vcf_path(submission.vcf_path, link.org_id))
+        except VcfPathError as exc:
+            return f"its path no longer passes the storage policy: {exc.code}"
+        if os.path.normcase(resolved) != os.path.normcase(submission.vcf_path):
+            return "its path now resolves somewhere else"
+        try:
+            now_hash = _sha256_file(resolved)
+        except OSError as exc:
+            return f"it could not be read again: {type(exc).__name__}"
+        if now_hash != link.vcf_hash:
+            return "its content differs from the content hashed before the run"
+        return None
+
+    def _set_aside_stale_outputs(self, output_dir: str, attempt: int) -> list:
+        """
+        Make this attempt's output directory its own. Anything an earlier attempt left under the names the engine and
+        this worker write is renamed aside with a suffix naming the earlier attempt and the time (never deleted), so a
+        later `geper_results.json` can only be this attempt's. Returns the new names.
+        """
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        moved = []
+        for name in _STALE_OUTPUT_NAMES:
+            path = os.path.join(output_dir, name)
+            if os.path.exists(path):
+                aside = f"{path}.stale-before-attempt{attempt}-{stamp}"
+                os.replace(path, aside)
+                moved.append(aside)
+        return moved
 
     def _identity(self, submission) -> Optional[tuple[uuid.UUID, uuid.UUID, uuid.UUID]]:
         """(org_id, order_id, sample_id) as UUIDs, or None when the submission
@@ -330,12 +465,20 @@ class InterpretationWorker:
             return None
         org_id, order_id, sample_id = identity
 
+        # The API checked this path when it accepted the submission; check again before the file is touched (a row may
+        # predate the policy, and a symlink can change in between). Nothing below reads a path that has not passed.
+        try:
+            submission.vcf_path = str(resolve_vcf_path(submission.vcf_path, org_id))
+        except VcfPathError as exc:
+            self._fail(submission, f"vcf_path rejected ({exc.code}); the file was not read.", exc.code)
+            return None
+
         session = self.data_access._create_system_session(org_id)
         order = self.data_access.get_order(session, order_id)
         if order is None:
             # No exception: exceptions hang off an order, and this
             # organisation has none by that id.
-            self._fail(submission, f"Order {order_id} not found in this submission's organisation.")
+            self._fail(submission, f"Order {order_id} not found in this submission's organisation.", "order_not_found")
             return None
 
         sample = self.data_access.get_sample(session, sample_id)
@@ -360,10 +503,19 @@ class InterpretationWorker:
         if not passed:
             # validate_order_for_submission has already recorded its own
             # exception, with the precise reason code.
+            # The failure code is the reason of the exception just recorded, so that when an operator resolves that
+            # exception the recovery step can find this submission again.
+            reason = None
+            try:
+                recorded = self.data_access.get_exception_by_id(session, exception_id)
+                reason = recorded.reason_code if recorded else None
+            except Exception as e:
+                logger.warning(f"[{submission.id}] Could not read back exception {exception_id}: {e}")
             self.store.update_status(
                 submission.id,
                 "failed",
                 error_message=f"Submission preconditions not met; see clinical exception {exception_id}.",
+                failure_code=reason,
             )
             return None
 
@@ -474,9 +626,18 @@ class InterpretationWorker:
         completed = 0
         for submission in self.store.get_submissions_with_status("interrupted", limit):
             identity = self._identity(submission)
-            if identity is None or not os.path.isfile(submission.vcf_path):
+            if identity is None:
                 continue
             org_id, order_id, sample_id = identity
+            try:
+                submission.vcf_path = str(resolve_vcf_path(submission.vcf_path, org_id))
+            except VcfPathError as exc:
+                # No longer left interrupted and silent: it fails with the policy's reason, opens an exception for the
+                # operator, and is then recoverable like any failed row (resolve the exception with retry_check).
+                self._fail(submission, f"vcf_path rejected ({exc.code}); the file was not read.", exc.code)
+                continue
+            if not os.path.isfile(submission.vcf_path):
+                continue
             try:
                 vcf_hash = _sha256_file(submission.vcf_path)
                 link = _ClinicalLink(
@@ -500,8 +661,12 @@ class InterpretationWorker:
         """
         logger.info(f"Processing submission {submission.id}")
 
-        # Update status to running
-        self.store.update_status(submission.id, "running")
+        # One atomic compare-and-set (queued -> running) decides which worker runs this submission; a caller that loses,
+        # because the row is no longer queued, does nothing.
+        attempt = self.store.claim(submission.id, self.worker_id)
+        if attempt is None:
+            logger.info(f"[{submission.id}] not claimed (no longer queued); skipping")
+            return False
 
         try:
             # One output directory per submission -- see
@@ -526,6 +691,20 @@ class InterpretationWorker:
 
             # Build the geper/main.py invocation. sys.executable, not a
             # bare command name -- see _DEFAULT_GEPER_MAIN_PATH.
+            attempt_started = time.time()
+            self._set_aside_stale_outputs(output_dir, attempt)
+            with open(os.path.join(output_dir, ATTEMPT_FILENAME), "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "submission_id": submission.id,
+                        "attempt": attempt,
+                        "worker_id": self.worker_id,
+                        "started_at": datetime.fromtimestamp(attempt_started, timezone.utc).isoformat(),
+                        "vcf_path": submission.vcf_path,
+                        "vcf_sha256": link.vcf_hash,
+                    },
+                    fh,
+                )
             cmd = [
                 sys.executable,
                 self.geper_main_path,
@@ -535,6 +714,8 @@ class InterpretationWorker:
                 submission.assembly,
                 "--output-dir",
                 output_dir,
+                # never resume from a checkpoint: a file an earlier attempt left is not this attempt's result
+                "--no-resume",
             ]
             # --sample-ref / --consent-ref DELIBERATELY DROPPED (2026-09-08
             # ruling): geper/main.py's build_arg_parser() has never accepted
@@ -639,17 +820,7 @@ class InterpretationWorker:
                 kill_process_tree_now(proc)
                 error_msg = f"Interpretation timed out after {INTERPRETATION_TIMEOUT_SECONDS}s"
                 logger.warning(f"[{submission.id}] {error_msg}")
-                self.store.update_status(
-                    submission.id,
-                    "failed",
-                    error_message=error_msg,
-                )
-                # Create exception for timeout
-                self._create_submission_failure_exception(
-                    submission,
-                    "bij_ai_timeout",
-                    error_msg,
-                )
+                self._fail_engine(submission, "bij_ai_timeout", error_msg)
                 return True
 
             # Success/failure is the EXIT CODE (2026-09-08 ruling):
@@ -665,17 +836,18 @@ class InterpretationWorker:
                 if stderr:
                     error_msg += f": {stderr[:500]}"
                 logger.error(f"[{submission.id}] {error_msg}")
-                self.store.update_status(
-                    submission.id,
-                    "failed",
-                    error_message=error_msg,
-                )
-                # Create exception for non-zero exit
-                self._create_submission_failure_exception(
-                    submission,
-                    "bij_ai_error_other",
-                    error_msg,
-                )
+                self._fail_engine(submission, "bij_ai_error_other", error_msg)
+                return True
+
+            # The engine read the VCF at some point during the run; the record will say it analysed the file whose hash
+            # was taken before it started. Check that it still is that file, from the same approved path, before any
+            # output is read or accepted. This DETECTS a change that is still in place now; it cannot prove which
+            # bytes the engine itself read (a file changed and restored mid-run is not seen).
+            changed = self._vcf_changed_since_preflight(submission, link)
+            if changed:
+                error_msg = f"The VCF changed while {SHORT_NAME} was running ({changed}); nothing was recorded."
+                logger.error(f"[{submission.id}] {error_msg}")
+                self._fail_engine(submission, "vcf_changed_during_run", error_msg)
                 return True
 
             # The run document is a FILE geper/main.py already writes
@@ -688,19 +860,10 @@ class InterpretationWorker:
             # is a contract violation worth surfacing distinctly rather
             # than crashing on open() below.
             results_path = os.path.join(output_dir, "geper_results.json")
-            if not os.path.isfile(results_path):
+            if not os.path.isfile(results_path) or os.path.getmtime(results_path) < attempt_started - 2:
                 error_msg = f"{SHORT_NAME} exited 0 but did not write {results_path}"
                 logger.error(f"[{submission.id}] {error_msg}")
-                self.store.update_status(
-                    submission.id,
-                    "failed",
-                    error_message=error_msg,
-                )
-                self._create_submission_failure_exception(
-                    submission,
-                    "bij_ai_error_other",
-                    error_msg,
-                )
+                self._fail_engine(submission, "bij_ai_error_other", error_msg)
                 return True
 
             # interpretation_id: THE CLINICAL INTERPRETATION THIS RUN IS
@@ -713,8 +876,22 @@ class InterpretationWorker:
             #
             # run_document_ref stays the PATH to the file main.py wrote;
             # the clinical record holds the content.
-            with open(results_path, "r", encoding="utf-8") as fh:
-                run_document = json.load(fh)
+            try:
+                with open(results_path, "r", encoding="utf-8") as fh:
+                    run_document = json.load(fh)
+            except (OSError, ValueError) as e:
+                self._fail_engine(
+                    submission, "bij_ai_error_other", f"{SHORT_NAME} wrote output that is not valid JSON: {e}"
+                )
+                return True
+            problems = validate_engine_output(run_document, submission.vcf_path)
+            if problems:
+                self._fail_engine(
+                    submission,
+                    "bij_ai_error_other",
+                    f"{SHORT_NAME} exited 0 but its output failed validation ({', '.join(problems)}); nothing was recorded.",
+                )
+                return True
             return self._record_run(submission, link, output_dir, results_path, run_document)
 
         except FileNotFoundError as e:
@@ -728,42 +905,31 @@ class InterpretationWorker:
             # itself being unavailable.
             error_msg = f"{SHORT_NAME} CLI not found: {e}"
             logger.error(f"[{submission.id}] {error_msg}")
-            self.store.update_status(
-                submission.id,
-                "failed",
-                error_message=error_msg,
-            )
-            # Create exception for missing CLI
-            self._create_submission_failure_exception(
-                submission,
-                "bij_ai_error_other",
-                error_msg,
-            )
+            self._fail_engine(submission, "bij_ai_error_other", error_msg)
             return True
         except Exception as e:
             error_msg = f"Unexpected error: {type(e).__name__}: {e}"
             logger.error(f"[{submission.id}] {error_msg}")
-            self.store.update_status(
-                submission.id,
-                "failed",
-                error_message=error_msg,
-            )
-            # Create exception for unexpected error
-            self._create_submission_failure_exception(
-                submission,
-                "bij_ai_error_other",
-                error_msg,
-            )
+            self._fail_engine(submission, "bij_ai_error_other", error_msg)
             return True
 
+    def request_stop(self) -> None:
+        """Ask the loop to stop: the job in progress is finished, no new one is claimed."""
+        self._stop.set()
+
+    def _beat(self) -> None:
+        if self.heartbeat is not None:
+            self.heartbeat()
+
     def run_loop(self, poll_interval: int = 5, batch_size: int = 10) -> None:
-        """Run the main worker loop.
+        """Run the main worker loop until `request_stop` (or Ctrl-C).
 
         Args:
             poll_interval: Seconds between polls for queued submissions
             batch_size: Max submissions to process per poll
         """
         logger.info("Starting interpretation worker loop")
+        self._beat()
 
         # Before taking new work: complete any submission a dead worker left
         # interrupted AFTER its clinical record was already written.
@@ -776,24 +942,43 @@ class InterpretationWorker:
         except Exception as e:
             logger.exception(f"Startup reconciliation failed: {e}")
 
-        while True:
+        lost = 0
+        while not self._stop.is_set():
+            # Look at the clinical database BEFORE claiming anything. With it gone, a claimed job would run the engine
+            # for nothing or fail for a reason that is not its own, and a heartbeat would say all was well. So: no
+            # beat and no claim while it is unreachable, and after _DB_LOSS_LIMIT passes in a row the loop ends with a
+            # non-zero exit code (the connection object is dead for good; a new process reconnects).
+            if self.data_access is not None and not self.data_access.ping():
+                lost += 1
+                logger.error(f"Clinical database unreachable ({lost}/{_DB_LOSS_LIMIT}); not claiming work")
+                if lost >= _DB_LOSS_LIMIT:
+                    self.exit_code = 1
+                    break
+                self._stop.wait(poll_interval)
+                continue
+            lost = 0
+            self._beat()
             try:
                 queued = self.store.get_queued_submissions(limit=batch_size)
                 if not queued:
                     logger.debug(f"No queued submissions (sleeping {poll_interval}s)")
-                    time.sleep(poll_interval)
+                    self._stop.wait(poll_interval)
                     continue
 
                 logger.info(f"Processing {len(queued)} queued submission(s)")
                 for submission in queued:
+                    if self._stop.is_set():
+                        break  # asked to stop: what is not started stays queued
                     self.process_queued_submission(submission)
+                    self._beat()
 
             except KeyboardInterrupt:
                 logger.info("Worker interrupted by user")
                 break
             except Exception as e:
                 logger.exception(f"Worker loop error: {e}")
-                time.sleep(poll_interval)
+                self._stop.wait(poll_interval)
+        logger.info("Interpretation worker stopped")
 
 
 def main():
@@ -802,6 +987,11 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # Refuse to start on bad configuration BEFORE touching the store or the database (api/service_health.py).
+    from .service_health import install_stop_handlers, make_heartbeat, poll_interval, require_valid
+
+    require_valid("submission_worker")
 
     # Get store path from env var or default
     store_path = os.getenv(
@@ -844,7 +1034,7 @@ def main():
     try:
         import psycopg
 
-        connection = psycopg.connect(dsn, autocommit=False)
+        connection = psycopg.connect(dsn, autocommit=False, connect_timeout=10)
         from clinical.data_access import DataAccess
 
         data_access = DataAccess(connection)
@@ -862,7 +1052,11 @@ def main():
         sys.exit(1)
 
     worker = InterpretationWorker(store, data_access)
-    worker.run_loop()
+    worker.heartbeat = make_heartbeat("submission_worker")
+    install_stop_handlers(worker)
+    worker.run_loop(poll_interval=poll_interval(5))
+    if worker.exit_code:
+        sys.exit(worker.exit_code)
 
 
 if __name__ == "__main__":

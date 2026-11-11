@@ -22,6 +22,9 @@ from report.clinical_report_builder import (
     EVIDENCE_COMPLETENESS_CAPTION,
     ISO_RESEARCH_ELEMENT,
     RESEARCH_USE_DISCLAIMER,
+    acmg_net_points_parts,
+    _consent_field,
+    _consent_timestamp,
     _consent_value_label,
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
@@ -240,10 +243,10 @@ def _render_consent_line(json_document: Dict[str, Any]) -> Optional[str]:
     if not consent:
         return None
     parts = [
-        f"Clinical reporting: {_consent_value_label(consent.get('clinical_reporting'))}",
-        f"Research use: {_consent_value_label(consent.get('research'))}",
+        f"Clinical reporting: {_consent_value_label(_consent_field(consent, 'clinical_reporting'))}",
+        f"Research use: {_consent_value_label(_consent_field(consent, 'research'))}",
     ]
-    timestamp = consent.get("timestamp")
+    timestamp = _consent_timestamp(consent)
     if timestamp:
         parts.append(f"Recorded: {timestamp}")
     # Statutory citation removed pending counsel (human ruling, 2026-09-10):
@@ -788,15 +791,13 @@ class ReportGenerator:
         # discarded. `None` only for BA1's stand-alone-benign
         # short-circuit (no point tally ran) or an unclassified
         # variant -- neither fabricates a number.
-        net_points = acmg.get("net_points")
-        if net_points is not None:
+        points = acmg_net_points_parts(acmg)
+        if points is not None:
+            net_text, components_text, with_band = points
             band = acmg.get("net_points_band")
-            band_text = f" -- threshold band: {band}" if band else ""
-            lines.append(
-                f"**Net points (Tavtigian 2018):** {net_points:g} "
-                f"(pathogenic {acmg.get('pathogenic_points', 0):g} − benign {acmg.get('benign_points', 0):g})"
-                f"{band_text}"
-            )
+            band_text = f" -- threshold band: {band}" if band and with_band else ""
+            components = f" ({components_text})" if components_text else ""
+            lines.append(f"**Net points (Tavtigian 2018):** {net_text}{components}{band_text}")
             lines.append("")
         # Clinician override (geper/review/signoff.py's "override" command)
         # -- layered on top of, never substituting for, GEPER's own
@@ -1580,8 +1581,16 @@ class ReportGenerator:
                 f"_Failed: {protein_result['error']} -- not evidence ESM-2 was inapplicable, see the AI Model Status table above._"
             )
         elif protein_result.get("skipped"):
-            lines.append(f"_Skipped: {protein_result.get('reason', 'not applicable')}._")
-        else:
+            # New-shape skip reasons are full sentences ending in "."; drop it so the closing "._" below
+            # does not double it. Old-shape reasons carry no trailing period, so their output is unchanged.
+            reason = str(protein_result.get("reason", "not applicable")).rstrip()
+            if reason.endswith("."):
+                reason = reason[:-1]
+            lines.append(f"_Skipped: {reason}._")
+        elif protein_result.get("esm2_input") is None:
+            # Result file written before ESM-2 was given a transcript-derived input (no `esm2_input`
+            # key): in those runs the local-window translation below WAS what ESM-2 received, so the
+            # original wording is kept verbatim and must not claim otherwise.
             translation = protein_result.get("translation", {})
             lines.append(f"- **Reference protein (local window):** `{translation.get('ref_protein') or 'n/a'}`")
             lines.append(f"- **Alternate protein (local window):** `{translation.get('alt_protein') or 'n/a'}`")
@@ -1592,6 +1601,37 @@ class ReportGenerator:
                 "criteria (BP7/BP1/PS1/PM5/PVS1) in the Clinical Report above for that._"
             )
             esm = protein_result.get("esm2", {})
+            if esm:
+                lines.append(f"- Embedding dim: {esm.get('embedding_dim', 'n/a')}")
+        else:
+            esm_input = protein_result.get("esm2_input") or {}
+            esm = protein_result.get("esm2", {})
+            if esm_input.get("basis") == "transcript_cds":
+                # Variant-specific ESM-2 input, built from the transcript's coding sequence.
+                if esm_input.get("status") == "used":
+                    lines.append(
+                        f"- **ESM-2 input (transcript {esm_input.get('transcript_id', 'n/a')}, "
+                        f"codon {esm_input.get('codon_number', 'n/a')}, "
+                        f"{esm_input.get('ref_aa', '?')}>{esm_input.get('alt_aa', '?')}, "
+                        f"residues {esm_input.get('window_start', '?')}-{esm_input.get('window_end', '?')}):** "
+                        f"`{esm_input.get('alt_peptide') or 'n/a'}`"
+                    )
+                else:
+                    lines.append(
+                        f"_ESM-2 was not run for this variant ({esm_input.get('skip_code', 'unknown')}): "
+                        f"{esm_input.get('skip_reason', protein_result.get('reason', 'not applicable'))}_"
+                    )
+            elif not esm:
+                lines.append(f"_ESM-2 was not run: {protein_result.get('reason', 'not applicable')}_")
+            translation = protein_result.get("translation", {})
+            lines.append(f"- **Reference protein (legacy local window):** `{translation.get('ref_protein') or 'n/a'}`")
+            lines.append(f"- **Alternate protein (legacy local window):** `{translation.get('alt_protein') or 'n/a'}`")
+            lines.append(
+                "  - _Translated from the first start codon found in a short flanking DNA window "
+                "(no exon/splicing/strand awareness); retained only for the PVS1 fallback and NOT "
+                "given to ESM-2. It is NOT the transcript-verified consequence -- see the ACMG "
+                "criteria (BP7/BP1/PS1/PM5/PVS1) in the Clinical Report above for that._"
+            )
             if esm:
                 lines.append(f"- Embedding dim: {esm.get('embedding_dim', 'n/a')}")
         lines.append("")

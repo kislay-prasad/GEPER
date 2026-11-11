@@ -29,6 +29,8 @@ import pytest
 
 from api.submission_store import SubmissionStore
 from api.submission_worker import InterpretationWorker
+from api.tests.conftest import place_vcf
+from api.tests.standin_engine import valid_engine_document
 from clinical.data_access import RecordedPipelineResult, interpretation_submission_key
 
 
@@ -109,12 +111,10 @@ class FakeClinical:
 
 
 @pytest.fixture
-def vcf_file(tmp_path):
+def vcf_file(vcf_root):
     """A real file: the worker hashes the VCF before running (the clinical
     idempotency key), so a path to nothing is now a precondition failure."""
-    path = tmp_path / "input.vcf"
-    path.write_text("##fileformat=VCFv4.2\n##assembly=GRCh38\n#CHROM\tPOS\tID\tREF\tALT\n", encoding="utf-8")
-    return str(path)
+    return place_vcf(vcf_root, ORG, "##fileformat=VCFv4.2\n##assembly=GRCh38\n#CHROM\tPOS\tID\tREF\tALT\n")
 
 
 @pytest.fixture
@@ -129,15 +129,30 @@ def worker(store, output_root, monkeypatch, clinical):
     return InterpretationWorker(store, clinical)
 
 
-def _write_results_file(output_root: str, submission_id: str) -> str:
+def _write_results_file(output_root: str, submission_id: str, vcf_path: str | None = None) -> str:
     """Simulates geper/main.py's real behavior (orchestrator.py:712):
     writes geper_results.json under --output-dir, which this worker
     passes as <output_root>/<submission.id>. Returns that path."""
     out_dir = Path(output_root) / submission_id
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "geper_results.json"
-    results_path.write_text(json.dumps({"variants": []}))
+    # With the submission's VCF the document is a finished run of THAT file, as the worker's output validation
+    # requires (submission_worker.validate_engine_output); without it, the bare stub older tests used.
+    document = valid_engine_document(vcf_path) if vcf_path else {"variants": []}
+    results_path.write_text(json.dumps(document))
     return str(results_path)
+
+
+def _writes_results_when_run(output_root: str, sub, proc):
+    """A `spawn_tracked` side effect that writes the engine's output WHEN THE ENGINE RUNS. A file already in the output
+    directory before the run is a previous attempt's, and the worker sets it aside (F3): output the engine "produced"
+    must therefore appear during the run, as the real engine's does."""
+
+    def run(cmd, **kwargs):
+        _write_results_file(output_root, sub.id, sub.vcf_path)
+        return proc
+
+    return run
 
 
 class TestInterpretationWorker:
@@ -166,7 +181,8 @@ class TestInterpretationWorker:
             # geper/main.py has no stdout contract to mock -- the
             # worker's success path reads the exit code (above) and the
             # file main.py writes (simulated here), not stdout.
-            results_path = _write_results_file(output_root, sub.id)
+            results_path = str(Path(output_root) / sub.id / "geper_results.json")
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_proc)
 
             result = worker.process_queued_submission(sub)
 
@@ -345,7 +361,7 @@ class TestInterpretationWorker:
             mock_proc.returncode = 0
             mock_spawn.return_value = mock_proc
 
-            _write_results_file(output_root, sub.id)
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_spawn.return_value)
 
             result = worker.process_queued_submission(sub)
 
@@ -468,7 +484,7 @@ class TestInterpretationWorker:
             mock_proc.returncode = 0
             mock_spawn.return_value = mock_proc
 
-            _write_results_file(output_root, sub.id)
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_spawn.return_value)
 
             worker.process_queued_submission(sub)
 
@@ -537,7 +553,7 @@ class TestWorkerClinicalLinkUnit:
     def test_already_recorded_run_is_reconciled_not_rerun(self, worker, store, clinical, output_root, vcf_file):
         sub = self._submit(store, vcf_file)
         with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()) as mock_spawn:
-            _write_results_file(output_root, sub.id)
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_spawn.return_value)
             worker.process_queued_submission(sub)
             store.update_status(sub.id, "queued")  # e.g. re-queued by the retry scheduler
             worker.process_queued_submission(store.get_submission(sub.id))
@@ -555,8 +571,8 @@ class TestWorkerClinicalLinkUnit:
 
         monkeypatch.setattr(clinical, "record_pipeline_result", boom)
         sub = self._submit(store, vcf_file)
-        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()):
-            _write_results_file(output_root, sub.id)
+        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()) as mock_spawn:
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_spawn.return_value)
             worker.process_queued_submission(sub)
         updated = store.get_submission(sub.id)
         assert updated.status == "failed"
@@ -566,8 +582,8 @@ class TestWorkerClinicalLinkUnit:
 
     def test_clinical_link_file_names_the_records(self, worker, store, clinical, output_root, vcf_file):
         sub = self._submit(store, vcf_file)
-        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()):
-            _write_results_file(output_root, sub.id)
+        with patch("api.submission_worker.spawn_tracked", return_value=_ok_spawn()) as mock_spawn:
+            mock_spawn.side_effect = _writes_results_when_run(output_root, sub, mock_spawn.return_value)
             worker.process_queued_submission(sub)
         link = json.loads((Path(output_root) / sub.id / "clinical_link.json").read_text(encoding="utf-8"))
         rec = clinical.recorded[0]

@@ -73,6 +73,9 @@ from report.clinical_report_builder import (
     # comment. Re-imported here (rather than call sites being rewritten)
     # so `report.summary._variant_reviewer_flags` and friends still
     # resolve for existing callers and tests.
+    acmg_net_points_parts,
+    _consent_field,
+    _consent_timestamp,
     _consent_value_label,
     _offline_sources_caveat_text,
     _variant_hgvs_or_locus,
@@ -978,12 +981,16 @@ def _consent_rows(patient: Dict[str, Any], lbl: ParagraphStyle, val: ParagraphSt
     rows = [
         [
             Paragraph("Consent -- Clinical Reporting", lbl),
-            Paragraph(_consent_value_label(consent["clinical_reporting"]), val),
+            Paragraph(_consent_value_label(_consent_field(consent, "clinical_reporting")), val),
         ],
-        [Paragraph("Consent -- Research Use", lbl), Paragraph(_consent_value_label(consent["research"]), val)],
+        [
+            Paragraph("Consent -- Research Use", lbl),
+            Paragraph(_consent_value_label(_consent_field(consent, "research")), val),
+        ],
     ]
-    if consent.get("timestamp"):
-        rows.append([Paragraph("Consent Recorded", lbl), Paragraph(esc(consent["timestamp"]), val)])
+    recorded = _consent_timestamp(consent)
+    if recorded:
+        rows.append([Paragraph("Consent Recorded", lbl), Paragraph(esc(recorded), val)])
     return rows
 
 
@@ -1470,9 +1477,9 @@ def _build_clinician_summary_table(variants: List[Dict[str, Any]], styles: Dict[
         # can see why without opening the detailed finding section.
         # Absent (no second line) only for BA1's stand-alone-benign
         # short-circuit or an unclassified variant.
-        net_points = acmg.get("net_points")
-        if net_points is not None:
-            classification = f"{classification}<br/>net {net_points:g}"
+        points = acmg_net_points_parts(acmg)
+        if points is not None:
+            classification = f"{classification}<br/>net {points[0]}"
 
         # No percentage in this front-page table (C2, report review
         # round 2): "Pathogenic / Low (25%)" reads as doubt about the
@@ -2042,18 +2049,13 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
         # band it landed in -- see `pipeline/acmg_rules.py::
         # CombineResult`'s docstring. `None` only for BA1's stand-alone-
         # benign short-circuit (no point tally ran), never fabricated.
-        net_points = acmg.get("net_points")
-        if net_points is not None:
+        points = acmg_net_points_parts(acmg)
+        if points is not None:
+            net_text, components_text, with_band = points
             band = acmg.get("net_points_band")
-            band_text = f" -- threshold band: {band}" if band else ""
-            flow.append(
-                Paragraph(
-                    f"<b>Net points:</b> {net_points:g} "
-                    f"(pathogenic {acmg.get('pathogenic_points', 0):g} − "
-                    f"benign {acmg.get('benign_points', 0):g}){band_text}",
-                    styles["BodyText"],
-                )
-            )
+            band_text = f" -- threshold band: {band}" if band and with_band else ""
+            components = f" ({components_text})" if components_text else ""
+            flow.append(Paragraph(f"<b>Net points:</b> {net_text}{components}{band_text}", styles["BodyText"]))
 
     # Clinician override (geper/review/signoff.py's "override" command) --
     # layered on top of, never substituting for, GEPER's own

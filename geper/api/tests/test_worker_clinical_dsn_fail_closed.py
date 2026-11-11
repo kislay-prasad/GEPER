@@ -152,7 +152,10 @@ def test_no_worker_reads_clinical_dsn_without_refusing():
 
     api_dir = pathlib.Path(exception_retry_worker.__file__).parent
     readers = sorted(p.name for p in api_dir.glob("*.py") if "CLINICAL_DSN" in p.read_text(encoding="utf-8"))
-    assert readers == ["exception_retry_worker.py", "submission_worker.py"], (
+    # service_health.py is the third reader, and it is the fail-closed one: `validate(role)` reports a missing DSN as
+    # `clinical_dsn_missing` and `require_valid` exits 1 for both workers before they take any work (asserted by
+    # test_processing_services.py::test_a_worker_process_with_missing_configuration_exits_1_naming_the_problem_and_no_secret).
+    assert readers == ["exception_retry_worker.py", "service_health.py", "submission_worker.py"], (
         f"a new reader of CLINICAL_DSN appeared: {readers}. Give it the same "
         "fail-closed policy as the other two, or this test is the only thing "
         "that will ever notice the divergence."

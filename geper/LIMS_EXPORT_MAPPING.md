@@ -57,6 +57,12 @@ status on, so this gate exists precisely so an unreviewed -- or
 subsequently clinician-overridden -- run's classification can never
 reach a hospital's LIMS silently.
 
+When the exporter is given the run directory (`run_dir=`; the CLI always supplies the directory of the results JSON) the
+run's sign-off publication must also be complete: `geper_signoff_manifest.json` has to exist and the full PDF, short PDF
+and results JSON it lists must still match it, and the document being exported must equal that results file, or the
+export is refused (`export_blocked`, as above). A library call that
+passes only a document and no `run_dir` cannot be checked this way.
+
 `review_status` starts `"draft"` (set by `report/json_builder.py` at
 generation time) and only ever changes via `review/signoff.py`:
 `approve()` sets it to `"reviewed"` (plus `reviewed_by`/`reviewed_at`);

@@ -21,6 +21,7 @@ WHAT THESE PIN
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import uuid
@@ -42,6 +43,7 @@ from report.clinical_report_builder import (
     apply_report_revision,
     report_revision_banners,
 )
+from review import signoff as _signoff
 from review.revision_status import RevisionStatusError, fetch_report_revision_status
 from tests.test_signoff import _make_document
 from utils.exceptions import LIMSExportBlockedError, SignoffError
@@ -287,9 +289,35 @@ def _reviewed_document():
     return document
 
 
+def _publish_signed_run(run_dir):
+    """
+    A COMPLETE sign-off publication for `_reviewed_document()` in `run_dir`: the results JSON, both PDFs, and a manifest
+    naming their SHA-256 values. The LIMS export now checks this when it is given the run directory (the exported
+    document must come with the files a real `approve` publishes), so a test that exports a reviewed document from a
+    directory has to put a consistent publication there. The PDF bytes are placeholders: only their hashes matter.
+    """
+    run_dir = str(run_dir)
+    contents = {
+        _signoff.RESULTS_FILENAME: json.dumps(_reviewed_document()).encode("utf-8"),
+        _signoff.FULL_PDF_FILENAME: b"%PDF-1.4 full",
+        _signoff.SHORT_PDF_FILENAME: b"%PDF-1.4 short",
+    }
+    for name, data in contents.items():
+        with open(os.path.join(run_dir, name), "wb") as fh:
+            fh.write(data)
+    manifest = {
+        "pdf_sha256": hashlib.sha256(contents[_signoff.FULL_PDF_FILENAME]).hexdigest(),
+        "short_pdf_sha256": hashlib.sha256(contents[_signoff.SHORT_PDF_FILENAME]).hexdigest(),
+        "results_json_sha256": hashlib.sha256(contents[_signoff.RESULTS_FILENAME]).hexdigest(),
+    }
+    with open(os.path.join(run_dir, _signoff.MANIFEST_FILENAME), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh)
+
+
 def _link_dir(tmp_path, report_id=REPORT, org_id=ORG):
     run_dir = tmp_path / "run"
     run_dir.mkdir(exist_ok=True)
+    _publish_signed_run(run_dir)
     (run_dir / "clinical_link.json").write_text(
         json.dumps({"org_id": str(org_id), "interpretation_id": str(INTERP), "report_id": str(report_id)}),
         encoding="utf-8",
@@ -307,12 +335,14 @@ def _audit_actions(directory):
 
 class TestLimsExportOfAnUnlinkedRunIsUnchanged:
     def test_json_has_no_report_status_and_the_original_version(self, tmp_path):
+        _publish_signed_run(tmp_path)
         out = tmp_path / "x.json"
         lims.export_lims_json(_reviewed_document(), str(out), run_dir=str(tmp_path))
         data = json.loads(out.read_text(encoding="utf-8"))
         assert "report_status" not in data and data["export_format_version"] == "1.0.0"
 
     def test_csv_has_exactly_the_original_columns(self, tmp_path):
+        _publish_signed_run(tmp_path)
         out = tmp_path / "x.csv"
         lims.export_lims_csv(_reviewed_document(), str(out), run_dir=str(tmp_path))
         with open(out, encoding="utf-8", newline="") as fh:
@@ -414,6 +444,7 @@ class TestLimsExportOfALinkedRunFailsClosed:
     def test_an_unreadable_link_is_a_block_not_an_unlinked_export(self, tmp_path):
         run_dir = tmp_path / "run"
         run_dir.mkdir()
+        _publish_signed_run(run_dir)
         (run_dir / "clinical_link.json").write_text("{not json", encoding="utf-8")
         with pytest.raises(LIMSExportBlockedError, match="cannot be read"):
             lims.export_lims_json(_reviewed_document(), str(run_dir / "x.json"), run_dir=str(run_dir))

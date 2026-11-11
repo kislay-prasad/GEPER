@@ -105,6 +105,14 @@ from pipeline.pvs1.lookup import TranscriptLookup
 from pipeline.pvs1.utils import canonical_protein_position, transcript_from_result
 from pipeline.hgvs_utils import is_mitochondrial_chrom, to_hgvs_c, to_hgvs_g
 from pipeline.variant_normalization import normalize_variant
+from pipeline.variant_peptides import (
+    ESM2_SPECIAL_TOKENS,
+    SKIP_CONSTRUCTION_ERROR,
+    SKIP_PROTEIN_UNCHANGED,
+    PeptideSkip,
+    VariantPeptides,
+    build_variant_peptides,
+)
 from pipeline.rna_generator import RNAGenerator
 from pipeline.router import HYENADNA, SequenceRouter
 from pipeline.sequence_context import SequenceContextGenerator
@@ -1672,7 +1680,7 @@ class GeperPipeline:
         self._attach_hgvs_c(normalization_result, transcript_result)
 
         rna_result = self._run_rna_stage(variant, sequence_context, errors)
-        protein_result = self._run_protein_stage(variant, sequence_context, errors)
+        protein_result = self._run_protein_stage(variant, sequence_context, errors, transcript_result)
         # mtDNA compartment gate (round 14, B2): AlphaMissense (no
         # mitochondrial catalogue rows), MMSplice/Enformer/Borzoi/
         # SpliceFormer/SpliceBERT (all nuclear-trained splice/regulatory
@@ -2168,7 +2176,55 @@ class GeperPipeline:
             # before this key existed.
             return {"skipped": True, "reason": detail, "error": detail}
 
-    def _run_protein_stage(self, variant: Variant, sequence_context, errors: List[str]) -> Dict[str, Any]:
+    def _build_esm2_input(
+        self, variant: Variant, transcript_result
+    ) -> "tuple[Optional[VariantPeptides], Dict[str, Any]]":
+        """
+        The variant-specific peptide ESM-2 is allowed to see, plus the `esm2_input`
+        provenance block. Built from the transcript's verified CDS
+        (`pipeline/variant_peptides.py`), never from the flat genomic window that
+        `ProteinTranslator` reads. Returns `(peptides_or_None, block)`; `peptides`
+        is None whenever ESM-2 must not run, and the block then carries a
+        structured `skip_code`/`skip_reason`.
+        """
+        try:
+            transcript = transcript_from_result(transcript_result)
+            outcome = build_variant_peptides(
+                transcript,
+                variant.pos,
+                variant.ref,
+                variant.alt,
+                max_residues=int(CONFIG.models.ESM2_MAX_SAFE_TOKENS) - ESM2_SPECIAL_TOKENS,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail closed: never embed an unverified peptide
+            detail = str(exc) or type(exc).__name__
+            logger.error(f"ESM-2 variant-peptide construction failed: {detail}")
+            outcome = PeptideSkip(SKIP_CONSTRUCTION_ERROR, f"Peptide construction raised: {detail}")
+
+        if isinstance(outcome, PeptideSkip):
+            return None, {
+                "basis": "transcript_cds",
+                "status": "skipped",
+                "skip_code": outcome.code,
+                "skip_reason": outcome.message,
+            }
+
+        block: Dict[str, Any] = {"basis": "transcript_cds", **outcome.to_dict()}
+        if not outcome.protein_changed:
+            # Synonymous: the peptides are recorded, but the protein is unchanged, so an
+            # ESM-2 embedding of it carries no variant-specific signal. Not counted as used.
+            block.update(
+                status="skipped",
+                skip_code=SKIP_PROTEIN_UNCHANGED,
+                skip_reason="Synonymous change: the reference and alternate proteins are identical.",
+            )
+            return None, block
+        block["status"] = "used"
+        return outcome, block
+
+    def _run_protein_stage(
+        self, variant: Variant, sequence_context, errors: List[str], transcript_result=None
+    ) -> Dict[str, Any]:
         if sequence_context is None:
             return {"skipped": True, "reason": "no sequence context available"}
         if not self.router.requires_protein_analysis(variant):
@@ -2178,29 +2234,38 @@ class GeperPipeline:
             rna_context = self.rna_generator.generate(sequence_context)
             protein_context = self.protein_translator.translate_context(rna_context)
 
-            if not protein_context.alt_orf_found:
-                return {
-                    "skipped": True,
-                    "reason": "no open reading frame (start codon) found in window",
-                    "translation": {
-                        "ref_protein": protein_context.ref_protein,
-                        "alt_protein": protein_context.alt_protein,
-                    },
-                }
-
-            if "esm2" not in self._model_instances:
-                self._model_instances["esm2"] = MODEL_REGISTRY["esm2"]()
-            with self._timer("model:esm2"):
-                esm2_result = self._model_instances["esm2"].predict(protein_context.alt_protein)
-
-            return {
-                "skipped": False,
-                "translation": {
-                    "ref_protein": protein_context.ref_protein,
-                    "alt_protein": protein_context.alt_protein,
-                },
-                "esm2": esm2_result,
+            # The old flat-window translation is kept, unchanged, in `translation`: the PVS1
+            # fallback (`pipeline/pvs1/utils.py::_protein_null_flags`) still reads it. It is NOT
+            # an ESM-2 input any more, because it is frame-/strand-/splice-unaware and need not
+            # even contain the variant.
+            translation = {
+                "ref_protein": protein_context.ref_protein,
+                "alt_protein": protein_context.alt_protein,
             }
+
+            peptides, esm2_input = self._build_esm2_input(variant, transcript_result)
+            esm2_result = None
+            if peptides is not None:
+                if "esm2" not in self._model_instances:
+                    self._model_instances["esm2"] = MODEL_REGISTRY["esm2"]()
+                with self._timer("model:esm2"):
+                    esm2_result = self._model_instances["esm2"].predict(peptides.alt_peptide)
+
+            result: Dict[str, Any] = {
+                # Top-level `skipped` keeps its historical meaning (no usable legacy window ORF) so
+                # PVS1's fallback behaves exactly as before; it is False when ESM-2 ran. ESM-2's own
+                # outcome is carried by the absent `esm2` key, `reason` and `esm2_input`.
+                "skipped": (not protein_context.alt_orf_found) and esm2_result is None,
+                "translation": translation,
+                "legacy_window_orf_found": bool(protein_context.alt_orf_found),
+                "esm2_input": esm2_input,
+            }
+            if esm2_result is not None:
+                result["esm2"] = esm2_result
+            else:
+                result["reason"] = esm2_input.get("skip_reason", "ESM-2 was not run")
+                result["esm2_skip_code"] = esm2_input.get("skip_code")
+            return result
         except (SequenceGenerationError, ModelLoadError, ModelInferenceError) as exc:
             # INVESTIGATED AND FOUND CURRENTLY UNREACHABLE (2026-08-31):
             # every raise of these three types in this codebase passes an

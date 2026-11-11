@@ -44,6 +44,9 @@ _IMPORT_TO_DIST = {
     # review/clinical_http.py (the human tools' HTTPS client) and its tests use httpx directly; it is declared
     # in geper/requirements.txt and this guard checks the declaration.
     "httpx": "httpx",
+    # api/tests/test_processing_services.py reads docker-compose.processing.yml to check the service definitions.
+    # pyyaml is declared in geper/requirements.txt (the engine reads its own YAML); this guard checks the declaration.
+    "yaml": "pyyaml",
 }
 
 # Imports that need a package they do not name. starlette.testclient (which

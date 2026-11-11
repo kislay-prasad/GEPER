@@ -81,6 +81,7 @@ Thumbs.db
 /secrets/**
 .env.clinical
 !.env.clinical.example
+!.env.processing.example
 config.yaml
 !config.yaml.example
 

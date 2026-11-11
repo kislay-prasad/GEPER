@@ -7,14 +7,19 @@
 > and `TEMP`/search-path decisions in §8 and the SQL are superseded by the v3 SQL and the review document.
 
 **Status: DESIGN ONLY.** Nothing is migrated, no DAO or route exists, no production data
-or configuration is touched, nothing is committed. The proposed SQL and its verification
-tests live under `docs/design/genome_callsets/` and are **not** part of
-`clinical/migrations`, `clinical/schema.sql` or any CI job.
+or configuration is touched, nothing is committed. The proposed SQL lives under
+`docs/design/genome_callsets/` and is **not** part of
+`clinical/migrations`, `clinical/schema.sql` or any CI job. Its verification tests
+(`test_lifecycle.py`, the design-verification suite) were written alongside it and are
+**not included in the repository**; their collected successor is
+`clinical/tests/test_callset_lifecycle_db.py`.
 
 Companion files (the SQL is canonical; this document does not repeat it, so the two cannot drift):
 
 * `docs/design/genome_callsets/0010_call_sets.proposed.sql` — final DDL, every trigger and constraint, grants.
-* `docs/design/genome_callsets/test_lifecycle.py` — 155 database-level tests (details in section 10).
+* `test_lifecycle.py` (the design-verification suite; **not included in the repository**) — 155 database-level tests when
+  this design was written (a historical count; details in section 10). Its collected successor is
+  `clinical/tests/test_callset_lifecycle_db.py` (206 tests when last run).
 
 ## 1. Decisions as approved, and how each is realised
 
@@ -260,7 +265,7 @@ append-only audit table.
 
 ## 10. Test inventory
 
-### 10.1 Database level — **built and passing: 155 tests** (`docs/design/genome_callsets/test_lifecycle.py`)
+### 10.1 Database level — **built and passing: 155 tests** (historical count, when this design was written; the design suite `test_lifecycle.py` is not included in the repository, and its collected successor is `clinical/tests/test_callset_lifecycle_db.py`)
 
 | Area | Tests |
 |---|---|

@@ -644,6 +644,11 @@ CALLSET_DESIGN_DSN=postgresql://postgres:***@127.0.0.1:55433/postgres \
 ```
 The suite builds and drops its own databases (`callset_design` and five variant databases) and touches no repository file.
 
+*Post-commit note: `test_lifecycle.py` is not included in the repository, so the command above is kept as the historical
+reproduction record and cannot be run from a checkout. A repository-collected derivative of that suite runs from
+`clinical/tests/test_callset_lifecycle_db.py` with `CLINICAL_TEST_DSN` (a disposable database only). It does not carry the
+20-case weakened-variant matrix, and it differs from the design suite in three helpers and one test body.*
+
 
 ---
 

@@ -1,12 +1,15 @@
 """
 CALL-SET LIFECYCLE AND DATABASE-SECURITY TESTS (migration 0010), COLLECTED BY THE REPOSITORY'S SUITE.
 
-Derived from docs/design/genome_callsets/test_lifecycle.py (the design-verification suite, kept unchanged as the record
-of how v3 was verified). This copy runs in CI: it builds a THROWAWAY database from the repository's own
+This is the repository-collected lifecycle and database-security suite. It is derived from a design-verification
+suite, `test_lifecycle.py`, written to verify the proposed v3 SQL
+(docs/design/genome_callsets/0010_call_sets.proposed.sql); that design suite is NOT included in the repository.
+This file runs in CI: it builds a THROWAWAY database from the repository's own
 `clinical/schema.sql` with `clinical.bootstrap` (real roles, real grants), and exercises the triggers, CHECKs, grants
 and the purge's database half through REAL LOGIN connections as `clinical_app` and `clinical_retention`.
 
-Differences from the design copy: it always runs against the repository schema (the proposed SQL is not applied again);
+Differences from the design suite (not in the repository): it always runs against the repository schema (the proposed
+SQL is not applied again);
 the weakened-variant matrix is not carried (it needs the proposed SQL as a separate file; it was green 20/20 before
 promotion, and `test_callset_migration.py` pins the search_path and `TEMP` properties it demonstrated); the four shadowing
 attacks run against the real objects; and expectations changed by the final review (cross-run duplicate rule, wrong-run

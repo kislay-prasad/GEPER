@@ -103,6 +103,7 @@ from clinical.tests.migration_db import (
     SENTINEL_ORG,
     connect,
     plant_sentinel,
+    prebuild_consents_index,
     read_sentinel,
     scratch_database,
 )
@@ -665,6 +666,8 @@ class TestNothingExistingIsRejected:
                     _write_event(cur, org_id, exception_id, token)
             connection.commit()
 
+            # This database holds a consent, so migration 0011 adopts an index the OPERATOR builds first.
+            prebuild_consents_index(dsn)
             migrate.migrate(connection, migrate.discover())
 
             notes, organisations = read_sentinel(connection)

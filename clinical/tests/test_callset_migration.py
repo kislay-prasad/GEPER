@@ -76,7 +76,7 @@ def _public_has_temp(connection) -> bool:
 class TestOrderAndDependencies:
     def test_0010_is_the_next_version_after_0009(self):
         versions = [m.version for m in migrate.discover()]
-        assert versions == sorted(versions) and versions[-2:] == [9, 10]
+        assert versions == sorted(versions) and versions[-3:] == [9, 10, 11]  # 0011 (the consents index) follows
         assert {m.version: m.name for m in migrate.discover()}[10] == "call_sets"
 
     def test_it_declares_its_own_post_conditions(self):
@@ -90,14 +90,15 @@ class TestOrderAndDependencies:
                 with c.cursor() as cur:
                     cur.execute("INSERT INTO organisations (name, created_at) VALUES ('survivor org', now())")
                 c.commit()
-                assert migrate.migrate(c) == (10,)
+                # 0010 is what is under test: stop there (0011, the consents index, has its own tests)
+                assert migrate.migrate(c, _upto(10)) == (10,)
                 c.commit()
                 assert _scalar(c, "SELECT count(*) FROM organisations WHERE name = 'survivor org'") == 1
                 for t in NEW_TABLES:
                     assert _scalar(c, "SELECT to_regclass(%s) IS NOT NULL", (f"public.{t}",)) is True
                 assert _scalar(c, "SELECT max(version) FROM schema_migrations") == 10
                 # running it again is a no-op, not an error
-                assert migrate.migrate(c) == ()
+                assert migrate.migrate(c, _upto(10)) == ()
 
     def test_the_foreign_keys_land_on_the_real_parent_keys(self):
         with scratch_database("callset_fk") as dsn:

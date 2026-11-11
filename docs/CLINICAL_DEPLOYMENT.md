@@ -132,9 +132,11 @@ The **init** job runs `python -m clinical.bootstrap && python -m clinical.migrat
 --migrate && python -m clinical.migrate --verify`, and the API does not start unless
 it exits 0.
 
-* On an **empty database** it creates the two login roles and applies migrations
-  0001 to 0009 in order. *Verified*: it applied 1 to 9 and the verifier reported OK
-  at version 9. The result was catalog-identical (602 columns, constraints, indexes,
+* On an **empty database** it creates the two login roles and applies every migration
+  in order (0001 to 0011 at the time of writing). *Verified, historical*: this was
+  observed when the newest migration was 0009 (it applied 1 to 9 and the verifier
+  reported OK at version 9); that stack run was not repeated for 0010 or 0011, which
+  are covered by the migration test suites instead. The result was catalog-identical (602 columns, constraints, indexes,
   triggers and privilege facts) to a database built directly from `clinical/schema.sql`.
 * On a **current database** it is a no-op. *Verified*: running the deploy command a
   second time updated the two roles' passwords, applied nothing, verified OK, left
@@ -196,6 +198,92 @@ What this means in operation:
 
 These statements come from the migration text and its tests; the `GRANT` and `--verify`
 commands above were not run against this stack.
+
+### Upgrading to migration 0011 (the consents index)
+
+Migration 0011 adds `consents_patient_scope_latest`, the index the consent rule's
+"latest consent" lookup needs. It changes **performance only**, never an answer: without
+it each lookup scans the whole `consents` table (about 20 ms per lookup at 300,000
+consents on a synthetic database, against about 0.02 ms with it).
+
+**A new database needs nothing.** `consents` is empty, so the migration builds the index
+itself, instantly. A database built from `schema.sql` already has it.
+
+**A database that already holds consents does not get the index built by the migration**,
+because a plain build blocks writes to `consents` for its whole duration and
+`CREATE INDEX CONCURRENTLY` cannot run inside the migration's transaction. **The operator
+builds it first, then the migration adopts it.** If it is absent, invalid or different in
+any respect, the migration refuses, records nothing and changes nothing. *Tested*: the
+migration command (`python -m clinical.migrate --migrate`) exits non-zero in that case and
+the database is left exactly as it was. *Not yet verified*: that the Docker Compose stack
+then keeps the API from starting. The API service declares `condition: service_completed_successfully` on the init job
+(`docker-compose.clinical.yml`), so it should not start, but a failed upgrade was never run
+against the stack. The
+migration never repairs, rebuilds or removes an index.
+
+The sequence (run it against the target database *before* `up` starts the init job; the
+init job runs migrations automatically and nothing in this stack pauses it):
+
+1. Back up the database and `secrets/` (above).
+2. Check the context, then that no invalid index and no relation of that name exists. Run
+   these read-only queries in `psql` against the target database:
+
+   ```sql
+   -- context: the database you mean, the role you are, and that `consents` resolves
+   SELECT current_database(), current_user, current_schemas(false), to_regclass('consents');
+   -- expected: your database name, the administrative role, {public}, consents
+
+   -- any relation already using the agreed name (an index, table, view...)
+   SELECT c.relname, c.relkind FROM pg_class c
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relname = 'consents_patient_scope_latest';
+   -- expected: zero rows (otherwise stop; see step 6)
+
+   -- leftover invalid indexes on consents
+   SELECT indexrelid::regclass FROM pg_index
+    WHERE indrelid = 'consents'::regclass AND NOT indisvalid;
+   -- expected: zero rows
+   ```
+3. Build it with `CREATE INDEX CONCURRENTLY consents_patient_scope_latest ON consents
+   (org_id, patient_id, scope, recorded_at DESC, consent_id DESC)`, in **autocommit**
+   (not inside a transaction), as the table's owner (the administrative role), from a
+   session that stays open for the whole build, with a `lock_timeout` set. It scans the
+   table twice and waits for older transactions; watch `pg_stat_progress_create_index`.
+   For the bundled database, `docker compose … exec clinical-db psql -U postgres -d clinical`
+   is the analogue of the `pg_dump` command below (`clinical` is the bundled default
+   database name; use yours); the runtime image carries no `psql`.
+4. Verify it. Repeat the context query from step 2, then:
+
+   ```sql
+   SELECT indexdef FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'consents' AND indexname = 'consents_patient_scope_latest';
+   -- expected, exactly one row, exactly this text:
+   -- CREATE INDEX consents_patient_scope_latest ON public.consents USING btree (org_id, patient_id, scope, recorded_at DESC, consent_id DESC)
+
+   SELECT i.indisvalid, i.indisready, i.indislive, i.indisunique,
+          i.indpred IS NULL AS no_where, i.indexprs IS NULL AS no_expressions,
+          i.indnkeyatts, i.indnatts, c.reloptions
+     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relname = 'consents_patient_scope_latest';
+   -- expected, exactly one row: t, t, t, f, t, t, 5, 5, and reloptions NULL
+   ```
+
+   The definition text pins the method, columns, order, directions, absence of `WHERE` and
+   `INCLUDE`. The migration additionally checks operator classes and collations (a default
+   build on these columns passes), and refuses anything else. *Verified*: the queries
+   above return the stated values on a database built from `schema.sql` (PostgreSQL 16).
+5. Only then `up -d` (or run `python -m clinical.migrate --migrate`).
+6. If step 3 is interrupted or fails, PostgreSQL leaves an **invalid** index of that name.
+   Remove it by hand and build it again; the migration will refuse it until you do.
+
+**Not verified:** these commands were not run against this stack; `docker compose … run
+--rm clinical-init python -m clinical.migrate …` for a separate migration step is inferred
+from Compose, not tested; and what happens to an already-running API when init fails during
+an upgrade was not observed. Rehearse on a disposable stack first.
+
+Once applied, `/readyz` checks on every call that **some** valid index with that shape
+exists (not that one particular name does), so removing the index makes the service report
+`schema_drift`. Replace it by adding the new index first and removing the old one in a
+later migration.
 
 ## First administrator
 
@@ -380,8 +468,18 @@ Restore into a **new, empty** database (same or a new cluster):
 2. Recreate the roles with the same passwords: run `python -m clinical.bootstrap`
    from the init job's image and environment, without `--apply-schema`.
 3. `pg_restore -U postgres -d clinical --exit-on-error < clinical-DATE.dump`.
-4. Run `python -m clinical.migrate --verify`; it must say OK.
-5. Start the API.
+4. **If the dump was taken before migration 0011 and `consents` holds rows**, build the
+   consents index now, exactly as in "Upgrading to migration 0011" above (its steps 2 to
+   4: check, `CREATE INDEX CONCURRENTLY`, verify), *before* any migration step. A dump
+   taken at 0011 or later already contains the index; skip this step. Without it, applying
+   0011 refuses (and `--verify` cannot say OK) because the restored table is populated.
+5. Apply any pending migrations (`python -m clinical.migrate --migrate`; 0010 and 0011 for
+   a pre-0011 dump), then run `python -m clinical.migrate --verify`; it must say OK.
+6. Start the API.
+
+The order is: restore, then index (pre-0011 populated dumps only), then migrate, then
+verify, then start. The *Verified* restores below pre-date migration 0011 and were not
+repeated for it, so the 0011 path of this procedure is untested end to end.
 
 *Verified* with `docker exec` equivalents of these commands, twice: restoring into a
 second database on the same cluster, and into a brand-new empty cluster whose roles

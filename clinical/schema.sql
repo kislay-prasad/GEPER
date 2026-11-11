@@ -514,6 +514,17 @@ CREATE INDEX consents_patient_active
     ON consents (org_id, patient_id)
     WHERE withdrawn_at IS NULL AND superseded_by IS NULL;
 
+-- Migration 0011 (Stage 1B). The index the consent rule's "latest consent" lookup needs: for an order,
+-- the patient's newest consent for its scope (WHERE org_id, patient_id, scope ORDER BY recorded_at DESC,
+-- consent_id DESC LIMIT 1), INCLUDING withdrawn and superseded rows, which the partial index above omits.
+-- A performance object only: it changes no answer. A fresh database builds it here on an empty table; an
+-- existing one gets it from the operator (built concurrently) and the migration adopts it after validating
+-- it. ONE definition: clinical/migrations/0011_consents_patient_scope_latest.sql carries the same statement
+-- and test_w126m_schema_equivalence.py compares the two. Keys 1-3 ascending, keys 4-5 descending
+-- (DESC defaults to NULLS FIRST), plain non-unique B-tree, default operator classes.
+CREATE INDEX consents_patient_scope_latest
+    ON consents (org_id, patient_id, scope, recorded_at DESC, consent_id DESC);
+
 
 CREATE TABLE tests (
     test_id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3075,4 +3086,5 @@ INSERT INTO schema_migrations (version, name, checksum) VALUES
     (7, 'order_test_same_org', '848b0c0cb9a4e2c19aecd28aeea694cbdbc8eb83a3f397a2bd5502ecf3fd7c02'),
     (8, 'active_test_name_unique', '0b8f520d74afc140175dfcd6218f8c441a1b5b80c35fe5c03cc292acf33546a1'),
     (9, 'portal_release_once', '4110a7fe900eeac745be879280387fd6e74b96b41221d70258740e651a2aae15'),
-    (10, 'call_sets', '99ea97ec440ea04ffa254f172f2be1dc6aef3b223fc4b3d7d8b2ba6bce07fc71');
+    (10, 'call_sets', '99ea97ec440ea04ffa254f172f2be1dc6aef3b223fc4b3d7d8b2ba6bce07fc71'),
+    (11, 'consents_patient_scope_latest', '4921f8b7ead841fcc074a1d70415d13909220be55c5f541e621504d7e4b72d35');

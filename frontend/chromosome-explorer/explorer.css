@@ -1,0 +1,124 @@
+/* GEPER Clinical -- Chromosome Explorer. One stylesheet, no external resources.
+   Dark surface, blue as the primary accent, a restrained yellow as the secondary
+   (used only for caution / uncertainty). Colour is never the only encoding:
+   position above/below the baseline, glyphs and text labels carry the same
+   information. The marketing site's stylesheet (site/product/style.css) is a
+   light, serif document theme; this is a separate tool surface and does not
+   reuse it. */
+
+:root {
+  --bg: #0b1220;
+  --panel: #111b30;
+  --panel-2: #16233f;
+  --line: #243558;
+  --ink: #e7edf8;
+  --muted: #9aa9c4;
+  --blue: #4f8bff;
+  --blue-soft: #2a4a8a;
+  --yellow: #d9b44a;
+  --yellow-soft: #6b5a24;
+  --danger: #ff8a7a;
+  --radius: 10px;
+  color-scheme: dark;
+}
+
+* , *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+.top { padding: 20px clamp(12px, 3vw, 32px) 8px; border-bottom: 1px solid var(--line); }
+.wordmark { font-weight: 700; letter-spacing: .04em; color: var(--blue); }
+.wordmark .sub { color: var(--muted); font-weight: 500; }
+h1 { margin: 4px 0 4px; font-size: 1.5rem; }
+h2 { font-size: 1.05rem; margin: 20px 0 8px; }
+h3 { font-size: 1rem; margin: 0 0 6px; }
+.scope { margin: 0 0 8px; color: var(--muted); max-width: 70ch; }
+main { padding: 12px clamp(12px, 3vw, 32px) 40px; }
+
+.state { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; max-width: 60ch; }
+.state-error { border-color: var(--yellow-soft); }
+.spinner { display: inline-block; width: 14px; height: 14px; margin-right: 10px; border-radius: 50%;
+  border: 2px solid var(--blue-soft); border-top-color: var(--blue); animation: spin 0.9s linear infinite; vertical-align: -2px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+.assembly strong { color: var(--blue); }
+.callsets, .legend, .limitations, .warnings, .links { margin: 6px 0; padding-left: 1.1rem; color: var(--muted); }
+.callsets li, .limitations li { margin: 3px 0; }
+.karyo { color: var(--yellow); }
+
+.overview-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; overflow-x: auto; }
+svg { display: block; width: 100%; height: auto; }
+/* Below this width the drawing scrolls horizontally instead of shrinking its labels to illegibility. */
+svg.overview, svg.detail { min-width: 720px; }
+svg text { fill: var(--muted); font: 12px "Segoe UI", system-ui, sans-serif; }
+
+.overview .chrom { cursor: pointer; outline: none; }
+.overview .chrom-name { fill: var(--ink); font-weight: 600; }
+.overview .chrom-bar { fill: var(--panel-2); stroke: var(--line); }
+.overview .chrom-bar.unassessed { stroke-dasharray: 4 3; }
+.overview .chrom.has-findings .chrom-bar { stroke: var(--blue-soft); }
+.overview .chrom.selected .chrom-bar, .overview .chrom:focus-visible .chrom-bar { stroke: var(--blue); stroke-width: 2; }
+.overview .chrom:hover .chrom-bar { fill: #1b2c4f; }
+.mk-small { stroke: var(--ink); stroke-width: 1; }
+.mk-cnv.deletion { fill: var(--blue); }
+.mk-cnv.duplication { fill: var(--yellow); }
+.mk-cnv.copy_number_change { fill: var(--muted); }
+.mk-svi { fill: var(--blue); }
+.mk-svi.duplication { fill: var(--yellow); }
+.mk-bnd { fill: var(--ink); }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 340px); gap: 16px; margin-top: 16px; align-items: start; }
+@media (max-width: 860px) { .split { grid-template-columns: minmax(0, 1fr); } }
+.detail-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; overflow-x: auto; }
+.detail .track-label { fill: var(--ink); font-weight: 600; }
+.detail .track-status { font-size: 11px; }
+.detail .ruler, .detail .baseline, .detail .tick { stroke: var(--line); }
+.detail .tick-label { font-size: 11px; }
+.detail .band { fill: none; stroke: var(--line); }
+.detail .band.unassessed { stroke-dasharray: 5 4; fill: repeating-linear-gradient(45deg, transparent, transparent 6px, #14213c 6px, #14213c 12px); }
+.detail .band-text { font-style: italic; }
+
+.cnv-seg .seg { fill: var(--blue); }
+.cnv-seg.duplication .seg { fill: var(--yellow); }
+.cnv-seg.copy_number_change .seg { fill: var(--muted); }
+.cnv-seg.uncertain .seg, .sv-int.uncertain .seg, .sv-bnd.uncertain path { stroke: var(--yellow); stroke-dasharray: 3 2; fill-opacity: .55; }
+.seg-glyph { fill: var(--bg) !important; font-size: 9px; font-weight: 700; pointer-events: none; }
+.sv-int .seg-glyph { fill: var(--ink) !important; }
+.sv-int .seg { fill: var(--blue); }
+.sv-int.duplication .seg { fill: var(--yellow); }
+.sv-int.inversion .seg { fill: none; stroke: var(--blue); stroke-width: 2; }
+.sv-bnd path { fill: var(--ink); }
+.sv-bnd.partner path { fill: none; stroke: var(--ink); stroke-width: 2; }
+.sv-bnd.ins path { fill: var(--blue); }
+.ci { fill: var(--blue); opacity: .28; }
+.ci.unquantified { fill: none; stroke: var(--yellow); stroke-dasharray: 3 2; opacity: .9; }
+[data-finding] { cursor: pointer; outline: none; }
+[data-finding]:focus-visible, [data-finding].selected { filter: drop-shadow(0 0 3px var(--blue)); }
+.mk-small.selected { stroke: var(--blue); stroke-width: 3; }
+
+#panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-height: 120px; }
+#panel dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 8px 0; }
+#panel dt { color: var(--muted); }
+#panel dd { margin: 0; overflow-wrap: anywhere; }
+.na { color: var(--muted); font-style: italic; }
+.status { display: inline-block; margin: 0 0 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--blue-soft); font-size: .85rem; }
+.status-uncertain { border-color: var(--yellow); color: var(--yellow); }
+.caveat { color: var(--yellow); margin: 4px 0 8px; }
+.hint { color: var(--muted); }
+.warnings li { color: var(--yellow); }
+details { margin-top: 8px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); padding: 8px; border-radius: 6px; border: 1px solid var(--line); font-size: 12px; }
+.links button { background: var(--panel-2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+.links button:hover, .links button:focus-visible { border-color: var(--blue); outline: none; }
+.legend { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.glyph { display: inline-block; width: 18px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--blue); vertical-align: -1px; }
+.glyph-tick { width: 2px; background: var(--ink); height: 12px; }
+.glyph-segment-above { background: var(--yellow); }
+.glyph-segment-hatched { background: repeating-linear-gradient(45deg, var(--muted), var(--muted) 3px, transparent 3px, transparent 6px); }
+.glyph-triangle { width: 0; height: 0; background: none; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 10px solid var(--blue); }
+.glyph-bracket { background: none; border: 2px solid var(--blue); }
+.glyph-diamond { width: 10px; height: 10px; transform: rotate(45deg); background: var(--ink); }
+.glyph-arc { background: none; border: 2px solid var(--ink); border-radius: 10px 10px 0 0; border-bottom: none; }

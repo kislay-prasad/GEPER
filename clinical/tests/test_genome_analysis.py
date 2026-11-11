@@ -315,7 +315,7 @@ class TestScientificGuards:
 class TestModuleHygiene:
     def test_no_imports_outside_the_package_or_stdlib(self):
         """The clinical service deploys without the rest of geper/, so this package must stand alone."""
-        stdlib_ok = {"__future__", "dataclasses", "typing"}
+        stdlib_ok = {"__future__", "dataclasses", "typing", "math", "re"}  # pure stdlib only (Phase 2 adds math, re)
         pkg = pathlib.Path(summary_module.__file__).parent
         for path in pkg.glob("*.py"):
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):

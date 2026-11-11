@@ -7,6 +7,8 @@ here.
 
     CLINICIAN GET /clinic/patients/{patient_id}/genome/chromosomes
               GET /clinic/patients/{patient_id}/genome/chromosomes/{name}
+              GET /clinic/patients/{patient_id}/genome/map                (Phase 2)
+              GET /clinic/patients/{patient_id}/genome/map/{name}?start&end (Phase 2)
     PATIENT   GET /portal/me/genome/chromosomes            (OFF BY DEFAULT)
               GET /portal/me/genome/chromosomes/{name}     (OFF BY DEFAULT)
 
@@ -57,7 +59,7 @@ NOT HERE: CNV, structural variants, karyotype. Every response says they are
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -73,6 +75,8 @@ from clinical.data_access import (
 from clinical.endpoints import _anonymous_refusal, _get_data_access, _get_session
 from clinical.genome_analysis import (
     PATIENT_WITHHELD_CHROMOSOMES,
+    CallSet,
+    build_chromosome_map,
     normalize_contig,
     patient_projection,
     summarise_run_document,
@@ -107,6 +111,16 @@ class PatientChromosomeResponse(BaseModel):
 class ClinicGenomeResponse(BaseModel):
     patient_id: str
     analyses: List[Dict[str, Any]]
+
+
+class ClinicMapResponse(BaseModel):
+    patient_id: str
+    chromosome: Optional[str] = None
+    maps: List[Dict[str, Any]]
+    call_sets_note: str
+    # Validated call sets that exist for this patient but are NOT drawn, by reason (a fixed vocabulary). Empty means none
+    # are held back; it never means "none exist". Counts only: no id, coordinate or content.
+    held_back_call_sets: Dict[str, int] = {}
 
 
 class ClinicChromosomeResponse(BaseModel):
@@ -227,4 +241,193 @@ async def clinic_get_chromosome(
         raise _bad_chromosome()
     return ClinicChromosomeResponse(
         patient_id=str(target), chromosome=canonical, analyses=[_clinic_entry(i, canonical) for i in items]
+    )
+
+
+# ── Phase 2: the Chromosome Explorer map (clinician only) ────────────────────
+#
+# WHERE CNV/SV CALLS COME FROM. Stored call sets (migration 0010), read through ONE data-layer method that returns
+# only VALIDATED, live, non-redacted evidence of THIS organisation's patient whose assembly agrees with the ordered
+# test (`DataAccess.list_patient_validated_call_sets`). The route supplies the session and the path's patient id and
+# nothing else: the organisation is the session's, and the patient is verified in the data layer against it. Each
+# stored document is rebuilt through the validating models, so a stored document that no longer satisfies them is
+# not returned by the data layer, which records a `call_set_integrity_failure` audit row (id only) instead.
+# Tests override the dependency with synthetic call sets.
+
+
+class DaoCallSetSource:
+    """The stored-call-set source: delegates entirely to the data layer, which owns every check."""
+
+    def __init__(self, dao: DataAccess) -> None:
+        self._dao = dao
+        self._excluded: Dict[str, int] = {}
+
+    def call_sets_for(self, session: Session, patient_id: Any) -> Sequence[CallSet]:
+        evidence = self._dao.patient_call_set_evidence(session, patient_id)
+        self._excluded = dict(evidence["excluded"])
+        return [row["call_set"] for row in evidence["eligible"]]
+
+    def excluded_for(self, session: Session, patient_id: Any) -> Dict[str, int]:
+        """Valid only after `call_sets_for` in the same request: the same single read supplies both."""
+        return dict(getattr(self, "_excluded", {}))
+
+
+def get_call_set_source(dao: DataAccess = Depends(_get_data_access)) -> DaoCallSetSource:
+    return DaoCallSetSource(dao)
+
+
+_CALL_SETS_NOTE_NONE = (
+    "No CNV or structural-variant call set is attached to this patient, so those layers are not assessed. "
+    "This is not a finding that no such variants exist."
+)
+_CALL_SETS_NOTE_SOME = "Call sets are drawn only on a map of their own assembly; none is converted between assemblies."
+_EXCLUDED_WORDS = {
+    "consent_withdrawn": "consent is withdrawn",
+    "sample_qc_not_passed": "the sample has not passed QC",
+    "order_cancelled": "the order is cancelled",
+    "sample_identity_changed": "the sample no longer matches the run",
+    "assembly_mismatch": "the assembly does not match the ordered test",
+    "small_variant_build_mismatch": "the run's small-variant analysis is on another genome build",
+    "integrity_failure": "its stored evidence failed an integrity check",
+    "retention_redacted": "it was removed under the retention policy",
+}
+
+
+def _call_sets_note(call_sets: Sequence[Any], excluded: Dict[str, int]) -> str:
+    """Three different answers: drawn, held back (and why), and never attached. Reasons are a fixed vocabulary."""
+    if not excluded:
+        return _CALL_SETS_NOTE_SOME if call_sets else _CALL_SETS_NOTE_NONE
+    total = sum(excluded.values())
+    why = "; ".join(f"{n} because {_EXCLUDED_WORDS.get(k, k)}" for k, n in sorted(excluded.items()))
+    held = (
+        f"{total} validated CNV/structural-variant call set(s) for this patient are NOT shown ({why}). "
+        "Those layers are not assessed from them; this is not a finding that no such variants exist."
+    )
+    return f"{_CALL_SETS_NOTE_SOME} {held}" if call_sets else held
+
+
+def _excluded_of(source: Any, session: Session, patient: Any) -> Dict[str, int]:
+    getter = getattr(source, "excluded_for", None)
+    return dict(getter(session, patient)) if callable(getter) else {}
+
+
+def _parse_region(start: Optional[str], end: Optional[str]) -> Optional[tuple]:
+    if start is None and end is None:
+        return None
+    try:
+        s, e = int(start), int(end)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid region.")
+    if s < 1 or e < s:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid region.")
+    return s, e
+
+
+def _maps(
+    items: List[Dict[str, Any]], call_sets: Sequence[CallSet], only: Optional[str], region
+) -> List[Dict[str, Any]]:
+    """One map per analysis (its own build) plus one per call-set build no analysis covers. Never merged."""
+    out: List[Dict[str, Any]] = []
+    covered = set()
+    for item in items:
+        summary = summarise_run_document(item["run_document"])
+        head = {
+            "interpretation_id": str(item["interpretation_id"]),
+            "created_at": item["created_at"].isoformat(),
+            "report_states": item["report_states"],
+            "released_to_patient": item["released_to_patient"],
+        }
+        if summary.assembly is None or summary.status != "ok":
+            out.append({**head, "status": summary.status, "reason": summary.reason, "map": None})
+            continue
+        covered.add(summary.assembly)
+        out.append(
+            {
+                **head,
+                "status": "ok",
+                "reason": None,
+                "map": build_chromosome_map(
+                    assembly=summary.assembly, summary=summary, call_sets=call_sets, only_chromosome=only, region=region
+                ),
+            }
+        )
+    for build in sorted({cs.assembly for cs in call_sets} - covered):
+        out.append(
+            {
+                "interpretation_id": None,
+                "created_at": None,
+                "report_states": [],
+                "released_to_patient": False,
+                "status": "ok",
+                "reason": "no small-variant analysis exists for this assembly",
+                "map": build_chromosome_map(
+                    assembly=build, summary=None, call_sets=call_sets, only_chromosome=only, region=region
+                ),
+            }
+        )
+    return out
+
+
+@clinic_genome_router.get(
+    "/{patient_id}/genome/map",
+    response_model=ClinicMapResponse,
+    summary="Chromosome Explorer data for one patient: small variants, CNV and SV layers per assembly (read-only)",
+)
+async def clinic_genome_map(
+    patient_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+    source: DaoCallSetSource = Depends(get_call_set_source),
+) -> ClinicMapResponse:
+    target = _target(patient_id)
+    try:
+        items = dao.list_patient_genome_analyses(session, target)
+        call_sets = list(source.call_sets_for(session, target))
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    excluded = _excluded_of(source, session, target)
+    return ClinicMapResponse(
+        patient_id=str(target),
+        maps=_maps(items, call_sets, None, None),
+        call_sets_note=_call_sets_note(call_sets, excluded),
+        held_back_call_sets=excluded,
+    )
+
+
+@clinic_genome_router.get(
+    "/{patient_id}/genome/map/{name}",
+    response_model=ClinicMapResponse,
+    summary="One chromosome of the Chromosome Explorer data, optionally restricted to start..end (read-only)",
+)
+async def clinic_genome_map_chromosome(
+    patient_id: str,
+    name: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+    source: DaoCallSetSource = Depends(get_call_set_source),
+) -> ClinicMapResponse:
+    # `start`/`end` are strings and are parsed AFTER the data layer's gate, so a
+    # malformed region cannot answer before the role check (no 422 ahead of a 403).
+    target = _target(patient_id)
+    try:
+        items = dao.list_patient_genome_analyses(session, target)
+        call_sets = list(source.call_sets_for(session, target))
+    except AuthorizationError:
+        raise _forbidden()
+    except NotFoundError:
+        raise _not_found()
+    canonical = normalize_contig(name)
+    if canonical is None:
+        raise _bad_chromosome()
+    region = _parse_region(start, end)
+    return ClinicMapResponse(
+        patient_id=str(target),
+        chromosome=canonical,
+        maps=_maps(items, call_sets, canonical, region),
+        call_sets_note=_call_sets_note(call_sets, _excluded_of(source, session, target)),
+        held_back_call_sets=_excluded_of(source, session, target),
     )

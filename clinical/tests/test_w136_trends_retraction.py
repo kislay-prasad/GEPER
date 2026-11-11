@@ -586,6 +586,12 @@ class TestTheHeldTrendsWorkIsNotServedHere:
             # (cross-organisation, role-gate-before-existence).
             "/clinic/patients/{patient_id}/genome/chromosomes",
             "/clinic/patients/{patient_id}/genome/chromosomes/{name}",
+            # Genome Analysis, Phase 2: the same property again for the two
+            # read-only Explorer map routes (staff session, role gate first,
+            # organisation from Session.org_id, audited as genome_read);
+            # behavioural halves in `test_genome_map_endpoints.py`.
+            "/clinic/patients/{patient_id}/genome/map",
+            "/clinic/patients/{patient_id}/genome/map/{name}",
         }
         served = {path for path, _ in leaves}
         assert exempt <= served, (

@@ -1,0 +1,420 @@
+{
+ "assembly": "GRCh38",
+ "caller_in_header": "GoldenCaller 1.0",
+ "counts": {
+  "detected": 6,
+  "invalid": 5,
+  "records": 14,
+  "uncertain": 2,
+  "unsupported": 1
+ },
+ "header_check": {
+  "contigs_checked": 3,
+  "note": null,
+  "reference_named": null,
+  "status": "verified"
+ },
+ "record_class": "cnv",
+ "records": [
+  {
+   "line_no": 7,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "deletion",
+    "copy_number": 1.0,
+    "copy_number_source": "INFO:CN",
+    "end": 5000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 5000,
+     "ci_low": 5000,
+     "notation": null,
+     "pos": 5000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 4001,
+    "line_no": 7,
+    "log2_ratio": null,
+    "quality": 60.0,
+    "source_id": "cn1_del",
+    "start": 1000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 1000,
+     "ci_low": 1000,
+     "notation": null,
+     "pos": 1000,
+     "precision": "precise"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "cn1_del",
+   "status": "detected"
+  },
+  {
+   "line_no": 8,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "duplication",
+    "copy_number": 3.0,
+    "copy_number_source": "INFO:CN",
+    "end": 12000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 12005,
+     "ci_low": 11995,
+     "notation": null,
+     "pos": 12000,
+     "precision": "interval"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 3001,
+    "line_no": 8,
+    "log2_ratio": null,
+    "quality": 1.5e+22,
+    "source_id": "cn3_dup_ci",
+    "start": 9000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 9010,
+     "ci_low": 8990,
+     "notation": null,
+     "pos": 9000,
+     "precision": "interval"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "cn3_dup_ci",
+   "status": "detected"
+  },
+  {
+   "line_no": 9,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "deletion",
+    "copy_number": 0.0,
+    "copy_number_source": "INFO:CN",
+    "end": 22000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 22000,
+     "ci_low": 22000,
+     "notation": null,
+     "pos": 22000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 2001,
+    "line_no": 9,
+    "log2_ratio": null,
+    "quality": null,
+    "source_id": "cn0_homdel",
+    "start": 20000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 20000,
+     "ci_low": 20000,
+     "notation": null,
+     "pos": 20000,
+     "precision": "precise"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "cn0_homdel",
+   "status": "detected"
+  },
+  {
+   "line_no": 10,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "copy_number_change",
+    "copy_number": 4.0,
+    "copy_number_source": "ALT",
+    "end": 33000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 33000,
+     "ci_low": 33000,
+     "notation": null,
+     "pos": 33000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 3001,
+    "line_no": 10,
+    "log2_ratio": null,
+    "quality": 45.0,
+    "source_id": "cn_from_alt",
+    "start": 30000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 30000,
+     "ci_low": 30000,
+     "notation": null,
+     "pos": 30000,
+     "precision": "precise"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "cn_from_alt",
+   "status": "detected"
+  },
+  {
+   "line_no": 11,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "deletion",
+    "copy_number": null,
+    "copy_number_source": null,
+    "end": 43000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 43000,
+     "ci_low": 43000,
+     "notation": null,
+     "pos": 43000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 3001,
+    "line_no": 11,
+    "log2_ratio": -0.9,
+    "quality": 45.0,
+    "source_id": "log2_only",
+    "start": 40000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 40000,
+     "ci_low": 40000,
+     "notation": null,
+     "pos": 40000,
+     "precision": "precise"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "log2_only",
+   "status": "detected"
+  },
+  {
+   "line_no": 12,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "copy_number_change",
+    "copy_number": null,
+    "copy_number_source": null,
+    "end": 53000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 53000,
+     "ci_low": 53000,
+     "notation": null,
+     "pos": 53000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 3001,
+    "line_no": 12,
+    "log2_ratio": null,
+    "quality": 45.0,
+    "source_id": "cnv_neither",
+    "start": 50000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 50000,
+     "ci_low": 50000,
+     "notation": null,
+     "pos": 50000,
+     "precision": "precise"
+    },
+    "status": "uncertain",
+    "warnings": [
+     "copy-number change reported with neither CN nor a log2 ratio"
+    ]
+   },
+   "source_id": "cnv_neither",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 13,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "1",
+    "cnv_type": "duplication",
+    "copy_number": 3.0,
+    "copy_number_source": "INFO:CN",
+    "end": 63000,
+    "end_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 63000,
+     "ci_low": 63000,
+     "notation": null,
+     "pos": 63000,
+     "precision": "precise"
+    },
+    "filter": "LowQual",
+    "kind": "cnv",
+    "length_bp": 3001,
+    "line_no": 13,
+    "log2_ratio": null,
+    "quality": 10.0,
+    "source_id": "lowqual_dup",
+    "start": 60000,
+    "start_breakpoint": {
+     "chrom": "1",
+     "chrom_raw": "1",
+     "ci_high": 60000,
+     "ci_low": 60000,
+     "notation": null,
+     "pos": 60000,
+     "precision": "precise"
+    },
+    "status": "uncertain",
+    "warnings": []
+   },
+   "source_id": "lowqual_dup",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 14,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "call_set_id": null,
+    "caller": null,
+    "chrom": "X",
+    "cnv_type": "deletion",
+    "copy_number": 0.0,
+    "copy_number_source": "INFO:CN",
+    "end": 9000,
+    "end_breakpoint": {
+     "chrom": "X",
+     "chrom_raw": "X",
+     "ci_high": 9000,
+     "ci_low": 9000,
+     "notation": null,
+     "pos": 9000,
+     "precision": "precise"
+    },
+    "filter": "PASS",
+    "kind": "cnv",
+    "length_bp": 2001,
+    "line_no": 14,
+    "log2_ratio": null,
+    "quality": 80.0,
+    "source_id": "cn_x",
+    "start": 7000,
+    "start_breakpoint": {
+     "chrom": "X",
+     "chrom_raw": "X",
+     "ci_high": 7000,
+     "ci_low": 7000,
+     "notation": null,
+     "pos": 7000,
+     "precision": "precise"
+    },
+    "status": "detected",
+    "warnings": []
+   },
+   "source_id": "cn_x",
+   "status": "detected"
+  },
+  {
+   "line_no": 15,
+   "reason": "copy_number cannot be negative",
+   "record": null,
+   "source_id": "invalid_negative_cn",
+   "status": "invalid"
+  },
+  {
+   "line_no": 16,
+   "reason": "QUAL 'nan' is not finite",
+   "record": null,
+   "source_id": "invalid_nan_quality",
+   "status": "invalid"
+  },
+  {
+   "line_no": 17,
+   "reason": "CNV end 89000 precedes start 90000",
+   "record": null,
+   "source_id": "invalid_end_before_pos",
+   "status": "invalid"
+  },
+  {
+   "line_no": 18,
+   "reason": "POS 'bad' is not a positive integer",
+   "record": null,
+   "source_id": "invalid_pos",
+   "status": "invalid"
+  },
+  {
+   "line_no": 19,
+   "reason": "ALT <CN3> states copy number 3 but CN=1",
+   "record": null,
+   "source_id": "invalid_alt_cn_conflict",
+   "status": "invalid"
+  },
+  {
+   "line_no": 20,
+   "reason": "contig 'chrUn_gl000220' is not chromosome 1-22, X, Y or MT",
+   "record": null,
+   "source_id": "unplaced",
+   "status": "unsupported"
+  }
+ ],
+ "samples": [
+  "GOLD"
+ ],
+ "schema_version": "1"
+}

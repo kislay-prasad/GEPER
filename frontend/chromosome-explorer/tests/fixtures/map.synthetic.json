@@ -1,0 +1,1244 @@
+{
+ "_comment": "SYNTHETIC development/test fixture. Not patient data. Regenerate with GENOME_REGENERATE_FIXTURE=1.",
+ "call_sets_note": "Call sets are drawn only on a map of their own assembly; none is converted between assemblies.",
+ "maps": [
+  {
+   "created_at": "2000-01-01T00:00:00+00:00",
+   "interpretation_id": "00000000-0000-0000-0000-000000000001",
+   "map": {
+    "assembly": "GRCh38",
+    "breakend_pairing": {
+     "inconsistent_pairs": 0,
+     "mate_missing": 0,
+     "no_mate_named": 1,
+     "paired_pairs": 1
+    },
+    "call_sets": [
+     {
+      "assembly": "GRCh38",
+      "call_set_id": "synthetic-cnv",
+      "caller": "SYNTHETIC-TEST-CALLER",
+      "caller_in_header": "SYNTHETIC-TEST-CALLER",
+      "counts": {
+       "detected": 1,
+       "invalid": 0,
+       "records": 3,
+       "uncertain": 2,
+       "unsupported": 0
+      },
+      "header_check": {
+       "contigs_checked": 3,
+       "note": null,
+       "reference_named": null,
+       "status": "verified"
+      },
+      "record_class": "cnv",
+      "rejected": [],
+      "samples": [],
+      "source_id": null
+     },
+     {
+      "assembly": "GRCh38",
+      "call_set_id": "synthetic-sv",
+      "caller": "SYNTHETIC-TEST-CALLER",
+      "caller_in_header": "SYNTHETIC-TEST-CALLER",
+      "counts": {
+       "detected": 5,
+       "invalid": 0,
+       "records": 6,
+       "uncertain": 1,
+       "unsupported": 0
+      },
+      "header_check": {
+       "contigs_checked": 3,
+       "note": null,
+       "reference_named": null,
+       "status": "verified"
+      },
+      "record_class": "sv",
+      "rejected": [],
+      "samples": [],
+      "source_id": null
+     }
+    ],
+    "chromosomes": [
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [
+         {
+          "a": "cnv:synthetic-cnv:7",
+          "b": "cnv:synthetic-cnv:8",
+          "relation": "overlap"
+         }
+        ],
+        "segments": [
+         {
+          "assembly": "GRCh38",
+          "call_set_id": "synthetic-cnv",
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "chrom": "1",
+          "cnv_type": "deletion",
+          "copy_number": 1.0,
+          "copy_number_source": "INFO:CN",
+          "end": 18000000,
+          "end_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 18000000,
+           "ci_high_frac": 0.07230181,
+           "ci_low": 18000000,
+           "ci_low_frac": 0.07230181,
+           "frac": 0.07230181,
+           "notation": null,
+           "pos": 18000000,
+           "precision": "precise"
+          },
+          "evidence": {
+           "alt": "<DEL>",
+           "format": {},
+           "info": {
+            "CIPOS": "-50000,50000",
+            "CN": "1",
+            "END": "18000000",
+            "SVTYPE": "DEL"
+           },
+           "raw_record": "1\t10000000\tcnv1\tN\t<DEL>\t80\tPASS\tSVTYPE=DEL;END=18000000;CN=1;CIPOS=-50000,50000",
+           "ref": "N"
+          },
+          "filter": "PASS",
+          "id": "cnv:synthetic-cnv:7",
+          "kind": "cnv",
+          "kind_class": "deletion",
+          "lane": 0,
+          "length_bp": 8000001,
+          "line_no": 7,
+          "log2_ratio": null,
+          "quality": 80.0,
+          "source_id": "cnv1",
+          "start": 10000000,
+          "start_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 10050000,
+           "ci_high_frac": 0.040368511,
+           "ci_low": 9950000,
+           "ci_low_frac": 0.039966834,
+           "frac": 0.040167672,
+           "notation": null,
+           "pos": 10000000,
+           "precision": "interval"
+          },
+          "status": "detected",
+          "warnings": [],
+          "x0": 0.040167672,
+          "x1": 0.07230181
+         },
+         {
+          "assembly": "GRCh38",
+          "call_set_id": "synthetic-cnv",
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "chrom": "1",
+          "cnv_type": "duplication",
+          "copy_number": 3.0,
+          "copy_number_source": "INFO:CN",
+          "end": 30000000,
+          "end_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 30000000,
+           "ci_high_frac": 0.120503017,
+           "ci_low": 30000000,
+           "ci_low_frac": 0.120503017,
+           "frac": 0.120503017,
+           "notation": null,
+           "pos": 30000000,
+           "precision": "precise"
+          },
+          "evidence": {
+           "alt": "<DUP>",
+           "format": {},
+           "info": {
+            "CN": "3",
+            "END": "30000000",
+            "SVTYPE": "DUP"
+           },
+           "raw_record": "1\t15000000\tcnv2\tN\t<DUP>\t20\tLowQual\tSVTYPE=DUP;END=30000000;CN=3",
+           "ref": "N"
+          },
+          "filter": "LowQual",
+          "id": "cnv:synthetic-cnv:8",
+          "kind": "cnv",
+          "kind_class": "duplication",
+          "lane": 1,
+          "length_bp": 15000001,
+          "line_no": 8,
+          "log2_ratio": null,
+          "quality": 20.0,
+          "source_id": "cnv2",
+          "start": 15000000,
+          "start_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 15000000,
+           "ci_high_frac": 0.060251509,
+           "ci_low": 15000000,
+           "ci_low_frac": 0.060251509,
+           "frac": 0.060251509,
+           "notation": null,
+           "pos": 15000000,
+           "precision": "precise"
+          },
+          "status": "uncertain",
+          "warnings": [],
+          "x0": 0.060251509,
+          "x1": 0.120503017
+         },
+         {
+          "assembly": "GRCh38",
+          "call_set_id": "synthetic-cnv",
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "chrom": "1",
+          "cnv_type": "copy_number_change",
+          "copy_number": null,
+          "copy_number_source": null,
+          "end": 104000000,
+          "end_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 104000000,
+           "ci_high_frac": 0.417743793,
+           "ci_low": 104000000,
+           "ci_low_frac": 0.417743793,
+           "frac": 0.417743793,
+           "notation": null,
+           "pos": 104000000,
+           "precision": "precise"
+          },
+          "evidence": {
+           "alt": "<CNV>",
+           "format": {},
+           "info": {
+            "END": "104000000",
+            "SVTYPE": "CNV"
+           },
+           "raw_record": "1\t100000000\tcnv3\tN\t<CNV>\t.\tPASS\tSVTYPE=CNV;END=104000000",
+           "ref": "N"
+          },
+          "filter": "PASS",
+          "id": "cnv:synthetic-cnv:9",
+          "kind": "cnv",
+          "kind_class": "copy_number_change",
+          "lane": 0,
+          "length_bp": 4000001,
+          "line_no": 9,
+          "log2_ratio": null,
+          "quality": null,
+          "source_id": "cnv3",
+          "start": 100000000,
+          "start_breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 100000000,
+           "ci_high_frac": 0.401676724,
+           "ci_low": 100000000,
+           "ci_low_frac": 0.401676724,
+           "frac": 0.401676724,
+           "notation": null,
+           "pos": 100000000,
+           "precision": "precise"
+          },
+          "status": "uncertain",
+          "warnings": [
+           "copy-number change reported with neither CN nor a log2 ratio"
+          ],
+          "x0": 0.401676724,
+          "x1": 0.417743793
+         }
+        ],
+        "status": "findings_present"
+       },
+       "small_variants": {
+        "count": 2,
+        "markers": [
+         {
+          "frac": 0.049589715,
+          "id": "1:12345678:A>T",
+          "pos": 12345678,
+          "variant_type": "SNV"
+         },
+         {
+          "frac": 0.204855129,
+          "id": "1:51000000:A>T",
+          "pos": 51000000,
+          "variant_type": "SNV"
+         }
+        ],
+        "status": "variants_present"
+       },
+       "sv": {
+        "breakends": [
+         {
+          "breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 60000000,
+           "ci_high_frac": 0.241006034,
+           "ci_low": 60000000,
+           "ci_low_frac": 0.241006034,
+           "frac": 0.241006034,
+           "notation": null,
+           "pos": 60000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "own",
+          "event_id": null,
+          "id": "sv:synthetic-sv:8",
+          "inserted_length": 350,
+          "kind_class": "insertion",
+          "mate_id": null,
+          "partner_status": null,
+          "source_id": "svi",
+          "status": "detected",
+          "sv_type": "INS",
+          "warnings": []
+         },
+         {
+          "breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 80000000,
+           "ci_high_frac": 0.321341379,
+           "ci_low": 80000000,
+           "ci_low_frac": 0.321341379,
+           "frac": 0.321341379,
+           "notation": "t]p]",
+           "pos": 80000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "own",
+          "event_id": null,
+          "id": "sv:synthetic-sv:10",
+          "inserted_length": null,
+          "kind_class": "breakend",
+          "mate_id": "b2",
+          "partner_status": "partner_given",
+          "source_id": "b1",
+          "status": "detected",
+          "sv_type": "BND",
+          "warnings": []
+         },
+         {
+          "breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 80000000,
+           "ci_high_frac": 0.321341379,
+           "ci_low": 80000000,
+           "ci_low_frac": 0.321341379,
+           "frac": 0.321341379,
+           "notation": null,
+           "pos": 80000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "partner",
+          "event_id": null,
+          "id": "sv:synthetic-sv:11",
+          "inserted_length": null,
+          "kind_class": "breakend",
+          "mate_id": "b1",
+          "partner_status": "partner_given",
+          "source_id": "b2",
+          "status": "detected",
+          "sv_type": "BND",
+          "warnings": []
+         },
+         {
+          "breakpoint": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 90000000,
+           "ci_high_frac": 0.361509052,
+           "ci_low": 90000000,
+           "ci_low_frac": 0.361509052,
+           "frac": 0.361509052,
+           "notation": null,
+           "pos": 90000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "own",
+          "event_id": null,
+          "id": "sv:synthetic-sv:12",
+          "inserted_length": null,
+          "kind_class": "breakend",
+          "mate_id": null,
+          "partner_status": "partner_not_specified",
+          "source_id": "lone",
+          "status": "uncertain",
+          "sv_type": "BND",
+          "warnings": [
+           "breakend partner location not stated"
+          ]
+         }
+        ],
+        "intervals": [
+         {
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 50400300,
+           "ci_high_frac": 0.202446274,
+           "ci_low": 50399700,
+           "ci_low_frac": 0.202443864,
+           "frac": 0.202445069,
+           "notation": null,
+           "pos": 50400000,
+           "precision": "interval"
+          },
+          "id": "sv:synthetic-sv:7",
+          "kind_class": "deletion",
+          "source_id": "svd",
+          "start": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 50000300,
+           "ci_high_frac": 0.200839567,
+           "ci_low": 49999700,
+           "ci_low_frac": 0.200837157,
+           "frac": 0.200838362,
+           "notation": null,
+           "pos": 50000000,
+           "precision": "interval"
+          },
+          "status": "detected",
+          "sv_length": -400000,
+          "sv_type": "DEL",
+          "warnings": [],
+          "x0": 0.200838362,
+          "x1": 0.202445069
+         },
+         {
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 72000000,
+           "ci_high_frac": 0.289207241,
+           "ci_low": 72000000,
+           "ci_low_frac": 0.289207241,
+           "frac": 0.289207241,
+           "notation": null,
+           "pos": 72000000,
+           "precision": "imprecise_unquantified"
+          },
+          "id": "sv:synthetic-sv:9",
+          "kind_class": "inversion",
+          "source_id": "svv",
+          "start": {
+           "chrom": "1",
+           "chrom_raw": "1",
+           "ci_high": 70000000,
+           "ci_high_frac": 0.281173707,
+           "ci_low": 70000000,
+           "ci_low_frac": 0.281173707,
+           "frac": 0.281173707,
+           "notation": null,
+           "pos": 70000000,
+           "precision": "imprecise_unquantified"
+          },
+          "status": "detected",
+          "sv_length": null,
+          "sv_type": "INV",
+          "warnings": [],
+          "x0": 0.281173707,
+          "x1": 0.289207241
+         }
+        ],
+        "status": "findings_present"
+       }
+      },
+      "length_bp": 248956422,
+      "name": "1",
+      "refseq_accession": "NC_000001.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [
+         {
+          "breakpoint": {
+           "chrom": "2",
+           "chrom_raw": "2",
+           "ci_high": 5000000,
+           "ci_high_frac": 0.020644647,
+           "ci_low": 5000000,
+           "ci_low_frac": 0.020644647,
+           "frac": 0.020644647,
+           "notation": null,
+           "pos": 5000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "partner",
+          "event_id": null,
+          "id": "sv:synthetic-sv:10",
+          "inserted_length": null,
+          "kind_class": "breakend",
+          "mate_id": "b2",
+          "partner_status": "partner_given",
+          "source_id": "b1",
+          "status": "detected",
+          "sv_type": "BND",
+          "warnings": []
+         },
+         {
+          "breakpoint": {
+           "chrom": "2",
+           "chrom_raw": "2",
+           "ci_high": 5000000,
+           "ci_high_frac": 0.020644647,
+           "ci_low": 5000000,
+           "ci_low_frac": 0.020644647,
+           "frac": 0.020644647,
+           "notation": "t]p]",
+           "pos": 5000000,
+           "precision": "precise"
+          },
+          "caller": "SYNTHETIC-TEST-CALLER",
+          "end": "own",
+          "event_id": null,
+          "id": "sv:synthetic-sv:11",
+          "inserted_length": null,
+          "kind_class": "breakend",
+          "mate_id": "b1",
+          "partner_status": "partner_given",
+          "source_id": "b2",
+          "status": "detected",
+          "sv_type": "BND",
+          "warnings": []
+         }
+        ],
+        "intervals": [],
+        "status": "findings_present"
+       }
+      },
+      "length_bp": 242193529,
+      "name": "2",
+      "refseq_accession": "NC_000002.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 198295559,
+      "name": "3",
+      "refseq_accession": "NC_000003.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 190214555,
+      "name": "4",
+      "refseq_accession": "NC_000004.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 181538259,
+      "name": "5",
+      "refseq_accession": "NC_000005.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 170805979,
+      "name": "6",
+      "refseq_accession": "NC_000006.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 159345973,
+      "name": "7",
+      "refseq_accession": "NC_000007.14"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 145138636,
+      "name": "8",
+      "refseq_accession": "NC_000008.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 138394717,
+      "name": "9",
+      "refseq_accession": "NC_000009.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 133797422,
+      "name": "10",
+      "refseq_accession": "NC_000010.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 135086622,
+      "name": "11",
+      "refseq_accession": "NC_000011.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 133275309,
+      "name": "12",
+      "refseq_accession": "NC_000012.12"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 114364328,
+      "name": "13",
+      "refseq_accession": "NC_000013.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 107043718,
+      "name": "14",
+      "refseq_accession": "NC_000014.9"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 101991189,
+      "name": "15",
+      "refseq_accession": "NC_000015.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 90338345,
+      "name": "16",
+      "refseq_accession": "NC_000016.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 1,
+        "markers": [
+         {
+          "frac": 0.092174584,
+          "id": "17:7674220:A>T",
+          "pos": 7674220,
+          "variant_type": "SNV"
+         }
+        ],
+        "status": "variants_present"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 83257441,
+      "name": "17",
+      "refseq_accession": "NC_000017.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 80373285,
+      "name": "18",
+      "refseq_accession": "NC_000018.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 58617616,
+      "name": "19",
+      "refseq_accession": "NC_000019.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 64444167,
+      "name": "20",
+      "refseq_accession": "NC_000020.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 46709983,
+      "name": "21",
+      "refseq_accession": "NC_000021.9"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "autosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 50818468,
+      "name": "22",
+      "refseq_accession": "NC_000022.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "sex_chromosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 156040895,
+      "name": "X",
+      "refseq_accession": "NC_000023.11"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "sex_chromosome",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 57227415,
+      "name": "Y",
+      "refseq_accession": "NC_000024.10"
+     },
+     {
+      "assembly": "GRCh38",
+      "kind": "mitochondrial",
+      "layers": {
+       "cnv": {
+        "overlaps": [],
+        "segments": [],
+        "status": "no_calls_reported"
+       },
+       "small_variants": {
+        "count": 0,
+        "markers": [],
+        "status": "no_variants_reported"
+       },
+       "sv": {
+        "breakends": [],
+        "intervals": [],
+        "status": "no_calls_reported"
+       }
+      },
+      "length_bp": 16569,
+      "name": "MT",
+      "refseq_accession": "NC_012920.1"
+     }
+    ],
+    "coordinate_system": "1-based, inclusive (VCF); positions also given as a 0..1 fraction of the chromosome",
+    "excluded_call_sets": [],
+    "karyotype": {
+     "reason": "No validated cytogenetic result is attached; a karyotype cannot be derived from variant data.",
+     "status": "not_assessed"
+    },
+    "legend": [
+     {
+      "glyph": "tick",
+      "kind": "small_variant",
+      "label": "Small variant"
+     },
+     {
+      "glyph": "segment-below",
+      "kind": "deletion",
+      "label": "Deletion"
+     },
+     {
+      "glyph": "segment-above",
+      "kind": "duplication",
+      "label": "Duplication"
+     },
+     {
+      "glyph": "segment-hatched",
+      "kind": "copy_number_change",
+      "label": "Copy-number change (direction not stated)"
+     },
+     {
+      "glyph": "triangle",
+      "kind": "insertion",
+      "label": "Insertion"
+     },
+     {
+      "glyph": "bracket",
+      "kind": "inversion",
+      "label": "Inversion"
+     },
+     {
+      "glyph": "diamond",
+      "kind": "breakend",
+      "label": "Breakend"
+     },
+     {
+      "glyph": "arc",
+      "kind": "link",
+      "label": "Breakend pair / partner"
+     }
+    ],
+    "limitations": [
+     "Only calls from the attached call sets are drawn. A chromosome with no call is NOT shown as normal: the regions a caller could assess are not recorded.",
+     "Copy number is shown only where the source reported it; a missing value is not a diploid value.",
+     "Breakpoints marked as a range are uncertain; the range is the source's, not a confirmation.",
+     "A link between two breakends is not by itself a translocation.",
+     "No karyotype is determined or implied, and sex is not inferred from the sex chromosomes.",
+     "Coordinates are valid only in the stated assembly; there is no liftover."
+    ],
+    "links": [
+     {
+      "a": {
+       "chrom": "1",
+       "chrom_raw": "1",
+       "ci_high": 80000000,
+       "ci_high_frac": 0.321341379,
+       "ci_low": 80000000,
+       "ci_low_frac": 0.321341379,
+       "frac": 0.321341379,
+       "notation": "t]p]",
+       "pos": 80000000,
+       "precision": "precise"
+      },
+      "b": {
+       "chrom": "2",
+       "chrom_raw": "2",
+       "ci_high": 5000000,
+       "ci_high_frac": 0.020644647,
+       "ci_low": 5000000,
+       "ci_low_frac": 0.020644647,
+       "frac": 0.020644647,
+       "notation": null,
+       "pos": 5000000,
+       "precision": "precise"
+      },
+      "caller": "SYNTHETIC-TEST-CALLER",
+      "id": "sv:synthetic-sv:10",
+      "is_interchromosomal": true,
+      "mate_paired": true,
+      "partner_status": "partner_given",
+      "status": "detected",
+      "sv_type": "BND",
+      "warnings": []
+     },
+     {
+      "a": {
+       "chrom": "2",
+       "chrom_raw": "2",
+       "ci_high": 5000000,
+       "ci_high_frac": 0.020644647,
+       "ci_low": 5000000,
+       "ci_low_frac": 0.020644647,
+       "frac": 0.020644647,
+       "notation": "t]p]",
+       "pos": 5000000,
+       "precision": "precise"
+      },
+      "b": {
+       "chrom": "1",
+       "chrom_raw": "1",
+       "ci_high": 80000000,
+       "ci_high_frac": 0.321341379,
+       "ci_low": 80000000,
+       "ci_low_frac": 0.321341379,
+       "frac": 0.321341379,
+       "notation": null,
+       "pos": 80000000,
+       "precision": "precise"
+      },
+      "caller": "SYNTHETIC-TEST-CALLER",
+      "id": "sv:synthetic-sv:11",
+      "is_interchromosomal": true,
+      "mate_paired": true,
+      "partner_status": "partner_given",
+      "status": "detected",
+      "sv_type": "BND",
+      "warnings": []
+     }
+    ]
+   },
+   "reason": null,
+   "released_to_patient": false,
+   "report_states": [
+    "draft"
+   ],
+   "status": "ok"
+  }
+ ],
+ "patient_id": "00000000-0000-0000-0000-000000000000"
+}

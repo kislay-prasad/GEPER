@@ -108,10 +108,10 @@ class TestTheMigrationsApplyCleanlyAndAreDeclared:
     def test_a_clean_database_migrated_from_nothing_reaches_the_current_version(self):
         with scratch_database("w167") as dsn, connect(dsn) as connection:
             applied = migrate.migrate(connection)
-            assert applied[-3:] == (7, 8, 9)
+            assert applied[-4:] == (7, 8, 9, 10)
             state = migrate.inspect_state(connection)
             assert state.ok, (state.reason, state.detail)
-            assert max(state.applied) == 9
+            assert max(state.applied) == 10
 
     def test_a_database_built_from_schema_sql_is_already_at_the_current_version(self, fresh):
         with connect(fresh) as connection:
@@ -129,7 +129,7 @@ class TestTheMigrationsApplyCleanlyAndAreDeclared:
                 order = _plant_order(cur, org, patient, consent, test)
             connection.commit()
 
-            assert migrate.migrate(connection) == (7, 8, 9)
+            assert migrate.migrate(connection) == (7, 8, 9, 10)
             state = migrate.inspect_state(connection)
             assert state.ok, (state.reason, state.detail)
 
@@ -551,7 +551,8 @@ class TestMigration0009:
         with connect(dsn) as connection:
             before = _release_rows(connection)
             assert len(before) == 5
-            assert migrate.migrate(connection) == (9,)
+            # 0009 is what is under test; 0010 (call sets) is additive and follows it in the same upgrade
+            assert migrate.migrate(connection) == (9, 10)
             assert migrate.inspect_state(connection).ok
             assert _release_rows(connection) == before  # not one row altered, added or removed
 

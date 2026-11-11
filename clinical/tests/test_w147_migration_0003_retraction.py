@@ -637,10 +637,11 @@ class TestReadinessCannotReportHealthyForTheWrongGeneration:
         `via_information_schema <= via_pg_catalog` -- a comparison that also
         passes when the two are EQUAL, which is what they are. Measured on a
         database built from this `schema.sql` (2026-09-18): `clinical_app`
-        holds at least one privilege on ALL 31 tables in this schema, so
+        holds at least one privilege on ALL 34 tables in this schema, so
         `information_schema` hides NOTHING from it and an information_schema
         invariant would not fail readiness today. `clinical_retention` is the
-        role that is really filtered -- it sees 13 tables of 31.
+        role that is really filtered -- it sees 16 tables of 34
+        (13 of 31 when this was measured, before migration 0010 added three tables it can read).
 
         So this row asserts three separate things and says which is which:
           1. the LOAD-BEARING half -- every invariant is TRUE as `clinical_app`;
@@ -673,7 +674,7 @@ class TestReadinessCannotReportHealthyForTheWrongGeneration:
                 cur.execute("RESET ROLE")
             connection.rollback()
 
-        assert app_via_catalog == 31, app_via_catalog
+        assert app_via_catalog == 34, app_via_catalog
         assert app_via_is == app_via_catalog, (
             "information_schema now hides tables from clinical_app. That makes the pg_catalog "
             "rule LOAD-BEARING rather than defence-in-depth, which is a change worth noticing: "

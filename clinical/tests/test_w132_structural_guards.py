@@ -581,6 +581,11 @@ class TestTheRouteCensus:
             # does not contain them, and this equality row proves it.
             ("/clinic/patients/{patient_id}/genome/chromosomes", ("GET",)),
             ("/clinic/patients/{patient_id}/genome/chromosomes/{name}", ("GET",)),
+            # Genome Analysis, Phase 2. The Chromosome Explorer map: two more
+            # read-only staff GETs on the same module, same dependency, same
+            # data-layer gate and audit. Still no patient route.
+            ("/clinic/patients/{patient_id}/genome/map", ("GET",)),
+            ("/clinic/patients/{patient_id}/genome/map/{name}", ("GET",)),
             # Stage 2 (test catalogue and order stage). The card the w157 and
             # w162 notes above describe -- "who may define a test panel" -- was
             # ruled: the Administrator manages a per-organisation catalogue
@@ -666,7 +671,8 @@ class TestTheRouteCensus:
         # `GET /auth/me/signing-identity` and the two `GET /review/reports/...` reads.
         # 43 from the read-only sign-off state route (`GET /review/reports/{id}/signoff-state`).
         # 45 from Genome Analysis Phase 1: two read-only staff GETs on `genome_endpoints.py`.
-        assert len(census) == 45, census
+        # 47 from Genome Analysis Phase 2: two more read-only staff GETs (the Explorer map).
+        assert len(census) == 47, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

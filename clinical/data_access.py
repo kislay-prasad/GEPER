@@ -48,7 +48,9 @@ import json
 import os
 import re
 import secrets
+import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Protocol, Sequence
@@ -444,6 +446,23 @@ class DuplicateInterpretationError(Exception):
     def __init__(self, submission_key: str) -> None:
         super().__init__(f"An interpretation with submission key {submission_key!r} already exists")
         self.submission_key = submission_key
+
+
+class CallSetInputError(ValueError):
+    """
+    A submitted call set cannot be accepted AS GIVEN: unreadable, over the configured size or record limit, a file the
+    parser rejects as a whole, a sample name that does not match the sequencing run's sample, an unsupported or
+    contradictory assembly. The caller can fix the input. Nothing is stored.
+    """
+
+
+class CallSetConflictError(Exception):
+    """
+    The call-set LIFECYCLE refuses this act in the record's current state (not pending, already decided, no approved
+    caller, a duplicate file, an integrity mismatch, a refusal from the database's own lifecycle rules). Deliberately
+    NOT an AuthorizationError or NotFoundError: `transactional` commits work done before those two, and a refused
+    lifecycle act must roll back, not commit.
+    """
 
 
 def _claim_timestamp_utc(ts: "_datetime.datetime") -> str:
@@ -1136,6 +1155,7 @@ def auditable(
     audit_denials_only: bool = False,
     resource_id_from_result: Any = None,
     resource_id_transform: Any = None,
+    atomic: bool = False,
 ):
     """
     Decorator that wraps a DataAccess method to capture audit outcomes.
@@ -1364,6 +1384,15 @@ def auditable(
             bound_params = dict(bound_args.arguments)
             bound_params.pop("self", None)  # Remove self, not part of user args
 
+            # ── atomic=True: THE SUCCESS AUDIT ROW AND THE DOMAIN WRITE COMMIT TOGETHER.
+            # By default the wrapped `transactional` commits the act and THEN this decorator writes and commits the
+            # audit row, so a crash between the two commits leaves a real act with no record. With atomic=True this
+            # decorator owns the transaction (the inner `transactional` passes through), writes the success row, and
+            # commits once. A refusal or failure rolls the act back FIRST and then records the denied/error row
+            # separately, so a refused act leaves no partial write and still leaves its record.
+            owns_tx = bool(atomic) and not self._in_transaction
+            if owns_tx:
+                self._in_transaction = True
             try:
                 result = func(self, *args, **kwargs)
                 if audit_denials_only:
@@ -1426,9 +1455,12 @@ def auditable(
                     details=details if details else None,
                     ip_address=bound_params.get("ip_address"),
                 )
-                self._DataAccess__connection.commit()
+                if not (atomic and not owns_tx):  # a NESTED atomic act leaves the outer transaction to its owner
+                    self._DataAccess__connection.commit()
                 return result
             except AuthorizationError as denial:
+                if owns_tx:
+                    self._DataAccess__connection.rollback()
                 # A denials-only wrapper does not repeat a refusal that a
                 # delegate has already put on the record.
                 if audit_denials_only and getattr(denial, "_audit_recorded", False):
@@ -1457,6 +1489,8 @@ def auditable(
                 denial._audit_recorded = True
                 raise
             except Exception:
+                if owns_tx:
+                    self._DataAccess__connection.rollback()
                 if audit_denials_only:
                     # The delegate has already recorded an ordinary error.
                     raise
@@ -1482,6 +1516,9 @@ def auditable(
                 )
                 self._DataAccess__connection.commit()
                 raise
+            finally:
+                if owns_tx:
+                    self._in_transaction = False
 
         return wrapper
 
@@ -4197,6 +4234,1333 @@ class DataAccess:
             for r in rows
         ]
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # CNV / STRUCTURAL-VARIANT CALL SETS (migration 0010)
+    #
+    # THE FOUR ACTS ARE SEPARATE RECORDS and separate methods: ingestion
+    # (submit), validation (validate/reject), approval of the CALLER VERSION
+    # (propose/approve/retire), and -- NOT HERE -- any clinical interpretation.
+    #
+    # ORGANISATION AND PATIENT ARE NEVER ARGUMENTS. The organisation is the
+    # session's; the patient is reached only through the sequencing run's own
+    # chain (run -> sample -> order -> patient), and a run id that is not this
+    # organisation's is the same NotFoundError as one that does not exist.
+    #
+    # A SUCCESSFUL PARSE IS NOT CLINICAL ELIGIBILITY. A call set may enter, be
+    # validated, and be drawn only while ALL of these hold, and they are
+    # re-checked at each of those three boundaries (see `_callset_assert_eligible`
+    # and the map reader's single statement): the sample passed QC; the order is
+    # not cancelled; the patient has an active consent for the order's scope; the
+    # run, sample, order and patient are one chain in this organisation; the
+    # file's sample column is the run's sample; the declared assembly is the
+    # ordered test's and agrees with any small-variant analysis of the run.
+    #
+    # ONE LOCK PER CALL SET. Every act that changes a call set's lifecycle, a
+    # replacement that names it, and its tombstone/redaction take the same
+    # transaction-scoped advisory lock (`_lock_call_set`; the database's
+    # triggers take the same key), so they are serialised, not raced.
+    #
+    # THE DATABASE'S OWN LIFECYCLE RULES (migration 0010) ARE THE LAST WORD.
+    # Every check made here is made first so the refusal is a clear domain
+    # error; the same rule is enforced again by a trigger where the database can
+    # see the facts. What the database enforces is SEPARATION OF RECORDED ACTORS
+    # -- it does not authenticate a human; this class supplies every actor id,
+    # from the session.
+    #
+    # AUDIT IS ATOMIC WITH THE ACT (`@auditable(atomic=True)`): the success row
+    # commits with the domain write; a refusal rolls the act back and is then
+    # recorded as denied/error. Rows carry the call-set id, actor, organisation,
+    # action and time -- no `details`, nothing genomic.
+    # ═════════════════════════════════════════════════════════════════════════
+
+    #: PROVISIONAL defaults (policy item: production size/record limits not final). Both are configuration
+    #: (`CLINICAL_CALLSET_MAX_BYTES`, `CLINICAL_CALLSET_MAX_RECORDS`). The only code-level bound is the database's own
+    #: 64 MiB CHECK on the stored bytes; there is deliberately NO invented record ceiling.
+    CALLSET_DEFAULT_MAX_SOURCE_BYTES = 5 * 1024 * 1024
+    CALLSET_DEFAULT_MAX_RECORDS = 40_000
+    CALLSET_DB_MAX_SOURCE_BYTES = 64 * 1024 * 1024
+    CALLSET_DB_MAX_DOCUMENT_BYTES = 128 * 1024 * 1024  # the schema's CHECK on the derived document's text
+    #: Lab technicians see STATUS and non-genomic outcomes only; the parsed document is for the people who review it.
+    CALLSET_STATUS_ROLES = ("Lab technician", "Interpreter", "Approver")
+    CALLSET_DOCUMENT_ROLES = ("Interpreter", "Approver")
+    CALLSET_CONSTRAINT_SQLSTATES = frozenset({"P0001", "23514", "23505", "23503", "23502"})
+    CALLSET_VALIDATION_CHECKS = {"sample_identity": True, "assembly": True, "caller": True}
+    CALLSET_WRONG_RUN_CHECKS = {"reason_code": "wrong_run_placement"}
+
+    # POLICY C (approved): BOTH must hold. (1) The consent the ORDER was placed under (`orders.consent_id`, immutable
+    # once set) exists, belongs to the order's patient and organisation, is for the order's scope and is not withdrawn.
+    # (2) The patient's LATEST consent for that scope, by recorded_at (then id), is not withdrawn. So a newer consent
+    # cannot revive an order whose own consent was withdrawn, and withdrawing the latest consent hides the evidence
+    # whatever the order says. `superseded_by` is deliberately NOT consulted: a supersession pointer is mutable
+    # bookkeeping, and letting it decide would let re-pointing one revive a withdrawn consent. Never NULL: anything
+    # missing or inconsistent is false (fail closed). Written once; used by submission, validation, the reviewer read
+    # and the map.
+    _CALLSET_ORDER_CONSENT_OK_SQL = (
+        "EXISTS (SELECT 1 FROM consents oc WHERE oc.org_id = o.org_id AND oc.consent_id = o.consent_id "
+        "AND oc.patient_id = o.patient_id AND oc.scope = o.required_scope AND oc.withdrawn_at IS NULL)"
+    )
+    _CALLSET_LATEST_CONSENT_OK_SQL = (
+        "((SELECT k.withdrawn_at IS NULL FROM consents k WHERE k.org_id = o.org_id AND k.patient_id = o.patient_id "
+        "AND k.scope = o.required_scope ORDER BY k.recorded_at DESC, k.consent_id DESC LIMIT 1) IS TRUE)"
+    )
+    _CALLSET_CONSENT_OK_SQL = "(" + _CALLSET_ORDER_CONSENT_OK_SQL + " AND " + _CALLSET_LATEST_CONSENT_OK_SQL + ")"
+
+    @classmethod
+    def _callset_limits(cls) -> tuple:
+        """(max source bytes, max records) in force. Bytes are clamped to the database CHECK; records are not clamped."""
+
+        def _env(name: str, default: int) -> int:
+            raw = os.getenv(name, "").strip()
+            try:
+                value = int(raw) if raw else default
+            except ValueError:
+                value = default
+            return max(1, value)
+
+        return (
+            min(
+                _env("CLINICAL_CALLSET_MAX_BYTES", cls.CALLSET_DEFAULT_MAX_SOURCE_BYTES),
+                cls.CALLSET_DB_MAX_SOURCE_BYTES,
+            ),
+            _env("CLINICAL_CALLSET_MAX_RECORDS", cls.CALLSET_DEFAULT_MAX_RECORDS),
+        )
+
+    @staticmethod
+    def _callset_count_data_lines(data: bytes) -> int:
+        """Data lines (non-blank, not starting with '#') counted WITHOUT decoding or parsing: the pre-parse record cap."""
+        import io
+
+        return sum(1 for line in io.BytesIO(data) if line.strip() and not line.startswith(b"#"))
+
+    def _set_actor_context(self, user_id: uuid.UUID) -> None:
+        """
+        `SET LOCAL clinical.actor_id`, which the call-set triggers compare with the actor id being recorded. It
+        catches an application BUG that forgets or mismatches the actor. It is NOT a security boundary: this same
+        class sets it, and the database cannot tell a human from the application that connects as one login.
+        """
+        self._query("SELECT set_config('clinical.actor_id', %s, true)", (str(user_id),))
+
+    def _lock_call_set(self, call_set_id: uuid.UUID) -> None:
+        """The call set's lifecycle lock (key = its id, seed 1): the key the database's triggers and the purge use."""
+        self._query("SELECT pg_advisory_xact_lock(hashtextextended(%s, 1))", (str(call_set_id),))
+
+    def _callset_execute(self, sql: str, params: Sequence[Any]) -> None:
+        """`_execute`, with a refusal from a call-set constraint or trigger turned into CallSetConflictError."""
+        try:
+            self._execute(sql, params)
+        except Exception as exc:  # noqa: BLE001 -- re-raised unless it is a lifecycle refusal
+            cause = exc.__cause__ if (isinstance(exc, ImmutabilityViolationError) and exc.__cause__) else exc
+            if getattr(cause, "sqlstate", None) in self.CALLSET_CONSTRAINT_SQLSTATES:
+                diag = getattr(cause, "diag", None)
+                message = getattr(diag, "message_primary", None) or (str(cause).splitlines() or ["refused"])[0]
+                if "another sequencing run" in message:
+                    message = self.CALLSET_CONFLICT_REFUSAL  # never confirm that these bytes exist on another run
+                raise CallSetConflictError(message) from cause
+            if getattr(cause, "sqlstate", None) == "40P01":
+                raise CallSetConflictError(
+                    "The request collided with another and was not applied; retry it."
+                ) from cause
+            raise
+
+    def _callset_chain_facts(self, session: Session, sequencing_run_id: uuid.UUID, *, lock: bool = False) -> dict:
+        """
+        The facts that decide clinical eligibility, for a run IN THIS ORGANISATION, or NotFoundError. One statement
+        through run -> sample -> order -> test, so the four rows are one consistent chain. `lock=True` takes
+        FOR SHARE on those rows: an identity or assembly change (which needs a row lock) then waits for this
+        transaction instead of slipping between the check and the write.
+        """
+        row = self._query_one(
+            "SELECT r.sample_id, o.patient_id, t.assembly, s.qc_status, o.state, "
+            + self._CALLSET_CONSENT_OK_SQL
+            + " FROM sequencing_runs r "
+            "JOIN samples s ON s.org_id = r.org_id AND s.sample_id = r.sample_id "
+            "JOIN orders  o ON o.org_id = s.org_id AND o.order_id  = s.order_id "
+            "JOIN tests   t ON t.org_id = o.org_id AND t.test_id   = o.test_id "
+            "WHERE r.id = %s AND r.org_id = %s" + (" FOR SHARE OF r, s, o, t" if lock else ""),
+            (sequencing_run_id, session.org_id),
+        )
+        if row is None:
+            raise NotFoundError("Sequencing run not found")
+        return {
+            "sample_id": row[0],
+            "patient_id": row[1],
+            "test_assembly": ASSEMBLY_CANONICAL.get(row[2], row[2]),
+            "qc_status": row[3],
+            "order_state": row[4],
+            "consent_ok": row[5] is True,
+        }
+
+    def _callset_small_variant_assemblies(self, session: Session, run_ids: Sequence[uuid.UUID]) -> dict:
+        """run id -> the set of assemblies its live small-variant analyses declare (validated by Phase 1's summariser)."""
+        from clinical.genome_analysis import summarise_run_document
+
+        out: dict = {rid: set() for rid in run_ids}
+        if not run_ids:
+            return out
+        rows = self._query(
+            "SELECT v.sequencing_run_id, i.run_document FROM interpretations i "
+            "JOIN vcfs v ON v.org_id = i.org_id AND v.id = i.vcf_id "
+            "WHERE i.org_id = %s AND v.sequencing_run_id = ANY(%s) AND i.tombstoned_at IS NULL",
+            (session.org_id, list(run_ids)),
+        )
+        for run_id, document in rows:
+            doc = json.loads(document) if isinstance(document, str) else document
+            assembly = summarise_run_document(doc).assembly
+            if assembly:
+                out[run_id].add(assembly)
+        return out
+
+    @staticmethod
+    def _callset_assert_eligible(facts: dict, *, assembly: str, small_variant: set) -> None:
+        """
+        The clinical-eligibility gates that do not depend on the file: QC, order, consent, assembly. Raises
+        CallSetConflictError naming the failed gate. (The sample-name check is separate because its failure is a
+        CallSetInputError at submission and a conflict at validation.)
+        """
+        if facts["qc_status"] != "passed":
+            raise CallSetConflictError(f"The sample has not passed QC (status: {facts['qc_status']}).")
+        if facts["order_state"] == "cancelled":
+            raise CallSetConflictError("The order has been cancelled.")
+        if not facts["consent_ok"]:
+            raise CallSetConflictError("There is no active consent for the order's scope.")
+        if facts["test_assembly"] != assembly:
+            raise CallSetConflictError(
+                f"Assembly mismatch: the call set is {assembly} but the ordered test is {facts['test_assembly']}; "
+                "conversion between builds is not supported."
+            )
+        other = sorted(a for a in small_variant if a != assembly)
+        if other:
+            raise CallSetConflictError(
+                f"Assembly mismatch: the call set is {assembly} but this run's small-variant analysis is "
+                f"{', '.join(other)}; conversion between builds is not supported."
+            )
+
+    #: Verified, rehydrated call sets, keyed (id, SHA-256, rule set, server-computed digest of the document text).
+    #: The key is computed BY THE DATABASE from the bytes and the document as they are stored NOW on every read, so a
+    #: changed byte or a changed document is a miss and is verified in full; nothing here weakens verification, it only
+    #: skips re-doing work whose inputs are provably identical. Bounded by RECORDS (memory ~5-7 KB per record).
+    _CALLSET_VERIFIED_CACHE: "OrderedDict" = OrderedDict()
+    _CALLSET_CACHE_LOCK = threading.Lock()
+    CALLSET_DEFAULT_CACHE_RECORDS = 100_000
+    CALLSET_SINGLE_FLIGHT_WAIT_SECONDS = 120
+
+    @classmethod
+    def _callset_cache_budget(cls) -> int:
+        raw = os.getenv("CLINICAL_CALLSET_CACHE_RECORDS", "").strip()
+        try:
+            return max(0, int(raw)) if raw else cls.CALLSET_DEFAULT_CACHE_RECORDS
+        except ValueError:
+            return cls.CALLSET_DEFAULT_CACHE_RECORDS
+
+    @classmethod
+    def _callset_cache_get(cls, key):
+        with cls._CALLSET_CACHE_LOCK:
+            hit = cls._CALLSET_VERIFIED_CACHE.get(key)
+            if hit is not None:
+                cls._CALLSET_VERIFIED_CACHE.move_to_end(key)
+            return hit
+
+    @classmethod
+    def _callset_cache_put(cls, key, records: int, call_set) -> bool:
+        """
+        Remember a call set that was just verified IN FULL. Bounded by RECORDS: an entry larger than the whole budget
+        is never stored (and evicts nothing); otherwise the least recently used entries are evicted until it fits.
+        Returns whether the entry is stored.
+        """
+        budget = cls._callset_cache_budget()
+        if records > budget:
+            return False
+        with cls._CALLSET_CACHE_LOCK:
+            cache = cls._CALLSET_VERIFIED_CACHE
+            cache.pop(key, None)
+            total = sum(v[0] for v in cache.values()) + records
+            while total > budget and cache:
+                total -= cache.popitem(last=False)[1][0]
+            cache[key] = (records, call_set)
+            return True
+
+    #: Cold verifications in flight in THIS process, keyed like the cache: a second reader of the same call set waits
+    #: for the first instead of repeating the same full verification (CPU-bound: threads only slow each other down).
+    _CALLSET_INFLIGHT: dict = {}
+
+    @classmethod
+    def _callset_claim(cls, key):
+        with cls._CALLSET_CACHE_LOCK:
+            event = cls._CALLSET_INFLIGHT.get(key)
+            if event is not None:
+                return False, event
+            event = threading.Event()
+            cls._CALLSET_INFLIGHT[key] = event
+            return True, event
+
+    @classmethod
+    def _callset_release(cls, key, event) -> None:
+        with cls._CALLSET_CACHE_LOCK:
+            if cls._CALLSET_INFLIGHT.get(key) is event:
+                del cls._CALLSET_INFLIGHT[key]
+        event.set()
+
+    @staticmethod
+    def _callset_exclusion_reason(consent_ok, qc_ok, order_ok, sample_ok, assembly_ok):
+        """The reason an undrawn validated call set is given when several apply, in this order. Pinned by tests."""
+        if not consent_ok:
+            return "consent_withdrawn"
+        if not qc_ok:
+            return "sample_qc_not_passed"
+        if not order_ok:
+            return "order_cancelled"
+        if not sample_ok:
+            return "sample_identity_changed"
+        if not assembly_ok:
+            return "assembly_mismatch"
+        return None
+
+    @staticmethod
+    def _callset_evidence_intact(call_set_id, source, source_hash, parser_version, document) -> bool:
+        """
+        The FULL check, never cached: the bytes still hash to the recorded SHA-256 AND re-parsing them with the RECORDED
+        rule set reproduces the stored document exactly. An unavailable rule set never passes.
+        """
+        from clinical.genome_analysis import verify_document_for_version
+
+        raw = bytes(source) if source is not None else b""
+        if not raw or hashlib.sha256(raw).hexdigest() != source_hash:
+            return False
+        return verify_document_for_version(parser_version, raw, document) is True
+
+    def _callset_integrity_incident(self, session: Session, call_set_id: uuid.UUID) -> None:
+        """
+        A validated call set that cannot be shown intact: recorded in the append-only audit trail, id only, AT MOST ONCE
+        PER HOUR per call set, so a persistent fault is reported without growing the trail on every map read.
+        """
+        since = self._clock.now() - _datetime.timedelta(hours=1)
+        if self._query_one(
+            'SELECT 1 FROM audit_log WHERE org_id = %s AND action = %s AND resource_id = %s AND "timestamp" > %s LIMIT 1',
+            (session.org_id, "call_set_integrity_failure", str(call_set_id), since),
+        ):
+            return
+        self._write_audit_entry(
+            "call_set_integrity_failure",
+            "call_set",
+            str(call_set_id),
+            "error",
+            org_id=session.org_id,
+            user_id=session.user_id,
+            actor_role=self._get_actor_role(session),
+        )
+
+    def _callset_row(
+        self, session: Session, call_set_id: uuid.UUID, *, content: bool = False, document: bool = False
+    ) -> dict:
+        """One call set of THIS organisation as a dict, or NotFoundError. `content` adds the bytes AND the document."""
+        extra = ""
+        if content:
+            extra = ", source_vcf, parsed_document"
+        elif document:
+            extra = ", parsed_document"
+        row = self._query_one(
+            "SELECT id, sequencing_run_id, record_class, assembly, caller_name, caller_version, vcf_sample_name, "
+            "       source_filename, source_content_hash, parser_version, supersedes_id, resubmission_of, created_at, created_by, "
+            "       retention_days, tombstoned_at, content_redacted_at, "
+            "       public.call_set_state(org_id, id)" + extra + " "
+            "FROM call_sets WHERE id = %s AND org_id = %s",
+            (call_set_id, session.org_id),
+        )
+        if row is None:
+            raise NotFoundError("Call set not found")
+        keys = (
+            "id,sequencing_run_id,record_class,assembly,caller_name,caller_version,vcf_sample_name,source_filename,"
+            "source_content_hash,parser_version,supersedes_id,resubmission_of,created_at,created_by,retention_days,tombstoned_at,"
+            "content_redacted_at,state"
+        ).split(",")
+        if content:
+            keys += ["source_vcf", "parsed_document"]
+        elif document:
+            keys += ["parsed_document"]
+        return dict(zip(keys, row))
+
+    def _insert_call_set_event(
+        self,
+        session: Session,
+        call_set_id: uuid.UUID,
+        event_type: str,
+        actor_role: str,
+        *,
+        reason: Optional[str] = None,
+        checks: Optional[dict] = None,
+        responds_to: Optional[uuid.UUID] = None,
+        caller_approval_id: Optional[uuid.UUID] = None,
+    ) -> uuid.UUID:
+        event_id = uuid.uuid4()
+        self._set_actor_context(session.user_id)
+        self._callset_execute(
+            "INSERT INTO call_set_events (org_id, id, call_set_id, event_type, actor_id, actor_role, occurred_at, "
+            "reason, checks, responds_to, caller_approval_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
+            (
+                session.org_id,
+                event_id,
+                call_set_id,
+                event_type,
+                session.user_id,
+                actor_role,
+                self._clock.now(),
+                reason,
+                json.dumps(checks or {}),
+                responds_to,
+                caller_approval_id,
+            ),
+        )
+        return event_id
+
+    @staticmethod
+    def _callset_reason(reason: Optional[str]) -> str:
+        text = (reason or "").strip()
+        if not text:
+            raise CallSetInputError("A reason is required.")
+        if len(text) > 2000:
+            raise CallSetInputError("The reason is too long.")
+        return text
+
+    # ── caller versions ──────────────────────────────────────────────────────
+
+    def _record_caller_event(
+        self,
+        session: Session,
+        event_type: str,
+        role: str,
+        caller_name: str,
+        caller_version: str,
+        record_class: str,
+        basis: str,
+    ) -> uuid.UUID:
+        self._require_role(session, role)
+        text = self._callset_reason(basis)
+        if record_class not in ("cnv", "sv"):
+            raise CallSetInputError("record_class must be 'cnv' or 'sv'.")
+        name, version = (caller_name or "").strip(), (caller_version or "").strip()
+        if not name or not version or len(name) > 100 or len(version) > 100:
+            raise CallSetInputError("A caller name and version of 1 to 100 characters are required.")
+        approval_id = uuid.uuid4()
+        self._set_actor_context(session.user_id)
+        self._callset_execute(
+            "INSERT INTO caller_approvals (org_id, id, caller_name, caller_version, record_class, event_type, "
+            "actor_id, actor_role, occurred_at, basis) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                approval_id,
+                name,
+                version,
+                record_class,
+                event_type,
+                session.user_id,
+                role,
+                self._clock.now(),
+                text,
+            ),
+        )
+        return approval_id
+
+    @auditable(action="caller_proposed", resource_type="caller_approval", resource_id_from_result=True, atomic=True)
+    @transactional
+    def propose_caller_version(
+        self, session: Session, caller_name: str, caller_version: str, record_class: str, basis: str
+    ) -> uuid.UUID:
+        """Administrator proposes a caller NAME+VERSION+CLASS for use. Proposing is not approving."""
+        return self._record_caller_event(
+            session, "proposed", "Administrator", caller_name, caller_version, record_class, basis
+        )
+
+    @auditable(action="caller_approved", resource_type="caller_approval", resource_id_from_result=True, atomic=True)
+    @transactional
+    def approve_caller_version(
+        self, session: Session, caller_name: str, caller_version: str, record_class: str, basis: str
+    ) -> uuid.UUID:
+        """Approver approves the EXACT proposed name/version/class. The proposer may not approve their own proposal."""
+        return self._record_caller_event(
+            session, "approved", "Approver", caller_name, caller_version, record_class, basis
+        )
+
+    @auditable(action="caller_retired", resource_type="caller_approval", resource_id_from_result=True, atomic=True)
+    @transactional
+    def retire_caller_version(
+        self, session: Session, caller_name: str, caller_version: str, record_class: str, basis: str
+    ) -> uuid.UUID:
+        """
+        Approver retires an approved caller version. Affects FUTURE validations only: a call set already validated
+        stays validated until an Approver retracts it.
+        """
+        return self._record_caller_event(
+            session, "retired", "Approver", caller_name, caller_version, record_class, basis
+        )
+
+    @auditable(
+        action="caller_versions_read",
+        resource_type="caller_approval",
+        auditable=False,
+        reason="organisation configuration, not patient data: the current state of each caller name/version/class",
+    )
+    @transactional
+    def list_caller_versions(self, session: Session) -> list:
+        """The CURRENT state (latest event) of every caller version this organisation has proposed."""
+        self._require_any_role(session, ("Administrator", "Approver", "Interpreter", "Lab technician"))
+        rows = self._query(
+            "SELECT DISTINCT ON (record_class, caller_name, caller_version) record_class, caller_name, caller_version, "
+            "       event_type, occurred_at "
+            "FROM caller_approvals WHERE org_id = %s "
+            "ORDER BY record_class, caller_name, caller_version, seq DESC",
+            (session.org_id,),
+        )
+        return [
+            {"record_class": r[0], "caller_name": r[1], "caller_version": r[2], "state": r[3], "since": r[4]}
+            for r in rows
+        ]
+
+    # ── submit ───────────────────────────────────────────────────────────────
+
+    #: The ONE message a submission gets when the RUN cannot accept it (QC, order, consent, assembly, sample). It is the
+    #: same text for every cause on purpose: a Lab technician must not be able to read another run's QC, consent,
+    #: order or analysis state off a refusal. (Validation, done by an Interpreter, still names the failed gate.)
+    CALLSET_RUN_REFUSAL = "This sequencing run cannot accept this call set."
+    CALLSET_CONFLICT_REFUSAL = "This call set conflicts with an existing submission."
+
+    @auditable(action="call_set_submitted", resource_type="call_set", resource_id_from_result=True, atomic=True)
+    @transactional
+    def submit_call_set(
+        self,
+        session: Session,
+        sequencing_run_id: uuid.UUID,
+        *,
+        record_class: str,
+        assembly: str,
+        caller_name: str,
+        caller_version: Optional[str],
+        vcf_sample_name: str,
+        source_filename: str,
+        source_vcf: bytes,
+        supersedes_id: Optional[uuid.UUID] = None,
+    ) -> uuid.UUID:
+        """
+        Store a CNV/SV call set as IMMUTABLE EVIDENCE: the original bytes, their SHA-256, the parsed document and the
+        parser version, plus a 'submitted' event. Lab technician only; replacement (`supersedes_id`) is the same act.
+
+        REPLAY, STATED BY STATE (the same bytes, the same run and record class):
+          * an earlier call set that is PENDING or VALIDATED, same submitter, same parameters -> that call set is
+            returned (idempotent: no row, no event; two identical racing requests become one);
+          * the same but different parameters or another submitter -> CallSetConflictError (generic text);
+          * the earlier call set is REJECTED or WITHDRAWN -> CallSetConflictError naming that state to its own
+            submitter, NEVER a successful return: to submit those bytes again use `resubmit_call_set`, which makes a NEW
+            call set with every check and validation afresh;
+          * RETRACTED or SUPERSEDED -> refused; those bytes are not resubmitted unchanged (a retracted file is
+            replaced by a corrected one, or moved with a wrong-run retraction).
+        The same bytes on ANOTHER run are refused unless the earlier call set was retracted with reason
+        `wrong_run_placement` (the database enforces both rules under one lock).
+
+        Order of work (so a refusal cannot be used to read a run's state): arguments, size, record count, decoding and
+        parsing -- none of which looks at the run -- THEN the run, THEN replay, THEN every run-dependent gate (sample,
+        QC, order, consent, assembly, small-variant build), which all fail with the one generic message.
+
+        Retention is SNAPSHOT here, once: the run's own VCF value when it has one, else the platform's age-conditional
+        rule. Which is PROVISIONAL policy.
+        """
+        self._require_role(session, "Lab technician")
+        return self._submit_call_set_impl(
+            session,
+            sequencing_run_id,
+            record_class=record_class,
+            assembly=assembly,
+            caller_name=caller_name,
+            caller_version=caller_version,
+            vcf_sample_name=vcf_sample_name,
+            source_filename=source_filename,
+            source_bytes=source_vcf,
+            supersedes_id=supersedes_id,
+        )
+
+    @auditable(action="call_set_resubmitted", resource_type="call_set", resource_id_from_result=True, atomic=True)
+    @transactional
+    def resubmit_call_set(self, session: Session, call_set_id: uuid.UUID, reason: str) -> uuid.UUID:
+        """
+        The safe path to submit a REJECTED or WITHDRAWN call set's file again: a NEW call set, built from the stored
+        bytes and the prior parameters, with fresh identity, a fresh parse under the CURRENT parser, a fresh
+        retention snapshot, every eligibility check afresh, and its own validation. The submitter only, with a reason.
+        Not available for retracted, superseded, pending, validated or redacted call sets. Duplicate protection is
+        unchanged: the database refuses a resubmission while any call set of that file is live on the run.
+        """
+        self._require_role(session, "Lab technician")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        prior = self._callset_row(session, call_set_id, content=True)
+        if prior["created_by"] != session.user_id:
+            raise NotFoundError("Call set not found")
+        if prior["tombstoned_at"] is not None or prior["content_redacted_at"] is not None:
+            raise CallSetConflictError("This call set has been retained out of the record and cannot be resubmitted.")
+        if prior["state"] not in ("rejected", "withdrawn"):
+            raise CallSetConflictError(
+                f"Only a rejected or withdrawn call set can be resubmitted (it is {prior['state']})."
+            )
+        # LINEAGE: a rejected REPLACEMENT is resubmitted as a replacement of the same predecessor for as long as that
+        # predecessor is still the live validated call set; otherwise the link would silently be lost and two validated
+        # call sets could stand for one run (the database also refuses that outright).
+        carried = None
+        if prior["supersedes_id"] is not None:
+            self._lock_call_set(prior["supersedes_id"])
+            pred = self._query_one(
+                "SELECT tombstoned_at, public.call_set_state(org_id, id) FROM call_sets WHERE id = %s AND org_id = %s",
+                (prior["supersedes_id"], session.org_id),
+            )
+            if pred is not None and pred[0] is None and pred[1] == "validated":
+                carried = prior["supersedes_id"]
+        return self._submit_call_set_impl(
+            session,
+            prior["sequencing_run_id"],
+            record_class=prior["record_class"],
+            assembly=prior["assembly"],
+            caller_name=prior["caller_name"],
+            caller_version=prior["caller_version"],
+            vcf_sample_name=prior["vcf_sample_name"],
+            source_filename=prior["source_filename"],
+            source_bytes=bytes(prior["source_vcf"]),
+            supersedes_id=carried,
+            resubmission_of=call_set_id,
+            reason=text,
+        )
+
+    def _submit_call_set_impl(
+        self,
+        session: Session,
+        sequencing_run_id: uuid.UUID,
+        *,
+        record_class: str,
+        assembly: str,
+        caller_name: str,
+        caller_version: Optional[str],
+        vcf_sample_name: str,
+        source_filename: str,
+        source_bytes: bytes,
+        supersedes_id: Optional[uuid.UUID],
+        resubmission_of: Optional[uuid.UUID] = None,
+        reason: Optional[str] = None,
+    ) -> uuid.UUID:
+        # local imports: the pure package must not be imported at module load of the data layer
+        from clinical.genome_analysis import (
+            CALLSET_PARSER_VERSION,
+            PARSER_RULESETS,
+            CallSetRejected,
+            canonical_assembly,
+        )
+
+        max_bytes, max_records = self._callset_limits()
+        if not isinstance(source_bytes, (bytes, bytearray)) or not (1 <= len(source_bytes) <= max_bytes):
+            raise CallSetInputError(f"The file must be between 1 byte and {max_bytes} bytes.")
+        source_bytes = bytes(source_bytes)
+        if record_class not in ("cnv", "sv"):
+            raise CallSetInputError("record_class must be 'cnv' or 'sv'.")
+        declared = canonical_assembly(assembly)
+        if declared is None:
+            raise CallSetInputError("The assembly must be GRCh37 or GRCh38; no liftover is supported.")
+        name = (caller_name or "").strip()
+        version = (caller_version or "").strip() or None
+        if not name or len(name) > 100 or (version is not None and len(version) > 100):
+            raise CallSetInputError("A caller name of 1 to 100 characters is required.")
+        filename = (source_filename or "").strip()
+        if not filename or len(filename) > 255 or "/" in filename or "\\" in filename:
+            raise CallSetInputError("The source filename must be a bare file name of at most 255 characters.")
+        sample_name = (vcf_sample_name or "").strip()
+        if not sample_name:
+            raise CallSetInputError("The VCF sample name is required.")
+        content_hash = hashlib.sha256(source_bytes).hexdigest()
+
+        # ── file-local work: nothing here looks at the run ──────────────────────────────────────────────────────
+        # BEFORE decoding or parsing: the record cap, counted without building a single record
+        records = self._callset_count_data_lines(source_bytes)
+        if records > max_records:
+            raise CallSetInputError(f"The file holds {records} records; the configured limit is {max_records}.")
+        try:
+            text = source_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CallSetInputError("The file is not valid UTF-8 text.") from exc
+        if "\x00" in text:
+            raise CallSetInputError("The file contains a NUL character, which cannot be stored.")
+        try:
+            parsed = PARSER_RULESETS[CALLSET_PARSER_VERSION](
+                text, assembly=declared, record_class=record_class, max_records=max_records
+            )
+        except CallSetRejected as exc:
+            raise CallSetInputError(str(exc)) from exc
+        if tuple(parsed.samples) != (sample_name,):
+            raise CallSetInputError("The file must contain exactly one sample column, named as the sample of this run.")
+        document = parsed.to_document()
+        payload = json.dumps(document)
+        if len(payload) > self.CALLSET_DB_MAX_DOCUMENT_BYTES:
+            # The derived document is ~5-11x the source (measured), so a file inside the byte and record limits can
+            # still exceed the stored-document limit. Say so cleanly instead of failing on the database's CHECK.
+            raise CallSetInputError("The file's derived document would exceed the stored-document size limit.")
+
+        # ── the run ───────────────────────────────────────────────────────────────────────────────────────────
+        facts = self._callset_chain_facts(session, sequencing_run_id, lock=True)
+
+        # LOCK HIERARCHY (shared with the database's triggers): call-set locks first, then content locks. A replacement
+        # therefore takes its predecessor's lock BEFORE the content lock below.
+        if supersedes_id is not None:
+            self._lock_call_set(supersedes_id)
+        # replay, serialised on the content key (NOT the class: identical bytes are identical bytes), so two identical
+        # concurrent requests become one call set
+        self._query(
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s, 3))",
+            (f"{session.org_id}|{sequencing_run_id}|{content_hash}",),
+        )
+        earlier = self._query(
+            "SELECT id, created_by, assembly, caller_name, caller_version, vcf_sample_name, "
+            "       public.call_set_state(org_id, id), tombstoned_at, record_class "
+            "FROM call_sets WHERE org_id = %s AND sequencing_run_id = %s AND source_content_hash = %s "
+            "ORDER BY seq DESC",
+            (session.org_id, sequencing_run_id, content_hash),
+        )
+        live = [e for e in earlier if e[7] is None and e[6] in ("pending_validation", "validated")]
+        if live:
+            e = live[0]
+            if (
+                resubmission_of is None
+                and e[8] == record_class
+                and (e[1], e[2], e[3], e[4], e[5]) == (session.user_id, declared, name, version, sample_name)
+            ):
+                return e[0]
+            raise CallSetConflictError(self.CALLSET_CONFLICT_REFUSAL)
+        if earlier and resubmission_of is None:
+            latest = earlier[0]
+            if latest[1] == session.user_id and latest[8] == record_class:
+                if latest[7] is None and latest[6] in ("rejected", "withdrawn"):
+                    raise CallSetConflictError(
+                        f"Your earlier submission of this file is {latest[6]}. It was not resubmitted; use "
+                        "resubmit_call_set to submit it again as a new call set."
+                    )
+                raise CallSetConflictError(
+                    f"Your earlier submission of this file is {latest[6]} and cannot be resubmitted unchanged."
+                )
+            raise CallSetConflictError(self.CALLSET_CONFLICT_REFUSAL)
+
+        # ── every gate that depends on the run: ONE message, whatever failed ──────────────────────────────────
+        try:
+            if sample_name != str(facts["sample_id"]):
+                raise CallSetConflictError(self.CALLSET_RUN_REFUSAL)
+            self._callset_assert_eligible(
+                facts,
+                assembly=declared,
+                small_variant=self._callset_small_variant_assemblies(session, [sequencing_run_id])[sequencing_run_id],
+            )
+        except CallSetConflictError as exc:
+            raise CallSetConflictError(self.CALLSET_RUN_REFUSAL) from exc
+
+        if supersedes_id is not None:
+            predecessor = self._query_one(
+                "SELECT sequencing_run_id, record_class FROM call_sets WHERE id = %s AND org_id = %s",
+                (supersedes_id, session.org_id),
+            )
+            if predecessor is None:
+                raise NotFoundError("Call set not found")
+            if (predecessor[0], predecessor[1]) != (sequencing_run_id, record_class):
+                # The database's foreign key (run AND class) stays as the last barrier; this is the clean answer.
+                raise CallSetConflictError(
+                    "A replacement must be on the same sequencing run and of the same evidence class "
+                    "as the call set it replaces."
+                )
+
+        inherited = self._query_one(
+            "SELECT max(retention_days) FROM vcfs WHERE org_id = %s AND sequencing_run_id = %s "
+            "AND tombstoned_at IS NULL AND retention_days IS NOT NULL",
+            (session.org_id, sequencing_run_id),
+        )
+        retention_days = (
+            inherited[0]
+            if inherited and inherited[0] is not None
+            else self._resolve_vcf_retention_days(session, sequencing_run_id)
+        )
+
+        call_set_id = uuid.uuid4()
+        self._set_actor_context(session.user_id)
+        self._callset_execute(
+            "INSERT INTO call_sets (org_id, id, sequencing_run_id, record_class, assembly, caller_name, caller_version, "
+            "caller_in_header, caller_approved_at_submission, vcf_sample_name, source_filename, source_vcf, "
+            "source_content_hash, parser_version, parsed_document, supersedes_id, resubmission_of, created_at, "
+            "created_by, retention_days) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s)",
+            (
+                session.org_id,
+                call_set_id,
+                sequencing_run_id,
+                record_class,
+                declared,
+                name,
+                version,
+                parsed.caller_in_header,
+                sample_name,
+                filename,
+                source_bytes,
+                content_hash,
+                CALLSET_PARSER_VERSION,
+                payload,
+                supersedes_id,
+                resubmission_of,
+                self._clock.now(),
+                session.user_id,
+                retention_days,
+            ),
+        )
+        self._insert_call_set_event(session, call_set_id, "submitted", "Lab technician", reason=reason)
+        return call_set_id
+
+    # ── decisions and corrections ────────────────────────────────────────────
+
+    @auditable(
+        action="call_set_validated",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def validate_call_set(self, session: Session, call_set_id: uuid.UUID) -> uuid.UUID:
+        """
+        Interpreter records that a PENDING call set passed the technical AND eligibility checks. NOT a clinical
+        interpretation.
+
+        The call set's lifecycle lock is taken first and the run/sample/order/test rows are read FOR SHARE, so the
+        facts checked here cannot change, and the call set cannot be withdrawn, retracted or redacted, between the
+        checks and the 'validated' event. Re-verified, from the stored bytes, at the moment of validation (never
+        trusted from submission): the SHA-256; a fresh parse with the RULE SET RECORDED for this call set against the
+        stored document; sample identity; QC; order; consent; assembly (ordered test and small-variant analysis); and
+        that the caller version is CURRENTLY approved. The submitter may not validate their own call set.
+        Validating a replacement atomically supersedes its predecessor (a database trigger).
+        """
+        self._require_role(session, "Interpreter")
+        from clinical.genome_analysis import verify_document_for_version
+
+        self._lock_call_set(call_set_id)
+        cs = self._callset_row(session, call_set_id, content=True)
+        if cs["created_by"] == session.user_id:
+            raise AuthorizationError("The submitter may not validate their own call set.")
+        if cs["tombstoned_at"] is not None or cs["content_redacted_at"] is not None:
+            raise CallSetConflictError("This call set has been retained out of the record and cannot be validated.")
+        if cs["state"] != "pending_validation":
+            raise CallSetConflictError(f"Only a pending call set can be validated (it is {cs['state']}).")
+
+        source = bytes(cs["source_vcf"])
+        document = (
+            cs["parsed_document"] if isinstance(cs["parsed_document"], dict) else json.loads(cs["parsed_document"])
+        )
+        if hashlib.sha256(source).hexdigest() != cs["source_content_hash"]:
+            raise CallSetConflictError("Integrity failure: the stored bytes no longer match their SHA-256.")
+        verdict = verify_document_for_version(cs["parser_version"], source, document)
+        if verdict is None:
+            raise CallSetConflictError(
+                f"This call set was parsed by rule set {cs['parser_version']}, which is no longer available; "
+                "it cannot be verified."
+            )
+        if not verdict:
+            raise CallSetConflictError("Integrity failure: the stored document does not match the original bytes.")
+
+        facts = self._callset_chain_facts(session, cs["sequencing_run_id"], lock=True)
+        if cs["vcf_sample_name"] != str(facts["sample_id"]) or list(document.get("samples") or []) != [
+            cs["vcf_sample_name"]
+        ]:
+            raise CallSetConflictError("Sample identity does not match the sequencing run.")
+        if document.get("assembly") != cs["assembly"]:
+            raise CallSetConflictError("Assembly does not match the stored document.")
+        self._callset_assert_eligible(
+            facts,
+            assembly=cs["assembly"],
+            small_variant=self._callset_small_variant_assemblies(session, [cs["sequencing_run_id"]])[
+                cs["sequencing_run_id"]
+            ],
+        )
+
+        approval = None
+        if cs["caller_version"] is not None:
+            approval = self._query_one(
+                "SELECT id, event_type FROM caller_approvals WHERE org_id = %s AND caller_name = %s "
+                "AND caller_version = %s AND record_class = %s ORDER BY seq DESC LIMIT 1",
+                (session.org_id, cs["caller_name"], cs["caller_version"], cs["record_class"]),
+            )
+        if approval is None or approval[1] != "approved":
+            raise CallSetConflictError("The caller version is not currently approved for this record class.")
+
+        return self._insert_call_set_event(
+            session,
+            call_set_id,
+            "validated",
+            "Interpreter",
+            checks=dict(self.CALLSET_VALIDATION_CHECKS),
+            caller_approval_id=approval[0],
+        )
+
+    @auditable(
+        action="call_set_rejected",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def reject_call_set(self, session: Session, call_set_id: uuid.UUID, reason: str) -> uuid.UUID:
+        """Interpreter rejects a PENDING call set, with a reason. The submitter may not."""
+        self._require_role(session, "Interpreter")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        cs = self._callset_row(session, call_set_id)
+        if cs["created_by"] == session.user_id:
+            raise AuthorizationError("The submitter may not decide their own call set.")
+        return self._insert_call_set_event(session, call_set_id, "rejected", "Interpreter", reason=text)
+
+    @auditable(
+        action="call_set_withdrawn",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def withdraw_call_set(self, session: Session, call_set_id: uuid.UUID, reason: str) -> uuid.UUID:
+        """The SUBMITTER withdraws their own PENDING call set, with a reason."""
+        self._require_role(session, "Lab technician")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        cs = self._callset_row(session, call_set_id)
+        if cs["created_by"] != session.user_id:
+            raise AuthorizationError("Only the submitter may withdraw a call set.")
+        return self._insert_call_set_event(session, call_set_id, "withdrawn", "Lab technician", reason=text)
+
+    @auditable(
+        action="call_set_retraction_requested",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def request_call_set_retraction(self, session: Session, call_set_id: uuid.UUID, reason: str) -> uuid.UUID:
+        """Interpreter asks an Approver to retract a VALIDATED call set. One open request at a time."""
+        self._require_role(session, "Interpreter")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        self._callset_row(session, call_set_id)
+        return self._insert_call_set_event(session, call_set_id, "retraction_requested", "Interpreter", reason=text)
+
+    def _open_retraction_request(self, session: Session, call_set_id: uuid.UUID) -> Optional[uuid.UUID]:
+        row = self._query_one("SELECT public.open_retraction_request(%s, %s)", (session.org_id, call_set_id))
+        return row[0] if row else None
+
+    @auditable(
+        action="call_set_retracted",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def retract_call_set(
+        self, session: Session, call_set_id: uuid.UUID, reason: str, wrong_run_placement: bool = False
+    ) -> uuid.UUID:
+        """
+        APPROVER ONLY retracts a VALIDATED call set (it then leaves the clinical map). An Interpreter can only
+        REQUEST retraction. Answers the open request when there is one. `wrong_run_placement=True` records the one
+        structured reason code that later lets the SAME bytes be submitted on another run (as a new call set).
+        """
+        self._require_role(session, "Approver")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        self._callset_row(session, call_set_id)
+        return self._insert_call_set_event(
+            session,
+            call_set_id,
+            "retracted",
+            "Approver",
+            reason=text,
+            checks=dict(self.CALLSET_WRONG_RUN_CHECKS) if wrong_run_placement else None,
+            responds_to=self._open_retraction_request(session, call_set_id),
+        )
+
+    @auditable(
+        action="call_set_retraction_declined",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+        atomic=True,
+    )
+    @transactional
+    def decline_call_set_retraction(self, session: Session, call_set_id: uuid.UUID, reason: str) -> uuid.UUID:
+        """Approver declines the OPEN retraction request, with a reason. The call set stays validated."""
+        self._require_role(session, "Approver")
+        text = self._callset_reason(reason)
+        self._lock_call_set(call_set_id)
+        self._callset_row(session, call_set_id)
+        request = self._open_retraction_request(session, call_set_id)
+        if request is None:
+            raise CallSetConflictError("There is no open retraction request to decline.")
+        return self._insert_call_set_event(
+            session, call_set_id, "retraction_declined", "Approver", reason=text, responds_to=request
+        )
+
+    # ── reads ────────────────────────────────────────────────────────────────
+
+    #: Why a VALIDATED call set that is not drawn is not drawn. A fixed vocabulary: it reaches clinicians.
+    CALLSET_EXCLUSION_REASONS = (
+        "consent_withdrawn",
+        "sample_qc_not_passed",
+        "order_cancelled",
+        "sample_identity_changed",
+        "assembly_mismatch",
+        "small_variant_build_mismatch",
+        "integrity_failure",
+        "retention_redacted",
+    )
+
+    def _callset_lineage(self, session: Session, call_set_id: uuid.UUID) -> list:
+        """
+        Every call set of the SAME FILE on the SAME RUN (any evidence class), oldest first, with the lifecycle events a
+        reviewer needs to know about a file: who rejected, withdrew or retracted it, when, and why. Reviewers only.
+        """
+        rows = self._query(
+            "SELECT x.id, x.record_class, public.call_set_state(x.org_id, x.id), x.created_at, x.created_by, "
+            "       x.resubmission_of, x.supersedes_id, x.id = me.id "
+            "FROM call_sets x JOIN call_sets me ON me.org_id = x.org_id AND me.sequencing_run_id = x.sequencing_run_id "
+            "AND me.source_content_hash = x.source_content_hash "
+            "WHERE me.id = %s AND me.org_id = %s ORDER BY x.seq",
+            (call_set_id, session.org_id),
+        )
+        ids = [r[0] for r in rows]
+        events: dict = {i: [] for i in ids}
+        for r in self._query(
+            "SELECT call_set_id, event_type, actor_role, occurred_at, reason FROM call_set_events "
+            "WHERE org_id = %s AND call_set_id = ANY(%s) "
+            "AND event_type IN ('rejected', 'withdrawn', 'retracted', 'retraction_declined') ORDER BY seq",
+            (session.org_id, ids),
+        ):
+            events[r[0]].append({"event_type": r[1], "actor_role": r[2], "occurred_at": r[3], "reason": r[4]})
+        return [
+            {
+                "id": r[0],
+                "record_class": r[1],
+                "state": r[2],
+                "created_at": r[3],
+                "created_by": r[4],
+                "resubmission_of": r[5],
+                "supersedes_id": r[6],
+                "is_this_call_set": r[7],
+                "prior_decisions": events[r[0]],
+            }
+            for r in rows
+        ]
+
+    @auditable(
+        action="call_set_read",
+        resource_type="sequencing_run",
+        resource_id_param="sequencing_run_id",
+        resource_id_transform=str,
+    )
+    @transactional
+    def list_call_sets_for_run(self, session: Session, sequencing_run_id: uuid.UUID) -> list:
+        """
+        STATUS of the call sets on a run of this organisation: metadata and derived state only (no bytes, no
+        document, no coordinates). A Lab technician sees only the call sets THEY submitted.
+        """
+        roles = {a.role for a in self.get_user_roles(session)}
+        self._require_any_role(session, self.CALLSET_STATUS_ROLES)
+        reviewer = bool(roles.intersection(self.CALLSET_DOCUMENT_ROLES))
+        self._callset_chain_facts(session, sequencing_run_id)
+        rows = self._query(
+            "SELECT id, record_class, assembly, caller_name, caller_version, source_content_hash, parser_version, "
+            "       supersedes_id, resubmission_of, created_at, created_by, tombstoned_at, content_redacted_at, "
+            "       public.call_set_state(org_id, id) "
+            "FROM call_sets WHERE org_id = %s AND sequencing_run_id = %s "
+            + ("" if reviewer else "AND created_by = %s ")
+            + "ORDER BY seq",
+            (session.org_id, sequencing_run_id) if reviewer else (session.org_id, sequencing_run_id, session.user_id),
+        )
+        keys = (
+            "id,record_class,assembly,caller_name,caller_version,source_content_hash,parser_version,supersedes_id,"
+            "resubmission_of,created_at,created_by,tombstoned_at,content_redacted_at,state"
+        ).split(",")
+        return [dict(zip(keys, r)) for r in rows]
+
+    @auditable(
+        action="call_set_read",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+    )
+    @transactional
+    def get_call_set_status(self, session: Session, call_set_id: uuid.UUID) -> dict:
+        """
+        One call set's STATUS and non-genomic outcomes: state, class, assembly, caller, record COUNTS by caller
+        filter status, the lifecycle with the reason attached to a rejection or withdrawal, and its resubmission
+        link. Never the bytes, the document, a coordinate or a variant record. Lab technicians see only call sets
+        they submitted (anything else is the same NotFoundError as a missing id); Interpreters and Approvers see the
+        organisation's, and ALSO the file's lineage (earlier attempts on this run and their decisions).
+        """
+        roles = {a.role for a in self.get_user_roles(session)}
+        self._require_any_role(session, self.CALLSET_STATUS_ROLES)
+        reviewer = bool(roles.intersection(self.CALLSET_DOCUMENT_ROLES))
+        row = self._query_one(
+            "SELECT id, sequencing_run_id, record_class, assembly, caller_name, caller_version, created_at, created_by, "
+            "       tombstoned_at, content_redacted_at, public.call_set_state(org_id, id), parsed_document->'counts', "
+            "       resubmission_of "
+            "FROM call_sets WHERE id = %s AND org_id = %s",
+            (call_set_id, session.org_id),
+        )
+        if row is None or (not reviewer and row[7] != session.user_id):
+            raise NotFoundError("Call set not found")
+        keys = (
+            "id,sequencing_run_id,record_class,assembly,caller_name,caller_version,created_at,created_by,"
+            "tombstoned_at,content_redacted_at,state,counts,resubmission_of"
+        ).split(",")
+        status = dict(zip(keys, row))
+        if isinstance(status["counts"], str):
+            status["counts"] = json.loads(status["counts"])
+        status["events"] = [
+            {
+                "event_type": r[0],
+                "occurred_at": r[1],
+                "reason": r[2] if r[0] in ("rejected", "withdrawn") else None,
+            }
+            for r in self._query(
+                "SELECT event_type, occurred_at, reason FROM call_set_events "
+                "WHERE org_id = %s AND call_set_id = %s ORDER BY seq",
+                (session.org_id, call_set_id),
+            )
+        ]
+        if reviewer:
+            status["lineage"] = self._callset_lineage(session, call_set_id)
+        return status
+
+    @auditable(
+        action="call_set_read",
+        resource_type="call_set",
+        resource_id_param="call_set_id",
+        resource_id_transform=str,
+    )
+    @transactional
+    def get_call_set_for_review(self, session: Session, call_set_id: uuid.UUID) -> dict:
+        """
+        One call set's metadata and its derived, COMPACT document, for the Interpreter or Approver reviewing it (any
+        state), WITH its lineage: the resubmission link, the replacement link and every earlier attempt on this file
+        with who decided what and why. Lab technicians are refused: the document holds coordinates and variant records.
+        The original bytes are never loaded here.
+
+        CONSENT (Policy C): while the order's own consent OR the patient's latest consent for its scope is withdrawn the document is WITHHELD (`document` is
+        None and `document_withheld` is "consent_withdrawn"); metadata, lifecycle and lineage remain, nothing is erased,
+        and the document is available again only if the order's own consent was never withdrawn and a later consent is recorded. A redacted call set has no document.
+        """
+        self._require_any_role(session, self.CALLSET_DOCUMENT_ROLES)
+        cs = self._callset_row(session, call_set_id)
+        facts = self._callset_chain_facts(session, cs["sequencing_run_id"])
+        document = None
+        withheld = None
+        if not facts["consent_ok"]:
+            withheld = "consent_withdrawn"
+        elif cs["content_redacted_at"] is None:
+            found = self._query_one(
+                "SELECT parsed_document FROM call_sets WHERE id = %s AND org_id = %s", (call_set_id, session.org_id)
+            )
+            document = found[0] if found else None
+            if isinstance(document, str):
+                document = json.loads(document)
+        cs["document"] = document
+        cs["document_withheld"] = withheld
+        cs["events"] = [
+            {"event_type": r[0], "actor_role": r[1], "occurred_at": r[2], "reason": r[3]}
+            for r in self._query(
+                "SELECT event_type, actor_role, occurred_at, reason FROM call_set_events "
+                "WHERE org_id = %s AND call_set_id = %s ORDER BY seq",
+                (session.org_id, call_set_id),
+            )
+        ]
+        cs["lineage"] = self._callset_lineage(session, call_set_id)
+        return cs
+
+    def _patient_call_set_evidence(self, session: Session, patient_id: uuid.UUID) -> dict:
+        """
+        The clinical-map reader's work. Considers every VALIDATED, live, non-redacted call set of this organisation's
+        patient and sorts it into DRAWN or EXCLUDED-for-a-reason (`CALLSET_EXCLUSION_REASONS`). It is drawn only when
+        ALL hold NOW: the sample passed QC; the order is not cancelled; the patient's latest consent for the order's
+        scope AND the consent the order was placed under are both not withdrawn (Policy C); the file's sample is still the run's sample; the assembly equals the ordered test's and
+        agrees with any small-variant analysis of the run; and the stored evidence is intact.
+
+        INTEGRITY, PER READ: the database computes the SHA-256 of the stored bytes and of the stored document's text
+        and returns them with the metadata. The bytes must hash to the recorded SHA-256, and the document digest must
+        be the one a full verification once passed for exactly these bytes; otherwise (a miss, or any change) the
+        bytes and document are fetched and verified IN FULL (re-parse with the recorded rule set, exact equality)
+        before the call set is drawn, and a failure excludes it as `integrity_failure` and is audited. No path
+        draws a call set whose bytes and document have not been verified against each other.
+        """
+        self._require_any_role(session, self.GENOME_READ_ROLES)
+        if (
+            self._query_one(
+                "SELECT 1 FROM patients WHERE patient_id = %s AND org_id = %s", (patient_id, session.org_id)
+            )
+            is None
+        ):
+            raise NotFoundError(PATIENT_NOT_FOUND)
+        rows = self._query(
+            "SELECT cs.id, cs.record_class, cs.assembly, cs.caller_name, cs.caller_version, cs.sequencing_run_id, "
+            "       cs.source_content_hash, cs.parser_version, encode(sha256(cs.source_vcf), 'hex'), "
+            "       encode(sha256(convert_to(cs.parsed_document::text, 'UTF8')), 'hex'), "
+            "       (SELECT max(e.occurred_at) FROM call_set_events e WHERE e.org_id = cs.org_id "
+            "         AND e.call_set_id = cs.id AND e.event_type = 'validated'), "
+            "       COALESCE(" + self._CALLSET_CONSENT_OK_SQL + ", false), s.qc_status = 'passed', "
+            "       o.state <> 'cancelled', s.sample_id::text = cs.vcf_sample_name, t.assembly = cs.assembly, "
+            "       jsonb_array_length(cs.parsed_document->'records') "
+            + self._PATIENT_RUN_CHAIN
+            + "JOIN tests t           ON t.org_id = o.org_id AND t.test_id = o.test_id "
+            "JOIN call_sets cs      ON cs.org_id = r.org_id AND cs.sequencing_run_id = r.id "
+            "WHERE p.patient_id = %s AND p.org_id = %s "
+            "  AND cs.tombstoned_at IS NULL AND cs.content_redacted_at IS NULL "
+            "  AND public.call_set_state(cs.org_id, cs.id) = 'validated' "
+            "ORDER BY cs.seq",
+            (patient_id, session.org_id),
+        )
+        excluded: dict = {}
+
+        def exclude(reason: str) -> None:
+            excluded[reason] = excluded.get(reason, 0) + 1
+
+        gated = []
+        for r in rows:
+            reason = self._callset_exclusion_reason(r[11], r[12], r[13], r[14], r[15])
+            if reason:
+                exclude(reason)
+            else:
+                gated.append(r)
+        from clinical.genome_analysis import (
+            PARSER_RULESETS,
+            CallSetRejected,
+            StructuralValidationError,
+            callset_from_document,
+        )
+
+        small_variant = self._callset_small_variant_assemblies(session, sorted({r[5] for r in gated}, key=str))
+        passing = []
+        for r in gated:
+            if any(a != r[2] for a in small_variant[r[5]]):
+                exclude("small_variant_build_mismatch")  # the run's small-variant analysis is on another build
+            elif r[8] != r[6]:
+                self._callset_integrity_incident(session, r[0])  # the stored bytes no longer hash to their SHA-256
+                exclude("integrity_failure")
+            elif r[7] not in PARSER_RULESETS:
+                # A retired rule set can verify nothing: a warm cache must not keep serving what a cold process would
+                # refuse, so this is decided BEFORE the cache is consulted.
+                self._callset_integrity_incident(session, r[0])
+                exclude("integrity_failure")
+            else:
+                passing.append(r)
+
+        verified: dict = {}
+        misses = []
+        for r in passing:
+            key = (r[0], r[6], r[7], r[9])
+            hit = self._callset_cache_get(key)
+            if hit is not None:
+                verified[r[0]] = hit[1]
+            else:
+                misses.append(r)
+
+        def verify_and_store(r) -> None:
+            fetched = self._query(
+                "SELECT source_vcf, parsed_document FROM call_sets WHERE org_id = %s AND id = %s",
+                (session.org_id, r[0]),
+            )
+            source, document = fetched[0]
+            document = json.loads(document) if isinstance(document, str) else document
+            try:
+                if not self._callset_evidence_intact(r[0], source, r[6], r[7], document):
+                    raise ValueError("stored document does not match its bytes")
+                call_set = callset_from_document(
+                    document, caller=" ".join(x for x in (r[3], r[4]) if x), call_set_id=str(r[0])
+                )
+            except (CallSetRejected, StructuralValidationError, KeyError, TypeError, ValueError):
+                self._callset_integrity_incident(session, r[0])
+                exclude("integrity_failure")
+                return
+            verified[r[0]] = call_set
+            key = (r[0], r[6], r[7], r[9])
+            self._callset_cache_put(key, r[16], call_set)
+
+        # SINGLE FLIGHT: claim what nobody else is verifying, verify and release it; only THEN wait for the others'
+        # (a claim is never held while waiting, so two readers cannot wait on each other). A waiter re-reads the cache
+        # with ITS OWN digests of the bytes it just read, so it is only ever served what matches its own read.
+        waiting = []
+        for r in misses:
+            key = (r[0], r[6], r[7], r[9])
+            mine, event = self._callset_claim(key)
+            if not mine:
+                waiting.append((r, key, event))
+                continue
+            try:
+                verify_and_store(r)
+            finally:
+                self._callset_release(key, event)
+        for r, key, event in waiting:
+            event.wait(timeout=self.CALLSET_SINGLE_FLIGHT_WAIT_SECONDS)
+            hit = self._callset_cache_get(key)
+            if hit is not None:
+                verified[r[0]] = hit[1]
+            else:
+                verify_and_store(r)  # the other reader failed, or its entry did not fit: verify in full ourselves
+        eligible = [
+            {
+                "call_set_id": r[0],
+                "record_class": r[1],
+                "assembly": r[2],
+                "caller_name": r[3],
+                "caller_version": r[4],
+                "call_set": verified[r[0]],
+                "validated_at": r[10],
+            }
+            for r in passing
+            if r[0] in verified
+        ]
+        # Evidence the RETENTION POLICY has since removed is a different answer from "nothing was ever attached".
+        # Only a count: the content is gone and nothing about it is described.
+        redacted = self._query_one(
+            "SELECT count(*) "
+            + self._PATIENT_RUN_CHAIN
+            + "JOIN call_sets cs ON cs.org_id = r.org_id AND cs.sequencing_run_id = r.id "
+            "WHERE p.patient_id = %s AND p.org_id = %s AND cs.content_redacted_at IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM call_set_events e WHERE e.org_id = cs.org_id AND e.call_set_id = cs.id "
+            "            AND e.event_type = 'validated')",
+            (patient_id, session.org_id),
+        )
+        if redacted and redacted[0]:
+            excluded["retention_redacted"] = int(redacted[0])
+        return {"eligible": eligible, "excluded": excluded}
+
+    @auditable(
+        action="genome_read",
+        resource_type="patient",
+        resource_id_param="patient_id",
+        resource_id_transform=str,
+    )
+    @transactional
+    def patient_call_set_evidence(self, session: Session, patient_id: uuid.UUID) -> dict:
+        """
+        The clinical map's reader: `{"eligible": [...], "excluded": {reason: count}}`. `excluded` counts VALIDATED call
+        sets that are NOT drawn and why, so "nothing was ever attached" and "evidence exists but is held back" are
+        different answers. Role-gated first (`GENOME_READ_ROLES`), then NotFoundError for any patient that is not this
+        organisation's. AUDITED as `genome_read` on the patient with no payload. See `_patient_call_set_evidence`.
+        """
+        return self._patient_call_set_evidence(session, patient_id)
+
+    @auditable(
+        action="genome_read",
+        resource_type="patient",
+        resource_id_param="patient_id",
+        resource_id_transform=str,
+    )
+    @transactional
+    def list_patient_validated_call_sets(self, session: Session, patient_id: uuid.UUID) -> list:
+        """The drawn call sets only (`patient_call_set_evidence()["eligible"]`), for callers that need no exclusion detail."""
+        return self._patient_call_set_evidence(session, patient_id)["eligible"]
+
     # ── w136: the patient's own released reports, AS A SERIES ────────────────
     #
     # WHAT A PATIENT TREND IS IN THIS MODEL, AND WHAT IT IS NOT. The held
@@ -4350,12 +5714,16 @@ class DataAccess:
     # staff genome reader build on it, so an organisation predicate cannot be
     # dropped from one copy and not the other. It carries no SELECT and no WHERE:
     # each caller binds its own anchor.
-    _PATIENT_INTERPRETATION_CHAIN = (
+    # patient -> order -> sample -> sequencing run, written ONCE. The interpretation chain below and the call-set
+    # reader both extend it, so an organisation predicate cannot be dropped from one copy and not the other.
+    _PATIENT_RUN_CHAIN = (
         "FROM patients p "
         "JOIN orders o          ON o.org_id = p.org_id  AND o.patient_id = p.patient_id "
         "JOIN samples s         ON s.org_id = o.org_id  AND s.order_id = o.order_id "
         "JOIN sequencing_runs r ON r.org_id = s.org_id  AND r.sample_id = s.sample_id "
-        "JOIN vcfs v            ON v.org_id = r.org_id  AND v.sequencing_run_id = r.id "
+    )
+    _PATIENT_INTERPRETATION_CHAIN = (
+        _PATIENT_RUN_CHAIN + "JOIN vcfs v            ON v.org_id = r.org_id  AND v.sequencing_run_id = r.id "
         "JOIN interpretations i ON i.org_id = v.org_id  AND i.vcf_id = v.id "
     )
 

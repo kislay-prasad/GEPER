@@ -150,6 +150,53 @@ it exits 0.
 `/readyz` re-checks the migration state on every call, so a database that drifts
 or is behind is reported not ready (503) with the reason named.
 
+### Migration 0010 revokes TEMPORARY on the database
+
+Migration 0010 (call sets, Genome Analysis Phase 2) runs three statements against the
+database it is applied to, naming that database (`current_database()`):
+
+```sql
+REVOKE TEMPORARY ON DATABASE <this database> FROM PUBLIC;
+REVOKE TEMPORARY ON DATABASE <this database> FROM clinical_app;
+REVOKE TEMPORARY ON DATABASE <this database> FROM clinical_retention;
+```
+
+A database built directly from `clinical/schema.sql` ends in the same state. The reason is
+defence in depth beside the pinned `search_path` (it closes the `pg_temp` shadowing route);
+the repository itself creates no temporary tables (checked by search when the migration was
+written).
+
+What this means in operation:
+
+* **It is database-wide, not limited to the two application roles.** The default grant of
+  `TEMPORARY` lives on `PUBLIC`, so every role in that database that held it only through
+  `PUBLIC` loses it. Other databases in the same cluster are not affected.
+* **Anything that creates temporary tables in this database now fails** with *permission
+  denied to create temporary table*: ad-hoc sessions, reporting tools, scripts. Nothing in
+  this repository does; tools outside it were not examined.
+* **Who can apply it.** The database owner or a superuser. The migration checks first and
+  refuses, changing nothing, if the administrative role is neither
+  (`migration 0010 refused: … neither owns this database nor is a superuser, so cannot
+  revoke TEMP`). On a managed database whose administrative role is neither, the migration
+  will not apply until that is resolved.
+* **Nothing in the stack undoes it, and there is no down-migration.** Restoring the
+  privilege is an explicit action by the database owner or a superuser, for a specific role:
+  `GRANT TEMPORARY ON DATABASE <database> TO <role>;`.
+* **Do not restore it to `PUBLIC` or to the application roles.** The migration's own
+  post-conditions, which `/readyz` and `python -m clinical.migrate --verify` re-evaluate,
+  require that neither `clinical_app` nor `clinical_retention` has `TEMPORARY` on the database
+  (including through a role they are members of) and that `PUBLIC` does not. Granting it to
+  `PUBLIC`, to either application role, or to a role they inherit from makes the service
+  report `schema_drift`. Granting it to a separate login that those roles are not members of
+  does not.
+* **After a restore, run `python -m clinical.migrate --verify`** (the restore steps below
+  already do). Whether a `pg_dump`/`pg_restore` round trip carries this database-level
+  privilege was not examined; if it does not, `--verify` reports `schema_drift` and the owner
+  must apply the revokes again.
+
+These statements come from the migration text and its tests; the `GRANT` and `--verify`
+commands above were not run against this stack.
+
 ## First administrator
 
 A hospital is onboarded by an operator, not through the API: there is no

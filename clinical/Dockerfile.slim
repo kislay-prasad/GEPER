@@ -74,6 +74,7 @@ COPY clinical/*.py /app/clinical/
 COPY clinical/models /app/clinical/models
 COPY clinical/migrations /app/clinical/migrations
 COPY clinical/schema.sql /app/clinical/schema.sql
+COPY clinical/genome_analysis /app/clinical/genome_analysis
 COPY clinical/log_config.json /app/clinical/log_config.json
 COPY clinical/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh \

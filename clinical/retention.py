@@ -131,7 +131,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, List, Optional, Sequence
 
@@ -206,6 +206,10 @@ class PurgeResult:
     org_id: uuid.UUID
     artefact_class: str
     tombstoned_ids: List[uuid.UUID]
+    # Records the purge COULD NOT decide, surfaced rather than skipped silently. Only `call_set` fills it: a call
+    # set whose run has no VCF or no released report has nothing to anchor a clock to. It is neither purged nor
+    # treated as eligible -- it is an operational review item. Empty for every other class.
+    unresolved_ids: List[uuid.UUID] = field(default_factory=list)
 
 
 class RetentionPrincipal:
@@ -302,6 +306,8 @@ class RetentionPrincipal:
             return self._purge_interpretations(org_id, when)
         if artefact_class == "vcf":
             return self._purge_vcfs(org_id, when)
+        if artefact_class == "call_set":
+            return self._purge_call_sets(org_id, when)
         raise ValueError(f"artefact_class {artefact_class!r} has no purge implementation.")
 
     def _purge_reports(self, org_id: uuid.UUID, now: datetime) -> PurgeResult:
@@ -601,3 +607,93 @@ class RetentionPrincipal:
             )
             self._write_purge_audit_entry(org_id, actor_id, "vcf", vcf_id, "vcf")
         return PurgeResult(org_id=org_id, artefact_class="vcf", tombstoned_ids=ids)
+
+    # The release clock for a call set: the LATEST release across every report of every interpretation of every VCF
+    # of the call set's sequencing run. NULL when the run has no VCF, or none of its VCFs has a released report.
+    _CALLSET_ANCHOR_SQL = (
+        "(SELECT MAX(re.released_at) FROM vcfs v "
+        " JOIN interpretations i ON i.org_id = v.org_id AND i.vcf_id = v.id "
+        " JOIN reports r ON r.org_id = i.org_id AND r.interpretation_id = i.id "
+        " JOIN release_events re ON re.org_id = r.org_id AND re.report_id = r.id "
+        " WHERE v.org_id = cs.org_id AND v.sequencing_run_id = cs.sequencing_run_id)"
+    )
+
+    def unresolved_call_sets(self, org_id: uuid.UUID) -> List[dict]:
+        """
+        THE OPERATIONAL REVIEW QUEUE for call-set evidence that retention cannot decide: live call sets whose run has
+        NO VCF (`no_vcf`) or whose VCFs have NO released report (`no_release`). Nothing anchors their clock, so
+        they are never purged and never reported as eligible; they wait here until a person resolves them
+        (a policy item -- no retention period is invented for them). Metadata only: no content leaves this method.
+        """
+        rows = self._query(
+            "SELECT cs.id, cs.sequencing_run_id, cs.created_at, cs.retention_days, "
+            "       CASE WHEN NOT EXISTS (SELECT 1 FROM vcfs v WHERE v.org_id = cs.org_id "
+            "                              AND v.sequencing_run_id = cs.sequencing_run_id) "
+            "            THEN 'no_vcf' ELSE 'no_release' END "
+            "FROM call_sets cs WHERE cs.org_id = %s AND cs.tombstoned_at IS NULL AND "
+            + self._CALLSET_ANCHOR_SQL
+            + " IS NULL ORDER BY cs.created_at, cs.id",
+            (org_id,),
+        )
+        return [
+            {"call_set_id": r[0], "sequencing_run_id": r[1], "created_at": r[2], "retention_days": r[3], "reason": r[4]}
+            for r in rows
+        ]
+
+    def _purge_call_sets(self, org_id: uuid.UUID, now: datetime) -> PurgeResult:
+        """
+        The DEDICATED call-set purge. Anchor: the latest release on the run's VCFs (`_CALLSET_ANCHOR_SQL`). Window:
+        the call set's OWN `retention_days`, a snapshot taken at creation and never recomputed. A live successor
+        blocks (D6): the predecessor of a live replacement is not purged. A call set with NO anchor is not eligible
+        and is returned in `unresolved_ids`.
+
+        EACH ELIGIBLE CALL SET IS REDACTED IN ONE ATOMIC STEP, inside the caller's transaction (this method, like
+        every purge here, does NOT commit): tombstone + removal of the original bytes + removal of the parsed
+        document, in a SINGLE UPDATE; then its lifecycle events are tombstoned; then the `retention_purge` audit row
+        is written. The database refuses the redaction at COMMIT unless that audit row is in the SAME transaction,
+        and the audit INSERT must therefore NOT be put in a savepoint. The caller commits once per call, so a
+        failure anywhere rolls the whole batch back: nothing half-redacted survives.
+
+        WHAT IS PRESERVED: the call_sets row (ids, run, assembly, caller, SHA-256, parser version, retention
+        snapshot, who/when), every lifecycle event, and the audit row. WHAT IS NOT CLAIMED: this redacts the LIVE
+        rows. Superseded row versions, TOAST storage, WAL, replicas and backups/dumps are NOT addressed here; their
+        erasure is an unresolved policy item.
+        """
+        eligible_sql = (
+            "SELECT cs.id FROM call_sets cs WHERE cs.org_id = %s AND cs.tombstoned_at IS NULL "
+            "AND cs.retention_days IS NOT NULL AND "
+            + self._CALLSET_ANCHOR_SQL
+            + " IS NOT NULL AND "
+            + self._CALLSET_ANCHOR_SQL
+            + " + (cs.retention_days * INTERVAL '1 day') <= %s "
+            "AND NOT EXISTS (SELECT 1 FROM call_sets s WHERE s.org_id = cs.org_id AND s.supersedes_id = cs.id "
+            "                 AND s.tombstoned_at IS NULL)"
+        )
+        # Candidates, in a fixed order (so two purgers lock in the same order and cannot deadlock). Only a CANDIDATE
+        # list: eligibility is decided again under the lock below.
+        candidates = sorted((row[0] for row in self._query(eligible_sql, (org_id, now))), key=str)
+        actor_id = self._system_principal(org_id) if candidates else None
+        ids: List[uuid.UUID] = []
+        for call_set_id in candidates:
+            # THE call set's lifecycle lock (the key every lifecycle event, every replacement naming it, and the
+            # database's own tombstone/redaction trigger take). Held to the end of the caller's transaction, so no
+            # event can commit between this redaction and the events cascade below, and a lifecycle act in flight
+            # makes this wait instead of racing it.
+            self._execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 1))", (str(call_set_id),))
+            if not self._query(eligible_sql + " AND cs.id = %s", (org_id, now, call_set_id)):
+                continue  # something that changed while we waited (e.g. a replacement) made it ineligible
+            self._execute("SELECT set_config('clinical.actor_id', %s, true)", (str(actor_id),))
+            self._execute(
+                "UPDATE call_sets SET tombstoned_at = %s, tombstoned_by = %s, source_vcf = NULL, parsed_document = NULL, "
+                "content_redacted_at = %s, content_redacted_by = %s WHERE org_id = %s AND id = %s",
+                (now, actor_id, now, actor_id, org_id, call_set_id),
+            )
+            self._execute(
+                "UPDATE call_set_events SET tombstoned_at = %s, tombstoned_by = %s "
+                "WHERE org_id = %s AND call_set_id = %s AND tombstoned_at IS NULL",
+                (now, actor_id, org_id, call_set_id),
+            )
+            self._write_purge_audit_entry(org_id, actor_id, "call_set", call_set_id, "call_set")
+            ids.append(call_set_id)
+        unresolved = [item["call_set_id"] for item in self.unresolved_call_sets(org_id)]
+        return PurgeResult(org_id=org_id, artefact_class="call_set", tombstoned_ids=ids, unresolved_ids=unresolved)

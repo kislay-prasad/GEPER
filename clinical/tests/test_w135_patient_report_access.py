@@ -1103,10 +1103,11 @@ class TestTheDataLayerMethodIsTheOneThatEnforcesIt:
             "the patient report join is written more than once -- two places for an org predicate "
             "to be dropped from, and only one of them is tested"
         )
-        assert source.count("_MY_RELEASED_REPORTS_SQL") == 4, (
-            "expected one definition and exactly THREE callers of the shared SQL "
-            "(w135's list and single read, and w136's report series). A fourth caller, "
-            "or an inlined copy, is a thing somebody must look at."
+        assert source.count("_MY_RELEASED_REPORTS_SQL") == 5, (
+            "expected one definition and exactly FOUR callers of the shared SQL "
+            "(w135's list and single read, w136's report series, and Genome Analysis's "
+            "`list_my_genome_analyses`, which reads the same statement rather than writing "
+            "a copy). A fifth caller, or an inlined copy, is a thing somebody must look at."
         )
 
 

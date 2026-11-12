@@ -1,0 +1,627 @@
+{
+ "assembly": "GRCh38",
+ "caller_in_header": "GoldenCaller 1.0",
+ "counts": {
+  "detected": 7,
+  "invalid": 4,
+  "records": 18,
+  "uncertain": 6,
+  "unsupported": 1
+ },
+ "header_check": {
+  "contigs_checked": 3,
+  "note": null,
+  "reference_named": null,
+  "status": "verified"
+ },
+ "record_class": "sv",
+ "records": [
+  {
+   "line_no": 7,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 1010,
+      "ci_low": 990,
+      "notation": null,
+      "pos": 1000,
+      "precision": "interval"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 5005,
+      "ci_low": 4995,
+      "notation": null,
+      "pos": 5000,
+      "precision": "interval"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 7,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 50.5,
+    "source_id": "del_ci",
+    "status": "detected",
+    "sv_length": null,
+    "sv_type": "DEL",
+    "warnings": []
+   },
+   "source_id": "del_ci",
+   "status": "detected"
+  },
+  {
+   "line_no": 8,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 9000,
+      "ci_low": 9000,
+      "notation": null,
+      "pos": 9000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 12000,
+      "ci_low": 12000,
+      "notation": null,
+      "pos": 12000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 8,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 60.0,
+    "source_id": "dup_plain",
+    "status": "detected",
+    "sv_length": 3000,
+    "sv_type": "DUP",
+    "warnings": []
+   },
+   "source_id": "dup_plain",
+   "status": "detected"
+  },
+  {
+   "line_no": 9,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 20000,
+      "ci_low": 20000,
+      "notation": null,
+      "pos": 20000,
+      "precision": "imprecise_unquantified"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 30000,
+      "ci_low": 30000,
+      "notation": null,
+      "pos": 30000,
+      "precision": "imprecise_unquantified"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "LowQual",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 9,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": null,
+    "source_id": "inv_imprecise",
+    "status": "uncertain",
+    "sv_length": null,
+    "sv_type": "INV",
+    "warnings": []
+   },
+   "source_id": "inv_imprecise",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 10,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 40000,
+      "ci_low": 40000,
+      "notation": null,
+      "pos": 40000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": null,
+    "kind": "sv",
+    "line_no": 10,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 40.0,
+    "source_id": "ins_seq",
+    "status": "detected",
+    "sv_length": 120,
+    "sv_type": "INS",
+    "warnings": []
+   },
+   "source_id": "ins_seq",
+   "status": "detected"
+  },
+  {
+   "line_no": 11,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 50000,
+      "ci_low": 50000,
+      "notation": "t]p]",
+      "pos": 50000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "2",
+      "chrom_raw": "2",
+      "ci_high": 700,
+      "ci_low": 700,
+      "notation": null,
+      "pos": 700,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": true,
+    "kind": "sv",
+    "line_no": 11,
+    "mate_id": "bnd_b",
+    "partner_status": "partner_given",
+    "quality": null,
+    "source_id": "bnd_a",
+    "status": "detected",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": []
+   },
+   "source_id": "bnd_a",
+   "status": "detected"
+  },
+  {
+   "line_no": 12,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "2",
+      "chrom_raw": "2",
+      "ci_high": 700,
+      "ci_low": 700,
+      "notation": "t]p]",
+      "pos": 700,
+      "precision": "precise"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 50000,
+      "ci_low": 50000,
+      "notation": null,
+      "pos": 50000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": true,
+    "kind": "sv",
+    "line_no": 12,
+    "mate_id": "bnd_a",
+    "partner_status": "partner_given",
+    "quality": null,
+    "source_id": "bnd_b",
+    "status": "detected",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": []
+   },
+   "source_id": "bnd_b",
+   "status": "detected"
+  },
+  {
+   "line_no": 13,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 60000,
+      "ci_low": 60000,
+      "notation": null,
+      "pos": 60000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": null,
+    "kind": "sv",
+    "line_no": 13,
+    "mate_id": null,
+    "partner_status": "single_breakend",
+    "quality": null,
+    "source_id": "single_breakend",
+    "status": "detected",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": []
+   },
+   "source_id": "single_breakend",
+   "status": "detected"
+  },
+  {
+   "line_no": 14,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 70000,
+      "ci_low": 70000,
+      "notation": null,
+      "pos": 70000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": null,
+    "kind": "sv",
+    "line_no": 14,
+    "mate_id": null,
+    "partner_status": "partner_not_specified",
+    "quality": null,
+    "source_id": "bnd_no_partner",
+    "status": "uncertain",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": [
+     "breakend partner location not stated"
+    ]
+   },
+   "source_id": "bnd_no_partner",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 15,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 80000,
+      "ci_low": 80000,
+      "notation": "t]p]",
+      "pos": 80000,
+      "precision": "precise"
+     },
+     {
+      "chrom": null,
+      "chrom_raw": "chrUn_gl000220",
+      "ci_high": 500,
+      "ci_low": 500,
+      "notation": null,
+      "pos": 500,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": null,
+    "kind": "sv",
+    "line_no": 15,
+    "mate_id": null,
+    "partner_status": "partner_on_unplaced_contig",
+    "quality": null,
+    "source_id": "bnd_unplaced_partner",
+    "status": "uncertain",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": [
+     "partner contig 'chrUn_gl000220' is not placed on chromosomes 1-22, X, Y, MT"
+    ]
+   },
+   "source_id": "bnd_unplaced_partner",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 16,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 90000,
+      "ci_low": 90000,
+      "notation": null,
+      "pos": 90000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 94000,
+      "ci_low": 94000,
+      "notation": null,
+      "pos": 94000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 16,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 55.0,
+    "source_id": "del_end_from_svlen",
+    "status": "uncertain",
+    "sv_length": -4000,
+    "sv_type": "DEL",
+    "warnings": [
+     "END was not given; derived from POS + |SVLEN|"
+    ]
+   },
+   "source_id": "del_end_from_svlen",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 17,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 100000,
+      "ci_low": 100000,
+      "notation": null,
+      "pos": 100000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 101000,
+      "ci_low": 101000,
+      "notation": null,
+      "pos": 101000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 17,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 55.0,
+    "source_id": "del_svlen_disagrees",
+    "status": "uncertain",
+    "sv_length": -2500,
+    "sv_type": "DEL",
+    "warnings": [
+     "|SVLEN|=2500 disagrees with END-POS=1000"
+    ]
+   },
+   "source_id": "del_svlen_disagrees",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 18,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "1",
+      "chrom_raw": "1",
+      "ci_high": 110000,
+      "ci_low": 110000,
+      "notation": "t]p]",
+      "pos": 110000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "2",
+      "chrom_raw": "2",
+      "ci_high": 900,
+      "ci_low": 900,
+      "notation": null,
+      "pos": 900,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": true,
+    "kind": "sv",
+    "line_no": 18,
+    "mate_id": "m1",
+    "partner_status": "partner_given",
+    "quality": null,
+    "source_id": "bnd_two_mates",
+    "status": "uncertain",
+    "sv_length": null,
+    "sv_type": "BND",
+    "warnings": [
+     "more than one MATEID given; only the first is kept (all are in evidence)"
+    ]
+   },
+   "source_id": "bnd_two_mates",
+   "status": "uncertain"
+  },
+  {
+   "line_no": 19,
+   "reason": null,
+   "record": {
+    "assembly": "GRCh38",
+    "breakpoints": [
+     {
+      "chrom": "X",
+      "chrom_raw": "X",
+      "ci_high": 5000,
+      "ci_low": 5000,
+      "notation": null,
+      "pos": 5000,
+      "precision": "precise"
+     },
+     {
+      "chrom": "X",
+      "chrom_raw": "X",
+      "ci_high": 6000,
+      "ci_low": 6000,
+      "notation": null,
+      "pos": 6000,
+      "precision": "precise"
+     }
+    ],
+    "call_set_id": null,
+    "caller": null,
+    "event_id": null,
+    "filter": "PASS",
+    "inserted_sequence": null,
+    "is_interchromosomal": false,
+    "kind": "sv",
+    "line_no": 19,
+    "mate_id": null,
+    "partner_status": null,
+    "quality": 70.0,
+    "source_id": "del_x",
+    "status": "detected",
+    "sv_length": null,
+    "sv_type": "DEL",
+    "warnings": []
+   },
+   "source_id": "del_x",
+   "status": "detected"
+  },
+  {
+   "line_no": 20,
+   "reason": "contig 'chrUn_gl000220' is not chromosome 1-22, X, Y or MT",
+   "record": null,
+   "source_id": "unplaced_record",
+   "status": "unsupported"
+  },
+  {
+   "line_no": 21,
+   "reason": "POS 'not-a-number' is not a positive integer",
+   "record": null,
+   "source_id": "invalid_pos",
+   "status": "invalid"
+  },
+  {
+   "line_no": 22,
+   "reason": "DEL has neither END nor a usable SVLEN; the extent is not stated",
+   "record": null,
+   "source_id": "invalid_no_extent",
+   "status": "invalid"
+  },
+  {
+   "line_no": 23,
+   "reason": "DEL end precedes its start",
+   "record": null,
+   "source_id": "invalid_end_before_pos",
+   "status": "invalid"
+  },
+  {
+   "line_no": 24,
+   "reason": "SV breakpoint: position 999999999 is outside 1..248956422 on 1 (GRCh38)",
+   "record": null,
+   "source_id": "invalid_off_chromosome",
+   "status": "invalid"
+  }
+ ],
+ "samples": [
+  "GOLD"
+ ],
+ "schema_version": "1"
+}

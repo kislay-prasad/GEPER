@@ -132,9 +132,11 @@ The **init** job runs `python -m clinical.bootstrap && python -m clinical.migrat
 --migrate && python -m clinical.migrate --verify`, and the API does not start unless
 it exits 0.
 
-* On an **empty database** it creates the two login roles and applies migrations
-  0001 to 0009 in order. *Verified*: it applied 1 to 9 and the verifier reported OK
-  at version 9. The result was catalog-identical (602 columns, constraints, indexes,
+* On an **empty database** it creates the two login roles and applies every migration
+  in order (0001 to 0011 at the time of writing). *Verified, historical*: this was
+  observed when the newest migration was 0009 (it applied 1 to 9 and the verifier
+  reported OK at version 9); that stack run was not repeated for 0010 or 0011, which
+  are covered by the migration test suites instead. The result was catalog-identical (602 columns, constraints, indexes,
   triggers and privilege facts) to a database built directly from `clinical/schema.sql`.
 * On a **current database** it is a no-op. *Verified*: running the deploy command a
   second time updated the two roles' passwords, applied nothing, verified OK, left
@@ -149,6 +151,163 @@ it exits 0.
 
 `/readyz` re-checks the migration state on every call, so a database that drifts
 or is behind is reported not ready (503) with the reason named.
+
+### Migration 0010 revokes TEMPORARY on the database
+
+Migration 0010 (call sets, Genome Analysis Phase 2) runs three statements against the
+database it is applied to, naming that database (`current_database()`):
+
+```sql
+REVOKE TEMPORARY ON DATABASE <this database> FROM PUBLIC;
+REVOKE TEMPORARY ON DATABASE <this database> FROM clinical_app;
+REVOKE TEMPORARY ON DATABASE <this database> FROM clinical_retention;
+```
+
+A database built directly from `clinical/schema.sql` ends in the same state. The reason is
+defence in depth beside the pinned `search_path` (it closes the `pg_temp` shadowing route);
+the repository itself creates no temporary tables (checked by search when the migration was
+written).
+
+What this means in operation:
+
+* **It is database-wide, not limited to the two application roles.** The default grant of
+  `TEMPORARY` lives on `PUBLIC`, so every role in that database that held it only through
+  `PUBLIC` loses it. Other databases in the same cluster are not affected.
+* **Anything that creates temporary tables in this database now fails** with *permission
+  denied to create temporary table*: ad-hoc sessions, reporting tools, scripts. Nothing in
+  this repository does; tools outside it were not examined.
+* **Who can apply it.** The database owner or a superuser. The migration checks first and
+  refuses, changing nothing, if the administrative role is neither
+  (`migration 0010 refused: … neither owns this database nor is a superuser, so cannot
+  revoke TEMP`). On a managed database whose administrative role is neither, the migration
+  will not apply until that is resolved.
+* **Nothing in the stack undoes it, and there is no down-migration.** Restoring the
+  privilege is an explicit action by the database owner or a superuser, for a specific role:
+  `GRANT TEMPORARY ON DATABASE <database> TO <role>;`.
+* **Do not restore it to `PUBLIC` or to the application roles.** The migration's own
+  post-conditions, which `/readyz` and `python -m clinical.migrate --verify` re-evaluate,
+  require that neither `clinical_app` nor `clinical_retention` has `TEMPORARY` on the database
+  (including through a role they are members of) and that `PUBLIC` does not. Granting it to
+  `PUBLIC`, to either application role, or to a role they inherit from makes the service
+  report `schema_drift`. Granting it to a separate login that those roles are not members of
+  does not.
+* **After a restore, run `python -m clinical.migrate --verify`** (the restore steps below
+  already do). Whether a `pg_dump`/`pg_restore` round trip carries this database-level
+  privilege was not examined; if it does not, `--verify` reports `schema_drift` and the owner
+  must apply the revokes again.
+
+These statements come from the migration text and its tests; the `GRANT` and `--verify`
+commands above were not run against this stack.
+
+### Upgrading to migration 0011 (the consents index)
+
+Migration 0011 adds `consents_patient_scope_latest`, the index the consent rule's
+"latest consent" lookup needs. It changes **performance only**, never an answer: without
+it each lookup scans the whole `consents` table (about 20 ms per lookup at 300,000
+consents on a synthetic database, against about 0.02 ms with it).
+
+**A new database needs nothing.** `consents` is empty, so the migration builds the index
+itself, instantly. A database built from `schema.sql` already has it.
+
+**A database that already holds consents does not get the index built by the migration**,
+because a plain build blocks writes to `consents` for its whole duration and
+`CREATE INDEX CONCURRENTLY` cannot run inside the migration's transaction. **The operator
+builds it first, then the migration adopts it.** If it is absent, invalid or different in
+any respect, the migration refuses, records nothing and changes nothing. *Tested*: the
+migration command (`python -m clinical.migrate --migrate`) exits non-zero in that case and
+the database is left exactly as it was. *Not yet verified*: that the Docker Compose stack
+then keeps the API from starting. The API service declares `condition: service_completed_successfully` on the init job
+(`docker-compose.clinical.yml`), so it should not start, but a failed upgrade was never run
+against the stack. The
+migration never repairs, rebuilds or removes an index.
+
+The sequence (run it against the target database *before* `up` starts the init job; the
+init job runs migrations automatically and nothing in this stack pauses it):
+
+1. Back up the database and `secrets/` (above).
+2. Check the context, then that no invalid index and no relation of that name exists. Run
+   these read-only queries in `psql` against the target database:
+
+   ```sql
+   -- context: the database you mean, the role you are, and that `consents` resolves
+   SELECT current_database(), current_user, current_schemas(false), to_regclass('consents');
+   -- expected: your database name, the administrative role, {public}, consents
+
+   -- any relation already using the agreed name (an index, table, view...)
+   SELECT c.relname, c.relkind FROM pg_class c
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relname = 'consents_patient_scope_latest';
+   -- expected: zero rows (otherwise stop; see step 6)
+
+   -- leftover invalid indexes on consents
+   SELECT indexrelid::regclass FROM pg_index
+    WHERE indrelid = 'consents'::regclass AND NOT indisvalid;
+   -- expected: zero rows
+   ```
+3. Build it with `CREATE INDEX CONCURRENTLY consents_patient_scope_latest ON consents
+   (org_id, patient_id, scope, recorded_at DESC, consent_id DESC)`, in **autocommit**
+   (not inside a transaction), as the table's owner (the administrative role), from a
+   session that stays open for the whole build, with a `lock_timeout` set. It scans the
+   table twice and waits for older transactions; watch `pg_stat_progress_create_index`.
+   For the bundled database, `docker compose … exec clinical-db psql -U postgres -d clinical`
+   is the analogue of the `pg_dump` command below (`clinical` is the bundled default
+   database name; use yours); the runtime image carries no `psql`.
+4. Verify it. Repeat the context query from step 2, then:
+
+   ```sql
+   SELECT indexdef FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'consents' AND indexname = 'consents_patient_scope_latest';
+   -- expected, exactly one row, exactly this text:
+   -- CREATE INDEX consents_patient_scope_latest ON public.consents USING btree (org_id, patient_id, scope, recorded_at DESC, consent_id DESC)
+
+   SELECT i.indisvalid, i.indisready, i.indislive, i.indisunique,
+          i.indpred IS NULL AS no_where, i.indexprs IS NULL AS no_expressions,
+          i.indnkeyatts, i.indnatts, c.reloptions
+     FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relname = 'consents_patient_scope_latest';
+   -- expected, exactly one row: t, t, t, f, t, t, 5, 5, and reloptions NULL
+   ```
+
+   The definition text pins the method, columns, order, directions, absence of `WHERE` and
+   `INCLUDE`. The migration additionally checks operator classes and collations (a default
+   build on these columns passes), and refuses anything else. *Verified*: the queries
+   above return the stated values on a database built from `schema.sql` (PostgreSQL 16).
+5. Only then `up -d` (or run `python -m clinical.migrate --migrate`).
+6. If step 3 is interrupted or fails, PostgreSQL leaves an **invalid** index of that name.
+   Remove it by hand and build it again; the migration will refuse it until you do.
+
+**Not verified:** these commands were not run against this stack; `docker compose … run
+--rm clinical-init python -m clinical.migrate …` for a separate migration step is inferred
+from Compose, not tested; and what happens to an already-running API when init fails during
+an upgrade was not observed. Rehearse on a disposable stack first.
+
+Once applied, `/readyz` checks on every call that **some** valid index with that shape
+exists (not that one particular name does), so removing the index makes the service report
+`schema_drift`. Replace it by adding the new index first and removing the old one in a
+later migration.
+
+### Release note: staff genome reads are consent-gated
+
+Applies to the four read-only staff routes of Genome Analysis (`GET /clinic/patients/{patient_id}/genome/chromosomes`,
+`.../chromosomes/{name}`, `.../map` and `.../map/{name}`). No migration, no setting and no restart procedure; it is
+code only.
+
+* **What changed.** Every analysis these routes would return is now checked against the call-set consent rule
+  (Policy C): the analysis's order must carry an **active** consent for its scope, **and** the patient's **latest**
+  consent for that scope must not be withdrawn. A newer consent does not revive a withdrawn order consent.
+* **Fail closed, whole read.** If **any** analysis of the patient fails the check, the **entire** response is refused
+  with HTTP 403 and the message *Consent for this patient's analysis is withdrawn or not active; the analysis is
+  withheld.* The routes never return a shorter list or an empty one, because that would read as "no findings".
+  A patient who has no analysis at all still gets an empty list (there is nothing to withhold).
+* **Who sees the message.** Only Orderer, Interpreter and Approver in the patient's own organisation, after the
+  role and organisation checks. Any other role gets the generic 403, and another organisation's patient gets the same
+  404 as an invented id. The refusal is audited as a denied `genome_read` with no details.
+* **Map routes behave differently from before.** For a patient who has a small-variant analysis and a withdrawn or
+  inactive consent, the map routes now answer 403 instead of drawing the map with a "held back" count for the call
+  sets. A patient with call sets but no small-variant analysis is unchanged: the map still reports call sets held back
+  for consent.
+* **Clinicians will notice** that one withdrawn consent can hide **all** of a patient's analyses until the per-analysis
+  notice of the planned Stage 1A exists. That is deliberate.
+* **Not verified:** behaviour against a deployed stack; it is covered by the data-layer and HTTP tests only.
 
 ## First administrator
 
@@ -333,8 +492,18 @@ Restore into a **new, empty** database (same or a new cluster):
 2. Recreate the roles with the same passwords: run `python -m clinical.bootstrap`
    from the init job's image and environment, without `--apply-schema`.
 3. `pg_restore -U postgres -d clinical --exit-on-error < clinical-DATE.dump`.
-4. Run `python -m clinical.migrate --verify`; it must say OK.
-5. Start the API.
+4. **If the dump was taken before migration 0011 and `consents` holds rows**, build the
+   consents index now, exactly as in "Upgrading to migration 0011" above (its steps 2 to
+   4: check, `CREATE INDEX CONCURRENTLY`, verify), *before* any migration step. A dump
+   taken at 0011 or later already contains the index; skip this step. Without it, applying
+   0011 refuses (and `--verify` cannot say OK) because the restored table is populated.
+5. Apply any pending migrations (`python -m clinical.migrate --migrate`; 0010 and 0011 for
+   a pre-0011 dump), then run `python -m clinical.migrate --verify`; it must say OK.
+6. Start the API.
+
+The order is: restore, then index (pre-0011 populated dumps only), then migrate, then
+verify, then start. The *Verified* restores below pre-date migration 0011 and were not
+repeated for it, so the 0011 path of this procedure is untested end to end.
 
 *Verified* with `docker exec` equivalents of these commands, twice: restoring into a
 second database on the same cluster, and into a brand-new empty cluster whose roles

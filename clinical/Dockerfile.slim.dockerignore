@@ -10,6 +10,7 @@
 
 !clinical/*.py
 !clinical/models/*.py
+!clinical/genome_analysis/*.py
 !clinical/migrations/*.sql
 !clinical/schema.sql
 !clinical/log_config.json

@@ -195,6 +195,12 @@ AUTHENTICATED_STAFF_ROUTES = (
     ("POST", "/admin/tests", {"name": "x", "assembly": "hg38", "genes": ["BRCA1"]}),
     ("POST", f"/admin/tests/{_UNKNOWN_UUID}/retirement", None),
     ("GET", "/clinic/tests", None),
+    # Genome Analysis, Phase 1: the two read-only staff genome routes.
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/chromosomes", None),
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/chromosomes/{_UNKNOWN_UUID}", None),
+    # Genome Analysis, Phase 2: the two read-only Explorer map routes.
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/map", None),
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/map/{_UNKNOWN_UUID}", None),
     (
         "POST",
         "/clinic/orders",
@@ -1673,7 +1679,9 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # TOTP enrolment; 23 from Stage 2, which added the six catalogue and
         # order routes; 28 from Stage 3, which added the five review routes.
         # 33: the read-only sign-off state route joined the 32 (see the "human-tool read API" rows above).
-        assert len(AUTHENTICATED_STAFF_ROUTES) == 33, "a staff route left the list without being probed"
+        # 35: the two read-only staff genome routes (Genome Analysis, Phase 1);
+        # 37: the two read-only Explorer map routes (Phase 2).
+        assert len(AUTHENTICATED_STAFF_ROUTES) == 37, "a staff route left the list without being probed"
         assert any(path.startswith("/auth/logout") for _, path, _ in AUTHENTICATED_STAFF_ROUTES), (
             "the logout route left the list -- it is the entire reason this class exists"
         )
@@ -1700,9 +1708,9 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # report-retraction route, 104 from w158's two bench routes, 128 from
         # w162's three clinic routes, 136 from w164's TOTP enrolment route,
         # 184 from Stage 2's six catalogue and order routes, 224 from Stage 3's
-        # five review routes.
+        # five review routes; 280 from Genome Analysis Phase 1's two staff GETs; 296 from Phase 2's two.
         # The product, not a hand-kept number.
-        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 264, observed
+        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 296, observed
         assert len(set(observed.values())) == 1, {k: (s, b[:120]) for k, (s, b) in observed.items()}
         assert set(observed.values()) == {THE_REFUSAL}, observed
 

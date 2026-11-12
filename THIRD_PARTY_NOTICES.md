@@ -326,3 +326,19 @@ card's own boundary, which is scoped to a component whose licence is a
 commercial blocker and that is nonetheless shipping -- none of the four
 is that. They are stated here because a notices file with a known hole
 named in it is the deliverable this card asked for.
+
+## Addendum -- Genome Analysis reference data (2026-11-10)
+
+`clinical/genome_analysis/reference.py` embeds chromosome names, lengths and
+accessions for GRCh37.p13 and GRCh38.p14 (chromosomes 1-22, X, Y, MT), taken
+from the NCBI assembly reports for RefSeq GCF_000001405.25 and GCF_000001405.40
+(sha256 values recorded in that file). NCBI places no restriction on use of this
+data beyond its published policy notice; the GRC assembly data is released
+without use restrictions. **Not included:** UCSC cytogenetic band data
+(`cytoBand`) -- its redistribution terms were not established, so no band or
+centromere information is shipped. Nothing in this addendum is legal advice;
+re-check the NCBI policy page before redistributing outside this repository.
+This package is also copied into the clinical service images
+(`clinical/Dockerfile` copies all of `clinical/`; `clinical/Dockerfile.slim` copies
+the package explicitly), which this file's original
+scope statement does not cover.

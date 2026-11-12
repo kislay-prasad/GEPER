@@ -905,6 +905,23 @@ class TestThePatientSurfaceIsSixRoutesAndAcceptsNoPatientIdentifier:
             # `::TestTheOtherOrganisationIsNotAddressable`, which plants a real
             # patient in the other organisation and names it.
             "/clinic/patients/{patient_id}/consents",
+            # Genome Analysis, Phase 1. THE FOURTH AND FIFTH, on the SAME property
+            # and nothing else: two READ-ONLY STAFF routes behind
+            # `clinical.endpoints._get_session` (the loop below PROVES it).
+            # `list_patient_genome_analyses` gates on role first, binds
+            # `p.patient_id = %s AND p.org_id = %s` with `org_id` from
+            # `Session.org_id`, and answers a patient in another organisation
+            # byte-identically to one that does not exist. Behavioural halves:
+            # `test_genome_analysis_endpoints.py::TestClinicianRoutes`
+            # (cross-organisation, role-gate-before-existence).
+            "/clinic/patients/{patient_id}/genome/chromosomes",
+            "/clinic/patients/{patient_id}/genome/chromosomes/{name}",
+            # Genome Analysis, Phase 2: the same property again for the two
+            # read-only Explorer map routes (staff session, role gate first,
+            # organisation from Session.org_id, audited as genome_read);
+            # behavioural halves in `test_genome_map_endpoints.py`.
+            "/clinic/patients/{patient_id}/genome/map",
+            "/clinic/patients/{patient_id}/genome/map/{name}",
         }
         assert exempt <= served, (
             f"the exemption names {sorted(exempt - served)}, which this app does not serve -- "

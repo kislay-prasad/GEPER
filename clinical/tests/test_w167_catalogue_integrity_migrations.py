@@ -28,7 +28,7 @@ import uuid
 import pytest
 
 from clinical import migrate
-from clinical.tests.migration_db import connect, require_psycopg, scratch_database
+from clinical.tests.migration_db import connect, prebuild_consents_index, require_psycopg, scratch_database
 
 T = "2026-01-01T00:00:00+00:00"
 
@@ -108,10 +108,10 @@ class TestTheMigrationsApplyCleanlyAndAreDeclared:
     def test_a_clean_database_migrated_from_nothing_reaches_the_current_version(self):
         with scratch_database("w167") as dsn, connect(dsn) as connection:
             applied = migrate.migrate(connection)
-            assert applied[-3:] == (7, 8, 9)
+            assert applied[-5:] == (7, 8, 9, 10, 11)
             state = migrate.inspect_state(connection)
             assert state.ok, (state.reason, state.detail)
-            assert max(state.applied) == 9
+            assert max(state.applied) == 11
 
     def test_a_database_built_from_schema_sql_is_already_at_the_current_version(self, fresh):
         with connect(fresh) as connection:
@@ -129,7 +129,10 @@ class TestTheMigrationsApplyCleanlyAndAreDeclared:
                 order = _plant_order(cur, org, patient, consent, test)
             connection.commit()
 
-            assert migrate.migrate(connection) == (7, 8, 9)
+            # This database HOLDS a consent, so migration 0011 does not build its index: the operator does, first
+            # (docs/CLINICAL_DEPLOYMENT.md, "Upgrading to migration 0011"), and the migration adopts it.
+            prebuild_consents_index(dsn)
+            assert migrate.migrate(connection) == (7, 8, 9, 10, 11)
             state = migrate.inspect_state(connection)
             assert state.ok, (state.reason, state.detail)
 
@@ -548,10 +551,13 @@ class TestMigration0009:
         a live portal row, the same external consumer twice, other consumers,
         and a tombstoned portal row beside the live one. All valid, all kept."""
         dsn, _ = fresh_release_world(upto=8)
+        prebuild_consents_index(dsn)  # the world holds consents: the operator's pre-build for migration 0011
         with connect(dsn) as connection:
             before = _release_rows(connection)
             assert len(before) == 5
-            assert migrate.migrate(connection) == (9,)
+            # 0009 is what is under test; 0010 (call sets) and 0011 (the consents index) are additive and follow
+            # it in the same upgrade
+            assert migrate.migrate(connection) == (9, 10, 11)
             assert migrate.inspect_state(connection).ok
             assert _release_rows(connection) == before  # not one row altered, added or removed
 

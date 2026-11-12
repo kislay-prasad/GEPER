@@ -124,6 +124,23 @@ def connect(dsn: str, *, autocommit: bool = False):
         connection.close()
 
 
+# ─── the operator's pre-build of the consents index (migration 0011, Stage 1B) ──
+# Migration 0011 does not build `consents_patient_scope_latest` on a table that holds rows: the OPERATOR
+# builds it first, CONCURRENTLY, and the migration adopts it after validating it. This is that step, for tests
+# that upgrade a database holding consents past 0011 (docs/CLINICAL_DEPLOYMENT.md, "Upgrading to migration
+# 0011"). CONCURRENTLY cannot run inside a transaction, hence autocommit. Idempotent.
+
+CONSENTS_INDEX_NAME = "consents_patient_scope_latest"
+CONSENTS_INDEX_COLUMNS = "(org_id, patient_id, scope, recorded_at DESC, consent_id DESC)"
+
+
+def prebuild_consents_index(dsn: str) -> None:
+    with connect(dsn, autocommit=True) as connection:
+        connection.execute(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {CONSENTS_INDEX_NAME} ON consents {CONSENTS_INDEX_COLUMNS}"
+        )
+
+
 # ─── the sentinel ───────────────────────────────────────────────────────────
 # A marker a DROP cannot carry across. TWO of them, because they fail
 # differently:

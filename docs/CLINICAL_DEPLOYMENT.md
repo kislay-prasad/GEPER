@@ -180,7 +180,8 @@ What this means in operation:
   refuses, changing nothing, if the administrative role is neither
   (`migration 0010 refused: … neither owns this database nor is a superuser, so cannot
   revoke TEMP`). On a managed database whose administrative role is neither, the migration
-  will not apply until that is resolved.
+  will not apply until that is resolved. Check this before the upgrade (the preflight in
+  "Upgrading a running stack" does); `migrate --status` alone does not.
 * **Nothing in the stack undoes it, and there is no down-migration.** Restoring the
   privilege is an explicit action by the database owner or a superuser, for a specific role:
   `GRANT TEMPORARY ON DATABASE <database> TO <role>;`.
@@ -191,10 +192,11 @@ What this means in operation:
   `PUBLIC`, to either application role, or to a role they inherit from makes the service
   report `schema_drift`. Granting it to a separate login that those roles are not members of
   does not.
-* **After a restore, run `python -m clinical.migrate --verify`** (the restore steps below
-  already do). Whether a `pg_dump`/`pg_restore` round trip carries this database-level
-  privilege was not examined; if it does not, `--verify` reports `schema_drift` and the owner
-  must apply the revokes again.
+* **A restore does not carry this revoke by itself.** A `pg_dump -Fc` / `pg_restore`
+  round trip loses it, the restored database has the default `TEMPORARY` grant on `PUBLIC`
+  again, and the service reports `schema_drift` (`/readyz` 503) until the owner applies the
+  revoke again. *Observed* on the rehearsal stack; the fix is a step in "Backup and restore"
+  below. Run `python -m clinical.migrate --verify` after every restore.
 
 These statements come from the migration text and its tests; the `GRANT` and `--verify`
 commands above were not run against this stack.
@@ -204,7 +206,8 @@ commands above were not run against this stack.
 Migration 0011 adds `consents_patient_scope_latest`, the index the consent rule's
 "latest consent" lookup needs. It changes **performance only**, never an answer: without
 it each lookup scans the whole `consents` table (about 20 ms per lookup at 300,000
-consents on a synthetic database, against about 0.02 ms with it).
+consents on a synthetic database, against about 0.02 ms with it; a later synthetic run at
+5,000,000 consents is in "Rehearsal findings" below).
 
 **A new database needs nothing.** `consents` is empty, so the migration builds the index
 itself, instantly. A database built from `schema.sql` already has it.
@@ -215,11 +218,12 @@ because a plain build blocks writes to `consents` for its whole duration and
 builds it first, then the migration adopts it.** If it is absent, invalid or different in
 any respect, the migration refuses, records nothing and changes nothing. *Tested*: the
 migration command (`python -m clinical.migrate --migrate`) exits non-zero in that case and
-the database is left exactly as it was. *Not yet verified*: that the Docker Compose stack
-then keeps the API from starting. The API service declares `condition: service_completed_successfully` on the init job
-(`docker-compose.clinical.yml`), so it should not start, but a failed upgrade was never run
-against the stack. The
-migration never repairs, rebuilds or removes an index.
+the database is left exactly as it was. *Rehearsed* on a disposable Compose stack: the
+init job exits 1 and the API container is not started by `up -d`, **but `up -d` first
+removes the API container that was serving**, so a failed `up -d` upgrade leaves no API at
+all. Upgrade with the staged sequence below instead. A refused 0011 does not undo 0010,
+which is a separate migration and stays applied (database at version 10, `TEMPORARY`
+already revoked). The migration never repairs, rebuilds or removes an index.
 
 The sequence (run it against the target database *before* `up` starts the init job; the
 init job runs migrations automatically and nothing in this stack pauses it):
@@ -271,19 +275,263 @@ init job runs migrations automatically and nothing in this stack pauses it):
    `INCLUDE`. The migration additionally checks operator classes and collations (a default
    build on these columns passes), and refuses anything else. *Verified*: the queries
    above return the stated values on a database built from `schema.sql` (PostgreSQL 16).
-5. Only then `up -d` (or run `python -m clinical.migrate --migrate`).
+5. Only then run the init job and swap the API as in "Upgrading a running stack" below.
+   Do not use a bare `up -d` for an upgrade.
 6. If step 3 is interrupted or fails, PostgreSQL leaves an **invalid** index of that name.
    Remove it by hand and build it again; the migration will refuse it until you do.
 
-**Not verified:** these commands were not run against this stack; `docker compose … run
---rm clinical-init python -m clinical.migrate …` for a separate migration step is inferred
-from Compose, not tested; and what happens to an already-running API when init fails during
-an upgrade was not observed. Rehearse on a disposable stack first.
+*Verified*: the index-building and verification queries above were run on a disposable
+PostgreSQL 16 cluster holding 600,000 synthetic consents; the build took about one second
+with no concurrent writers, and the verification returned exactly the stated values. A
+build on a production table was not rehearsed; a synthetic run with 5,000,000 consents and
+live writers is in "Rehearsal findings" below. Watch `pg_stat_progress_create_index` on the
+real build.
 
 Once applied, `/readyz` checks on every call that **some** valid index with that shape
 exists (not that one particular name does), so removing the index makes the service report
 `schema_drift`. Replace it by adding the new index first and removing the old one in a
 later migration.
+
+### Upgrading a running stack: the staged sequence
+
+**Why not `up -d`.** `docker compose up -d` does the migration and the API replacement in
+one command. When the image changed, Compose removes the running `clinical-api` container
+*before* the init job has finished, and starts the new one only if init succeeds. If init
+fails (for example migration 0011 refusing because the index was not pre-built), the
+service that was serving is already gone and nothing replaces it. *Observed* on the
+rehearsal stack. Use the sequence below, which runs init as a separate step while the
+existing API keeps serving and replaces only the API container at the end.
+
+This is **not a zero-downtime deployment.** The final step stops the old API container
+and starts the new one: *measured* at about 1.4 seconds without a successful `/readyz` on
+a small rehearsal stack, and the container then needs its health check to pass. Requests
+in that window fail. It is a short, bounded interruption at a moment of your choosing,
+instead of an open-ended outage after a failed migration.
+
+Define the two command prefixes once (the env files differ only in `CLINICAL_IMAGE`, the
+image tag; keep the previous tag and image available so that the API can be put back):
+
+```bash
+OLD="docker compose -f docker-compose.clinical.yml --env-file .env.clinical.old --profile with-db"
+NEW="docker compose -f docker-compose.clinical.yml --env-file .env.clinical     --profile with-db"
+```
+
+The sequence was run with the new image built beforehand with
+`docker build -f clinical/Dockerfile.slim --target runtime -t <new tag> .`. Omit
+`--profile with-db` if you use an external database.
+
+1. **Back up** the database and `secrets/` ("Backup and restore" below). Do not continue
+   without a dump you could restore from.
+2. **Preflight.** The API is untouched:
+
+   ```bash
+   $NEW run --rm --no-deps clinical-init python -m clinical.migrate --status
+   ```
+
+   Expected on an upgrade from 0009: `pending : 10, 11` and `verdict : schema_migrations_pending`.
+   Anything unexpected here (a different pending list, or a `verdict` that names drift or a
+   missing history) is to be understood before going on.
+
+   **`migrate --status` does not show that the administrative role may apply the pending
+   migrations.** *Observed*: with a role that was neither the database owner nor a
+   superuser, `--status` exited 0 and printed exactly the output above, and the init job
+   then refused migration 0010. So also check the privilege, as the same role the init job
+   uses (its `clinical_bootstrap_dsn` secret):
+
+   ```bash
+   $NEW run --rm --no-deps clinical-init python -c "
+   import os, psycopg
+   with psycopg.connect(os.environ['CLINICAL_BOOTSTRAP_DSN']) as c:
+       print(c.execute('SELECT current_user, r.rolsuper, pg_get_userbyid(d.datdba) = current_user FROM pg_roles r, pg_database d WHERE r.rolname = current_user AND d.datname = current_database()').fetchone())
+   "
+   ```
+
+   The output is `(role, is_superuser, owns_database)`. *Observed*: `('postgres', True, True)`
+   for the bundled database's administrator, and `('mig_h', False, False)` for the role
+   that migration 0010 refused. **At least one of the last two values must be `True`.** If
+   both are `False`, stop: migration 0010 will refuse (it needs the database owner or a
+   superuser to revoke `TEMPORARY`; see "Migration 0010 revokes TEMPORARY on the database"),
+   and the failed run leaves the database at its old version. The same check as plain SQL
+   for an external database, run with that role's own credentials:
+   `SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user;` and
+   `SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = current_database();`.
+   Other privileges the migrations need (creating objects in `public`) are not covered by
+   this check.
+3. **Pre-build the consents index if `consents` holds rows** ("Upgrading to migration 0011"
+   above, steps 2 to 4, and check the verification output there). An empty `consents` table
+   needs nothing.
+4. **Run the init job on its own.** The existing `clinical-api` container is not touched:
+
+   ```bash
+   $NEW run --rm --no-deps clinical-init
+   ```
+
+   Expected: exit code 0 and `verdict : OK` at the newest version (11 at the time of
+   writing). Init also resets the two application roles' passwords to the values in
+   `secrets/`, as it does on every run.
+5. **Replace only the API container**, then wait for it to be healthy:
+
+   ```bash
+   $NEW up -d --no-deps clinical-api
+   $NEW ps clinical-api            # wait until it shows (healthy)
+   curl -fsS http://127.0.0.1:${CLINICAL_API_PORT:-8000}/readyz
+   # expected: {"status":"ready","database":"ok","schema":"ok"}
+   ```
+
+**If step 4 fails.** The init job exits non-zero and prints the reason (a refused
+migration prints `migration NNNN refused: …`). *Observed*: the existing API container was
+not stopped, recreated or restarted (same container id and start time), and every
+`/readyz` probe made during and after the failed run returned 200. Fix the cause (for the
+0011 refusal, build the index) and run step 4 again; it is safe to repeat. Be aware that
+a failed run can leave the database partly upgraded: migrations are applied one at a time,
+each in its own transaction, so with 0010 applied and 0011 refused the database is at
+version 10, with `TEMPORARY` already revoked. The *previous* API image kept answering
+`/readyz` and login against a database at 10 and at 11.
+
+**Putting the previous image back.** If the new API is unhealthy after step 5:
+
+```bash
+$OLD up -d --no-deps clinical-api
+```
+
+*Observed*: the previous image served `/readyz` 200 against a database already at 11.
+**This rolls back the image, not the database.** Migrations are forward-only, there is no
+down-migration, and the database stays at the newer version. Only restoring the backup
+from step 1 returns the data to the earlier schema, and it loses everything recorded
+since the dump. Authenticated workflows of the previous image against a version-11 database
+were exercised on synthetic data ("Rehearsal findings" below); that is a limited test, not a
+guarantee.
+
+*Tested on disposable stacks with synthetic data, Docker Compose 5.4.0 on Docker Desktop for
+Windows, PostgreSQL 16*: steps 2, 4 (both a refusal and a success) and 5 (health checked with
+`docker inspect` and `/readyz`), and the previous-image rollback. Step 4 was also run as a
+role that was neither owner nor superuser: it exited 1 with `migration 0010 refused: … neither
+owns this database nor is a superuser, so cannot revoke TEMP; nothing was changed`, the
+database stayed at version 9 with `TEMPORARY` unchanged, the serving API container was not
+touched (same container id and start time, 26 of 26 `/readyz` probes 200, no errors in its
+log), and re-running with the proper administrative role then succeeded. Not tested: step 5 under
+real traffic, a database with production volume, a native Linux host, or an external managed
+database.
+
+### Rehearsal findings: what they do and do not show
+
+These came from disposable Docker stacks on one developer machine (Docker Desktop for
+Windows, PostgreSQL 16, default PostgreSQL settings, 128 MB `shared_buffers`), with
+**synthetic data only**. They are rehearsal results, **not production measurements**, and
+they do not show that this deployment is ready for production use or clinically
+validated. The
+evidence files are kept outside the repository.
+
+**The consents index on 5,000,000 synthetic consents.**
+
+* *Dataset.* 5 organisations, 500,000 patients, 5,000,000 consents (about 644 MB of table
+  data), three scopes, about 8% withdrawn. This is an arbitrary size: **the real consent
+  count and its distribution are not known** (see the sign-offs below).
+* *Procedure.* The exact "Upgrading to migration 0011" steps 2 to 4, while `pgbench` ran as
+  `clinical_app` for 140 seconds: 4 reader clients doing the consent rule's "latest consent"
+  lookup (40 per second offered), 2 clients inserting consents (50 per second) and 1
+  withdrawing consents (10 per second). The build started 45 seconds in.
+* *Result.* `CREATE INDEX CONCURRENTLY` took **6.8 seconds** under that load (6.3 seconds in a
+  separate run with no load). The index is **444 MB**. The verification queries returned the
+  stated values. **No writer failed** (7,019 inserts, 1,440 withdrawals; no deadlocks, no
+  serialisation failures), no lock wait was seen in one-second samples of `pg_locks` and
+  `pg_stat_activity`, and the 5-second window containing the start of the build showed insert
+  latency of about 7 ms against about 3 ms typically (other windows without a build showed
+  similar single spikes). The staged init then applied 0010
+  and 0011 on this database in 2.4 seconds, adopted the index, verified OK, and 13 of 13
+  `/readyz` probes of the old API during it returned 200.
+* *Limitations.* One host, a table that fits in memory (so cold-cache or slow-disk builds
+  will be slower), uniform synthetic data, writer rates that are assumptions, no long
+  transactions (a concurrent build waits for older transactions, and this run had none), no
+  replicas or standby, and a single run of the final configuration. **Do not read 6.8
+  seconds as an expected production duration.** The "Production-shaped index rehearsal"
+  sign-off below is still required.
+
+**Lookups without the index, at 5,000,000 synthetic consents.** Before the build the four
+reader clients completed only about 12 to 14 lookups per second against the 40 per second
+offered, roughly 300 ms each, and the backlog grew to about 30 seconds; once the index was
+valid each lookup took under 1 ms and the backlog drained. This is a synthetic
+measurement on this machine, of a query of the same shape as the consent rule's
+latest-consent lookup, and not a measurement of production. It supports building the index before the upgrade, as above.
+
+**`/dev/shm` in the bundled database container.** The bundled PostgreSQL container has
+Docker's default 64 MB `/dev/shm` (`ShmSize=67108864`; `docker-compose.clinical.yml`
+sets no `shm_size`). *Observed* on the 5,000,000-row synthetic table: a
+`VACUUM (ANALYZE) consents` failed with `could not resize shared memory segment … to 67145248
+bytes: No space left on device`. Parallel maintenance and parallel query plans on large
+tables allocate shared memory there. No query or index-build failure of this kind was seen
+in the benchmark above. This document does not change the Compose file; **before running
+`VACUUM`, `ANALYZE` or other maintenance on a large database, assess the memory sizing
+and the maintenance strategy** (the `/dev/shm` size, or maintenance that does not use
+parallel workers), and decide it deliberately. An external database has its own limits.
+
+**The pre-Phase-2 API image against a schema-11 database.** A database migrated to version
+11 was served by the previous image (`92662729`) and, as a baseline, by the current image,
+with the same 33 authenticated checks over HTTP on synthetic users, two organisations, a
+patient and a catalogue test: login (right and wrong password, wrong organisation, forged
+cookie), role refusals, patient creation, consent, order creation and placement, sample
+receipt and QC, report read, submission, approval and release, the patient portal, cross-organisation
+isolation and consent withdrawal. **31 of 33 passed on both images, the status was identical
+on all 33, and neither API logged an error or a 5xx.** The previous image does not have the
+genome routes (404). The 2 checks that did not match were *expectations of mine*,
+identical on both images, so they are not compatibility defects. A later read-only review
+of the code found that both are existing, documented behaviour, and what remains open is
+policy, not a defect:
+
+* An account holding only the **Administrator** role gets 200 from `GET
+  /review/reports/{id}`. That endpoint returns the report's **status and identifiers**
+  (report id, interpretation id, state, retraction flag, creation time), **not report
+  content and not sign-off claims**, to Interpreter, Approver, Auditor and Administrator
+  (`REPORT_READ_ROLES` in `clinical/data_access.py`, a stated pilot policy choice;
+  `docs/SIGNOFF_API_DESIGN.md`; tests in `test_w174_human_tool_read_api.py`). Another
+  organisation's report is the same 404 as one that does not exist. Authorization was not
+  changed. **Unresolved policy question:** the sibling `GET /review/reports/{id}/revision`
+  is readable by the same roles and can carry a retraction's free-text reason; whether
+  that reason should be visible to Administrator (and to Auditor) has not been decided.
+* An order created on a **withdrawn consent** gets the generic 404, the same response as for
+  a consent that does not exist or belongs to another organisation: `create_order` accepts
+  only an active consent, and a distinct status would reveal that a consent exists. A
+  regression test (`TestAWithdrawnConsentCannotBeOrderedOn` in
+  `clinical/tests/test_w166_catalogue_and_orders.py`) pins this for creation. **Unresolved
+  clinical, legal and data-protection (DPDP Act) decision:** what withdrawal does to orders
+  and reports that already exist. The code states that this is not decided
+  (`DataAccess.withdraw_consent`: no order state moves and no report is recalled), the
+  platform specification (section 6.3) says withdrawal "stops further processing" and marks
+  retained-data handling as needing counsel, and, from reading the code (not executed),
+  `place_order` does not re-check consent. This document does not decide it.
+
+Limits: a handful of users, the new code wrote the pipeline result and signatory claim
+(there is no HTTP route for them) that the previous image then read, no MFA, and only the
+workflows listed.
+
+### Sign-offs and production blockers still outstanding
+
+None of the following is done; each needs a named human or the real environment.
+
+1. **Actual production consent count and data distribution** (rows per organisation,
+   patient, scope; growth rate). Needed to choose build windows and to judge the synthetic
+   figures above.
+2. **Production migration-role privileges.** Confirm that the role in the production
+   `clinical_bootstrap_dsn` is the database owner or a superuser (preflight check above),
+   and that it can create objects in `public`.
+3. **External `TEMPORARY`-consumer sign-off** from the database administrator or data owner:
+   every login, tool and service that uses the database and creates temporary tables, and
+   an explicit `GRANT TEMPORARY` decision for each ("Migration 0010 revokes TEMPORARY").
+4. **Encrypted, scheduled backups and restore testing**, including the `TEMPORARY` step
+   after a restore and the secrets directory, with a restore actually performed from a
+   backup of the production database into an isolated, access-controlled environment.
+5. **Production-shaped index rehearsal:** the index build and the staged upgrade on a
+   copy of the production `consents` table (or one of the same size and shape), with
+   realistic concurrent traffic and long transactions, recording the duration and the
+   effect on reads and writes.
+6. **`/dev/shm` and maintenance sizing** (above).
+7. **Two policy decisions** (above): whether Administrator (and Auditor) should see a
+   retraction's free-text reason through `/review/reports/{id}/revision`, and what consent
+   withdrawal means for orders, reports and retained data that already exist (clinical,
+   legal and DPDP Act; needs counsel).
+
+Items 1 to 5 are summarised in one row of the "Unresolved risks" table below. They are
+sign-offs rather than properties of this stack, and none of them is done.
 
 ### Release note: staff genome reads are consent-gated
 
@@ -492,25 +740,104 @@ Restore into a **new, empty** database (same or a new cluster):
 2. Recreate the roles with the same passwords: run `python -m clinical.bootstrap`
    from the init job's image and environment, without `--apply-schema`.
 3. `pg_restore -U postgres -d clinical --exit-on-error < clinical-DATE.dump`.
-4. **If the dump was taken before migration 0011 and `consents` holds rows**, build the
+4. **If the dump was taken at migration 0010 or later, restore the database-level
+   `TEMPORARY` restriction** (details below). Connected to the restored database as the
+   administrative role:
+
+   ```bash
+   docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+       exec -T clinical-db psql -U postgres -d clinical -v ON_ERROR_STOP=1 <<'SQL'
+   SELECT format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC, clinical_app, clinical_retention',
+                 current_database()) \gexec
+   SQL
+   ```
+
+   Expected output: `REVOKE`. It names the database it is connected to, so it is correct
+   whatever the database is called, and it is safe to repeat. A dump taken before 0010
+   does not need it: migration 0010 applies the same revoke in step 6.
+5. **If the dump was taken before migration 0011 and `consents` holds rows**, build the
    consents index now, exactly as in "Upgrading to migration 0011" above (its steps 2 to
    4: check, `CREATE INDEX CONCURRENTLY`, verify), *before* any migration step. A dump
    taken at 0011 or later already contains the index; skip this step. Without it, applying
    0011 refuses (and `--verify` cannot say OK) because the restored table is populated.
-5. Apply any pending migrations (`python -m clinical.migrate --migrate`; 0010 and 0011 for
-   a pre-0011 dump), then run `python -m clinical.migrate --verify`; it must say OK.
-6. Start the API.
+6. Apply any pending migrations (`python -m clinical.migrate --migrate`; 0010 and 0011 for
+   a pre-0011 dump).
+7. **Verify, with both checks. Neither alone is enough, and both must pass:**
 
-The order is: restore, then index (pre-0011 populated dumps only), then migrate, then
-verify, then start. The *Verified* restores below pre-date migration 0011 and were not
-repeated for it, so the 0011 path of this procedure is untested end to end.
+   ```bash
+   docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+       run --rm --no-deps clinical-init python -m clinical.migrate --verify
+   # expected: exit 0, "verdict       : OK"
+   ```
 
-*Verified* with `docker exec` equivalents of these commands, twice: restoring into a
-second database on the same cluster, and into a brand-new empty cluster whose roles
-were created by the bootstrap step. Both restored copies had the identical catalog,
-the same row counts (organisations, users, patients, tests, 45 audit rows) and the
+   then start the API (`up -d clinical-api`) and, once it shows `(healthy)`:
+
+   ```bash
+   curl -fsS http://127.0.0.1:${CLINICAL_API_PORT:-8000}/readyz
+   # expected: {"status":"ready","database":"ok","schema":"ok"}
+   ```
+
+   Do not hand the restored service to users until both pass.
+
+The order is: restore, then the `TEMPORARY` revoke (0010+ dumps), then index (pre-0011
+populated dumps only), then migrate, then verify, then start and check `/readyz`.
+
+**Why step 4 is needed.** A normal custom-format dump (`pg_dump -Fc`) holds the objects
+*inside* the database. Privileges on the database object itself (here `TEMPORARY`) are part
+of the database's own definition, which `pg_dump` emits only with `--create`. The restored
+database therefore has the default `TEMPORARY` grant on `PUBLIC` again. Migration 0010 is recorded
+as applied in the restored history and is not run again, so nothing restores the revoke.
+*Observed*: without step 4 the restored database had `PUBLIC` and `clinical_app` holding
+`TEMPORARY`; `migrate --verify` exited 3 with `schema_drift` ("migration 10 (call_sets) is
+recorded as applied, but the database does not satisfy it"); `/readyz` returned 503 with
+`reason: schema_drift` (the image's health check calls `/readyz`, so the container cannot
+become healthy); and `clinical_app`
+could create temporary tables. With step 4: `--verify` OK, `/readyz` 200, container healthy.
+
+**Alternative: `--create`.** The database definition, including the revoke, can travel with
+the dump:
+
+```bash
+# backup
+docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+    exec -T clinical-db pg_dump -U postgres -Fc --create clinical > clinical-$(date +%F).dump
+# restore (the roles must exist first, step 2; the target database must NOT exist)
+#   run bootstrap (step 2) BEFORE dropping the empty database it connects to, then:
+docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+    exec -T clinical-db psql -U postgres -d postgres -c 'DROP DATABASE clinical'
+docker compose -f docker-compose.clinical.yml --env-file .env.clinical \
+    exec -T clinical-db pg_restore -U postgres -d postgres --create --exit-on-error < clinical-DATE.dump
+```
+
+Step 4 is then not needed (the restored database showed no `TEMPORARY` for `PUBLIC`,
+`clinical_app` or `clinical_retention`, `--verify` OK), but steps 5 to 7 still apply. Only
+`DROP DATABASE` an *empty* database you have just created for the restore; it is
+irreversible. A dump taken with `--create` also records the database name, so it restores
+under that name. Only the default grants were observed in the `--create` output
+(`REVOKE CONNECT,TEMPORARY … FROM PUBLIC; GRANT CONNECT … TO PUBLIC`); that explicit
+grants to other roles would also be carried was not tested, so check them either way.
+
+**Intentional `TEMPORARY` grants to external roles.** Migration 0010 revokes `TEMPORARY`
+database-wide. If you deliberately gave it back to a separate role (for example a reporting
+login) with `GRANT TEMPORARY ON DATABASE <database> TO <role>;`, that grant is a
+database-level privilege too and is **not** in a plain dump; re-apply it after the restore,
+after step 4. *Observed*: such a grant to a role that is not a member of the application roles
+leaves `--verify` OK. Roles themselves are cluster-level and are not in the dump either.
+
+*Verified, historical* (before migration 0010) with `docker exec` equivalents of these
+commands, twice: restoring into a second database on the same cluster, and into a
+brand-new empty cluster whose roles were created by the bootstrap step. Both restored
+copies had the identical catalog, the same row counts (organisations, users, patients, tests, 45 audit rows) and the
 same migration history, passed `--verify`, kept `clinical_app` unable to update or
 delete the audit log, and accepted the application's own `clinical_app` login.
+
+*Rehearsed* later on a disposable stack with 600,000 synthetic consents, restoring into
+a brand-new empty cluster whose roles came from the bootstrap step: a dump at 0009 (index,
+then migrate, then verify: OK); a dump at 0010 without the index (`--verify` reported
+migration 11 pending, `--migrate` refused, and after the index it migrated); and a dump at
+0011 (needs step 4, as above). Row counts matched, `clinical_app` could log in and could
+not update or delete the audit log. Not tested: cross-version restores, a restore of a
+production-sized database, or restoring explicit `TEMPORARY` grants held by other roles.
 
 ## Recovery limitations
 
@@ -769,6 +1096,10 @@ access log; restoring across PostgreSQL versions; the image under a vulnerabilit
 | The first administrator has no second factor until they enrol | Enrol administrators immediately after provisioning. |
 | `/readyz` reports database and schema state but the Docker health check runs it every 30 seconds with a real connection | Acceptable at this scale; revisit if probes become a load. |
 | Native Linux secret-file ownership and Compose behaviour are unverified | Test on the target host: `scripts/clinical-secrets.sh --check`, then `up`. |
+| The bundled database container has Docker's default 64 MB `/dev/shm`; a `VACUUM` failed on it with 5,000,000 synthetic consents | Decide the memory sizing or the maintenance strategy before maintenance on a large database ("Rehearsal findings"). |
+| Migration privileges, the production consent count and distribution, external `TEMPORARY` consumers, encrypted scheduled backups with a tested restore, and a production-shaped index rehearsal are unconfirmed | The sign-offs in "Sign-offs and production blockers still outstanding". |
+| Administrator and Auditor can read report status, and a retraction's free-text reason through `/revision`; whether the reason should be visible to them is undecided (report content and claims are not exposed) | A policy decision; behaviour was not changed ("Rehearsal findings"). |
+| The effect of consent withdrawal on existing orders, reports and retained data is not decided in code or specification (an order on a withdrawn consent is refused at creation only) | A clinical, legal and DPDP Act decision; needs counsel ("Rehearsal findings"). |
 
 A deployment that has addressed all of the above, and the regulatory questions this
 document cannot answer, can reasonably call itself production-ready. This one has

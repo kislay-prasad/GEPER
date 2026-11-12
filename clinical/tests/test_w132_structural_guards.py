@@ -596,6 +596,17 @@ class TestTheRouteCensus:
             ("/admin/tests", ("POST",)),
             ("/admin/tests/{test_id}/retirement", ("POST",)),
             ("/clinic/tests", ("GET",)),
+            # Milestone 1. THE STAFF READ SURFACE: six clinic routes and two laboratory routes. Every one is a
+            # single read-only domain call behind the staff session dependency, role-gated and audited inside
+            # the domain method, scoped to the session's organisation, and none takes an organisation.
+            ("/clinic/patients", ("GET",)),
+            ("/clinic/patients/{patient_id}", ("GET",)),
+            ("/clinic/patients/{patient_id}/consents", ("GET",)),
+            ("/clinic/consents/{consent_id}", ("GET",)),
+            ("/clinic/orders", ("GET",)),
+            ("/clinic/orders/{order_id}", ("GET",)),
+            ("/lab/samples", ("GET",)),
+            ("/lab/samples/{sample_id}", ("GET",)),
             ("/clinic/orders", ("POST",)),
             ("/clinic/orders/{order_id}/placement", ("POST",)),
             ("/clinic/orders/{order_id}/cancellation", ("POST",)),
@@ -672,7 +683,8 @@ class TestTheRouteCensus:
         # 43 from the read-only sign-off state route (`GET /review/reports/{id}/signoff-state`).
         # 45 from Genome Analysis Phase 1: two read-only staff GETs on `genome_endpoints.py`.
         # 47 from Genome Analysis Phase 2: two more read-only staff GETs (the Explorer map).
-        assert len(census) == 47, census
+        # 55 from Milestone 1: eight read-only staff GETs for patients, orders, consents and samples.
+        assert len(census) == 55, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

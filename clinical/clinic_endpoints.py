@@ -235,7 +235,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict
 
 from clinical.admin_endpoints import _forbidden, _not_found, _target
@@ -674,3 +674,316 @@ async def cancel_order(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Milestone 1: the staff READ surface (patients, orders, consents) ───────────────────────────────
+#
+# READ-ONLY, ORGANISATION-SCOPED, ROLE-GATED INSIDE THE DOMAIN METHOD (the first statement of each `read_*` /
+# `list_*` method, so a refusal never depends on what an identifier names). Every route is AUDITED by the domain
+# method with no payload. No route accepts an organisation: `Session.org_id` is the only scope.
+#
+# LIST PARAMETERS ARE DECLARED `Optional[str]` ON PURPOSE. FastAPI validates a typed query parameter BEFORE the
+# handler runs and therefore before the role gate, so `limit=abc` would answer a caller with no reading role a 422
+# while a permitted caller got data. The domain method validates AFTER its gate (a bad value is a 400 with fixed
+# text), keeping the refusal for an unauthorised caller one 403 whatever the query says.
+#
+# A detail route answers an absent id, a malformed id and an id in ANOTHER organisation with the same 404.
+
+
+def _iso(value):
+    return None if value is None else value.isoformat()
+
+
+def _text(value):
+    return None if value is None else str(value)
+
+
+class PatientView(BaseModel):
+    """A patient as staff see them. `disabled` patients are included in lists by default."""
+
+    patient_id: str
+    name: str
+    dob: str
+    sex: str
+    created_at: str
+    disabled: bool
+
+
+class PatientPage(BaseModel):
+    items: list[PatientView]
+    total: int
+    limit: int
+    offset: int
+
+
+class OrderSummary(BaseModel):
+    """An order as every permitted role sees it. `ordered_by` and `clinical_indication` are present on every
+    order and are None unless the caller is an Orderer, Interpreter or Approver reading ONE order."""
+
+    order_id: str
+    patient_id: str
+    test_id: str
+    required_scope: str
+    consent_id: str
+    priority: str
+    state: str
+    placed_at: Optional[str] = None
+    cancelled_at: Optional[str] = None
+    created_at: str
+    ordered_by: Optional[str] = None
+    clinical_indication: Optional[str] = None
+
+
+class OrderPage(BaseModel):
+    items: list[OrderSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class ConsentView(BaseModel):
+    """A consent as staff see them. `status` DISPLAYS the row (withdrawn, superseded or active); it is not a
+    determination that processing is permitted. The staff user ids that recorded or withdrew it are not shown."""
+
+    consent_id: str
+    patient_id: str
+    scope: str
+    status: str
+    recorded_at: str
+    withdrawn_at: Optional[str] = None
+    superseded_by: Optional[str] = None
+
+
+class ConsentPage(BaseModel):
+    items: list[ConsentView]
+    total: int
+    limit: int
+    offset: int
+
+
+_READ_RESPONSES = {
+    400: {"model": ErrorResponse, "description": "A list parameter is malformed (checked after the role gate)"},
+    401: {"model": ErrorResponse, "description": "Not authenticated"},
+    403: {"model": ErrorResponse, "description": "Not permitted"},
+}
+_DETAIL_RESPONSES = {
+    401: {"model": ErrorResponse, "description": "Not authenticated"},
+    403: {"model": ErrorResponse, "description": "Not permitted"},
+    404: {"model": ErrorResponse, "description": "Not found (absent, malformed or another organisation's)"},
+}
+
+
+def _patient_view(row):
+    return PatientView(
+        patient_id=str(row["patient_id"]),
+        name=row["name"],
+        dob=_iso(row["dob"]),
+        sex=row["sex"],
+        created_at=_iso(row["created_at"]),
+        disabled=bool(row["disabled"]),
+    )
+
+
+def _order_view(row):
+    return OrderSummary(
+        order_id=str(row["order_id"]),
+        patient_id=str(row["patient_id"]),
+        test_id=str(row["test_id"]),
+        required_scope=row["required_scope"],
+        consent_id=str(row["consent_id"]),
+        priority=row["priority"],
+        state=row["state"],
+        placed_at=_iso(row["placed_at"]),
+        cancelled_at=_iso(row["cancelled_at"]),
+        created_at=_iso(row["created_at"]),
+        ordered_by=_text(row["ordered_by"]),
+        clinical_indication=row["clinical_indication"],
+    )
+
+
+def _consent_view(row):
+    return ConsentView(
+        consent_id=str(row["consent_id"]),
+        patient_id=str(row["patient_id"]),
+        scope=row["scope"],
+        status=row["status"],
+        recorded_at=_iso(row["recorded_at"]),
+        withdrawn_at=_iso(row["withdrawn_at"]),
+        superseded_by=_text(row["superseded_by"]),
+    )
+
+
+@router.get(
+    "/patients",
+    response_model=PatientPage,
+    summary="List and search the caller's own organisation's patients (Orderer, Interpreter, Approver)",
+    responses=_READ_RESPONSES,
+)
+async def list_patients(
+    q: Optional[str] = None,
+    sex: Optional[str] = None,
+    disabled: Optional[str] = None,
+    limit: Optional[str] = None,
+    offset: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> PatientPage:
+    """
+    `DataAccess.list_patients`, and nothing else. `q` is a case-insensitive contains match on the NAME only
+    (2 to 100 characters; `%` and `_` are literal). `disabled=true|false` filters; the default includes both.
+    `limit` is a whole number 1 to 200 (default 50); `offset` is 0 or more. Newest first.
+    """
+    try:
+        page = dao.list_patients(session, q=q, sex=sex, disabled=disabled, limit=limit, offset=offset)
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return PatientPage(
+        items=[_patient_view(r) for r in page["items"]], total=page["total"], limit=page["limit"], offset=page["offset"]
+    )
+
+
+@router.get(
+    "/patients/{patient_id}",
+    response_model=PatientView,
+    summary="One patient of the caller's own organisation (Orderer, Interpreter, Approver)",
+    responses=_DETAIL_RESPONSES,
+)
+async def get_patient(
+    patient_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> PatientView:
+    """`DataAccess.read_patient`, and nothing else."""
+    target = _target(patient_id)
+    try:
+        row = dao.read_patient(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return _patient_view(row)
+
+
+@router.get(
+    "/orders",
+    response_model=OrderPage,
+    summary="List and filter the caller's own organisation's orders (Orderer, Lab technician, Interpreter, Approver, Auditor)",
+    responses=_READ_RESPONSES,
+)
+async def list_orders(
+    patient_id: Optional[str] = None,
+    state: Optional[str] = None,
+    test_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    created_from: Optional[str] = None,
+    created_to: Optional[str] = None,
+    limit: Optional[str] = None,
+    offset: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> OrderPage:
+    """
+    `DataAccess.list_orders`, and nothing else. A list never carries `clinical_indication` or `ordered_by`.
+    `created_from` / `created_to` take an ISO-8601 date or timestamp; a bare `created_to` date means through
+    that whole day. A malformed id filter names nothing and returns an empty page.
+    """
+    try:
+        page = dao.list_orders(
+            session,
+            patient_id=patient_id,
+            state=state,
+            test_id=test_id,
+            priority=priority,
+            created_from=created_from,
+            created_to=created_to,
+            limit=limit,
+            offset=offset,
+        )
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return OrderPage(
+        items=[_order_view(r) for r in page["items"]], total=page["total"], limit=page["limit"], offset=page["offset"]
+    )
+
+
+@router.get(
+    "/orders/{order_id}",
+    response_model=OrderSummary,
+    summary="One order of the caller's own organisation (Orderer, Lab technician, Interpreter, Approver, Auditor)",
+    responses=_DETAIL_RESPONSES,
+)
+async def get_order(
+    order_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> OrderSummary:
+    """`DataAccess.read_order`, and nothing else. `ordered_by` and `clinical_indication` are shown to Orderer,
+    Interpreter and Approver only; to a Lab technician or Auditor they are None."""
+    target = _target(order_id)
+    try:
+        row = dao.read_order(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return _order_view(row)
+
+
+@router.get(
+    "/patients/{patient_id}/consents",
+    response_model=ConsentPage,
+    summary="List ONE patient's consents in the caller's own organisation (Orderer, Interpreter, Approver, Auditor)",
+    responses={**_READ_RESPONSES, 404: {"model": ErrorResponse, "description": "Not found"}},
+)
+async def list_patient_consents(
+    patient_id: str,
+    scope: Optional[str] = None,
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    limit: Optional[str] = None,
+    offset: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> ConsentPage:
+    """
+    `DataAccess.list_patient_consents`, and nothing else. There is NO organisation-wide consent list. `status`
+    is `active`, `withdrawn` or `superseded` (a display of the row, not a processing decision). The staff user
+    ids that recorded or withdrew a consent are never shown.
+    """
+    target = _target(patient_id)
+    try:
+        page = dao.list_patient_consents(session, target, scope=scope, status=status_filter, limit=limit, offset=offset)
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if page is None:
+        raise _not_found()
+    return ConsentPage(
+        items=[_consent_view(r) for r in page["items"]], total=page["total"], limit=page["limit"], offset=page["offset"]
+    )
+
+
+@router.get(
+    "/consents/{consent_id}",
+    response_model=ConsentView,
+    summary="One consent of the caller's own organisation (Orderer, Interpreter, Approver, Auditor)",
+    responses=_DETAIL_RESPONSES,
+)
+async def get_consent(
+    consent_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> ConsentView:
+    """`DataAccess.read_consent`, and nothing else."""
+    target = _target(consent_id)
+    try:
+        row = dao.read_consent(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return _consent_view(row)

@@ -430,3 +430,107 @@ async def record_qc(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Milestone 1: the staff READ surface for samples ────────────────────────────────────────────────
+#
+# Read-only, organisation-scoped, role-gated inside the domain method (Lab technician, Orderer, Interpreter,
+# Approver, Auditor) and AUDITED with no payload. List parameters are `Optional[str]` for the reason given with
+# the clinic read routes: validation must follow the role gate. The staff user ids on a sample are never shown.
+
+
+def _iso(value):
+    return None if value is None else value.isoformat()
+
+
+class SampleView(BaseModel):
+    """A sample as staff see it. `qc_reason` (free text) is None in every list, and on a detail read unless the
+    caller is a Lab technician, Orderer, Interpreter or Approver."""
+
+    sample_id: str
+    order_id: str
+    type: str
+    received_at: Optional[str] = None
+    condition_on_receipt: Optional[str] = None
+    qc_status: Optional[str] = None
+    qc_recorded_at: Optional[str] = None
+    created_at: str
+    qc_reason: Optional[str] = None
+
+
+class SamplePage(BaseModel):
+    items: list[SampleView]
+    total: int
+    limit: int
+    offset: int
+
+
+def _sample_view(row):
+    return SampleView(
+        sample_id=str(row["sample_id"]),
+        order_id=str(row["order_id"]),
+        type=row["type"],
+        received_at=_iso(row["received_at"]),
+        condition_on_receipt=row["condition_on_receipt"],
+        qc_status=row["qc_status"],
+        qc_recorded_at=_iso(row["qc_recorded_at"]),
+        created_at=_iso(row["created_at"]),
+        qc_reason=row["qc_reason"],
+    )
+
+
+@router.get(
+    "/samples",
+    response_model=SamplePage,
+    summary="List the caller's own organisation's samples (Lab technician, Orderer, Interpreter, Approver, Auditor)",
+    responses={
+        400: {"model": ErrorResponse, "description": "A list parameter is malformed (checked after the role gate)"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+    },
+)
+async def list_samples(
+    order_id: Optional[str] = None,
+    qc_status: Optional[str] = None,
+    limit: Optional[str] = None,
+    offset: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> SamplePage:
+    """`DataAccess.list_samples`, and nothing else. Newest first. A list never carries `qc_reason`. A malformed
+    `order_id` names nothing and returns an empty page."""
+    try:
+        page = dao.list_samples(session, order_id=order_id, qc_status=qc_status, limit=limit, offset=offset)
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return SamplePage(
+        items=[_sample_view(r) for r in page["items"]], total=page["total"], limit=page["limit"], offset=page["offset"]
+    )
+
+
+@router.get(
+    "/samples/{sample_id}",
+    response_model=SampleView,
+    summary="One sample of the caller's own organisation (Lab technician, Orderer, Interpreter, Approver, Auditor)",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Not found (absent, malformed or another organisation's)"},
+    },
+)
+async def get_sample(
+    sample_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> SampleView:
+    """`DataAccess.read_sample`, and nothing else."""
+    target = _target(sample_id)
+    try:
+        row = dao.read_sample(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return _sample_view(row)

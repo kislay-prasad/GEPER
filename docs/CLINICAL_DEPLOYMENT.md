@@ -472,16 +472,32 @@ cookie), role refusals, patient creation, consent, order creation and placement,
 receipt and QC, report read, submission, approval and release, the patient portal, cross-organisation
 isolation and consent withdrawal. **31 of 33 passed on both images, the status was identical
 on all 33, and neither API logged an error or a 5xx.** The previous image does not have the
-genome routes (404). The 2 checks that did not match are *expectations of mine that are not
-settled policy*, identical on both images, so they are not compatibility defects, and they
-are unresolved:
+genome routes (404). The 2 checks that did not match were *expectations of mine*,
+identical on both images, so they are not compatibility defects. A later read-only review
+of the code found that both are existing, documented behaviour, and what remains open is
+policy, not a defect:
 
-* An account holding only the **Administrator** role can read a report (`GET
-  /review/reports/{id}` returned 200 on both images). **Policy decision needed: should
-  Administrator be able to read report content?** This audit changed no authorization
-  behaviour.
-* An order created on a **withdrawn consent** returned 404 on both images (rather than
-  a 4xx that names the consent). Whether 404 is the intended response is unconfirmed.
+* An account holding only the **Administrator** role gets 200 from `GET
+  /review/reports/{id}`. That endpoint returns the report's **status and identifiers**
+  (report id, interpretation id, state, retraction flag, creation time), **not report
+  content and not sign-off claims**, to Interpreter, Approver, Auditor and Administrator
+  (`REPORT_READ_ROLES` in `clinical/data_access.py`, a stated pilot policy choice;
+  `docs/SIGNOFF_API_DESIGN.md`; tests in `test_w174_human_tool_read_api.py`). Another
+  organisation's report is the same 404 as one that does not exist. Authorization was not
+  changed. **Unresolved policy question:** the sibling `GET /review/reports/{id}/revision`
+  is readable by the same roles and can carry a retraction's free-text reason; whether
+  that reason should be visible to Administrator (and to Auditor) has not been decided.
+* An order created on a **withdrawn consent** gets the generic 404, the same response as for
+  a consent that does not exist or belongs to another organisation: `create_order` accepts
+  only an active consent, and a distinct status would reveal that a consent exists. A
+  regression test (`TestAWithdrawnConsentCannotBeOrderedOn` in
+  `clinical/tests/test_w166_catalogue_and_orders.py`) pins this for creation. **Unresolved
+  clinical, legal and data-protection (DPDP Act) decision:** what withdrawal does to orders
+  and reports that already exist. The code states that this is not decided
+  (`DataAccess.withdraw_consent`: no order state moves and no report is recalled), the
+  platform specification (section 6.3) says withdrawal "stops further processing" and marks
+  retained-data handling as needing counsel, and, from reading the code (not executed),
+  `place_order` does not re-check consent. This document does not decide it.
 
 Limits: a handful of users, the new code wrote the pipeline result and signatory claim
 (there is no HTTP route for them) that the previous image then read, no MFA, and only the
@@ -508,8 +524,10 @@ None of the following is done; each needs a named human or the real environment.
    realistic concurrent traffic and long transactions, recording the duration and the
    effect on reads and writes.
 6. **`/dev/shm` and maintenance sizing** (above).
-7. **Policy decision on Administrator access to report content** (above), and whether a
-   withdrawn-consent order should return 404.
+7. **Two policy decisions** (above): whether Administrator (and Auditor) should see a
+   retraction's free-text reason through `/review/reports/{id}/revision`, and what consent
+   withdrawal means for orders, reports and retained data that already exist (clinical,
+   legal and DPDP Act; needs counsel).
 
 Items 1 to 5 are summarised in one row of the "Unresolved risks" table below. They are
 sign-offs rather than properties of this stack, and none of them is done.
@@ -1079,7 +1097,8 @@ access log; restoring across PostgreSQL versions; the image under a vulnerabilit
 | Native Linux secret-file ownership and Compose behaviour are unverified | Test on the target host: `scripts/clinical-secrets.sh --check`, then `up`. |
 | The bundled database container has Docker's default 64 MB `/dev/shm`; a `VACUUM` failed on it with 5,000,000 synthetic consents | Decide the memory sizing or the maintenance strategy before maintenance on a large database ("Rehearsal findings"). |
 | Migration privileges, the production consent count and distribution, external `TEMPORARY` consumers, encrypted scheduled backups with a tested restore, and a production-shaped index rehearsal are unconfirmed | The sign-offs in "Sign-offs and production blockers still outstanding". |
-| Administrators can read report content (200 on `GET /review/reports/{id}`); unconfirmed whether that is intended | A policy decision; behaviour was not changed ("Rehearsal findings"). |
+| Administrator and Auditor can read report status, and a retraction's free-text reason through `/revision`; whether the reason should be visible to them is undecided (report content and claims are not exposed) | A policy decision; behaviour was not changed ("Rehearsal findings"). |
+| The effect of consent withdrawal on existing orders, reports and retained data is not decided in code or specification (an order on a withdrawn consent is refused at creation only) | A clinical, legal and DPDP Act decision; needs counsel ("Rehearsal findings"). |
 
 A deployment that has addressed all of the above, and the regulatory questions this
 document cannot answer, can reasonably call itself production-ready. This one has

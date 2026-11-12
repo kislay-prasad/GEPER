@@ -402,3 +402,47 @@ class TestNoOrderCrossesAnOrganisation:
             assert real.status_code == invented.status_code == 404
             assert real.content == invented.content
         assert _order_row(conn, b_order)[5] == "draft"
+
+
+class TestAWithdrawnConsentCannotBeOrderedOn:
+    """
+    A consent that has been withdrawn cannot back a new order, and the refusal is the SAME generic 404 as for a
+    consent that does not exist: the response must not tell the caller that the withdrawn consent exists.
+
+    WHAT THIS PINS, AND WHAT IT DOES NOT. It pins creation only (`DataAccess.create_order` selects the consent with
+    `withdrawn_at IS NULL`). What withdrawal does to orders and reports that already exist is NOT decided in this tree
+    (see `DataAccess.withdraw_consent`) and nothing here asserts either way.
+    """
+
+    def _withdraw(self, client, world, cookie, tag="a"):
+        response = client.post(f"/clinic/consents/{world[tag]['consent']}/withdrawal", cookies=cookie)
+        assert response.status_code == 204, response.text
+
+    def test_a_withdrawn_consent_reads_exactly_like_one_that_does_not_exist(self, client, world, conn):
+        test_id = _make_test(client, world, "a")
+        cookie = _cookies(_orderer_cookie(client, world, "a"))
+        self._withdraw(client, world, cookie)
+
+        withdrawn = client.post("/clinic/orders", json=_order_body(world, "a", test_id), cookies=cookie)
+        invented = client.post(
+            "/clinic/orders", json=_order_body(world, "a", test_id, consent_id=NOWHERE), cookies=cookie
+        )
+
+        assert withdrawn.status_code == invented.status_code == 404
+        assert withdrawn.content == invented.content  # byte-identical: nothing says the consent exists
+        assert str(world["a"]["consent"]) not in withdrawn.text
+        assert "withdraw" not in withdrawn.text.lower()
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM orders WHERE consent_id = %s", (world["a"]["consent"],))
+            assert cur.fetchone()[0] == 0  # refused: no draft order was written
+        conn.rollback()
+
+    def test_withdrawing_one_consent_leaves_another_organisations_consent_usable(self, client, world):
+        a_cookie = _cookies(_orderer_cookie(client, world, "a"))
+        self._withdraw(client, world, a_cookie)
+
+        b_test = _make_test(client, world, "b")
+        b_cookie = _cookies(_orderer_cookie(client, world, "b"))
+        response = client.post("/clinic/orders", json=_order_body(world, "b", b_test), cookies=b_cookie)
+        assert response.status_code == 201, response.text

@@ -6956,6 +6956,146 @@ class DataAccess:
         items = [self._staff_sample_view(dict(zip(keys, r)), False) for r in rows]
         return {"items": items, "total": total, "limit": lim, "offset": off}
 
+    # ── Milestone 2, Phase A: the STAFF DIRECTORY (read-only) ───────────────────────────────────────────
+    #
+    # THREE READS FOR THE ADMINISTRATOR, AND NOTHING THAT WRITES: the organisation's staff, one staff member, and the
+    # organisation itself. ADMINISTRATOR ONLY -- the Auditor reads the audit trail, not the directory, and an
+    # Administrator gains no clinical read access by holding the role. The gate is the FIRST statement, before any
+    # parameter is validated and before any row is read, so a refusal cannot vary with the query or the identifier.
+    #
+    # THE ORGANISATION IS `session.org_id` AND NOTHING ELSE. Foreign, absent and malformed user ids are one answer.
+    #
+    # NO AUTHENTICATION SECRET IS SELECTED. The column lists below are explicit and name neither `password_hash`
+    # nor `totp_secret` nor `totp_last_used_step` nor anything in `totp_backup_codes`; `mfa_enrolled` is computed in
+    # SQL from `totp_enrolled_at IS NOT NULL`. SYSTEM ACCOUNTS (`is_system_account`) are machine principals, not staff,
+    # and are not part of the directory: they are omitted from the list and read as not found.
+    #
+    # AUDITED, WITH NO PAYLOAD. Each read records actor, organisation, action, resource type, (for one user) the
+    # resource id, and the outcome including a refusal. NO `details`: no staff email, name, search term or filter
+    # reaches the append-only log. The emails the Administrator sees are in the RESPONSE only.
+
+    def _staff_directory_roles(self, session: Session, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, list[str]]:
+        """Current role NAMES per user for a page, in one query bound to the session's organisation."""
+        if not user_ids:
+            return {}
+        rows = self._query(
+            "SELECT user_id, role FROM role_assignments "
+            "WHERE org_id = %s AND revoked_at IS NULL AND user_id = ANY(%s) ORDER BY role",
+            (session.org_id, user_ids),
+        )
+        grouped: dict[uuid.UUID, list[str]] = {}
+        for user_id, role in rows:
+            if role not in grouped.setdefault(user_id, []):
+                grouped[user_id].append(role)
+        return grouped
+
+    @auditable(action="staff_directory_list", resource_type="user", requires_session=True)
+    @transactional
+    def list_staff_users(
+        self,
+        session: Session,
+        q: Any = None,
+        role: Any = None,
+        disabled: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+    ) -> dict[str, Any]:
+        """A page of the caller's organisation's staff, newest first, disabled staff INCLUDED unless `disabled`
+        says otherwise. `q` is a case-insensitive CONTAINS match on the email or the full name. `role` filters on a
+        CURRENTLY HELD role. Administrator only."""
+        self._require_role(session, "Administrator")
+        lim, off = self._staff_page(limit, offset)
+        pattern = self._staff_like(q)
+        want_role = self._staff_text_filter(role)
+        if want_role is not None and want_role not in HUMAN_ASSIGNABLE_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(HUMAN_ASSIGNABLE_ROLES)}.")
+        want_disabled = self._staff_bool_filter(disabled, "disabled")
+        conditions, params = ["u.org_id = %s", "u.is_system_account = false"], [session.org_id]
+        if pattern is not None:
+            conditions.append("(u.email ILIKE %s ESCAPE '\\' OR u.full_name ILIKE %s ESCAPE '\\')")
+            params.extend([pattern, pattern])
+        if want_role is not None:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM role_assignments ra WHERE ra.org_id = u.org_id AND ra.user_id = u.user_id "
+                "AND ra.role = %s AND ra.revoked_at IS NULL)"
+            )
+            params.append(want_role)
+        if want_disabled is not None:
+            conditions.append("u.disabled = %s")
+            params.append(want_disabled)
+        total, rows = self._staff_page_of(
+            "users u",
+            "u.user_id, u.email, u.full_name, u.disabled, (u.totp_enrolled_at IS NOT NULL), u.created_at",
+            conditions,
+            params,
+            "u.created_at DESC, u.user_id DESC",
+            lim,
+            off,
+        )
+        roles = self._staff_directory_roles(session, [r[0] for r in rows])
+        items = [
+            {
+                "user_id": r[0],
+                "email": r[1],
+                "full_name": r[2],
+                "disabled": r[3],
+                "mfa_enrolled": bool(r[4]),
+                "roles": roles.get(r[0], []),
+                "created_at": r[5],
+            }
+            for r in rows
+        ]
+        return {"items": items, "total": total, "limit": lim, "offset": off}
+
+    @auditable(action="staff_user_read", resource_type="user", requires_session=True, resource_id_param="user_id")
+    @transactional
+    def read_staff_user(self, session: Session, user_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """One staff member of the caller's organisation with their CURRENT role assignments, or None (foreign,
+        absent, malformed and system accounts read the same). Administrator only. `locked_until` is shown only
+        while the lock is still in force."""
+        self._require_role(session, "Administrator")
+        row = self._query_one(
+            "SELECT user_id, email, full_name, registration_number, hospital, disabled, "
+            "       (totp_enrolled_at IS NOT NULL), "
+            "       CASE WHEN locked_until > %s THEN locked_until END, "
+            "       password_changed_at, created_at, updated_at "
+            "FROM users WHERE org_id = %s AND user_id = %s AND is_system_account = false",
+            (self._clock.now(), session.org_id, user_id),
+        )
+        if row is None:
+            return None
+        assignments = [
+            {"role": a.role, "assigned_at": a.assigned_at, "assigned_by": a.assigned_by, "basis": a.basis}
+            for a in self.get_user_roles(session, user_id)
+        ]
+        return {
+            "user_id": row[0],
+            "email": row[1],
+            "full_name": row[2],
+            "registration_number": row[3],
+            "hospital": row[4],
+            "disabled": row[5],
+            "mfa_enrolled": bool(row[6]),
+            "locked_until": row[7],
+            "password_changed_at": row[8],
+            "created_at": row[9],
+            "updated_at": row[10],
+            "roles": assignments,
+        }
+
+    @auditable(action="staff_organisation_read", resource_type="organisation", requires_session=True)
+    @transactional
+    def read_own_organisation(self, session: Session) -> Optional[dict[str, Any]]:
+        """The caller's OWN organisation (name, creation time, disabled flag). Takes no identifier: the
+        organisation is `session.org_id`. Administrator only."""
+        self._require_role(session, "Administrator")
+        row = self._query_one(
+            "SELECT org_id, name, created_at, disabled FROM organisations WHERE org_id = %s", (session.org_id,)
+        )
+        if row is None:
+            return None
+        return {"org_id": row[0], "name": row[1], "created_at": row[2], "disabled": row[3]}
+
     # ── Phase 4a: Lineage foundation ─────────────────────────────────────────
 
     @auditable(

@@ -512,9 +512,15 @@ class TestTheProductionWriterExists:
         needs no session surgery: the two sites that enforce on this state
         are the two that always did, and both are per-request reads.
         """
+        # Milestone 2, Phase A added two DISPLAY-ONLY readers of the same predicate (`revoked_at IS NULL`): the
+        # staff directory shows a user's CURRENT roles (`_staff_directory_roles`) and filters on a currently held
+        # role (`list_staff_users`). Neither enforces anything -- the two sites that ENFORCE on this state are
+        # still the two that always did, both per-request reads -- so the census grows by exactly those two.
         assert _revocation_readers() == [
             ("data_access.py", "_get_actor_role"),
+            ("data_access.py", "_staff_directory_roles"),
             ("data_access.py", "get_user_roles"),
+            ("data_access.py", "list_staff_users"),
         ], _revocation_readers()
 
     def test_the_twin_the_census_returns_nothing_for_a_module_that_only_reads(self):

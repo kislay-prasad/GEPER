@@ -1772,7 +1772,8 @@ class TestTheRouteCensusGrewByExactlyTwo:
         # 47 from Genome Analysis Phase 2: two more read-only staff GETs, same module.
         # 55 from Milestone 1: eight read-only staff GETs, on `clinic_endpoints.py` and `workflow_endpoints.py`,
         # both already in the set above, so the needle's search is not narrowed.
-        assert len(served_routes(app)) == 55, served_routes(app)
+        # 58 from Milestone 2 Phase A: three read-only staff-directory GETs, on `admin_endpoints.py`, already in the set above.
+        assert len(served_routes(app)) == 58, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

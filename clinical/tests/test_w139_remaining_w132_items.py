@@ -141,6 +141,10 @@ AUTHENTICATED_STAFF_ROUTES = (
     ("POST", f"/admin/users/{_UNKNOWN_UUID}/disabled", {"disabled": True}),
     ("POST", f"/admin/patient-logins/{_UNKNOWN_UUID}/disabled", {"disabled": True}),
     ("GET", "/admin/audit", None),
+    # Milestone 2 Phase A: the three read-only, Administrator-only staff-directory routes.
+    ("GET", "/admin/users", None),
+    ("GET", f"/admin/users/{_UNKNOWN_UUID}", None),
+    ("GET", "/admin/organisation", None),
     # w154 (WAVE 4). Role revocation, the inverse of the assign route above.
     # A DELETE, and the first one in this set — `_call` grew a branch for it.
     # The role segment is a member of the closed seven-string vocabulary, not
@@ -1691,7 +1695,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 35: the two read-only staff genome routes (Genome Analysis, Phase 1);
         # 37: the two read-only Explorer map routes (Phase 2).
         # 45: the eight read-only staff routes for patients, orders, consents and samples (Milestone 1).
-        assert len(AUTHENTICATED_STAFF_ROUTES) == 45, "a staff route left the list without being probed"
+        # 48: the three read-only staff-directory routes (Milestone 2, Phase A).
+        assert len(AUTHENTICATED_STAFF_ROUTES) == 48, "a staff route left the list without being probed"
         assert any(path.startswith("/auth/logout") for _, path, _ in AUTHENTICATED_STAFF_ROUTES), (
             "the logout route left the list -- it is the entire reason this class exists"
         )
@@ -1720,8 +1725,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 184 from Stage 2's six catalogue and order routes, 224 from Stage 3's
         # five review routes; 280 from Genome Analysis Phase 1's two staff GETs; 296 from Phase 2's two.
         # The product, not a hand-kept number.
-        # 360 from Milestone 1's eight staff read routes.
-        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 360, observed
+        # 360 from Milestone 1's eight staff read routes; 384 from Milestone 2 Phase A's three directory routes.
+        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 384, observed
         assert len(set(observed.values())) == 1, {k: (s, b[:120]) for k, (s, b) in observed.items()}
         assert set(observed.values()) == {THE_REFUSAL}, observed
 
@@ -1809,6 +1814,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
                 # the entry again -- the route is not skipped, it is held to
                 # its own shape, and "not the refusal pair" still applies.
                 continue
+            if method == "GET" and path in ("/admin/users", "/admin/organisation"):
+                continue  # Milestone 2 Phase A: Administrator-only reads with their own success shape, asserted below
             response = _call(client, method, path, credential, body)
             assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
             if any(marker in path for marker in _ADMIN_ROUTES_NOT_GATED_ON_ADMINISTRATOR):
@@ -1894,6 +1901,19 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
                 assert response.status_code == 404, (path, response.text)
                 assert response.json() == {"detail": ADMIN_NOT_FOUND}, (path, response.text)
                 assert _UNKNOWN_UUID not in response.text, (path, response.text)
+
+        # Milestone 2 Phase A. THE STAFF DIRECTORY, each held to its OWN shape. `admin@a.example` holds
+        # Administrator, so the list and the organisation answer 200 with their own models, and a user id that
+        # names nothing in this organisation answers the one administrative 404 and echoes nothing (that case is
+        # in the loop above, where `GET /admin/users/{id}` is held to ADMIN_NOT_FOUND).
+        directory = _call(client, "GET", "/admin/users", credential, None)
+        assert (directory.status_code, directory.content) != THE_REFUSAL
+        assert directory.status_code == 200, directory.text
+        assert set(directory.json()) == {"items", "total", "limit", "offset"}, directory.text
+        organisation = _call(client, "GET", "/admin/organisation", credential, None)
+        assert (organisation.status_code, organisation.content) != THE_REFUSAL
+        assert organisation.status_code == 200, organisation.text
+        assert set(organisation.json()) == {"org_id", "name", "created_at", "disabled"}, organisation.text
 
         logout = client.post("/auth/logout", cookies=credential)
         assert (logout.status_code, logout.content) != THE_REFUSAL

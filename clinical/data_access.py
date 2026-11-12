@@ -72,6 +72,21 @@ BACKUP_CODE_COUNT = 8
 # DataAccess.read_report_status). A pilot policy choice, kept in one place.
 REPORT_READ_ROLES = ("Interpreter", "Approver", "Auditor", "Administrator")
 
+# Milestone 1: the roles that may read patients, orders, consents and samples through the staff read API. A pilot
+# policy choice kept in one place. ADMINISTRATOR IS DELIBERATELY ABSENT from all of them: it manages users and
+# organisation settings and does not gain clinical read access by that role. AUDITOR sees order, consent and sample
+# METADATA only (never patient identity, clinical indication or the staff user ids).
+STAFF_PATIENT_READ_ROLES = ("Orderer", "Interpreter", "Approver")
+STAFF_ORDER_READ_ROLES = ("Orderer", "Lab technician", "Interpreter", "Approver", "Auditor")
+STAFF_ORDER_CLINICAL_ROLES = ("Orderer", "Interpreter", "Approver")  # may see ordered_by and clinical_indication
+STAFF_CONSENT_READ_ROLES = ("Orderer", "Interpreter", "Approver", "Auditor")
+STAFF_SAMPLE_READ_ROLES = ("Lab technician", "Orderer", "Interpreter", "Approver", "Auditor")
+STAFF_SAMPLE_QC_REASON_ROLES = ("Lab technician", "Orderer", "Interpreter", "Approver")  # may see qc_reason
+STAFF_LIST_DEFAULT_LIMIT = 50
+STAFF_LIST_MAX_LIMIT = 200
+STAFF_SEARCH_MIN = 2
+STAFF_SEARCH_MAX = 100
+
 ROLES = (
     "Orderer",
     "Lab technician",
@@ -6507,6 +6522,439 @@ class DataAccess:
             "qc_recorded_at": row[11],
             "created_at": row[12],
         }
+
+    # ── Milestone 1: STAFF READ APIS (patients, orders, consents, samples) ────────────────────────────────
+    #
+    # WHY NEW METHODS AND NOT A GATE ON `get_patient` / `get_order` / `get_consent` / `get_sample`. Those four are
+    # shared with the processing worker (which holds a system session) and carry no role gate by design; adding one
+    # would change what the worker may do. These methods are the STAFF surface: the role gate is the FIRST executable
+    # statement, so a refusal cannot vary with whether an identifier names anything; every query is bound to
+    # `session.org_id` and never to a caller argument; and the detail methods REUSE the shared readers rather than
+    # restating their SQL.
+    #
+    # AUDITED (spec 17.1: every read of a patient record). Each row records actor, organisation, action, the resource
+    # type and (for a detail read) the resource id, and the outcome including a refusal. NO `details` are written:
+    # no search term, filter, name, date of birth, clinical text or consent detail reaches the append-only log.
+    #
+    # NOT A CONSENT DECISION. The `status` shown on a consent is a DISPLAY of the row's own columns. It is not
+    # `check_consent`, not Policy C and not the order rule, and nothing may use it to decide whether processing is
+    # permitted. What withdrawal means for existing orders and reports is not decided here.
+    #
+    # LIST PARAMETERS ARRIVE UNPARSED (strings from the HTTP layer) and are validated AFTER the role gate, so a
+    # caller without a reading role learns nothing -- not even that a parameter was malformed -- from a refusal.
+
+    @staticmethod
+    def _staff_page(limit: Any, offset: Any) -> tuple[int, int]:
+        """Validate paging. Raises ValueError (fixed text, no echo of the input)."""
+
+        def whole(value: Any, default: int) -> Optional[int]:
+            if value is None or value == "":
+                return default
+            if isinstance(value, bool):
+                return None
+            try:
+                return int(str(value).strip())
+            except ValueError:
+                return None
+
+        lim = whole(limit, STAFF_LIST_DEFAULT_LIMIT)
+        off = whole(offset, 0)
+        if lim is None or not 1 <= lim <= STAFF_LIST_MAX_LIMIT:
+            raise ValueError(f"limit must be a whole number from 1 to {STAFF_LIST_MAX_LIMIT}.")
+        if off is None or off < 0:
+            raise ValueError("offset must be a whole number of 0 or more.")
+        return lim, off
+
+    @staticmethod
+    def _staff_id_filter(value: Any) -> Optional[uuid.UUID]:
+        """None means no filter. A MALFORMED id becomes the nil UUID, which names nothing, so it is the same
+        empty answer as an id in another organisation."""
+        if value is None or value == "":
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        try:
+            return uuid.UUID(str(value))
+        except ValueError:
+            return uuid.UUID(int=0)
+
+    @staticmethod
+    def _staff_text_filter(value: Any) -> Optional[str]:
+        """Equality filter on a free vocabulary the tree does not enumerate (state, priority, scope, ...)."""
+        if value is None or value == "":
+            return None
+        return str(value)
+
+    @staticmethod
+    def _staff_timestamp(value: Any, name: str, *, upper: bool) -> Optional[_datetime.datetime]:
+        """A date or ISO-8601 timestamp. A bare date as an UPPER bound means 'through that whole day'."""
+        if value is None or value == "":
+            return None
+        text = str(value).strip()
+        try:
+            if len(text) == 10:
+                day = _datetime.date.fromisoformat(text)
+                start = _datetime.datetime(day.year, day.month, day.day, tzinfo=_datetime.timezone.utc)
+                return start + _datetime.timedelta(days=1) if upper else start
+            parsed = _datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError(f"{name} must be an ISO-8601 date or timestamp.") from None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=_datetime.timezone.utc)
+
+    @staticmethod
+    def _staff_like(value: Any) -> Optional[str]:
+        """A case-insensitive CONTAINS pattern with the user's wildcards neutralised."""
+        if value is None or value == "":
+            return None
+        text = str(value).strip()
+        if not STAFF_SEARCH_MIN <= len(text) <= STAFF_SEARCH_MAX:
+            raise ValueError(f"q must be {STAFF_SEARCH_MIN} to {STAFF_SEARCH_MAX} characters.")
+        return "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+    def _staff_page_of(
+        self,
+        table: str,
+        columns: str,
+        conditions: list[str],
+        params: list[Any],
+        order_by: str,
+        limit: int,
+        offset: int,
+    ) -> tuple[int, list[tuple]]:
+        """ONE place that builds a list query. `conditions` and `order_by` are fixed fragments written in this
+        file; every VALUE is a bound parameter, and the first condition is always the session's organisation."""
+        where = " WHERE " + " AND ".join(conditions)
+        total = self._query("SELECT count(*) FROM " + table + where, params)[0][0]
+        rows = self._query(
+            "SELECT " + columns + " FROM " + table + where + " ORDER BY " + order_by + " LIMIT %s OFFSET %s",
+            [*params, limit, offset],
+        )
+        return int(total), rows
+
+    # -- patients --------------------------------------------------------------------------------------
+
+    @auditable(
+        action="staff_patient_read", resource_type="patient", requires_session=True, resource_id_param="patient_id"
+    )
+    @transactional
+    def read_patient(self, session: Session, patient_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """One patient of the caller's organisation, or None (absent, malformed and foreign read the same)."""
+        self._require_any_role(session, STAFF_PATIENT_READ_ROLES)
+        return self.get_patient(session, patient_id)
+
+    @auditable(action="staff_patient_list", resource_type="patient", requires_session=True)
+    @transactional
+    def list_patients(
+        self,
+        session: Session,
+        q: Any = None,
+        sex: Any = None,
+        disabled: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+    ) -> dict[str, Any]:
+        """A page of the caller's organisation's patients, newest first, disabled patients INCLUDED unless
+        `disabled` says otherwise. `q` is a case-insensitive CONTAINS match on the NAME only."""
+        self._require_any_role(session, STAFF_PATIENT_READ_ROLES)
+        lim, off = self._staff_page(limit, offset)
+        pattern = self._staff_like(q)
+        want_sex = self._staff_text_filter(sex)
+        want_disabled = self._staff_bool_filter(disabled, "disabled")
+        conditions, params = ["org_id = %s"], [session.org_id]
+        if pattern is not None:
+            conditions.append("name ILIKE %s ESCAPE '\\'")
+            params.append(pattern)
+        if want_sex is not None:
+            conditions.append("sex = %s")
+            params.append(want_sex)
+        if want_disabled is not None:
+            conditions.append("disabled = %s")
+            params.append(want_disabled)
+        total, rows = self._staff_page_of(
+            "patients",
+            "patient_id, name, dob, sex, created_at, disabled",
+            conditions,
+            params,
+            "created_at DESC, patient_id DESC",
+            lim,
+            off,
+        )
+        items = [
+            {"patient_id": r[0], "name": r[1], "dob": r[2], "sex": r[3], "created_at": r[4], "disabled": r[5]}
+            for r in rows
+        ]
+        return {"items": items, "total": total, "limit": lim, "offset": off}
+
+    @staticmethod
+    def _staff_bool_filter(value: Any, name: str) -> Optional[bool]:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("true", "1", "yes"):
+            return True
+        if text in ("false", "0", "no"):
+            return False
+        raise ValueError(f"{name} must be true or false.")
+
+    # -- orders ----------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _staff_order_view(row: dict[str, Any], clinical: bool) -> dict[str, Any]:
+        """The ONE shape of an order for staff. `ordered_by` and `clinical_indication` are shown only to the
+        roles that act on the clinical record (`STAFF_ORDER_CLINICAL_ROLES`); to everyone else the keys are
+        present and None, so the shape does not vary by role."""
+        return {
+            "order_id": row["order_id"],
+            "patient_id": row["patient_id"],
+            "test_id": row["test_id"],
+            "required_scope": row["required_scope"],
+            "consent_id": row["consent_id"],
+            "priority": row["priority"],
+            "state": row["state"],
+            "placed_at": row["placed_at"],
+            "cancelled_at": row["cancelled_at"],
+            "created_at": row["created_at"],
+            "ordered_by": row.get("ordered_by") if clinical else None,
+            "clinical_indication": row.get("clinical_indication") if clinical else None,
+        }
+
+    def _staff_holds(self, session: Session, roles: Sequence[str]) -> bool:
+        return bool({a.role for a in self.get_user_roles(session)}.intersection(roles))
+
+    @auditable(action="staff_order_read", resource_type="order", requires_session=True, resource_id_param="order_id")
+    @transactional
+    def read_order(self, session: Session, order_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """One order of the caller's organisation, or None."""
+        self._require_any_role(session, STAFF_ORDER_READ_ROLES)
+        row = self.get_order(session, order_id)
+        if row is None:
+            return None
+        return self._staff_order_view(row, self._staff_holds(session, STAFF_ORDER_CLINICAL_ROLES))
+
+    @auditable(action="staff_order_list", resource_type="order", requires_session=True)
+    @transactional
+    def list_orders(
+        self,
+        session: Session,
+        patient_id: Any = None,
+        state: Any = None,
+        test_id: Any = None,
+        priority: Any = None,
+        created_from: Any = None,
+        created_to: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+    ) -> dict[str, Any]:
+        """A page of the caller's organisation's orders, newest first. A LIST NEVER CARRIES
+        `clinical_indication` or `ordered_by`, for any role."""
+        self._require_any_role(session, STAFF_ORDER_READ_ROLES)
+        lim, off = self._staff_page(limit, offset)
+        want_patient = self._staff_id_filter(patient_id)
+        want_test = self._staff_id_filter(test_id)
+        want_state = self._staff_text_filter(state)
+        want_priority = self._staff_text_filter(priority)
+        since = self._staff_timestamp(created_from, "created_from", upper=False)
+        until = self._staff_timestamp(created_to, "created_to", upper=True)
+        conditions, params = ["org_id = %s"], [session.org_id]
+        for column, value in (
+            ("patient_id", want_patient),
+            ("test_id", want_test),
+            ("state", want_state),
+            ("priority", want_priority),
+        ):
+            if value is not None:
+                conditions.append(column + " = %s")
+                params.append(value)
+        if since is not None:
+            conditions.append("created_at >= %s")
+            params.append(since)
+        if until is not None:
+            conditions.append("created_at < %s" if len(str(created_to).strip()) == 10 else "created_at <= %s")
+            params.append(until)
+        total, rows = self._staff_page_of(
+            "orders",
+            "order_id, patient_id, test_id, required_scope, consent_id, priority, state, placed_at, "
+            "cancelled_at, created_at",
+            conditions,
+            params,
+            "created_at DESC, order_id DESC",
+            lim,
+            off,
+        )
+        keys = (
+            "order_id",
+            "patient_id",
+            "test_id",
+            "required_scope",
+            "consent_id",
+            "priority",
+            "state",
+            "placed_at",
+            "cancelled_at",
+            "created_at",
+        )
+        items = [self._staff_order_view(dict(zip(keys, r)), False) for r in rows]
+        return {"items": items, "total": total, "limit": lim, "offset": off}
+
+    # -- consents (per patient only) -------------------------------------------------------------------
+
+    @staticmethod
+    def _staff_consent_view(row: dict[str, Any]) -> dict[str, Any]:
+        """The ONE shape of a consent for staff. `recorded_by` and `withdrawn_by` (staff user ids) are NOT
+        part of it. `status` displays the row's own columns, WITHDRAWN taking precedence over SUPERSEDED."""
+        if row["withdrawn_at"] is not None:
+            status = "withdrawn"
+        elif row["superseded_by"] is not None:
+            status = "superseded"
+        else:
+            status = "active"
+        return {
+            "consent_id": row["consent_id"],
+            "patient_id": row["patient_id"],
+            "scope": row["scope"],
+            "status": status,
+            "recorded_at": row["recorded_at"],
+            "withdrawn_at": row["withdrawn_at"],
+            "superseded_by": row["superseded_by"],
+        }
+
+    @auditable(
+        action="staff_consent_read", resource_type="consent", requires_session=True, resource_id_param="consent_id"
+    )
+    @transactional
+    def read_consent(self, session: Session, consent_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """One consent of the caller's organisation, or None."""
+        self._require_any_role(session, STAFF_CONSENT_READ_ROLES)
+        row = self.get_consent(session, consent_id)
+        return None if row is None else self._staff_consent_view(row)
+
+    _STAFF_CONSENT_STATUS_SQL = {
+        "active": "withdrawn_at IS NULL AND superseded_by IS NULL",
+        "withdrawn": "withdrawn_at IS NOT NULL",
+        "superseded": "withdrawn_at IS NULL AND superseded_by IS NOT NULL",
+    }
+
+    @auditable(
+        action="staff_consent_list", resource_type="patient", requires_session=True, resource_id_param="patient_id"
+    )
+    @transactional
+    def list_patient_consents(
+        self,
+        session: Session,
+        patient_id: uuid.UUID,
+        scope: Any = None,
+        status: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+    ) -> Optional[dict[str, Any]]:
+        """A page of ONE patient's consents, newest first, or None when the patient is not in the caller's
+        organisation (absent, malformed and foreign read the same)."""
+        self._require_any_role(session, STAFF_CONSENT_READ_ROLES)
+        lim, off = self._staff_page(limit, offset)
+        want_scope = self._staff_text_filter(scope)
+        want_status = self._staff_text_filter(status)
+        if want_status is not None and want_status not in self._STAFF_CONSENT_STATUS_SQL:
+            raise ValueError("status must be active, withdrawn or superseded.")
+        if (
+            self._query_one(
+                "SELECT 1 FROM patients WHERE patient_id = %s AND org_id = %s", (patient_id, session.org_id)
+            )
+            is None
+        ):
+            return None
+        conditions, params = ["org_id = %s", "patient_id = %s"], [session.org_id, patient_id]
+        if want_scope is not None:
+            conditions.append("scope = %s")
+            params.append(want_scope)
+        if want_status is not None:
+            conditions.append(self._STAFF_CONSENT_STATUS_SQL[want_status])
+        total, rows = self._staff_page_of(
+            "consents",
+            "consent_id, patient_id, scope, recorded_at, withdrawn_at, superseded_by",
+            conditions,
+            params,
+            "recorded_at DESC, consent_id DESC",
+            lim,
+            off,
+        )
+        keys = ("consent_id", "patient_id", "scope", "recorded_at", "withdrawn_at", "superseded_by")
+        items = [self._staff_consent_view(dict(zip(keys, r))) for r in rows]
+        return {"items": items, "total": total, "limit": lim, "offset": off}
+
+    # -- samples ---------------------------------------------------------------------------------------
+
+    @staticmethod
+    def _staff_sample_view(row: dict[str, Any], reason: bool) -> dict[str, Any]:
+        """The ONE shape of a sample for staff. The staff user ids (`collected_by`, `received_by`,
+        `qc_recorded_by`) are not part of it. `qc_reason` (free text) is shown only to
+        `STAFF_SAMPLE_QC_REASON_ROLES` and only on a detail read; elsewhere the key is None."""
+        return {
+            "sample_id": row["sample_id"],
+            "order_id": row["order_id"],
+            "type": row["type"],
+            "received_at": row["received_at"],
+            "condition_on_receipt": row["condition_on_receipt"],
+            "qc_status": row["qc_status"],
+            "qc_recorded_at": row["qc_recorded_at"],
+            "created_at": row["created_at"],
+            "qc_reason": row.get("qc_reason") if reason else None,
+        }
+
+    @auditable(action="staff_sample_read", resource_type="sample", requires_session=True, resource_id_param="sample_id")
+    @transactional
+    def read_sample(self, session: Session, sample_id: uuid.UUID) -> Optional[dict[str, Any]]:
+        """One sample of the caller's organisation, or None."""
+        self._require_any_role(session, STAFF_SAMPLE_READ_ROLES)
+        row = self.get_sample(session, sample_id)
+        if row is None:
+            return None
+        return self._staff_sample_view(row, self._staff_holds(session, STAFF_SAMPLE_QC_REASON_ROLES))
+
+    @auditable(action="staff_sample_list", resource_type="sample", requires_session=True)
+    @transactional
+    def list_samples(
+        self,
+        session: Session,
+        order_id: Any = None,
+        qc_status: Any = None,
+        limit: Any = None,
+        offset: Any = None,
+    ) -> dict[str, Any]:
+        """A page of the caller's organisation's samples, newest first. A LIST NEVER CARRIES `qc_reason`."""
+        self._require_any_role(session, STAFF_SAMPLE_READ_ROLES)
+        lim, off = self._staff_page(limit, offset)
+        want_order = self._staff_id_filter(order_id)
+        want_qc = self._staff_text_filter(qc_status)
+        conditions, params = ["org_id = %s"], [session.org_id]
+        if want_order is not None:
+            conditions.append("order_id = %s")
+            params.append(want_order)
+        if want_qc is not None:
+            conditions.append("qc_status = %s")
+            params.append(want_qc)
+        total, rows = self._staff_page_of(
+            "samples",
+            "sample_id, order_id, type, received_at, condition_on_receipt, qc_status, qc_recorded_at, created_at",
+            conditions,
+            params,
+            "created_at DESC, sample_id DESC",
+            lim,
+            off,
+        )
+        keys = (
+            "sample_id",
+            "order_id",
+            "type",
+            "received_at",
+            "condition_on_receipt",
+            "qc_status",
+            "qc_recorded_at",
+            "created_at",
+        )
+        items = [self._staff_sample_view(dict(zip(keys, r)), False) for r in rows]
+        return {"items": items, "total": total, "limit": lim, "offset": off}
 
     # ── Phase 4a: Lineage foundation ─────────────────────────────────────────
 

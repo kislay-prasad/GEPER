@@ -195,6 +195,15 @@ AUTHENTICATED_STAFF_ROUTES = (
     ("POST", "/admin/tests", {"name": "x", "assembly": "hg38", "genes": ["BRCA1"]}),
     ("POST", f"/admin/tests/{_UNKNOWN_UUID}/retirement", None),
     ("GET", "/clinic/tests", None),
+    # Milestone 1: the eight read-only staff routes for patients, orders, consents and samples.
+    ("GET", "/clinic/patients", None),
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}", None),
+    ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/consents", None),
+    ("GET", f"/clinic/consents/{_UNKNOWN_UUID}", None),
+    ("GET", "/clinic/orders", None),
+    ("GET", f"/clinic/orders/{_UNKNOWN_UUID}", None),
+    ("GET", "/lab/samples", None),
+    ("GET", f"/lab/samples/{_UNKNOWN_UUID}", None),
     # Genome Analysis, Phase 1: the two read-only staff genome routes.
     ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/chromosomes", None),
     ("GET", f"/clinic/patients/{_UNKNOWN_UUID}/genome/chromosomes/{_UNKNOWN_UUID}", None),
@@ -1681,7 +1690,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 33: the read-only sign-off state route joined the 32 (see the "human-tool read API" rows above).
         # 35: the two read-only staff genome routes (Genome Analysis, Phase 1);
         # 37: the two read-only Explorer map routes (Phase 2).
-        assert len(AUTHENTICATED_STAFF_ROUTES) == 37, "a staff route left the list without being probed"
+        # 45: the eight read-only staff routes for patients, orders, consents and samples (Milestone 1).
+        assert len(AUTHENTICATED_STAFF_ROUTES) == 45, "a staff route left the list without being probed"
         assert any(path.startswith("/auth/logout") for _, path, _ in AUTHENTICATED_STAFF_ROUTES), (
             "the logout route left the list -- it is the entire reason this class exists"
         )
@@ -1710,7 +1720,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # 184 from Stage 2's six catalogue and order routes, 224 from Stage 3's
         # five review routes; 280 from Genome Analysis Phase 1's two staff GETs; 296 from Phase 2's two.
         # The product, not a hand-kept number.
-        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 296, observed
+        # 360 from Milestone 1's eight staff read routes.
+        assert len(observed) == 8 * len(AUTHENTICATED_STAFF_ROUTES) == 360, observed
         assert len(set(observed.values())) == 1, {k: (s, b[:120]) for k, (s, b) in observed.items()}
         assert set(observed.values()) == {THE_REFUSAL}, observed
 
@@ -1821,8 +1832,8 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         # own constant -- no second refusal vocabulary. That is distinguishable
         # from the anonymous 401, which is what makes the set above meaningful.
         for method, path, body in AUTHENTICATED_STAFF_ROUTES:
-            if not path.startswith("/lab/"):
-                continue
+            if not path.startswith("/lab/") or method == "GET":
+                continue  # Milestone 1's two GET reads are held to their own shapes further down
             response = _call(client, method, path, credential, body)
             assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
             assert response.status_code == 403, (path, response.text)
@@ -1856,13 +1867,33 @@ class TestEveryStaffRefusalIsOnePairOnEveryRouteIncludingLogout:
         assert retired.status_code == 204, retired.text
 
         for method, path, body in AUTHENTICATED_STAFF_ROUTES:
-            if not path.startswith("/clinic/orders"):
-                continue
+            if not path.startswith("/clinic/orders") or (method, path) == ("GET", "/clinic/orders"):
+                continue  # the order LIST is a Milestone 1 read with its own success shape, asserted below
             response = _call(client, method, path, credential, body)
             assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
             assert response.status_code == 404, (path, response.text)
             assert response.json() == {"detail": ADMIN_NOT_FOUND}, (path, response.text)
             assert _UNKNOWN_UUID not in response.text, (path, response.text)
+
+        # Milestone 1. THE EIGHT STAFF READ ROUTES, each held to its OWN shape. `admin@a.example` holds
+        # Administrator AND Orderer, and Orderer may read all four resources, so the three lists answer 200 and
+        # the five routes that name a target in this organisation answer the one 404 and echo nothing.
+        for method, path, body in AUTHENTICATED_STAFF_ROUTES:
+            if method != "GET" or not path.startswith(
+                ("/clinic/patients", "/clinic/consents", "/clinic/orders", "/lab/samples")
+            ):
+                continue
+            if "/genome/" in path or path == "/clinic/tests":
+                continue
+            response = _call(client, method, path, credential, body)
+            assert (response.status_code, response.content) != THE_REFUSAL, (path, response.text)
+            if path in ("/clinic/patients", "/clinic/orders", "/lab/samples"):
+                assert response.status_code == 200, (path, response.text)
+                assert set(response.json()) == {"items", "total", "limit", "offset"}, (path, response.text)
+            else:
+                assert response.status_code == 404, (path, response.text)
+                assert response.json() == {"detail": ADMIN_NOT_FOUND}, (path, response.text)
+                assert _UNKNOWN_UUID not in response.text, (path, response.text)
 
         logout = client.post("/auth/logout", cookies=credential)
         assert (logout.status_code, logout.content) != THE_REFUSAL

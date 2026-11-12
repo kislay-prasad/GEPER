@@ -922,6 +922,13 @@ class TestThePatientSurfaceIsSixRoutesAndAcceptsNoPatientIdentifier:
             # behavioural halves in `test_genome_map_endpoints.py`.
             "/clinic/patients/{patient_id}/genome/map",
             "/clinic/patients/{patient_id}/genome/map/{name}",
+            # Milestone 1. THE SIXTH, on the SAME property and nothing else: `GET /clinic/patients/{patient_id}` is a
+            # READ-ONLY STAFF route behind `clinical.endpoints._get_session` (the loop below PROVES it). `read_patient`
+            # gates on role first (Orderer, Interpreter, Approver), binds `org_id` from `Session.org_id` and never from
+            # the request, is audited, and answers a patient in another organisation byte-identically to one that does
+            # not exist. (`GET /clinic/patients/{patient_id}/consents` shares the path already exempted above.)
+            # Behavioural halves: `test_staff_read_endpoints.py::TestOrganisationIsolation` and `::TestTheRoleMatrix`.
+            "/clinic/patients/{patient_id}",
         }
         assert exempt <= served, (
             f"the exemption names {sorted(exempt - served)}, which this app does not serve -- "

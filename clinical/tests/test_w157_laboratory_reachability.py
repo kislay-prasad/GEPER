@@ -728,14 +728,16 @@ class TestThePremiseThisWaveMeasured:
         }
         served = served_routes(app)
         for path, methods in expected.items():
-            matches = [entry for entry in served if entry[0] == path]
+            # Milestone 1 added `GET /clinic/orders` beside `POST /clinic/orders`: the property is "this VERB on
+            # this path is registered exactly once", so the comparison is per (path, methods).
+            matches = [entry for entry in served if entry[0] == path and entry[1] == methods]
             assert matches == [(path, methods)], (path, matches)
 
         by_path = {}
         for route in router.routes:
             by_path.setdefault(route.path, []).append(route)
-        for prefixed in ("/clinic" + path.removeprefix("/clinic") for path in expected):
-            routes = by_path.get(prefixed, [])
+        for prefixed, methods in expected.items():
+            routes = [r for r in by_path.get(prefixed, []) if tuple(sorted(r.methods - {"HEAD"})) == methods]
             assert len(routes) == 1, (prefixed, routes)
             assert _get_session in [d.call for d in routes[0].dependant.dependencies], prefixed
 
@@ -1079,6 +1081,8 @@ class TestTheVerbsAreShapedTheWayTheHouseRequires:
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
+            if not node.name.endswith("Request"):
+                continue  # Milestone 1's RESPONSE models (SampleView) legitimately declare `qc_status: Optional[str]`
             for stmt in node.body:
                 if not isinstance(stmt, ast.AnnAssign) or not isinstance(stmt.target, ast.Name):
                     continue
@@ -1766,7 +1770,9 @@ class TestTheRouteCensusGrewByExactlyTwo:
         # 43 from the read-only sign-off state route, on `review_endpoints.py`, already in the set above.
         # 45 from Genome Analysis Phase 1: two read-only staff GETs, on `genome_endpoints.py`, added to the set above.
         # 47 from Genome Analysis Phase 2: two more read-only staff GETs, same module.
-        assert len(served_routes(app)) == 47, served_routes(app)
+        # 55 from Milestone 1: eight read-only staff GETs, on `clinic_endpoints.py` and `workflow_endpoints.py`,
+        # both already in the set above, so the needle's search is not narrowed.
+        assert len(served_routes(app)) == 55, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

@@ -487,6 +487,12 @@ class TestTheRouteCensus:
             ("/admin/patients/{patient_id}/logins", ("POST",)),
             ("/admin/patient-logins/{patient_login_id}/disabled", ("POST",)),
             ("/admin/audit", ("GET",)),
+            # Milestone 2, Phase A. THE STAFF DIRECTORY: three read-only, Administrator-only routes, each a single
+            # domain call behind the staff session dependency, audited with no payload, scoped to the session's
+            # organisation. Nothing here writes, and none takes an organisation.
+            ("/admin/users", ("GET",)),
+            ("/admin/users/{user_id}", ("GET",)),
+            ("/admin/organisation", ("GET",)),
             # w156 (WAVE 6). REPORT RETRACTION, and it is the first route on
             # this surface for a capability that was ABSENT rather than
             # implemented-and-unreachable: at 7bb6f8c `def retract_report` had
@@ -684,7 +690,8 @@ class TestTheRouteCensus:
         # 45 from Genome Analysis Phase 1: two read-only staff GETs on `genome_endpoints.py`.
         # 47 from Genome Analysis Phase 2: two more read-only staff GETs (the Explorer map).
         # 55 from Milestone 1: eight read-only staff GETs for patients, orders, consents and samples.
-        assert len(census) == 55, census
+        # 58 from Milestone 2 Phase A: three read-only Administrator-only staff-directory GETs.
+        assert len(census) == 58, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

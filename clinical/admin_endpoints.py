@@ -1221,3 +1221,210 @@ async def retire_test(
     except NotFoundError:
         raise _not_found()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ─── Milestone 2, Phase A: the STAFF DIRECTORY (read-only) ──────────────────────────────────────────
+#
+# THREE READS, ADMINISTRATOR ONLY, AUDITED WITH NO PAYLOAD. The role gate is the domain method's FIRST statement, so
+# a refusal never depends on the query string or the identifier. No route accepts an organisation: `Session.org_id`
+# is the only scope. Nothing here writes, creates, invites, resets or changes MFA, and nothing selects a password
+# hash, a TOTP secret or a backup code.
+#
+# LIST PARAMETERS ARE `Optional[str]` ON PURPOSE, for the reason given with the clinic read routes: FastAPI validates
+# a typed query parameter BEFORE the handler, hence before the role gate; the domain method validates AFTER its gate
+# (a bad value is a 400 with fixed text), so a caller without the Administrator role gets the one 403 whatever the
+# query says.
+
+
+def _iso_or_none(value):
+    return None if value is None else value.isoformat()
+
+
+class StaffUserSummary(BaseModel):
+    """One staff member in the directory. No authentication material of any kind."""
+
+    user_id: str
+    email: str
+    full_name: Optional[str] = None
+    disabled: bool
+    mfa_enrolled: bool
+    roles: List[str]
+    created_at: str
+
+
+class StaffUserPage(BaseModel):
+    items: List[StaffUserSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class StaffRoleAssignment(BaseModel):
+    """A CURRENT role assignment. `basis` is the qualification statement an Approver grant requires."""
+
+    role: str
+    assigned_at: str
+    assigned_by: str
+    basis: Optional[str] = None
+
+
+class StaffUserProfile(BaseModel):
+    """One staff member's profile. `mfa_enrolled` is a flag only; `locked_until` is present only while a lock is in
+    force. No password hash, TOTP secret or backup code is part of this model."""
+
+    user_id: str
+    email: str
+    full_name: Optional[str] = None
+    registration_number: Optional[str] = None
+    hospital: Optional[str] = None
+    disabled: bool
+    mfa_enrolled: bool
+    locked_until: Optional[str] = None
+    password_changed_at: str
+    created_at: str
+    updated_at: str
+    roles: List[StaffRoleAssignment]
+
+
+class OrganisationProfile(BaseModel):
+    org_id: str
+    name: str
+    created_at: str
+    disabled: bool
+
+
+@router.get(
+    "/users",
+    response_model=StaffUserPage,
+    summary="List and search the staff of the CALLER'S OWN organisation (Administrator)",
+    responses={
+        400: {"model": ErrorResponse, "description": "A list parameter is malformed (checked after the role gate)"},
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+    },
+)
+async def list_staff_users(
+    q: Optional[str] = None,
+    role: Optional[str] = None,
+    disabled: Optional[str] = None,
+    limit: Optional[str] = None,
+    offset: Optional[str] = None,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> StaffUserPage:
+    """
+    `DataAccess.list_staff_users`, and nothing else. `q` is a case-insensitive contains match on the email or full
+    name (2 to 100 characters; `%` and `_` are literal). `role` filters on a currently held role; `disabled=true|false`
+    filters; the default includes disabled staff. `limit` is a whole number 1 to 200 (default 50); `offset` is 0 or
+    more. Newest first. SYSTEM (machine) ACCOUNTS ARE NOT STAFF: they are never listed, and reading one by id is a 404
+    (see `GET /admin/users/{user_id}`).
+    """
+    try:
+        page = dao.list_staff_users(session, q=q, role=role, disabled=disabled, limit=limit, offset=offset)
+    except AuthorizationError:
+        raise _forbidden()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return StaffUserPage(
+        items=[
+            StaffUserSummary(
+                user_id=str(r["user_id"]),
+                email=r["email"],
+                full_name=r["full_name"],
+                disabled=bool(r["disabled"]),
+                mfa_enrolled=bool(r["mfa_enrolled"]),
+                roles=list(r["roles"]),
+                created_at=r["created_at"].isoformat(),
+            )
+            for r in page["items"]
+        ],
+        total=page["total"],
+        limit=page["limit"],
+        offset=page["offset"],
+    )
+
+
+@router.get(
+    "/users/{user_id}",
+    response_model=StaffUserProfile,
+    summary="One staff member of the CALLER'S OWN organisation, with current roles (Administrator)",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {
+            "model": ErrorResponse,
+            "description": "Not found: absent, malformed, another organisation's, or a SYSTEM (machine) account",
+        },
+    },
+)
+async def read_staff_user(
+    user_id: str,
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> StaffUserProfile:
+    """
+    `DataAccess.read_staff_user`, and nothing else.
+
+    SYSTEM ACCOUNTS ARE NOT STAFF. The per-organisation machine principals (`users.is_system_account`) that the
+    processing workers act as are excluded from the directory: they are omitted from `GET /admin/users`, and a read
+    of one by id is the SAME 404 as an absent, malformed or other-organisation id, so the response cannot reveal
+    that one exists. (Decision recorded for Milestone 2, Phase A.)
+    """
+    target = _target(user_id)
+    try:
+        row = dao.read_staff_user(session, target)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return StaffUserProfile(
+        user_id=str(row["user_id"]),
+        email=row["email"],
+        full_name=row["full_name"],
+        registration_number=row["registration_number"],
+        hospital=row["hospital"],
+        disabled=bool(row["disabled"]),
+        mfa_enrolled=bool(row["mfa_enrolled"]),
+        locked_until=_iso_or_none(row["locked_until"]),
+        password_changed_at=row["password_changed_at"].isoformat(),
+        created_at=row["created_at"].isoformat(),
+        updated_at=row["updated_at"].isoformat(),
+        roles=[
+            StaffRoleAssignment(
+                role=a["role"],
+                assigned_at=a["assigned_at"].isoformat(),
+                assigned_by=str(a["assigned_by"]),
+                basis=a["basis"],
+            )
+            for a in row["roles"]
+        ],
+    )
+
+
+@router.get(
+    "/organisation",
+    response_model=OrganisationProfile,
+    summary="The CALLER'S OWN organisation (Administrator)",
+    responses={
+        401: {"model": ErrorResponse, "description": "Not authenticated"},
+        403: {"model": ErrorResponse, "description": "Not permitted"},
+        404: {"model": ErrorResponse, "description": "Not found"},
+    },
+)
+async def read_own_organisation(
+    session: Session = Depends(_get_session),
+    dao: DataAccess = Depends(_get_data_access),
+) -> OrganisationProfile:
+    """`DataAccess.read_own_organisation`, and nothing else. It takes no identifier."""
+    try:
+        row = dao.read_own_organisation(session)
+    except AuthorizationError:
+        raise _forbidden()
+    if row is None:
+        raise _not_found()
+    return OrganisationProfile(
+        org_id=str(row["org_id"]),
+        name=row["name"],
+        created_at=row["created_at"].isoformat(),
+        disabled=bool(row["disabled"]),
+    )

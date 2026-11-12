@@ -1218,6 +1218,12 @@ class TestTheHandlersComposeNoDecoratedCalls:
             # decorated call each, same-named as the domain method.
             "create_test",
             "retire_test",
+            # Milestone 2, Phase A. The staff directory: three READ-ONLY handlers, each a single decorated call
+            # with the same name as the domain method it wraps. They write nothing, so the hazard this row
+            # guards (a committed audit row for something that did not happen) cannot arise through them.
+            "list_staff_users",
+            "read_staff_user",
+            "read_own_organisation",
         }, per_handler
         for handler, calls in per_handler.items():
             assert len(calls) == 1, (handler, calls)

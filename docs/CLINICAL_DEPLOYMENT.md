@@ -285,6 +285,30 @@ exists (not that one particular name does), so removing the index makes the serv
 `schema_drift`. Replace it by adding the new index first and removing the old one in a
 later migration.
 
+### Release note: staff genome reads are consent-gated
+
+Applies to the four read-only staff routes of Genome Analysis (`GET /clinic/patients/{patient_id}/genome/chromosomes`,
+`.../chromosomes/{name}`, `.../map` and `.../map/{name}`). No migration, no setting and no restart procedure; it is
+code only.
+
+* **What changed.** Every analysis these routes would return is now checked against the call-set consent rule
+  (Policy C): the analysis's order must carry an **active** consent for its scope, **and** the patient's **latest**
+  consent for that scope must not be withdrawn. A newer consent does not revive a withdrawn order consent.
+* **Fail closed, whole read.** If **any** analysis of the patient fails the check, the **entire** response is refused
+  with HTTP 403 and the message *Consent for this patient's analysis is withdrawn or not active; the analysis is
+  withheld.* The routes never return a shorter list or an empty one, because that would read as "no findings".
+  A patient who has no analysis at all still gets an empty list (there is nothing to withhold).
+* **Who sees the message.** Only Orderer, Interpreter and Approver in the patient's own organisation, after the
+  role and organisation checks. Any other role gets the generic 403, and another organisation's patient gets the same
+  404 as an invented id. The refusal is audited as a denied `genome_read` with no details.
+* **Map routes behave differently from before.** For a patient who has a small-variant analysis and a withdrawn or
+  inactive consent, the map routes now answer 403 instead of drawing the map with a "held back" count for the call
+  sets. A patient with call sets but no small-variant analysis is unchanged: the map still reports call sets held back
+  for consent.
+* **Clinicians will notice** that one withdrawn consent can hide **all** of a patient's analyses until the per-analysis
+  notice of the planned Stage 1A exists. That is deliberate.
+* **Not verified:** behaviour against a deployed stack; it is covered by the data-layer and HTTP tests only.
+
 ## First administrator
 
 A hospital is onboarded by an operator, not through the API: there is no

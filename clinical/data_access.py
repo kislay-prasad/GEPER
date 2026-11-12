@@ -330,6 +330,18 @@ class AuthorizationError(Exception):
     """Raised when an authenticated session lacks the role for an action."""
 
 
+class GenomeConsentWithheldError(AuthorizationError):
+    """
+    A staff genome read was refused because consent is not ACTIVE for an analysis it would have returned (Policy C: the
+    order's own consent is active AND the patient's latest consent for that scope is not withdrawn).
+
+    A DISTINCT refusal, never an empty answer: an empty list would read as "this patient has no findings". It is an
+    `AuthorizationError`, so the audit trail records a denied read, but the routes catch it first and answer with
+    their own message, so a caller can tell it from a missing role. It is raised only AFTER the role gate and the
+    organisation check, so it tells nothing to a caller who could not have read the patient anyway.
+    """
+
+
 class NotFoundError(Exception):
     """
     Raised when a record does not exist *for this session's organisation*.
@@ -4138,6 +4150,10 @@ class DataAccess:
 
     GENOME_READ_ROLES = ("Orderer", "Interpreter", "Approver")
 
+    GENOME_CONSENT_WITHHELD = (
+        "Consent for this patient's analysis is withdrawn or not active; the analysis is withheld."
+    )
+
     @auditable(
         action="portal_genome_read",
         resource_type="report",
@@ -4211,6 +4227,12 @@ class DataAccess:
         `GENOME_READ_ROLES`: genomic content is clinical, and none of those
         roles is (spec: a technician sees samples and QC, an auditor the audit
         trail, not clinical content).
+
+        CONSENT (Policy C, the call-set rule): every analysis returned must belong to an order whose OWN consent is
+        active and whose patient's LATEST consent for the order's scope is not withdrawn. If ANY analysis fails that,
+        the whole read is refused with `GenomeConsentWithheldError` -- never filtered to a shorter list, which would
+        read as "no findings". It is checked after the role gate and the organisation check. A patient with no
+        analysis at all returns an empty list: there is nothing to withhold.
         """
         self._require_any_role(session, self.GENOME_READ_ROLES)
         exists = self._query_one(
@@ -4227,13 +4249,18 @@ class DataAccess:
             "                                       AND re.consumer = 'patient_portal') "
             "                        AND NOT EXISTS (SELECT 1 FROM report_retractions rr "
             "                                         WHERE rr.org_id = rep.org_id AND rr.report_id = rep.id)), "
-            "                FALSE) "
+            "                FALSE), "
+            "       COALESCE(bool_and("
+            + self._CALLSET_CONSENT_OK_SQL
+            + "), FALSE) "
             + self._PATIENT_INTERPRETATION_CHAIN
             + "LEFT JOIN reports rep  ON rep.org_id = i.org_id AND rep.interpretation_id = i.id "
             "WHERE p.patient_id = %s AND p.org_id = %s AND i.tombstoned_at IS NULL "
             "GROUP BY i.id ORDER BY i.created_at, i.id",
             (patient_id, session.org_id),
         )
+        if any(not r[5] for r in rows):
+            raise GenomeConsentWithheldError(self.GENOME_CONSENT_WITHHELD)
         return [
             {
                 "interpretation_id": r[0],

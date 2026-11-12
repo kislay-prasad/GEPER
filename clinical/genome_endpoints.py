@@ -68,6 +68,7 @@ from clinical.admin_endpoints import _forbidden, _not_found, _target
 from clinical.data_access import (
     AuthorizationError,
     DataAccess,
+    GenomeConsentWithheldError,
     NotFoundError,
     PatientSession,
     Session,
@@ -127,6 +128,11 @@ class ClinicChromosomeResponse(BaseModel):
     patient_id: str
     chromosome: str
     analyses: List[Dict[str, Any]]
+
+
+def _consent_withheld() -> HTTPException:
+    """403 with its OWN message, so a clinician can tell "consent is not active" from "you lack the role"."""
+    return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DataAccess.GENOME_CONSENT_WITHHELD)
 
 
 def _bad_chromosome() -> HTTPException:
@@ -208,6 +214,8 @@ async def clinic_list_genome(
     target = _target(patient_id)
     try:
         items = dao.list_patient_genome_analyses(session, target)
+    except GenomeConsentWithheldError:
+        raise _consent_withheld()
     except AuthorizationError:
         raise _forbidden()
     except NotFoundError:
@@ -232,6 +240,8 @@ async def clinic_get_chromosome(
     target = _target(patient_id)
     try:
         items = dao.list_patient_genome_analyses(session, target)
+    except GenomeConsentWithheldError:
+        raise _consent_withheld()
     except AuthorizationError:
         raise _forbidden()
     except NotFoundError:
@@ -383,6 +393,8 @@ async def clinic_genome_map(
     try:
         items = dao.list_patient_genome_analyses(session, target)
         call_sets = list(source.call_sets_for(session, target))
+    except GenomeConsentWithheldError:
+        raise _consent_withheld()
     except AuthorizationError:
         raise _forbidden()
     except NotFoundError:
@@ -416,6 +428,8 @@ async def clinic_genome_map_chromosome(
     try:
         items = dao.list_patient_genome_analyses(session, target)
         call_sets = list(source.call_sets_for(session, target))
+    except GenomeConsentWithheldError:
+        raise _consent_withheld()
     except AuthorizationError:
         raise _forbidden()
     except NotFoundError:

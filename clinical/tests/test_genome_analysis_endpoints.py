@@ -31,7 +31,7 @@ import uuid
 
 import pytest
 
-from clinical.data_access import PORTAL_RELEASE_CONSUMER, AuthorizationError
+from clinical.data_access import PORTAL_RELEASE_CONSUMER, AuthorizationError, DataAccess
 from clinical.tests.test_w135_patient_report_access import (  # noqa: F401  (fixtures are used by name)
     PASSWORD,
     PATIENT_COOKIE,
@@ -628,3 +628,151 @@ class TestStructure:
         from clinical.genome_analysis import summarise_run_document
 
         assert summarise_run_document({"variants": []}).status == "assembly_unavailable"
+
+
+# ─── 8. consent gate (Policy C) on every staff genome read ───────────────────
+#
+# `list_patient_genome_analyses` is the single reader behind all four staff routes (the two chromosome routes and the
+# two Explorer map routes). It refuses with a DISTINCT error when consent is not active for an analysis it would have
+# returned; it never returns a shorter list, which would read as "no findings".
+
+_FOUR_ROUTES = ("chromosomes", "chromosomes/17", "map", "map/17")
+
+
+def _withdraw_every_consent(dao, conn, org, patient_id):
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT consent_id FROM consents WHERE patient_id = %s AND org_id = %s AND withdrawn_at IS NULL",
+            (patient_id, org["org_id"]),
+        )
+        ids = [r[0] for r in cur.fetchall()]
+    conn.rollback()
+    for consent_id in ids:
+        dao.withdraw_consent(org["staff"], consent_id)
+    return ids
+
+
+def _consent_audit(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT outcome, details::text FROM audit_log WHERE action = 'genome_read' ORDER BY log_id")
+        rows = cur.fetchall()
+    conn.rollback()
+    return rows
+
+
+class TestTheConsentGate:
+    def _read_all(self, client, org, cookie):
+        return {tail: _get(client, _clinic(org["first_patient"], tail), cookie, staff=True) for tail in _FOUR_ROUTES}
+
+    def test_active_consent_serves_all_four_routes(self, client, dao, world, tmp_path):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document(variants=(("chr17", 7674220),)))
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        statuses = {t: r.status_code for t, r in self._read_all(client, org, cookie).items()}
+        assert statuses == dict.fromkeys(_FOUR_ROUTES, 200)
+
+    def test_withdrawn_consent_refuses_all_four_routes_with_the_distinct_message(
+        self, client, dao, conn, world, tmp_path
+    ):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document(variants=(("chr17", 7674220),)))
+        assert _withdraw_every_consent(dao, conn, org, org["first_patient"])
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        for tail, response in self._read_all(client, org, cookie).items():
+            assert response.status_code == 403, tail
+            assert response.json() == {"detail": DataAccess.GENOME_CONSENT_WITHHELD}, tail
+            for leaked in ("7674220", "analyses", "maps"):
+                assert leaked not in response.text, (tail, leaked)
+
+    def test_the_refusal_is_not_the_role_refusal_and_the_role_gate_still_comes_first(
+        self, client, dao, conn, world, tmp_path
+    ):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document())
+        _withdraw_every_consent(dao, conn, org, org["first_patient"])
+        _staff_with_roles(dao, conn, org["org_id"], "admin-only@a.example", ["Administrator"])
+        admin = _staff_login(client, org["org_id"], "admin-only@a.example")
+        clinician = _staff_login(client, org["org_id"], org["staff_email"])
+        for tail in _FOUR_ROUTES:
+            no_role = _get(client, _clinic(org["first_patient"], tail), admin, staff=True)
+            clinical = _get(client, _clinic(org["first_patient"], tail), clinician, staff=True)
+            assert no_role.status_code == clinical.status_code == 403, tail
+            assert no_role.json() != clinical.json(), tail
+            assert clinical.json()["detail"] == DataAccess.GENOME_CONSENT_WITHHELD
+            assert DataAccess.GENOME_CONSENT_WITHHELD not in no_role.text, "no role, so nothing is learnt of consent"
+
+    def test_a_newer_active_consent_cannot_revive_a_withdrawn_order_consent(self, client, dao, conn, world, tmp_path):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document())
+        _withdraw_every_consent(dao, conn, org, org["first_patient"])
+        dao.record_consent(org["staff"], org["first_patient"], "testing")
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        assert {r.status_code for r in self._read_all(client, org, cookie).values()} == {403}
+
+    def test_no_consent_at_all_fails_closed(self, client, dao, conn, world, tmp_path):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document())
+        with conn.cursor() as cur:  # owner-level: lift the foreign keys for this transaction only, then remove it
+            cur.execute("SET LOCAL session_replication_role = replica")
+            cur.execute(
+                "DELETE FROM consents WHERE patient_id = %s AND org_id = %s", (org["first_patient"], org["org_id"])
+            )
+        conn.commit()
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        for tail, response in self._read_all(client, org, cookie).items():
+            assert response.status_code == 403, tail
+            assert response.json()["detail"] == DataAccess.GENOME_CONSENT_WITHHELD, tail
+
+    def test_one_withheld_analysis_refuses_the_whole_read_rather_than_shortening_it(
+        self, client, dao, conn, world, tmp_path
+    ):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document(variants=(("chr5", 1),)))
+        _drive(dao, org, org["first_patient"], tmp_path, _document(variants=(("chr9", 2),)))
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT consent_id FROM consents WHERE patient_id = %s AND org_id = %s "
+                "ORDER BY recorded_at, consent_id LIMIT 1",
+                (org["first_patient"], org["org_id"]),
+            )
+            first = cur.fetchone()[0]
+        conn.rollback()
+        dao.withdraw_consent(org["staff"], first)
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        assert {r.status_code for r in self._read_all(client, org, cookie).values()} == {403}
+
+    def test_a_patient_with_no_analysis_is_an_empty_answer_not_a_refusal(self, client, dao, world):
+        org = _a(world)
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        response = _get(client, _clinic(org["second_patient"]), cookie, staff=True)
+        assert response.status_code == 200 and response.json()["analyses"] == []
+
+    def test_organisation_isolation_is_unchanged(self, client, dao, conn, world, tmp_path):
+        a, b = world["a"], world["b"]
+        _drive(dao, a, a["first_patient"], tmp_path, _document())
+        _withdraw_every_consent(dao, conn, a, a["first_patient"])
+        cookie_b = _staff_login(client, b["org_id"], b["staff_email"])
+        foreign = _get(client, _clinic(a["first_patient"]), cookie_b, staff=True)
+        invented = _get(client, _clinic(uuid.uuid4()), cookie_b, staff=True)
+        assert {foreign.status_code, invented.status_code} == {404}
+        assert foreign.content == invented.content
+
+    def test_the_refusal_is_audited_as_denied_with_no_details(self, client, dao, conn, world, tmp_path):
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document(variants=(("chr17", 7674220),)))
+        _withdraw_every_consent(dao, conn, org, org["first_patient"])
+        cookie = _staff_login(client, org["org_id"], org["staff_email"])
+        assert _get(client, _clinic(org["first_patient"]), cookie, staff=True).status_code == 403
+        rows = _consent_audit(conn)
+        assert len(rows) == 1 and rows[0][0] == "denied" and rows[0][1] in (None, "null", "{}"), rows
+
+    def test_the_data_layer_raises_a_subclass_of_the_authorization_error(self, dao, conn, world, tmp_path):
+        from clinical.data_access import GenomeConsentWithheldError
+
+        org = _a(world)
+        _drive(dao, org, org["first_patient"], tmp_path, _document())
+        assert dao.list_patient_genome_analyses(org["staff"], org["first_patient"])  # active: served
+        _withdraw_every_consent(dao, conn, org, org["first_patient"])
+        with pytest.raises(GenomeConsentWithheldError) as info:
+            dao.list_patient_genome_analyses(org["staff"], org["first_patient"])
+        assert isinstance(info.value, AuthorizationError) and str(info.value) == DataAccess.GENOME_CONSENT_WITHHELD

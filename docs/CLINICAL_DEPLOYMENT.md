@@ -418,7 +418,8 @@ database.
 These came from disposable Docker stacks on one developer machine (Docker Desktop for
 Windows, PostgreSQL 16, default PostgreSQL settings, 128 MB `shared_buffers`), with
 **synthetic data only**. They are rehearsal results, **not production measurements**, and
-they do not show that this deployment is production-ready or clinically validated. The
+they do not show that this deployment is ready for production use or clinically
+validated. The
 evidence files are kept outside the repository.
 
 **The consents index on 5,000,000 synthetic consents.**

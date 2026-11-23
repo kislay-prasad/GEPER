@@ -107,3 +107,9 @@ USER 10001:10001
 WORKDIR /repo
 ENV PYTHONPATH=/repo
 CMD ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "-rfEs", "clinical/tests"]
+
+# -- serve: the default build target ------------------------------------------
+# Hosts that build the Dockerfile without naming a target (e.g. Render) build the
+# LAST stage. That must be the server, not `test`. Builds that pass --target
+# test or --target runtime are unaffected.
+FROM runtime AS serve

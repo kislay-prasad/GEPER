@@ -106,7 +106,7 @@ class TestTheSlimDockerfile:
 
     def test_every_stage_starts_from_that_pinned_argument_or_an_earlier_stage(self):
         stages = _stages(SLIM)
-        assert set(stages) == {"deps", "runtime", "test"}, list(stages)
+        assert set(stages) == {"deps", "runtime", "test", "serve"}, list(stages)
         for name, lines in stages.items():
             base = lines[0].split()[1]
             assert base in ("${PYTHON_IMAGE}", "runtime"), (name, base)

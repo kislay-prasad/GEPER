@@ -237,17 +237,19 @@ RUN pip install --no-cache-dir --upgrade pip
 COPY geper/requirements.txt /tmp/geper-requirements.txt
 COPY kim_pipeline/requirements.txt /tmp/kim-requirements.txt
 
-# Pre-fetched CPU-only torch wheel (175.8 MB vs 821 MB CUDA bundle).
-# Host downloaded with curl -L -C- (resumable) to bypass network transfer issues.
-# Verify byte count: exactly 175,833,687 bytes before building.
-# CAVEAT: resulting image is CPU-only; would need torch reinstall to use GPU host.
-COPY torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl /tmp/torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
-COPY torchvision-0.22.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl /tmp/torchvision-0.22.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
-COPY torchaudio-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl /tmp/torchaudio-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl
-
-RUN pip install --no-cache-dir /tmp/torch-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl /tmp/torchvision-0.22.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl /tmp/torchaudio-2.7.1+cpu-cp312-cp312-manylinux_2_28_x86_64.whl && \
-    pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 -r /tmp/geper-requirements.txt \
-    && pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 -r /tmp/kim-requirements.txt
+# Install the pinned CPU-only PyTorch stack directly from the official
+# PyTorch CPU wheel index. Do not COPY local wheel files: they are not
+# tracked in this repository and therefore are absent from Render's build
+# context. Versions stay aligned with geper/requirements.txt.
+RUN pip install --no-cache-dir --retries 10 --timeout 3600 \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "torch==2.7.1+cpu" \
+    "torchvision==0.22.1+cpu" \
+    "torchaudio==2.7.1+cpu" && \
+    pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 \
+    -r /tmp/geper-requirements.txt && \
+    pip install --no-cache-dir --retries 10 --timeout 3600 --resume-retries 50 \
+    -r /tmp/kim-requirements.txt
 
 # -----------------------------------------------------------------------
 # Enformer / Borzoi (CONFIG.splicing.ENABLE_ENFORMER / ENABLE_BORZOI both

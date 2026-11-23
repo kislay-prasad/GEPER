@@ -1773,7 +1773,8 @@ class TestTheRouteCensusGrewByExactlyTwo:
         # 55 from Milestone 1: eight read-only staff GETs, on `clinic_endpoints.py` and `workflow_endpoints.py`,
         # both already in the set above, so the needle's search is not narrowed.
         # 58 from Milestone 2 Phase A: three read-only staff-directory GETs, on `admin_endpoints.py`, already in the set above.
-        assert len(served_routes(app)) == 58, served_routes(app)
+        # 59: the static landing route `/` (anonymous, no dependency, no data), declared in app.py.
+        assert len(served_routes(app)) == 59, served_routes(app)
         sites = {path for path, _ in _call_sites("_release_report")}
         assert sites & modules == set(), sites
         # The needle's single origin, proved rather than asserted.

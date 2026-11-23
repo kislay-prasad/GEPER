@@ -1182,7 +1182,7 @@ class TestNoPublicPatientSelfRegistration:
         assert "clinical/auth_endpoints.py" not in minting
         assert "clinical/portal_endpoints.py" not in minting
 
-    def test_every_served_route_but_the_four_public_ones_requires_a_session(self):
+    def test_every_served_route_but_the_five_public_ones_requires_a_session(self):
         """
         (F) AS A CENSUS OVER THE WHOLE SERVED SURFACE, not over the routes
         somebody remembered to list. Four routes are unauthenticated BY
@@ -1203,7 +1203,8 @@ class TestNoPublicPatientSelfRegistration:
         from clinical.endpoints import _get_session
         from clinical.portal_endpoints import _get_patient_session
 
-        public = {"/auth/login", "/portal/login", "/healthz", "/readyz"}
+        # A FIFTH public route, declared: "/" is the static landing response (no data, no dependency).
+        public = {"/", "/auth/login", "/portal/login", "/healthz", "/readyz"}
         unguarded = []
         seen = 0
         for route in app.routes:

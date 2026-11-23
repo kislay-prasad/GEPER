@@ -418,7 +418,10 @@ class TestTheSurfaceIsMounted:
 
         non_admin = {path for path, _ in served_routes(app) if not path.startswith("/admin/")}
         assert non_admin and all(
-            path.startswith(
+            # "/" is the one exact-match declaration: the static landing response. It is not a
+            # prefix, which would match every path.
+            path == "/"
+            or path.startswith(
                 ("/auth/", "/portal/", "/exceptions/", "/lab/", "/clinic/", "/review/", "/healthz", "/readyz")
             )
             for path in non_admin

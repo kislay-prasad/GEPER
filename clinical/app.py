@@ -239,6 +239,17 @@ if patient_routes_enabled():
     app.include_router(portal_genome_router)
 
 
+@app.get("/", include_in_schema=False)
+async def root() -> Dict[str, str]:
+    """
+    A landing response so a browser visiting the bare address sees that the service
+    is up instead of FastAPI's generic 404. It states nothing about the database,
+    the version or the routes: that is `/readyz`'s job, and the route list stays
+    unpublished (see `_DOCS_ENABLED`).
+    """
+    return {"service": "geper-clinical", "status": "running"}
+
+
 @app.get("/healthz", tags=["health"], summary="Liveness probe")
 async def healthz() -> Dict[str, str]:
     """

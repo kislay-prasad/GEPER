@@ -419,6 +419,8 @@ class TestTheRouteCensus:
 
     EXPECTED = sorted(
         {
+            # Landing response for the bare address: static, no dependency, no data.
+            ("/", ("GET",)),
             ("/healthz", ("GET",)),
             ("/readyz", ("GET",)),
             ("/exceptions/orders/{order_id}", ("GET",)),
@@ -691,7 +693,8 @@ class TestTheRouteCensus:
         # 47 from Genome Analysis Phase 2: two more read-only staff GETs (the Explorer map).
         # 55 from Milestone 1: eight read-only staff GETs for patients, orders, consents and samples.
         # 58 from Milestone 2 Phase A: three read-only Administrator-only staff-directory GETs.
-        assert len(census) == 58, census
+        # 59: the bare-address landing route `/` (static status message, anonymous, no data).
+        assert len(census) == 59, census
         assert all(path and path.startswith("/") for path, _ in census), census
         assert all(methods for _, methods in census), census
 

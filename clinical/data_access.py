@@ -11253,6 +11253,34 @@ class DataAccess:
         """
         The live retraction of one report in this organisation, or None.
 
+        THE ONE-ROW READER a delivery-state gate asks the retraction question
+        with. NOT the only code that reads the retraction table (w124: an
+        earlier docstring here called it "the one place retraction is read",
+        and that was never true). Five functions reach `report_retractions`:
+
+          - THIS HELPER. Called by get_report (the `is_retracted` flag),
+            _release_report (the debt owed to a consumer receiving an
+            already-retracted report), require_release (the delivery gate) and
+            retract_report (the refusal of a second retraction).
+          - `_read_retracted`, which runs its own SELECT on purpose: it must see
+            MORE THAN ONE row in order to refuse a report carrying two
+            retractions, and `_query_one` here would hide the second.
+          - `read_signoff_state`, which folds an EXISTS over the table into its
+            one-statement snapshot so the flag and the state come from the same
+            read.
+          - `list_patient_genome_analyses`, which filters retracted reports out
+            of the patient portal with a NOT EXISTS in the same query.
+          - clinical/retention.py's _cascade_tombstone_report_dependents, which
+            selects the un-tombstoned rows to stamp. Another module, another
+            database role, another set of grants.
+
+        WHAT IS ACTUALLY TRUE, and what
+        clinical/tests/test_e10_retraction_composition.py enforces: every
+        DataAccess method that GATES ON A DELIVERY STATE asks the retraction
+        question by calling this helper (or is exempted there with a reason),
+        so "does this reader compose retraction" has a mechanical answer. The
+        same test measures the set of readers above, so this list cannot drift.
+
         NOT `@auditable` AND NOT `@transactional`, and both absences are
         load-bearing rather than tidiness. `@auditable` COMMITS after each
         audit row it writes (the standing hazard), so a decorated read called

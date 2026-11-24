@@ -66,23 +66,31 @@ class TestLeftAlignment(unittest.TestCase):
     def _fetch_base(self, chrom: str, pos: int) -> str:
         return self._REF[pos]
 
+    # C1 (ClinVar audit): the leftmost anchor of a deletion/insertion in a run is the reference
+    # base BEFORE the run (here the 'G' at 100) -- the form bcftools norm / vt normalize emit. The
+    # three expectations below used to be (101, "AA", "A") / (101, "A", "AA"), an anchor INSIDE the
+    # run, one base short of the leftmost position; the old shift test (see the module docstring of
+    # pipeline/variant_normalization.py) stopped there. Both forms describe the same sequence
+    # change; the equivalence is asserted explicitly in tests/test_variant_normalization_c1.py.
+
     def test_deletion_left_aligns_to_leftmost_anchor_in_homopolymer(self):
-        # "Delete one A", anchored at 103 (deleting the A at 104) -- should shift left to the true leftmost anchor, 101.
+        # "Delete one A", anchored at 103 (deleting the A at 104) -- should shift left to the true leftmost anchor, 100.
         r = normalize_variant("1", 103, "AA", "A", fetch_base=self._fetch_base)
-        self.assertEqual((r.pos, r.ref, r.alt), (101, "AA", "A"))
+        self.assertEqual((r.pos, r.ref, r.alt), (100, "GA", "G"))
         self.assertTrue(r.was_left_aligned)
         self.assertTrue(r.changed)
 
     def test_deletion_already_at_leftmost_anchor_is_unchanged(self):
-        r = normalize_variant("1", 101, "AA", "A", fetch_base=self._fetch_base)
-        self.assertEqual((r.pos, r.ref, r.alt), (101, "AA", "A"))
-        # Position 100 is 'G', not 'A' -- shifting further would change the variant, so no shift happens.
+        r = normalize_variant("1", 100, "GA", "G", fetch_base=self._fetch_base)
+        self.assertEqual((r.pos, r.ref, r.alt), (100, "GA", "G"))
+        # Position 99 is not in the reference fixture's run, and the alleles end in different bases
+        # ('A' vs 'G'): shifting further would change the variant, so no shift happens.
         self.assertFalse(r.was_left_aligned)
 
     def test_insertion_left_aligns_to_leftmost_anchor_in_homopolymer(self):
-        # Inserting one extra 'A' into the run, anchored at 104 -- should shift left to 101.
+        # Inserting one extra 'A' into the run, anchored at 104 -- should shift left to 100.
         r = normalize_variant("1", 104, "A", "AA", fetch_base=self._fetch_base)
-        self.assertEqual((r.pos, r.ref, r.alt), (101, "A", "AA"))
+        self.assertEqual((r.pos, r.ref, r.alt), (100, "G", "GA"))
         self.assertTrue(r.was_left_aligned)
 
     def test_deletion_outside_the_repeat_run_does_not_shift(self):

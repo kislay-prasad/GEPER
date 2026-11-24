@@ -640,7 +640,14 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
         "net_points": ir.get("acmg_net_points"),
         "pathogenic_points": ir.get("acmg_pathogenic_points"),
         "benign_points": ir.get("acmg_benign_points"),
-        "net_points_band": acmg_net_points_band_label(ir.get("acmg_classification")),
+        # No band when no point tally ran (BA1 path, including BA1 contradicted
+        # by strong pathogenic evidence -> Uncertain Significance): a band
+        # such as "0–5" beside a null net_points would imply a tally that
+        # never happened. Renderers already skip the band then; this keeps
+        # the structured field (JSON/LIMS consumers) consistent with them.
+        "net_points_band": (
+            acmg_net_points_band_label(ir.get("acmg_classification")) if ir.get("acmg_net_points") is not None else None
+        ),
     }
 
 
@@ -1936,6 +1943,16 @@ def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[D
         if (variant_result.get(stage_key) or {}).get("gene_resolution_status") == "ambiguous":
             flags.append("Ambiguous gene resolution")
             break
+
+    # BA1 remediation (Priority 1): BA1 (stand-alone benign) triggered
+    # alongside strong/very-strong pathogenic evidence -- classified
+    # Uncertain Significance pending expert review (see
+    # `pipeline/acmg_rules.py::ACMGRuleEngine._combine`). Kept as a specific
+    # flag, not a generic "review required" one, so this list stays narrow:
+    # a Pathogenic/Likely Pathogenic call also sets review_required, and
+    # flagging every one of those here would be the noise this list avoids.
+    if "ba1_contradicted_by_strong_pathogenic_evidence" in (clinical.get("review_required_reasons") or []):
+        flags.append("BA1 contradicted by strong pathogenic evidence (expert review required)")
 
     return flags
 

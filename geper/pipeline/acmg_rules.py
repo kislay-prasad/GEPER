@@ -698,6 +698,13 @@ class CombineResult:
     pathogenic_points: Optional[float]
     benign_points: Optional[float]
     net_points: Optional[float]
+    # BA1 / strong-pathogenic contradiction (Priority 1 remediation): the
+    # codes of the strong or very-strong pathogenic criteria that were
+    # triggered alongside BA1. Empty unless that contradiction occurred.
+    # When non-empty, `classification` is "Uncertain Significance" and
+    # `evaluate()` escalates the variant to review_required -- see
+    # `_combine`'s BA1 branch for the guidance this follows.
+    ba1_contradicted_by: List[str] = field(default_factory=list)
 
 
 def _functional_evidence_not_evaluated_reason(functional_evidence_result: Optional[Dict[str, Any]]) -> str:
@@ -1041,6 +1048,7 @@ class ACMGRuleEngine:
             pathogenic_points=combine_result.pathogenic_points,
             benign_points=combine_result.benign_points,
             classification=combine_result.classification,
+            ba1_contradicted=bool(combine_result.ba1_contradicted_by),
         )
         # Human ruling, 2026-09-09/10 (round 2): the answer to "if both
         # [review_required triggers] need to be visible, say so" -- see
@@ -1050,6 +1058,7 @@ class ACMGRuleEngine:
             pathogenic_points=combine_result.pathogenic_points,
             benign_points=combine_result.benign_points,
             classification=combine_result.classification,
+            ba1_contradicted=bool(combine_result.ba1_contradicted_by),
         )
 
         return {
@@ -3749,13 +3758,59 @@ class ACMGRuleEngine:
         triggered = {code: c for code, c in criteria.items() if c.status == "triggered"}
 
         if "BA1" in triggered:
-            trace.append("BA1 triggered (stand-alone benign) -> classification = Benign.")
             # BA1 short-circuits the whole point system -- no tally was
             # computed on this path, so `pathogenic_points`/
             # `benign_points`/`net_points` are honestly `None` here
             # (report review round 10), not a fabricated 0: "the point
             # system wasn't consulted" is a different claim from "the
             # point system was consulted and totalled zero."
+            #
+            # BA1 is stand-alone benign evidence (Richards et al. 2015,
+            # Table 4) and sits outside the Bayesian point model (Tavtigian
+            # et al. 2018), so it is not netted against pathogenic points.
+            # But it must not silently discard STRONG pathogenic evidence
+            # either. Richards et al. 2015, Table 5 footnote: "Variants
+            # should be classified as Uncertain Significance if other
+            # criteria are unmet or the criteria for benign and pathogenic
+            # are contradictory." ClinGen SVI (Ghosh et al. 2018) keeps BA1
+            # stand-alone but recognises high-frequency variants with
+            # credible pathogenic evidence (its BA1 exception list), which
+            # need expert review rather than an automatic Benign call.
+            # Policy implemented here (a clinical decision, recorded for
+            # sign-off): BA1 together with any triggered strong or
+            # very-strong pathogenic criterion -> Uncertain Significance
+            # and review_required. BA1 with only moderate/supporting
+            # pathogenic evidence stays Benign (stand-alone), but those
+            # criteria are named in the trace rather than dropped unseen.
+            other_pathogenic = sorted(
+                code for code, c in triggered.items() if code != "BA1" and c.direction == "pathogenic"
+            )
+            strong_pathogenic = [
+                code for code in other_pathogenic if triggered[code].strength in ("very_strong", "strong")
+            ]
+            if strong_pathogenic:
+                listed = ", ".join(f"{code} ({triggered[code].strength})" for code in strong_pathogenic)
+                trace.append(
+                    f"BA1 triggered (stand-alone benign) but contradicted by strong pathogenic evidence: {listed}."
+                )
+                trace.append(
+                    "Benign and pathogenic criteria are contradictory -> classification = Uncertain Significance; "
+                    "expert review required (ACMG/AMP 2015 Table 5; ClinGen SVI BA1 exception process)."
+                )
+                return CombineResult(
+                    classification="Uncertain Significance",
+                    trace=trace,
+                    pathogenic_points=None,
+                    benign_points=None,
+                    net_points=None,
+                    ba1_contradicted_by=strong_pathogenic,
+                )
+            trace.append("BA1 triggered (stand-alone benign) -> classification = Benign.")
+            if other_pathogenic:
+                listed = ", ".join(f"{code} ({triggered[code].strength})" for code in other_pathogenic)
+                trace.append(
+                    f"Pathogenic criteria also triggered but not counted, because BA1 is stand-alone: {listed}."
+                )
             return CombineResult(
                 classification="Benign", trace=trace, pathogenic_points=None, benign_points=None, net_points=None
             )

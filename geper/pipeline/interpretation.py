@@ -403,6 +403,10 @@ class InterpretationEngine:
             logger.exception("ACMG rule engine failed; falling back to legacy summary only.")
             acmg_evaluation = {"error": "ACMG rule engine failed; see logs.", "classification": None}
 
+        summary, confidence = self._reconcile_legacy_summary_with_ba1(
+            chrom, pos, ref, alt, summary, confidence, significance_score, bool(clinvar_records), acmg_evaluation
+        )
+
         legacy_result = {
             "summary": summary,
             "confidence": confidence,
@@ -1128,6 +1132,62 @@ class InterpretationEngine:
                 )
 
         return lines
+
+    @staticmethod
+    def _reconcile_legacy_summary_with_ba1(
+        chrom: object,
+        pos: object,
+        ref: object,
+        alt: object,
+        summary: str,
+        confidence: str,
+        score: float,
+        has_clinvar: bool,
+        acmg_evaluation: Dict[str, Any],
+    ) -> "tuple[str, str]":
+        """
+        Keep the rendered legacy "Summary"/"Confidence (legacy)" lines from
+        contradicting a BA1-decided ACMG classification (Priority 1
+        remediation).
+
+        The legacy score counts BA1 as one weight (-3.0) among others, so
+        pathogenic-leaning inputs (e.g. a ClinVar Pathogenic record plus an
+        AlphaMissense likely-pathogenic call) can outweigh it, and
+        `report_generator._render_interpretation` printed "shows some
+        evidence suggestive of clinical relevance" beside an ACMG
+        classification of Benign. That is two conclusions for one variant
+        in one report.
+
+        Applies ONLY when the ACMG engine actually ran and BA1 was
+        triggered. When the engine failed, the legacy summary is the
+        reader's only summary and is returned unchanged, so its fallback
+        role is untouched. Returns (summary, confidence).
+        """
+        if acmg_evaluation.get("classification") is None:
+            return summary, confidence
+        ba1 = (acmg_evaluation.get("all_criteria") or {}).get("BA1") or {}
+        if ba1.get("status") != "triggered":
+            return summary, confidence
+
+        variant_label = f"{chrom}:{pos} {ref}>{alt}"
+        if "ba1_contradicted_by_strong_pathogenic_evidence" in (acmg_evaluation.get("review_required_reasons") or []):
+            return (
+                f"{variant_label} meets BA1 (stand-alone benign population frequency) but also has strong "
+                f"pathogenic evidence. The ACMG/AMP classification is Uncertain Significance pending expert "
+                f"review; see the ACMG criteria and review-required reasons.",
+                "low",
+            )
+        # `_build_summary`'s two pathogenic-leaning buckets (score >= 1 with
+        # a ClinVar record). Other buckets already agree with a BA1 Benign
+        # call or are neutral ("uncertain"/"preliminary"), so they stay.
+        if has_clinvar and score >= 1:
+            return (
+                f"{variant_label} is classified Benign under ACMG/AMP because BA1 (stand-alone benign "
+                f"population frequency) was met. Other evidence sources lean toward clinical relevance and "
+                f"are not reflected in that classification; review the conflict before relying on it.",
+                "low",
+            )
+        return summary, confidence
 
     @staticmethod
     def _build_summary(

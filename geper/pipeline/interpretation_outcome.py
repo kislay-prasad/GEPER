@@ -202,6 +202,7 @@ def determine_interpretation_outcome(
     pathogenic_points: Optional[float],
     benign_points: Optional[float],
     classification: Optional[str],
+    ba1_contradicted: bool = False,
 ) -> InterpretationOutcome:
     """
     Pure function. No evidence is fabricated and no classification is
@@ -280,7 +281,7 @@ def determine_interpretation_outcome(
         benign_points=benign_points,
     )
     is_pathogenic_or_likely_pathogenic = classification in _REVIEW_REQUIRED_CLASSIFICATIONS
-    if base is _BaseOutcome.CONFLICTING or is_pathogenic_or_likely_pathogenic:
+    if base is _BaseOutcome.CONFLICTING or is_pathogenic_or_likely_pathogenic or ba1_contradicted:
         return InterpretationOutcome.REVIEW_REQUIRED
     if base is _BaseOutcome.INSUFFICIENT_EVIDENCE:
         return InterpretationOutcome.INSUFFICIENT_EVIDENCE
@@ -292,6 +293,7 @@ def determine_review_required_reasons(
     pathogenic_points: Optional[float],
     benign_points: Optional[float],
     classification: Optional[str],
+    ba1_contradicted: bool = False,
 ) -> List[str]:
     """
     THE ANSWER TO "if both need to be visible, say so" (round 2,
@@ -314,6 +316,12 @@ def determine_review_required_reasons(
     reasons: List[str] = []
     if _is_comparable_weight_conflict(pathogenic_points, benign_points):
         reasons.append("conflicting_evidence")
+    # BA1 (stand-alone benign) triggered alongside strong/very-strong
+    # pathogenic evidence -- see `ACMGRuleEngine._combine`'s BA1 branch.
+    # Not covered by the comparable-weight check above because BA1's
+    # path never runs the point tally (its points are None).
+    if ba1_contradicted:
+        reasons.append("ba1_contradicted_by_strong_pathogenic_evidence")
     if classification in _REVIEW_REQUIRED_CLASSIFICATIONS:
         reasons.append("classification_pathogenic_or_likely_pathogenic")
     return reasons

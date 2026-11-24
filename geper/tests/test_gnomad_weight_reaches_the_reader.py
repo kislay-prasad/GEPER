@@ -51,6 +51,7 @@ different claims.
 """
 
 import unittest
+from unittest import mock
 
 from config import CONFIG
 from pipeline.interpretation import InterpretationEngine
@@ -99,17 +100,30 @@ class TestTheGnomadWeightIsReaderVisible(unittest.TestCase):
         self.assertLess(_G.BS1_AF_THRESHOLD, _G.BA1_AF_THRESHOLD)
         self.engine = InterpretationEngine()
 
-    def _render(self, gnomad_result, significance="Pathogenic", alphamissense=None):
-        result = self.engine.interpret(
-            _VARIANT,
-            [],
-            _clinvar(significance),
-            {},
-            {},
-            {},
-            gnomad_result=gnomad_result,
-            alphamissense_result=alphamissense,
-        )
+    def _render(self, gnomad_result, significance="Pathogenic", alphamissense=None, acmg_engine_fails=False):
+        # `acmg_engine_fails` (BA1 remediation, Priority 1): when the ACMG
+        # engine runs and BA1 triggers, the rendered summary now defers to
+        # the BA1-decided classification instead of the legacy weight
+        # (`InterpretationEngine._reconcile_legacy_summary_with_ba1`). The
+        # BA1 WEIGHT still decides the reader's text on the fallback path
+        # (engine failed), so that is where its bracket is asserted.
+        def run():
+            return self.engine.interpret(
+                _VARIANT,
+                [],
+                _clinvar(significance),
+                {},
+                {},
+                {},
+                gnomad_result=gnomad_result,
+                alphamissense_result=alphamissense,
+            )
+
+        if acmg_engine_fails:
+            with mock.patch.object(self.engine._acmg_engine, "evaluate", side_effect=RuntimeError("test")):
+                result = run()
+        else:
+            result = run()
         return ReportGenerator._render_interpretation(result)
 
     @staticmethod
@@ -122,7 +136,7 @@ class TestTheGnomadWeightIsReaderVisible(unittest.TestCase):
     def test_each_gnomad_branch_renders_its_own_confidence_to_the_reader(self):
         for label, gnomad_result, significance, am, expected in _CASES:
             with self.subTest(case=label):
-                lines = self._render(gnomad_result, significance, am)
+                lines = self._render(gnomad_result, significance, am, acmg_engine_fails=gnomad_result is _BA1)
                 self.assertEqual(
                     self._line(lines, "**Confidence (legacy):**"),
                     f"**Confidence (legacy):** {expected}",
@@ -140,6 +154,16 @@ class TestTheGnomadWeightIsReaderVisible(unittest.TestCase):
         self.assertIn("uncertain clinical significance", summary)
         self.assertNotIn("suggestive of clinical relevance", summary)
         self.assertNotIn("consistent with pathogenicity", summary)
+
+    def test_when_the_acmg_engine_runs_a_ba1_variant_never_renders_pathogenic_leaning(self):
+        # Baseline 4 (ClinVar Pathogenic + AlphaMissense likely-pathogenic):
+        # the legacy weight alone gives "moderate"/"suggestive of clinical
+        # relevance" -- the harm described above -- beside an ACMG Benign.
+        lines = self._render(_BA1, "Pathogenic", _AM_LIKELY_PATHOGENIC)
+        self.assertEqual(self._line(lines, "**Confidence (legacy):**"), "**Confidence (legacy):** low")
+        summary = self._line(lines, "**Summary:**")
+        self.assertIn("classified Benign under ACMG/AMP because BA1", summary)
+        self.assertNotIn("suggestive of clinical relevance", summary)
 
     def test_dropping_gnomad_entirely_changes_the_rendered_lines(self):
         # Control: the differences above are gnomAD's doing and not a

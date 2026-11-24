@@ -82,7 +82,15 @@ from pipeline.variant_normalization import bare_spdi
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
-from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, parse_vcv_submitters, warn_if_placeholder_contact
+from utils.ncbi_eutils import (
+    ESEARCH_MAX_RECORDS,
+    ESUMMARY_BATCH_SIZE,
+    complete_esearch_idlist,
+    lenient_json_loads,
+    parse_retry_after,
+    parse_vcv_submitters,
+    warn_if_placeholder_contact,
+)
 from utils.service_health import HEALTH, is_transient_http_error
 
 logger = get_logger(__name__)
@@ -126,6 +134,26 @@ class ClinVarMatchStatus(str, enum.Enum):
             "into one answer, which is exactly the distinction this type exists to "
             "keep. Compare explicitly, e.g. `x is ClinVarMatchStatus.MATCHED`."
         )
+
+
+def self_build_offset(variation_loc: Any, build_name: str) -> Optional[int]:
+    """
+    GRCh38 start minus `build_name` start for ONE ClinVar record, read from
+    that record's own `variation_loc` list -- or None when either start is
+    missing or not an integer. Used only to place the record's GRCh38
+    `canonical_spdi` into the query's build for comparison.
+    """
+    starts: Dict[str, int] = {}
+    for loc in variation_loc or []:
+        if not isinstance(loc, dict):
+            continue
+        name = (loc.get("assembly_name") or "").strip()
+        start = str(loc.get("start") or "").strip()
+        if name in ("GRCh38", build_name) and start.isdigit() and name not in starts:
+            starts[name] = int(start)
+    if "GRCh38" not in starts or build_name not in starts:
+        return None
+    return starts["GRCh38"] - starts[build_name]
 
 
 class ClinVarClient:
@@ -318,7 +346,11 @@ class ClinVarClient:
             "db": self.db,
             "term": term,
             "retmode": "json",
-            "retmax": 10,
+            # Was 10, read without checking `count`: the +/-1 bp indel window
+            # at BRCA1 c.68_69del holds 20 records and the matching one
+            # (VCV000017662) was never fetched. Now the complete set is
+            # requested and verified -- see `complete_esearch_idlist`.
+            "retmax": ESEARCH_MAX_RECORDS,
             "tool": CONFIG.api.NCBI_TOOL_NAME,
             "email": CONFIG.api.NCBI_EMAIL,
         }
@@ -326,9 +358,19 @@ class ClinVarClient:
             params["api_key"] = CONFIG.api.NCBI_API_KEY
 
         payload = self._request_json(f"{self.base_url}/esearch.fcgi", params)
-        return payload.get("esearchresult", {}).get("idlist", [])
+        return complete_esearch_idlist(payload, source="ClinVarClient")
 
     def _esummary(self, uids: list, variant: Optional[Variant] = None, assembly: Optional[str] = None) -> list:
+        # Batched: `_esearch` can now return up to ESEARCH_MAX_RECORDS IDs,
+        # more than one GET request's `id=` list should carry.
+        records: List[Dict[str, Any]] = []
+        for start in range(0, len(uids), ESUMMARY_BATCH_SIZE):
+            records.extend(self._esummary_batch(uids[start : start + ESUMMARY_BATCH_SIZE], variant, assembly))
+        return records
+
+    def _esummary_batch(
+        self, uids: List[str], variant: Optional[Variant], assembly: Optional[str]
+    ) -> List[Dict[str, Any]]:
         params = {
             "db": self.db,
             "id": ",".join(uids),
@@ -494,6 +536,26 @@ class ClinVarClient:
                 cand_pos, cand_ref, cand_alt = bare_spdi(spdi_pos_1based, spdi_ref.upper(), spdi_alt.upper())
                 if (cand_pos, cand_ref, cand_alt) == (query_bare_pos, query_bare_ref, query_bare_alt):
                     return True
+                # GRCh37 queries (Priority 2 ClinVar remediation). ClinVar's
+                # canonical_spdi is on GRCh38 (e.g. NC_000017.11), so for a
+                # GRCh37 variant the comparison above is in the wrong frame,
+                # and the raw-allele fallback below only works for SNVs (an
+                # indel's SPDI and VCF anchoring differ). Live-confirmed: BRCA1
+                # c.68_69del VCV000017662 never matched GRCh37 17:41276044
+                # ACT>A. Translate the SPDI position into the query's build
+                # using THIS record's own GRCh38 and query-build
+                # `variation_loc` starts (the same locus in both builds, so
+                # their difference is the local offset), then compare bare
+                # forms as above. No external liftover; if either start is
+                # missing, nothing is translated and nothing new can match.
+                if build_name != "GRCh38":
+                    offset = self_build_offset(v.get("variation_loc"), build_name)
+                    if offset is not None:
+                        cand_pos, cand_ref, cand_alt = bare_spdi(
+                            spdi_pos_1based - offset, spdi_ref.upper(), spdi_alt.upper()
+                        )
+                        if (cand_pos, cand_ref, cand_alt) == (query_bare_pos, query_bare_ref, query_bare_alt):
+                            return True
 
             if spdi_ref.upper() != ref or spdi_alt.upper() != alt:
                 continue

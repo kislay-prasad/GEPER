@@ -235,6 +235,13 @@ class LIMSClassification(BaseModel):
     )
     triggered_criteria: List[LIMSAcmgCriterion] = []
     not_evaluated_criteria_count: Optional[int] = None
+    # Carried verbatim from the clinical report (BA1 remediation, Priority 1):
+    # "interpreted" | "insufficient_evidence" | "review_required" | None, and
+    # the reasons review_required fired (e.g.
+    # "ba1_contradicted_by_strong_pathogenic_evidence"). JSON export only --
+    # the CSV header is a fixed contract and is deliberately not changed here.
+    interpretation_outcome: Optional[str] = None
+    review_required_reasons: List[str] = []
 
 
 class LIMSConfidence(BaseModel):
@@ -523,6 +530,8 @@ def _classification(clinical: Dict[str, Any]) -> LIMSClassification:
             for c in (acmg.get("triggered_criteria") or [])
         ],
         not_evaluated_criteria_count=acmg.get("not_evaluated_count"),
+        interpretation_outcome=clinical.get("interpretation_outcome"),
+        review_required_reasons=list(clinical.get("review_required_reasons") or []),
     )
 
 

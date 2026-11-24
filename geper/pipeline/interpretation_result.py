@@ -78,6 +78,10 @@ class InterpretationResult:
     # one string is ever reported there. See
     # `pipeline/interpretation_outcome.py::determine_review_required_reasons`.
     review_required_reasons: List[str] = field(default_factory=list)
+    # Codes of the strong/very-strong pathogenic criteria that contradicted a
+    # triggered BA1 (PR #51 round 2, F3): the structured form of what the
+    # combining-rule trace says in prose. Empty unless BA1 was contradicted.
+    ba1_contradicted_by: List[str] = field(default_factory=list)
 
     # Aggregated evidence (deduplicated, sourced from the ACMG criteria
     # plus the legacy free-text evidence list -- nothing new is derived
@@ -199,6 +203,7 @@ class InterpretationResult:
             "acmg_benign_points": self.acmg_benign_points,
             "interpretation_outcome": self.interpretation_outcome,
             "review_required_reasons": self.review_required_reasons,
+            "ba1_contradicted_by": self.ba1_contradicted_by,
             "supporting_evidence": self.supporting_evidence,
             "conflicting_evidence": self.conflicting_evidence,
             "ai_consensus": self.ai_consensus,
@@ -624,6 +629,7 @@ def build_interpretation_result(
         acmg_benign_points=acmg.get("benign_points"),
         interpretation_outcome=acmg.get("interpretation_outcome"),
         review_required_reasons=acmg.get("review_required_reasons") or [],
+        ba1_contradicted_by=list(acmg.get("ba1_contradicted_by") or []),
         supporting_evidence=_dedupe(supporting_evidence),
         conflicting_evidence=_dedupe(conflicting_evidence),
         ai_consensus=ai_consensus,

@@ -583,9 +583,21 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
         f"not triggered, {n_not_evaluated} could not be evaluated{_not_evaluated_reason_clause(not_evaluated_rules)}."
     )
 
+    # PR #51 round 2 (F2): a BA1-contradicted variant is Uncertain Significance
+    # for a specific reason a reader must see up front, not only in the
+    # criteria trace -- otherwise it reads like a variant with no evidence.
+    contradiction_clause = ""
+    if "ba1_contradicted_by_strong_pathogenic_evidence" in (ir.get("review_required_reasons") or []):
+        codes = ", ".join(ir.get("ba1_contradicted_by") or []) or "strong pathogenic criteria"
+        contradiction_clause = (
+            f" BA1 (stand-alone benign allele frequency) is met, but strong pathogenic evidence ({codes}) also "
+            "applies; these contradict each other, so the variant is Uncertain Significance and expert review "
+            "is required."
+        )
+
     return (
         f"Variant {locus}{gene_clause} was classified as **{classification}**{conf_clause}."
-        f"{priority_clause}{evidence_clause}"
+        f"{contradiction_clause}{priority_clause}{evidence_clause}"
     )
 
 
@@ -640,7 +652,17 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
         "net_points": ir.get("acmg_net_points"),
         "pathogenic_points": ir.get("acmg_pathogenic_points"),
         "benign_points": ir.get("acmg_benign_points"),
-        "net_points_band": acmg_net_points_band_label(ir.get("acmg_classification")),
+        # No band when no point tally ran (BA1 path, including BA1 contradicted
+        # by strong pathogenic evidence -> Uncertain Significance): a band
+        # such as "0–5" beside a null net_points would imply a tally that
+        # never happened. Renderers already skip the band then; this keeps
+        # the structured field (JSON/LIMS consumers) consistent with them.
+        "net_points_band": (
+            acmg_net_points_band_label(ir.get("acmg_classification")) if ir.get("acmg_net_points") is not None else None
+        ),
+        # PR #51 round 2 (F3): which strong/very-strong pathogenic criteria
+        # contradicted a triggered BA1, as data. Empty unless contradicted.
+        "ba1_contradicted_by": list(ir.get("ba1_contradicted_by") or []),
     }
 
 
@@ -1936,6 +1958,16 @@ def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[D
         if (variant_result.get(stage_key) or {}).get("gene_resolution_status") == "ambiguous":
             flags.append("Ambiguous gene resolution")
             break
+
+    # BA1 remediation (Priority 1): BA1 (stand-alone benign) triggered
+    # alongside strong/very-strong pathogenic evidence -- classified
+    # Uncertain Significance pending expert review (see
+    # `pipeline/acmg_rules.py::ACMGRuleEngine._combine`). Kept as a specific
+    # flag, not a generic "review required" one, so this list stays narrow:
+    # a Pathogenic/Likely Pathogenic call also sets review_required, and
+    # flagging every one of those here would be the noise this list avoids.
+    if "ba1_contradicted_by_strong_pathogenic_evidence" in (clinical.get("review_required_reasons") or []):
+        flags.append("BA1 contradicted by strong pathogenic evidence (expert review required)")
 
     return flags
 

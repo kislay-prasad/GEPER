@@ -196,6 +196,7 @@ class ConflictResolutionEngine:
         interpro_result: Optional[Dict[str, Any]] = None,
         alphafold_result: Optional[Dict[str, Any]] = None,
         blast_result: Optional[Dict[str, Any]] = None,
+        ba1_contradicted_by: Sequence[str] = (),
     ) -> List[ConflictItem]:
         """
         Runs every detector and returns the raw item list, before any
@@ -218,9 +219,23 @@ class ConflictResolutionEngine:
         c = self._clinical_conflict(clinvar_result, clingen_result)
         if c:
             conflicts.append(c)
-        c = self._population_conflict(acmg_classification, clinvar_result, gnomad_result)
-        if c:
-            conflicts.append(c)
+        population = self._population_conflict(acmg_classification, clinvar_result, gnomad_result)
+        if population:
+            conflicts.append(population)
+        # PR #51 round 2 (F5): a triggered BA1 contradicted by strong
+        # pathogenic evidence. NOT added when `_population_conflict` already
+        # fired at Major: that item is raised only when the frequency is at or
+        # above the BA1 threshold, so it already represents the same
+        # population-frequency evidence, and scoring both would count one fact
+        # twice (the conflict score doubled, confidence fell further). The
+        # Major item keeps its own severity and the priority floor it already
+        # carries, and the BA1 contradiction itself stays in the ACMG result
+        # (`ba1_contradicted_by`, `review_required_reasons`) and the report.
+        # A Moderate population item is a DIFFERENT finding (frequency below
+        # the BA1 threshold, e.g. BA1 met on popmax only), so there both stay.
+        ba1_conflict = self._ba1_contradiction_conflict(ba1_contradicted_by)
+        if ba1_conflict and not (population is not None and population.severity == "Major"):
+            conflicts.append(ba1_conflict)
         c = self._ai_conflict(
             ai_consensus,
             confidence_conflict_penalty,
@@ -290,6 +305,7 @@ class ConflictResolutionEngine:
         interpro_result: Optional[Dict[str, Any]] = None,
         alphafold_result: Optional[Dict[str, Any]] = None,
         blast_result: Optional[Dict[str, Any]] = None,
+        ba1_contradicted_by: Sequence[str] = (),
     ) -> List[ConflictItem]:
         """
         The real-conflict list Phases 3 and 4 score against, computed
@@ -328,6 +344,7 @@ class ConflictResolutionEngine:
                 interpro_result=interpro_result,
                 alphafold_result=alphafold_result,
                 blast_result=blast_result,
+                ba1_contradicted_by=ba1_contradicted_by,
             )
         )
 
@@ -350,6 +367,7 @@ class ConflictResolutionEngine:
         interpro_result: Optional[Dict[str, Any]] = None,
         alphafold_result: Optional[Dict[str, Any]] = None,
         blast_result: Optional[Dict[str, Any]] = None,
+        ba1_contradicted_by: Sequence[str] = (),
     ) -> ConflictResolutionResult:
         cfg = CONFIG.conflict
         conflicts = self._detect_conflict_items(
@@ -369,6 +387,7 @@ class ConflictResolutionEngine:
             interpro_result=interpro_result,
             alphafold_result=alphafold_result,
             blast_result=blast_result,
+            ba1_contradicted_by=ba1_contradicted_by,
         )
         real_conflicts = self._real_conflicts(conflicts)
 
@@ -706,6 +725,67 @@ class ConflictResolutionEngine:
             resolution_rationale="Population frequency this common is difficult to reconcile with a highly penetrant pathogenic variant for most Mendelian disorders; gnomAD's frequency estimate is direct, large-scale population data.",
             confidence_impact="Not currently counted in the confidence engine's numeric conflict penalty; Population Evidence quality in confidence_breakdown reflects the frequency value itself, not this cross-category comparison.",
             priority_impact="Partially reflected: the Population Rarity priority factor already scores this variant low on rarity grounds, which pulls priority_score down independent of this conflict check.",
+        )
+
+    @staticmethod
+    def _ba1_contradiction_conflict(ba1_contradicted_by: Sequence[str]) -> Optional[ConflictItem]:
+        """
+        PR #51 round 2 (F5): a triggered BA1 (stand-alone benign allele
+        frequency) alongside strong/very-strong pathogenic criteria.
+
+        `_population_conflict` cannot see this: it fires on a
+        pathogenic-leaning CLASSIFICATION or a pathogenic ClinVar record,
+        and a BA1-contradicted variant is classified Uncertain Significance
+        by design (`ACMGRuleEngine._combine`). Without this item the one
+        pairing of evidence that most needs a reviewer carried no conflict
+        at all.
+
+        Severity is "Major". That reuses machinery already in place and adds
+        no new threshold or policy: a Major conflict is counted like any
+        other real conflict in the confidence and priority penalties, and
+        `prioritization_engine.floor_category_for_conflict_severity` already
+        floors the priority category of a Major-conflict finding at High (so
+        the finding is not buried by its own penalty). The classification
+        itself is set by the ACMG engine, not here.
+
+        `_detect_conflict_items` does not add this item when
+        `_population_conflict` already fired at Major, because that item
+        represents the same at-or-above-BA1-frequency evidence (one fact must
+        not be scored twice); this detector itself stays unconditional.
+        """
+        codes = [str(code) for code in (ba1_contradicted_by or []) if code]
+        if not codes:
+            return None
+        gcfg = CONFIG.gnomad
+        return ConflictItem(
+            conflict_type="BA1 stand-alone benign frequency contradicted by strong pathogenic evidence",
+            category="Population",
+            evidence_a={
+                "source": "gnomAD",
+                "statement": (
+                    f"Allele frequency at or above the BA1 stand-alone-benign threshold ({gcfg.BA1_AF_THRESHOLD:.2e})."
+                ),
+            },
+            evidence_b={
+                "source": "GEPER ACMG engine",
+                "statement": f"Strong/very-strong pathogenic criteria also triggered: {', '.join(codes)}.",
+            },
+            severity="Major",
+            resolution=(
+                "The ACMG engine classified this variant Uncertain Significance because benign and pathogenic "
+                "criteria are contradictory (ACMG/AMP 2015, Table 5 footnote), and marked it review_required. "
+                "This engine does not change that classification; an expert should decide whether the pathogenic "
+                "evidence outweighs the population frequency (for example a ClinGen BA1 exception-list variant)."
+            ),
+            resolution_rationale=(
+                "A variant at or above the BA1 frequency is, by definition, too common for most rare Mendelian "
+                "disorders, yet strong pathogenic evidence also applies; neither can be set aside automatically."
+            ),
+            confidence_impact="Counted as one real conflict in the confidence engine's conflict penalty.",
+            priority_impact=(
+                "Counted as one real conflict in the prioritization penalty; a Major conflict also floors the "
+                "review-priority category at High (see `floor_category_for_conflict_severity`)."
+            ),
         )
 
     @staticmethod

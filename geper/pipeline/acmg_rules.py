@@ -698,6 +698,13 @@ class CombineResult:
     pathogenic_points: Optional[float]
     benign_points: Optional[float]
     net_points: Optional[float]
+    # BA1 / strong-pathogenic contradiction (Priority 1 remediation): the
+    # codes of the strong or very-strong pathogenic criteria that were
+    # triggered alongside BA1. Empty unless that contradiction occurred.
+    # When non-empty, `classification` is "Uncertain Significance" and
+    # `evaluate()` escalates the variant to review_required -- see
+    # `_combine`'s BA1 branch for the guidance this follows.
+    ba1_contradicted_by: List[str] = field(default_factory=list)
 
 
 def _functional_evidence_not_evaluated_reason(functional_evidence_result: Optional[Dict[str, Any]]) -> str:
@@ -1041,6 +1048,11 @@ class ACMGRuleEngine:
             pathogenic_points=combine_result.pathogenic_points,
             benign_points=combine_result.benign_points,
             classification=combine_result.classification,
+            ba1_contradicted=bool(combine_result.ba1_contradicted_by),
+            # False on the BA1 stand-alone path (net_points is None there):
+            # no point tally ran because a stand-alone criterion decided,
+            # which is NOT "no evidence" -- see `_base_outcome`.
+            point_tally_ran=combine_result.net_points is not None,
         )
         # Human ruling, 2026-09-09/10 (round 2): the answer to "if both
         # [review_required triggers] need to be visible, say so" -- see
@@ -1050,6 +1062,7 @@ class ACMGRuleEngine:
             pathogenic_points=combine_result.pathogenic_points,
             benign_points=combine_result.benign_points,
             classification=combine_result.classification,
+            ba1_contradicted=bool(combine_result.ba1_contradicted_by),
         )
 
         return {
@@ -1066,6 +1079,11 @@ class ACMGRuleEngine:
             "pathogenic_points": combine_result.pathogenic_points,
             "benign_points": combine_result.benign_points,
             "net_points": combine_result.net_points,
+            # PR #51 round 2 (F3): the strong/very-strong pathogenic criteria
+            # that contradicted a triggered BA1, as data (the same codes the
+            # trace names in prose). Always a list; empty when BA1 was not
+            # contradicted.
+            "ba1_contradicted_by": list(combine_result.ba1_contradicted_by),
             "clinvar_crossreference": clinvar_note,
             "triggered_criteria": triggered,
             "not_triggered_criteria": not_triggered,
@@ -1186,6 +1204,56 @@ class ACMGRuleEngine:
         return transcript, (int(pos) if pos is not None else None), ref, alt, query
 
     @staticmethod
+    def _ps1_pm5_lookup_gap(
+        result: CriterionResult, query: Any, clinvar_codon_result: Optional[Dict[str, Any]]
+    ) -> CriterionResult:
+        """
+        Priority 2 ClinVar remediation: PS1/PM5 must not draw a NEGATIVE
+        conclusion from a ClinVar codon lookup that failed or was incomplete.
+
+        - A triggered result is returned unchanged: a qualifying record that
+          WAS retrieved is real evidence even if another position failed.
+        - Only a missense substitution reaches the ClinVar comparison; any
+          other variant class is "not applicable" regardless of the lookup,
+          so it is returned unchanged.
+        - Otherwise, a failed lookup (`error`) or a partial one
+          (`incomplete`) makes the criterion not_evaluated, with a rationale
+          that says the lookup failed -- previously a total failure read
+          "no ClinVar record ... was found at codon N" (as if searched and
+          empty), and a partial failure could conclude not_triggered.
+        """
+        if result.status == "triggered" or not clinvar_codon_result or clinvar_codon_result.get("skipped"):
+            return result
+        if query is None or getattr(query, "category", None) != "missense":
+            return result
+        error = clinvar_codon_result.get("error")
+        if error is not None:
+            reason = f"the ClinVar codon lookup failed ({error or 'no detail returned'})"
+        elif clinvar_codon_result.get("incomplete"):
+            reason = (
+                "the ClinVar codon lookup was incomplete -- some codon positions could not be queried "
+                f"({clinvar_codon_result.get('incomplete_reason') or 'no detail returned'})"
+            )
+        else:
+            return result
+        return CriterionResult(
+            result.code,
+            result.direction,
+            result.strength,
+            "not_evaluated",
+            (
+                f"{result.code} was not evaluated: {reason}, so the absence of a qualifying ClinVar record at "
+                "this codon cannot be concluded."
+            ),
+            supporting_evidence=list(result.supporting_evidence),
+            conflicting_evidence=list(result.conflicting_evidence),
+            evidence_sources=list(result.evidence_sources),
+            confidence="Low",
+            category=NotEvaluatedReason.DATA_UNAVAILABLE.value,
+            details=result.details,
+        )
+
+    @staticmethod
     def _ps1_pm5_result(evaluation: PS1PM5Evaluation, direction: str, nominal_strength: str) -> CriterionResult:
         """
         Adapt a `pipeline/ps1_pm5/models.py::PS1PM5Evaluation` into this
@@ -1243,7 +1311,9 @@ class ACMGRuleEngine:
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
         ).evaluate_ps1(query, matches, transcript, pos, ref, alt)
-        return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
+        return ACMGRuleEngine._ps1_pm5_lookup_gap(
+            ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
+        )
 
     @staticmethod
     def _pm5(
@@ -1272,7 +1342,9 @@ class ACMGRuleEngine:
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
         ).evaluate_pm5(query, matches, transcript, pos, ref, alt)
-        return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
+        return ACMGRuleEngine._ps1_pm5_lookup_gap(
+            ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
+        )
 
     @staticmethod
     def _pm1(interpro_result: Optional[Dict[str, Any]], is_synonymous: Optional[bool] = None) -> CriterionResult:
@@ -3749,13 +3821,59 @@ class ACMGRuleEngine:
         triggered = {code: c for code, c in criteria.items() if c.status == "triggered"}
 
         if "BA1" in triggered:
-            trace.append("BA1 triggered (stand-alone benign) -> classification = Benign.")
             # BA1 short-circuits the whole point system -- no tally was
             # computed on this path, so `pathogenic_points`/
             # `benign_points`/`net_points` are honestly `None` here
             # (report review round 10), not a fabricated 0: "the point
             # system wasn't consulted" is a different claim from "the
             # point system was consulted and totalled zero."
+            #
+            # BA1 is stand-alone benign evidence (Richards et al. 2015,
+            # Table 4) and sits outside the Bayesian point model (Tavtigian
+            # et al. 2018), so it is not netted against pathogenic points.
+            # But it must not silently discard STRONG pathogenic evidence
+            # either. Richards et al. 2015, Table 5 footnote: "Variants
+            # should be classified as Uncertain Significance if other
+            # criteria are unmet or the criteria for benign and pathogenic
+            # are contradictory." ClinGen SVI (Ghosh et al. 2018) keeps BA1
+            # stand-alone but recognises high-frequency variants with
+            # credible pathogenic evidence (its BA1 exception list), which
+            # need expert review rather than an automatic Benign call.
+            # Policy implemented here (a clinical decision, recorded for
+            # sign-off): BA1 together with any triggered strong or
+            # very-strong pathogenic criterion -> Uncertain Significance
+            # and review_required. BA1 with only moderate/supporting
+            # pathogenic evidence stays Benign (stand-alone), but those
+            # criteria are named in the trace rather than dropped unseen.
+            other_pathogenic = sorted(
+                code for code, c in triggered.items() if code != "BA1" and c.direction == "pathogenic"
+            )
+            strong_pathogenic = [
+                code for code in other_pathogenic if triggered[code].strength in ("very_strong", "strong")
+            ]
+            if strong_pathogenic:
+                listed = ", ".join(f"{code} ({triggered[code].strength})" for code in strong_pathogenic)
+                trace.append(
+                    f"BA1 triggered (stand-alone benign) but contradicted by strong pathogenic evidence: {listed}."
+                )
+                trace.append(
+                    "Benign and pathogenic criteria are contradictory -> classification = Uncertain Significance; "
+                    "expert review required (ACMG/AMP 2015 Table 5; ClinGen SVI BA1 exception process)."
+                )
+                return CombineResult(
+                    classification="Uncertain Significance",
+                    trace=trace,
+                    pathogenic_points=None,
+                    benign_points=None,
+                    net_points=None,
+                    ba1_contradicted_by=strong_pathogenic,
+                )
+            trace.append("BA1 triggered (stand-alone benign) -> classification = Benign.")
+            if other_pathogenic:
+                listed = ", ".join(f"{code} ({triggered[code].strength})" for code in other_pathogenic)
+                trace.append(
+                    f"Pathogenic criteria also triggered but not counted, because BA1 is stand-alone: {listed}."
+                )
             return CombineResult(
                 classification="Benign", trace=trace, pathogenic_points=None, benign_points=None, net_points=None
             )

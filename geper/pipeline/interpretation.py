@@ -487,6 +487,7 @@ class InterpretationEngine:
                     interpro_result=interpro_result,
                     alphafold_result=alphafold_result,
                     blast_result=blast_result,
+                    ba1_contradicted_by=result_obj.ba1_contradicted_by,
                 )
             except Exception:
                 # NOT `real_conflicts = []`. That was this block's first
@@ -674,6 +675,7 @@ class InterpretationEngine:
                     interpro_result=interpro_result,
                     alphafold_result=alphafold_result,
                     blast_result=blast_result,
+                    ba1_contradicted_by=result_obj.ba1_contradicted_by,
                 )
                 result_obj.conflict_summary = conflict_result.conflict_summary
                 result_obj.conflict_list = [c.to_dict() for c in conflict_result.conflict_list]

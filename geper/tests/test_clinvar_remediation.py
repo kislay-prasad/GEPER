@@ -314,5 +314,126 @@ class TestPs1Pm5NeverConcludesAbsenceFromAFailedLookup(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# PR #51 round 2 (F6, F7)
+# ---------------------------------------------------------------------------
+
+
+class TestF6NcbiErrorPayloadsAreFailuresNotEmptyResults(unittest.TestCase):
+    # NCBI reports some failures as a normal JSON body. Each of these has no
+    # `count` and an empty/absent `idlist`, and used to read as "not found".
+    _ERROR_BODIES = {
+        "rate-limit body (top-level error)": {"error": "API rate limit exceeded", "api-key": "x", "count": "1"},
+        "invalid query (esearchresult.ERROR)": {"esearchresult": {"ERROR": "Invalid query"}},
+        "top-level ERROR": {"ERROR": "service unavailable"},
+        "no result set": {},
+        "result set is not an object": {"esearchresult": "oops"},
+        "payload is not an object": ["unexpected"],
+        "payload is None": None,
+    }
+
+    def test_each_error_body_raises(self):
+        for label, payload in self._ERROR_BODIES.items():
+            with self.subTest(body=label):
+                with self.assertRaises(ExternalAPIError):
+                    complete_esearch_idlist(payload, source="t")
+
+    def test_messages_carry_no_query_text_or_url(self):
+        for label, payload in self._ERROR_BODIES.items():
+            with self.subTest(body=label):
+                try:
+                    complete_esearch_idlist(payload, source="ClinVarClient")
+                except ExternalAPIError as exc:
+                    message = str(exc).lower()
+                    self.assertNotIn("http", message)
+                    self.assertNotIn("invalid query", message)
+                    self.assertNotIn("rate limit exceeded", message)
+
+    def test_a_genuine_zero_hit_search_is_still_not_found(self):
+        # NCBI sends errorlist.phrasesnotfound with count "0" for a term that
+        # simply matches nothing. That is a real "not found", not a failure.
+        zero = {"esearchresult": {"count": "0", "idlist": [], "errorlist": {"phrasesnotfound": ["1[chrpos38]"]}}}
+        self.assertEqual(complete_esearch_idlist(zero, source="t"), [])
+        warned = {"esearchresult": {"count": "0", "idlist": [], "warninglist": {"outputmessages": ["x"]}}}
+        self.assertEqual(complete_esearch_idlist(warned, source="t"), [])
+
+    def test_valid_shapes_are_unchanged(self):
+        self.assertEqual(complete_esearch_idlist({"esearchresult": {"idlist": ["1", "2"]}}, source="t"), ["1", "2"])
+        self.assertEqual(
+            complete_esearch_idlist({"esearchresult": {"count": "2", "idlist": ["1", "2"]}}, source="t"), ["1", "2"]
+        )
+        with self.assertRaises(ExternalAPIError):  # truncation still detected
+            complete_esearch_idlist({"esearchresult": {"count": "5", "idlist": ["1"]}}, source="t")
+
+    def test_clinvar_client_reports_a_failed_lookup_not_not_found(self):
+        client = ClinVarClient()
+        with mock.patch.object(client, "_request_json", return_value={"error": "API rate limit exceeded"}):
+            with self.assertRaises(ExternalAPIError):
+                client.query_variant(_variant(43124027, "ACT", "A"), assembly="GRCh38")
+
+    def test_codon_lookup_surfaces_the_error_instead_of_an_empty_result(self):
+        lookup = ClinVarCodonLookup.__new__(ClinVarCodonLookup)
+        lookup.cache = None
+        with mock.patch.object(lookup, "_request_json", return_value={"esearchresult": {"ERROR": "Invalid query"}}):
+            result = lookup.query_codon(_Transcript(), 175, "GRCh38")
+        self.assertIsNotNone(result["error"])
+        self.assertFalse(result["found"])
+
+
+class _RecordingCache:
+    def __init__(self):
+        self.puts = []
+
+    def get(self, key):
+        return None
+
+    def put(self, key, value):
+        self.puts.append((key, value))
+
+
+class TestF7IncompleteCodonLookupsAreNotCached(unittest.TestCase):
+    def _run(self, side_effects):
+        lookup = ClinVarCodonLookup.__new__(ClinVarCodonLookup)
+        lookup.cache = _RecordingCache()
+        calls = iter(side_effects)
+
+        def esearch(term):
+            effect = next(calls)
+            if isinstance(effect, Exception):
+                raise effect
+            return effect
+
+        with (
+            mock.patch.object(lookup, "_esearch", side_effect=esearch),
+            mock.patch.object(lookup, "_esummary", return_value=[mock.Mock(uid="1", to_dict=lambda: {"uid": "1"})]),
+            mock.patch.object(lookup, "_fetch_submitters", return_value={}),
+            mock.patch("pipeline.ps1_pm5.lookup.dedupe_by_uid", side_effect=lambda m: m),
+            mock.patch("pipeline.ps1_pm5.lookup.dataclasses.replace", side_effect=lambda m, **k: m),
+        ):
+            result = lookup.query_codon(_Transcript(), 175, "GRCh38")
+        return result, lookup.cache.puts
+
+    def test_a_complete_result_is_cached(self):
+        result, puts = self._run([["1"], [], []])
+        self.assertFalse(result["incomplete"])
+        self.assertEqual(len(puts), 1)
+
+    def test_an_incomplete_result_is_returned_but_not_cached(self):
+        result, puts = self._run([["1"], ExternalAPIError("incomplete search"), []])
+        self.assertTrue(result["incomplete"])
+        self.assertEqual(puts, [], "an incomplete lookup must not be cached, or PS1/PM5 stay degraded for the TTL")
+
+    def test_a_total_failure_is_still_not_cached(self):
+        result, puts = self._run([ExternalAPIError("down")] * 3)
+        self.assertIsNotNone(result["error"])
+        self.assertEqual(puts, [])
+
+    def test_a_recovered_lookup_replaces_the_incomplete_one(self):
+        # First call incomplete (not cached); the retry is complete and IS cached.
+        _, first = self._run([["1"], ExternalAPIError("blip"), []])
+        _, second = self._run([["1"], [], []])
+        self.assertEqual((len(first), len(second)), (0, 1))
+
+
 if __name__ == "__main__":
     unittest.main()

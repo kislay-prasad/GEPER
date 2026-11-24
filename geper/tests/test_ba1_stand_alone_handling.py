@@ -38,6 +38,7 @@ from unittest import mock
 
 from config import CONFIG
 from pipeline.acmg_rules import ACMGRuleEngine, CombineResult, CriterionResult
+from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.interpretation import InterpretationEngine
 from pipeline.interpretation_outcome import (
     InterpretationOutcome,
@@ -395,6 +396,403 @@ class TestBa1ReviewSignalReachesEveryOutput(unittest.TestCase):
                 )
                 self.assertEqual(lims.interpretation_outcome, outcome)
                 self.assertEqual(lims.review_required_reasons, reasons)
+
+
+# ---------------------------------------------------------------------------
+# PR #51 round 2 (F1-F5). These run the REAL path -- real `_ba1_bs1`, real
+# `_combine`, real `evaluate()` / `interpret()` -- forcing only `_pvs1`
+# (building a genuine PVS1 needs transcript structure). The round-1 tests above
+# mock `_combine`, which is why they could not see these.
+# ---------------------------------------------------------------------------
+
+_GENE_RESOLVED = {"gene_resolution_status": "resolved"}
+
+
+def _pvs1(strength):
+    return CriterionResult("PVS1", "pathogenic", strength, "triggered", "forced for the test")
+
+
+def _evaluate(gnomad_result=_GNOMAD_BA1, pvs1=None, extra=None):
+    """The real `ACMGRuleEngine.evaluate()`; only `_pvs1` is forced when given."""
+    patches = []
+    if pvs1 is not None:
+        patches.append(mock.patch.object(ACMGRuleEngine, "_pvs1", return_value=pvs1))
+    for patch in patches:
+        patch.start()
+    try:
+        return ACMGRuleEngine().evaluate(
+            clinvar_result={}, dbsnp_result={}, protein_result={}, gnomad_result=gnomad_result, **(extra or {})
+        )
+    finally:
+        for patch in patches:
+            patch.stop()
+
+
+def _interpret(pvs1, gnomad_result=_GNOMAD_BA1, clinvar_result=None):
+    with mock.patch.object(ACMGRuleEngine, "_pvs1", return_value=pvs1):
+        return InterpretationEngine().interpret(
+            _VARIANT, [], clinvar_result or {}, {}, {}, {}, gnomad_result=gnomad_result, clingen_result=_GENE_RESOLVED
+        )["interpretation_result"]
+
+
+class TestF1Ba1BenignIsNotReportedAsInsufficientEvidence(unittest.TestCase):
+    _KW = dict(gene_resolved=True, evidence_queries_completed=True, pathogenic_points=None, benign_points=None)
+
+    def test_the_stand_alone_path_is_interpreted(self):
+        outcome = determine_interpretation_outcome(classification="Benign", point_tally_ran=False, **self._KW)
+        self.assertIs(outcome, InterpretationOutcome.INTERPRETED)
+
+    def test_default_behaviour_is_unchanged_for_existing_callers(self):
+        # No tally flag + zero evidence is still insufficient_evidence.
+        zero = dict(self._KW, pathogenic_points=0.0, benign_points=0.0)
+        self.assertIs(
+            determine_interpretation_outcome(classification="Uncertain Significance", **zero),
+            InterpretationOutcome.INSUFFICIENT_EVIDENCE,
+        )
+        self.assertIs(
+            determine_interpretation_outcome(classification="Benign", **self._KW),
+            InterpretationOutcome.INSUFFICIENT_EVIDENCE,
+        )
+
+    def test_real_path_ba1_benign_is_interpreted(self):
+        out = _evaluate(extra={"clingen_result": _GENE_RESOLVED})
+        self.assertEqual(out["classification"], "Benign")
+        self.assertEqual(out["interpretation_outcome"], InterpretationOutcome.INTERPRETED.value)
+        self.assertEqual(out["review_required_reasons"], [])
+
+    def test_a_genuine_no_evidence_variant_is_still_insufficient(self):
+        out = _evaluate(gnomad_result=None, extra={"clingen_result": _GENE_RESOLVED})
+        self.assertEqual(out["interpretation_outcome"], InterpretationOutcome.INSUFFICIENT_EVIDENCE.value)
+
+    def test_lims_json_no_longer_exports_the_contradiction(self):
+        from pipeline.interpretation_result import build_interpretation_result
+        from report.clinical_report_builder import build_clinical_report
+        from report.export_lims import _classification
+
+        interp = InterpretationEngine().interpret(
+            _VARIANT, [], {}, {}, {}, {}, gnomad_result=_GNOMAD_BA1, clingen_result=_GENE_RESOLVED
+        )
+        ir = build_interpretation_result(variant_dict=_VARIANT, interpretation=interp, gnomad_result=_GNOMAD_BA1)
+        lims = _classification(build_clinical_report(ir.to_dict(), variant_dict=_VARIANT))
+        self.assertEqual(lims.acmg_classification, "Benign")
+        self.assertEqual(lims.interpretation_outcome, "interpreted")
+
+
+class TestF3Ba1ContradictedByIsStructuredData(unittest.TestCase):
+    def test_evaluate_exposes_the_contradicting_codes(self):
+        out = _evaluate(pvs1=_pvs1("very_strong"))
+        self.assertEqual(out["ba1_contradicted_by"], ["PVS1"])
+
+    def test_empty_list_when_not_contradicted(self):
+        self.assertEqual(_evaluate()["ba1_contradicted_by"], [])
+        self.assertEqual(_evaluate(pvs1=_pvs1("supporting"))["ba1_contradicted_by"], [])
+
+    def test_carried_to_the_interpretation_result_and_clinical_report(self):
+        from pipeline.interpretation_result import build_interpretation_result
+        from report.clinical_report_builder import build_clinical_report
+
+        with mock.patch.object(ACMGRuleEngine, "_pvs1", return_value=_pvs1("very_strong")):
+            interp = InterpretationEngine().interpret(
+                _VARIANT, [], {}, {}, {}, {}, gnomad_result=_GNOMAD_BA1, clingen_result=_GENE_RESOLVED
+            )
+        ir = build_interpretation_result(variant_dict=_VARIANT, interpretation=interp, gnomad_result=_GNOMAD_BA1)
+        self.assertEqual(ir.ba1_contradicted_by, ["PVS1"])
+        self.assertEqual(ir.to_dict()["ba1_contradicted_by"], ["PVS1"])
+        clinical = build_clinical_report(ir.to_dict(), variant_dict=_VARIANT)
+        self.assertEqual(clinical["acmg_classification"]["ba1_contradicted_by"], ["PVS1"])
+
+    def test_default_for_old_results_without_the_key(self):
+        from report.clinical_report_builder import _acmg_section
+
+        self.assertEqual(_acmg_section({"acmg_classification": "Benign"})["ba1_contradicted_by"], [])
+
+
+class TestF4RealPathThroughEvaluate(unittest.TestCase):
+    def test_strength_follows_the_effective_pvs1_strength(self):
+        # PVS1 can be downgraded (ClinGen SVI); the policy uses the strength
+        # the criterion actually carries, exactly like the point tally does.
+        cases = {
+            "very_strong": ("Uncertain Significance", True),
+            "strong": ("Uncertain Significance", True),
+            "moderate": ("Benign", False),
+            "supporting": ("Benign", False),
+        }
+        for strength, (classification, contradicted) in cases.items():
+            with self.subTest(pvs1_strength=strength):
+                out = _evaluate(pvs1=_pvs1(strength))
+                self.assertEqual(out["classification"], classification)
+                self.assertEqual(bool(out["ba1_contradicted_by"]), contradicted)
+                self.assertEqual(_BA1_REASON in out["review_required_reasons"], contradicted)
+                self.assertIn("PVS1", " ".join(out["combining_rule_trace"]))
+
+    def test_a_forced_strong_ps1_contradicts_like_pvs1(self):
+        ps1 = CriterionResult("PS1", "pathogenic", "strong", "triggered", "forced for the test")
+        with mock.patch.object(ACMGRuleEngine, "_ps1", return_value=ps1):
+            out = _evaluate()
+        self.assertEqual(out["classification"], "Uncertain Significance")
+        self.assertEqual(out["ba1_contradicted_by"], ["PS1"])
+
+    def test_a_failed_or_missing_gnomad_lookup_never_counts_as_benign(self):
+        # BA1 is not_evaluated, so strong pathogenic evidence decides alone
+        # (PVS1 = 8 points = Likely Pathogenic) -- never Benign, never a
+        # "contradiction" with a criterion that did not trigger.
+        for label, gnomad in (("error", {"skipped": False, "found": False, "error": "timeout"}), ("none", None)):
+            with self.subTest(gnomad=label):
+                out = _evaluate(gnomad_result=gnomad, pvs1=_pvs1("very_strong"))
+                self.assertNotEqual(out["classification"], "Benign")
+                self.assertEqual(out["ba1_contradicted_by"], [])
+
+    def test_below_the_threshold_is_not_a_contradiction(self):
+        below = dict(_GNOMAD_BA1, global_af=_G.BA1_AF_THRESHOLD * 0.5)
+        out = _evaluate(gnomad_result=below, pvs1=_pvs1("very_strong"))
+        self.assertEqual(out["ba1_contradicted_by"], [])
+        self.assertNotEqual(out["classification"], "Benign")
+
+
+class TestF2ExecutiveSummaryExplainsTheContradiction(unittest.TestCase):
+    def test_summary_names_ba1_the_codes_and_expert_review(self):
+        from report.clinical_report_builder import _executive_summary
+
+        text = _executive_summary(
+            {
+                "variant": _VARIANT,
+                "acmg_classification": "Uncertain Significance",
+                "review_required_reasons": [_BA1_REASON],
+                "ba1_contradicted_by": ["PVS1", "PS3"],
+            }
+        )
+        self.assertIn("BA1", text)
+        self.assertIn("PVS1, PS3", text)
+        self.assertIn("expert review is required", text)
+
+    def test_summary_is_unchanged_without_the_reason(self):
+        from report.clinical_report_builder import _executive_summary
+
+        for reasons in ([], ["classification_pathogenic_or_likely_pathogenic"]):
+            with self.subTest(reasons=reasons):
+                text = _executive_summary(
+                    {"variant": _VARIANT, "acmg_classification": "Pathogenic", "review_required_reasons": reasons}
+                )
+                self.assertNotIn("BA1", text)
+
+    def test_real_flow_summary_mentions_the_contradiction(self):
+        from pipeline.interpretation_result import build_interpretation_result
+        from report.clinical_report_builder import build_clinical_report
+
+        with mock.patch.object(ACMGRuleEngine, "_pvs1", return_value=_pvs1("very_strong")):
+            interp = InterpretationEngine().interpret(
+                _VARIANT, [], {}, {}, {}, {}, gnomad_result=_GNOMAD_BA1, clingen_result=_GENE_RESOLVED
+            )
+        ir = build_interpretation_result(variant_dict=_VARIANT, interpretation=interp, gnomad_result=_GNOMAD_BA1)
+        summary = build_clinical_report(ir.to_dict(), variant_dict=_VARIANT)["executive_summary"]
+        self.assertIn("BA1", summary)
+        self.assertIn("PVS1", summary)
+
+
+class TestF5ConflictResolutionAndPrioritization(unittest.TestCase):
+    _DETECT = dict(
+        acmg_classification="Uncertain Significance",
+        acmg_conflicting_evidence=[],
+        ai_consensus=[],
+        confidence_conflict_penalty=0.0,
+        confidence_conflict_explanation="",
+        priority_conflict_penalty=0.0,
+        priority_conflict_explanation="",
+    )
+
+    def test_detector_returns_a_major_population_item(self):
+        item = ConflictResolutionEngine._ba1_contradiction_conflict(["PVS1", "PS3"])
+        self.assertIsNotNone(item)
+        self.assertEqual(item.severity, "Major")
+        self.assertEqual(item.category, "Population")
+        self.assertIn("PVS1, PS3", item.evidence_b["statement"])
+
+    def test_detector_is_silent_without_a_contradiction(self):
+        for empty in ([], (), None, [""]):
+            with self.subTest(value=empty):
+                self.assertIsNone(ConflictResolutionEngine._ba1_contradiction_conflict(empty))
+
+    def test_detect_and_scoring_agree_and_default_is_unchanged(self):
+        engine = ConflictResolutionEngine()
+        plain = engine.detect(**self._DETECT)
+        self.assertEqual(plain.conflict_severity, "None")  # existing callers: no new item
+        with_ba1 = engine.detect(ba1_contradicted_by=["PVS1"], **self._DETECT)
+        self.assertEqual(with_ba1.conflict_severity, "Major")
+        self.assertGreater(with_ba1.conflict_score, 0.0)
+        scoring = engine.real_conflicts_for_scoring(
+            **{k: v for k, v in self._DETECT.items() if "penalty" not in k and "explanation" not in k},
+            ba1_contradicted_by=["PVS1"],
+        )
+        self.assertEqual([c.severity for c in scoring], ["Major"])
+
+    def test_real_flow_records_the_conflict_and_floors_priority_at_high(self):
+        ir = _interpret(_pvs1("very_strong"))
+        self.assertEqual(ir["acmg_classification"], "Uncertain Significance")
+        self.assertEqual(ir["conflict_severity"], "Major")
+        types = [c["conflict_type"] for c in ir["conflict_list"]]
+        self.assertTrue(any(t.startswith("BA1 stand-alone benign frequency") for t in types), types)
+        self.assertEqual(ir["priority_category"], "High")
+        self.assertTrue(
+            any("floored at High" in line for line in ir["priority_explanation"]), ir["priority_explanation"]
+        )
+
+    def test_real_flow_without_a_contradiction_is_unchanged(self):
+        ir = _interpret(_pvs1("supporting"))  # BA1 stays Benign; PVS1 only named in the trace
+        self.assertEqual(ir["acmg_classification"], "Benign")
+        self.assertEqual(ir["conflict_severity"], "None")
+        self.assertFalse(
+            any(c["conflict_type"].startswith("BA1 stand-alone") for c in ir["conflict_list"]), ir["conflict_list"]
+        )
+
+    def test_reviewer_flag_reports_the_major_conflict(self):
+        from report.clinical_report_builder import _variant_reviewer_flags
+
+        flags = _variant_reviewer_flags(
+            {}, {"conflict_resolution": {"severity": "Major"}, "review_required_reasons": []}
+        )
+        self.assertIn("Conflicting evidence (Major)", flags)
+
+
+_POP_CONFLICT_PREFIX = "Population rarity inconsistent"
+_BA1_CONFLICT_PREFIX = "BA1 stand-alone benign frequency"
+
+
+def _types(conflict_list):
+    return [c["conflict_type"] for c in conflict_list]
+
+
+class TestF5DuplicatePopulationEvidenceIsScoredOnce(unittest.TestCase):
+    """
+    The existing population conflict and the BA1-contradiction conflict are
+    two descriptions of the same at-or-above-BA1-frequency evidence when the
+    first fires at Major. Scoring both doubled the conflict score and lowered
+    confidence twice for one fact (found in the round-2 verification).
+    """
+
+    _DETECT = TestF5ConflictResolutionAndPrioritization._DETECT
+
+    def _kwargs(self, global_af, clinvar=True):
+        kw = dict(
+            self._DETECT,
+            gnomad_result={"found": True, "global_af": global_af, "population_breakdown": {}},
+        )
+        if clinvar:
+            kw["clinvar_result"] = _clinvar("Pathogenic")
+        return kw
+
+    def test_major_population_conflict_suppresses_the_duplicate(self):
+        engine = ConflictResolutionEngine()
+        kw = self._kwargs(_G.BA1_AF_THRESHOLD * 2)
+        without = engine.detect(**kw)
+        with_ba1 = engine.detect(ba1_contradicted_by=["PVS1"], **kw)
+        types = [c.conflict_type for c in with_ba1.conflict_list]
+        self.assertTrue(any(t.startswith(_POP_CONFLICT_PREFIX) for t in types), types)
+        self.assertFalse(any(t.startswith(_BA1_CONFLICT_PREFIX) for t in types), types)
+        # Same fact is not counted twice: identical score and severity.
+        self.assertEqual(with_ba1.conflict_score, without.conflict_score)
+        self.assertEqual(with_ba1.conflict_severity, without.conflict_severity)
+        self.assertEqual(with_ba1.conflict_severity, "Major")
+        self.assertEqual([c.to_dict() for c in with_ba1.conflict_list], [c.to_dict() for c in without.conflict_list])
+
+    def test_the_existing_population_conflict_keeps_its_severity_and_content(self):
+        engine = ConflictResolutionEngine()
+        kw = self._kwargs(_G.BA1_AF_THRESHOLD * 2)
+        pop_alone = [c for c in engine.detect(**kw).conflict_list if c.conflict_type.startswith(_POP_CONFLICT_PREFIX)]
+        pop_with_ba1 = [
+            c
+            for c in engine.detect(ba1_contradicted_by=["PVS1"], **kw).conflict_list
+            if c.conflict_type.startswith(_POP_CONFLICT_PREFIX)
+        ]
+        self.assertEqual(len(pop_with_ba1), 1)
+        self.assertEqual(pop_with_ba1[0].severity, "Major")
+        self.assertEqual(pop_with_ba1[0].to_dict(), pop_alone[0].to_dict())
+
+    def test_scoring_path_agrees_with_detect(self):
+        engine = ConflictResolutionEngine()
+        kw = self._kwargs(_G.BA1_AF_THRESHOLD * 2)
+        scoring_kw = {k: v for k, v in kw.items() if "penalty" not in k and "explanation" not in k}
+        scoring = engine.real_conflicts_for_scoring(ba1_contradicted_by=["PVS1"], **scoring_kw)
+        self.assertEqual(
+            [c.conflict_type.split(" ")[0] for c in scoring],
+            ["Population"],
+            [c.conflict_type for c in scoring],
+        )
+        self.assertEqual([c.severity for c in scoring], ["Major"])
+
+    def test_without_a_population_conflict_the_ba1_conflict_is_still_raised(self):
+        engine = ConflictResolutionEngine()
+        # No ClinVar pathogenic record and an Uncertain classification: the
+        # population detector stays silent, so the BA1 item must carry the conflict.
+        kw = self._kwargs(_G.BA1_AF_THRESHOLD * 2, clinvar=False)
+        result = engine.detect(ba1_contradicted_by=["PVS1"], **kw)
+        types = [c.conflict_type for c in result.conflict_list]
+        self.assertFalse(any(t.startswith(_POP_CONFLICT_PREFIX) for t in types), types)
+        self.assertTrue(any(t.startswith(_BA1_CONFLICT_PREFIX) for t in types), types)
+        self.assertEqual(result.conflict_severity, "Major")
+
+    def test_a_moderate_population_conflict_is_a_different_finding_and_both_remain(self):
+        engine = ConflictResolutionEngine()
+        # global AF between BS1 and BA1 (BA1 met on popmax only): the population
+        # item is Moderate, so it does NOT represent the BA1 evidence.
+        kw = self._kwargs((_G.BS1_AF_THRESHOLD + _G.BA1_AF_THRESHOLD) / 2)
+        result = engine.detect(ba1_contradicted_by=["PVS1"], **kw)
+        by_prefix = {
+            "pop": [c for c in result.conflict_list if c.conflict_type.startswith(_POP_CONFLICT_PREFIX)],
+            "ba1": [c for c in result.conflict_list if c.conflict_type.startswith(_BA1_CONFLICT_PREFIX)],
+        }
+        self.assertEqual([c.severity for c in by_prefix["pop"]], ["Moderate"])
+        self.assertEqual([c.severity for c in by_prefix["ba1"]], ["Major"])
+        self.assertEqual(result.conflict_severity, "Major")
+
+    def test_default_without_ba1_codes_is_unchanged(self):
+        engine = ConflictResolutionEngine()
+        kw = self._kwargs(_G.BA1_AF_THRESHOLD * 2)
+        self.assertEqual(
+            [c.to_dict() for c in engine.detect(**kw).conflict_list],
+            [c.to_dict() for c in engine.detect(ba1_contradicted_by=(), **kw).conflict_list],
+        )
+
+    def test_real_flow_counts_the_evidence_once_and_keeps_the_high_floor(self):
+        ir = _interpret(_pvs1("very_strong"), clinvar_result=_clinvar("Pathogenic"))
+        types = _types(ir["conflict_list"])
+        self.assertEqual(ir["acmg_classification"], "Uncertain Significance")
+        self.assertEqual(sum(t.startswith(_POP_CONFLICT_PREFIX) for t in types), 1, types)
+        self.assertFalse(any(t.startswith(_BA1_CONFLICT_PREFIX) for t in types), types)
+        self.assertEqual(ir["conflict_severity"], "Major")
+        # One Major item: same score as the pre-round-2 behaviour (one item), not two.
+        self.assertAlmostEqual(ir["conflict_score"], 16.67, places=1)
+        # Genuine contradiction still gets the High-priority floor, via the Major item.
+        self.assertEqual(ir["priority_category"], "High")
+        self.assertTrue(
+            any("floored at High" in line for line in ir["priority_explanation"]), ir["priority_explanation"]
+        )
+
+    def test_real_flow_keeps_the_contradiction_in_the_acmg_result_and_report(self):
+        from pipeline.interpretation_result import build_interpretation_result
+        from report.clinical_report_builder import build_clinical_report
+
+        clinvar = _clinvar("Pathogenic")
+        with mock.patch.object(ACMGRuleEngine, "_pvs1", return_value=_pvs1("very_strong")):
+            interp = InterpretationEngine().interpret(
+                _VARIANT, [], clinvar, {}, {}, {}, gnomad_result=_GNOMAD_BA1, clingen_result=_GENE_RESOLVED
+            )
+        ir = build_interpretation_result(
+            variant_dict=_VARIANT, interpretation=interp, clinvar_result=clinvar, gnomad_result=_GNOMAD_BA1
+        ).to_dict()
+        self.assertEqual(ir["ba1_contradicted_by"], ["PVS1"])
+        self.assertEqual(ir["interpretation_outcome"], "review_required")
+        self.assertIn(_BA1_REASON, ir["review_required_reasons"])
+        report = build_clinical_report(ir, variant_dict=_VARIANT)
+        self.assertIn("BA1", report["executive_summary"])
+        self.assertIn("PVS1", report["executive_summary"])
+        self.assertEqual(report["acmg_classification"]["ba1_contradicted_by"], ["PVS1"])
+
+    def test_ordinary_ba1_benign_is_not_elevated_by_the_new_logic(self):
+        # BA1 stays Benign with only supporting pathogenic evidence: no BA1 conflict.
+        ir = _interpret(_pvs1("supporting"))
+        self.assertEqual(ir["acmg_classification"], "Benign")
+        self.assertEqual(ir["conflict_severity"], "None")
+        self.assertFalse(any(t.startswith(_BA1_CONFLICT_PREFIX) for t in _types(ir["conflict_list"])))
 
 
 if __name__ == "__main__":

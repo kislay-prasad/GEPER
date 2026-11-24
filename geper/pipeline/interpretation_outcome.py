@@ -169,6 +169,7 @@ def _base_outcome(
     evidence_queries_completed: bool,
     pathogenic_points: Optional[float],
     benign_points: Optional[float],
+    point_tally_ran: bool = True,
 ) -> _BaseOutcome:
     """
     The three-way determination from before round 2 (conflicting /
@@ -189,7 +190,18 @@ def _base_outcome(
     if _is_comparable_weight_conflict(pathogenic_points, benign_points):
         return _BaseOutcome.CONFLICTING
 
-    if gene_resolved and evidence_queries_completed and resolved_pathogenic_points == 0 and resolved_benign_points == 0:
+    # `point_tally_ran=False` is the BA1 stand-alone path: a criterion decided
+    # the classification and no tally was run, so both totals are None. That
+    # is not "nothing was found" -- reporting insufficient_evidence beside a
+    # Benign classification decided by stand-alone evidence contradicts it
+    # (PR #51 round 2, F1).
+    if (
+        point_tally_ran
+        and gene_resolved
+        and evidence_queries_completed
+        and resolved_pathogenic_points == 0
+        and resolved_benign_points == 0
+    ):
         return _BaseOutcome.INSUFFICIENT_EVIDENCE
 
     return _BaseOutcome.INTERPRETED
@@ -203,6 +215,7 @@ def determine_interpretation_outcome(
     benign_points: Optional[float],
     classification: Optional[str],
     ba1_contradicted: bool = False,
+    point_tally_ran: bool = True,
 ) -> InterpretationOutcome:
     """
     Pure function. No evidence is fabricated and no classification is
@@ -279,6 +292,7 @@ def determine_interpretation_outcome(
         evidence_queries_completed=evidence_queries_completed,
         pathogenic_points=pathogenic_points,
         benign_points=benign_points,
+        point_tally_ran=point_tally_ran,
     )
     is_pathogenic_or_likely_pathogenic = classification in _REVIEW_REQUIRED_CLASSIFICATIONS
     if base is _BaseOutcome.CONFLICTING or is_pathogenic_or_likely_pathogenic or ba1_contradicted:

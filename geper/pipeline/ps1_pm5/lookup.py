@@ -153,10 +153,13 @@ class ClinVarCodonLookup:
             "incomplete": bool(errors) and bool(matches),
             "incomplete_reason": "; ".join(errors) if errors and matches else None,
         }
-        if self.cache is not None and not (errors and not matches):
-            # Cache a clean result, or a partial one that still found
-            # something; never cache a total failure, so a transient
-            # NCBI outage doesn't paper over every codon for the TTL.
+        if self.cache is not None and not errors:
+            # Cache only a COMPLETE result. This used to cache a partial one
+            # that "still found something" as well as a clean one; but the
+            # partial result is now marked `incomplete` and makes PS1/PM5
+            # not_evaluated, so caching it would keep PS1/PM5 degraded for the
+            # whole TTL (6 h) after NCBI recovers (PR #51 round 2, F7). A
+            # total failure was never cached, for the same reason.
             self.cache.put(key, dict(result))
         return result
 

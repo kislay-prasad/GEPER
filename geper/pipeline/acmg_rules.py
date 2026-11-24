@@ -1049,6 +1049,10 @@ class ACMGRuleEngine:
             benign_points=combine_result.benign_points,
             classification=combine_result.classification,
             ba1_contradicted=bool(combine_result.ba1_contradicted_by),
+            # False on the BA1 stand-alone path (net_points is None there):
+            # no point tally ran because a stand-alone criterion decided,
+            # which is NOT "no evidence" -- see `_base_outcome`.
+            point_tally_ran=combine_result.net_points is not None,
         )
         # Human ruling, 2026-09-09/10 (round 2): the answer to "if both
         # [review_required triggers] need to be visible, say so" -- see
@@ -1075,6 +1079,11 @@ class ACMGRuleEngine:
             "pathogenic_points": combine_result.pathogenic_points,
             "benign_points": combine_result.benign_points,
             "net_points": combine_result.net_points,
+            # PR #51 round 2 (F3): the strong/very-strong pathogenic criteria
+            # that contradicted a triggered BA1, as data (the same codes the
+            # trace names in prose). Always a list; empty when BA1 was not
+            # contradicted.
+            "ba1_contradicted_by": list(combine_result.ba1_contradicted_by),
             "clinvar_crossreference": clinvar_note,
             "triggered_criteria": triggered,
             "not_triggered_criteria": not_triggered,

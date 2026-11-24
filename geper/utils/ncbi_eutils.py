@@ -210,7 +210,29 @@ def complete_esearch_idlist(payload: Dict[str, Any], *, source: str) -> List[str
     format quirk into an outage. The message never embeds the request URL
     or term (see `ClinVarClient._request_json`'s sanitization note).
     """
-    result = payload.get("esearchresult", {}) or {}
+    # An error response is a FAILED lookup, never "no records" (PR #51 round 2,
+    # F6). NCBI reports some failures as a normal JSON body rather than an HTTP
+    # error: a top-level `error` (for example the rate-limit body), or an
+    # `ERROR` string inside `esearchresult` (an invalid query). Both carry no
+    # `count` and an empty `idlist`, which the code below would otherwise read
+    # as a complete, empty result.
+    #
+    # Deliberately NOT treated as failures: `errorlist` / `warninglist`. NCBI
+    # sends `errorlist.phrasesnotfound` with `count: "0"` for a search whose
+    # term simply matches nothing (for example a position with no ClinVar
+    # record) -- that is a genuine "not found".
+    #
+    # Messages carry no query text or URL (see `ClinVarClient._request_json`'s
+    # sanitization note).
+    if not isinstance(payload, dict):
+        raise ExternalAPIError(f"{source}: ClinVar search returned an unreadable response.")
+    if payload.get("error") or payload.get("ERROR"):
+        raise ExternalAPIError(f"{source}: ClinVar search returned an error response (no result set).")
+    result = payload.get("esearchresult")
+    if not isinstance(result, dict):
+        raise ExternalAPIError(f"{source}: ClinVar search response had no result set.")
+    if result.get("ERROR"):
+        raise ExternalAPIError(f"{source}: ClinVar rejected the search (error response, no result set).")
     idlist = list(result.get("idlist", []) or [])
     try:
         count = int(result.get("count", len(idlist)))

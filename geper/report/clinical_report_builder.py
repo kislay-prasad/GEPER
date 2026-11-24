@@ -583,9 +583,21 @@ def _executive_summary(ir: Dict[str, Any], variant_dict: Dict[str, Any] = None) 
         f"not triggered, {n_not_evaluated} could not be evaluated{_not_evaluated_reason_clause(not_evaluated_rules)}."
     )
 
+    # PR #51 round 2 (F2): a BA1-contradicted variant is Uncertain Significance
+    # for a specific reason a reader must see up front, not only in the
+    # criteria trace -- otherwise it reads like a variant with no evidence.
+    contradiction_clause = ""
+    if "ba1_contradicted_by_strong_pathogenic_evidence" in (ir.get("review_required_reasons") or []):
+        codes = ", ".join(ir.get("ba1_contradicted_by") or []) or "strong pathogenic criteria"
+        contradiction_clause = (
+            f" BA1 (stand-alone benign allele frequency) is met, but strong pathogenic evidence ({codes}) also "
+            "applies; these contradict each other, so the variant is Uncertain Significance and expert review "
+            "is required."
+        )
+
     return (
         f"Variant {locus}{gene_clause} was classified as **{classification}**{conf_clause}."
-        f"{priority_clause}{evidence_clause}"
+        f"{contradiction_clause}{priority_clause}{evidence_clause}"
     )
 
 
@@ -648,6 +660,9 @@ def _acmg_section(ir: Dict[str, Any]) -> Dict[str, Any]:
         "net_points_band": (
             acmg_net_points_band_label(ir.get("acmg_classification")) if ir.get("acmg_net_points") is not None else None
         ),
+        # PR #51 round 2 (F3): which strong/very-strong pathogenic criteria
+        # contradicted a triggered BA1, as data. Empty unless contradicted.
+        "ba1_contradicted_by": list(ir.get("ba1_contradicted_by") or []),
     }
 
 

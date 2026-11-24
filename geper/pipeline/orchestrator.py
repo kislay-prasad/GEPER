@@ -3020,11 +3020,14 @@ class GeperPipeline:
                 "reason": "Variant normalization disabled via GEPER_ENABLE_VARIANT_NORMALIZATION=false",
             }
 
-        fetch_base = None
+        # The reference source is the same generator (and therefore the same
+        # genome assembly) every other stage uses; with left-alignment
+        # disabled no reference is read, so the REF allele is not checked.
+        fetch_sequence = None
         if CONFIG.normalization.LEFT_ALIGN_ENABLED:
 
-            def fetch_base(chrom: str, pos: int) -> str:  # noqa: F811 - intentional shadow, this is the callback
-                return self.sequence_context_gen.fetch_reference_sequence(chrom, pos, pos)
+            def fetch_sequence(chrom: str, start: int, end: int) -> str:  # noqa: F811 - intentional shadow, this is the callback
+                return self.sequence_context_gen.fetch_reference_sequence(chrom, start, end)
 
         try:
             with self._timer("normalization"):
@@ -3033,9 +3036,10 @@ class GeperPipeline:
                     variant.pos,
                     variant.ref,
                     variant.alt,
-                    fetch_base=fetch_base,
                     max_shift_bp=CONFIG.normalization.LEFT_ALIGN_MAX_SHIFT_BP,
+                    fetch_sequence=fetch_sequence,
                 )
+            self._note_reference_check(normalized, variant, errors)
             hgvs_g = to_hgvs_g(
                 normalized.chrom,
                 normalized.pos,
@@ -3052,6 +3056,30 @@ class GeperPipeline:
             errors.append(f"Variant normalization stage failed: {detail}")
             logger.error(errors[-1])
             return {"skipped": False, "normalized": None, "hgvs_g": None, "hgvs_c": None, "error": detail}
+
+    def _note_reference_check(self, normalized: Any, variant: Variant, errors: List[str]) -> None:
+        """
+        Make the normalization stage's reference-allele check visible in the
+        run's warnings (C1, ClinVar audit): a mismatch is never silent, and
+        neither is a reference that could not be read.
+        """
+        assembly = self.sequence_context_gen.assembly or "the default (GRCh38) assembly"
+        if normalized.reference_check == "mismatch":
+            errors.append(
+                f"Reference allele mismatch at {variant.chrom}:{variant.pos}: {normalized.reference_check_detail}. "
+                f"The variant was analysed exactly as given and was NOT normalised; check that the VCF's genome "
+                f"build matches the assembly used ({assembly})."
+            )
+        elif normalized.reference_check_detail:
+            consequence = (
+                "the REF allele was not checked"
+                if normalized.reference_check == "not_checked"
+                else "the REF allele matched, but left-alignment could not be completed"
+            )
+            errors.append(
+                f"Variant normalization at {variant.chrom}:{variant.pos}: {normalized.reference_check_detail}; "
+                f"{consequence} and the variant was trimmed but not left-aligned."
+            )
 
     def _attach_hgvs_c(self, normalization_result: Dict[str, Any], transcript_result: Dict[str, Any]) -> None:
         """

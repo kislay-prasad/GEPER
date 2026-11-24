@@ -33,7 +33,15 @@ from pipeline.ps1_pm5.utils import clinvar_codon_match_from_esummary, dedupe_by_
 from pipeline.pvs1.models import TranscriptContext
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
-from utils.ncbi_eutils import lenient_json_loads, parse_retry_after, parse_vcv_submitters, warn_if_placeholder_contact
+from utils.ncbi_eutils import (
+    ESEARCH_MAX_RECORDS,
+    ESUMMARY_BATCH_SIZE,
+    complete_esearch_idlist,
+    lenient_json_loads,
+    parse_retry_after,
+    parse_vcv_submitters,
+    warn_if_placeholder_contact,
+)
 
 logger = get_logger(__name__)
 
@@ -134,6 +142,16 @@ class ClinVarCodonLookup:
             "queried_positions": positions,
             "matches": [m.to_dict() for m in matches],
             "error": "; ".join(errors) if errors and not matches else None,
+            # Priority 2 ClinVar remediation: some codon positions failed (or
+            # their search was incomplete) while others returned records.
+            # `error` stays None so the records that WERE retrieved can still
+            # support a positive PS1/PM5 finding, but a negative conclusion
+            # ("no qualifying record at this codon") cannot be drawn from a
+            # partial search -- see `ACMGRuleEngine._ps1_pm5_lookup_gap`.
+            # Carried in the cached copy too, so a cached partial result
+            # stays labelled as partial.
+            "incomplete": bool(errors) and bool(matches),
+            "incomplete_reason": "; ".join(errors) if errors and matches else None,
         }
         if self.cache is not None and not (errors and not matches):
             # Cache a clean result, or a partial one that still found
@@ -151,16 +169,24 @@ class ClinVarCodonLookup:
             "db": CONFIG.api.CLINVAR_DB,
             "term": term,
             "retmode": "json",
-            "retmax": 50,
+            # Was 50, read without checking `count`. Now the complete set is
+            # requested and verified -- see `complete_esearch_idlist`.
+            "retmax": ESEARCH_MAX_RECORDS,
             "tool": CONFIG.api.NCBI_TOOL_NAME,
             "email": CONFIG.api.NCBI_EMAIL,
         }
         if CONFIG.api.NCBI_API_KEY:
             params["api_key"] = CONFIG.api.NCBI_API_KEY
         payload = self._request_json(f"{CONFIG.api.NCBI_EUTILS_BASE}/esearch.fcgi", params)
-        return payload.get("esearchresult", {}).get("idlist", [])
+        return complete_esearch_idlist(payload, source="ClinVarCodonLookup")
 
     def _esummary(self, uids: List[str]):
+        matches = []
+        for start in range(0, len(uids), ESUMMARY_BATCH_SIZE):
+            matches.extend(self._esummary_batch(uids[start : start + ESUMMARY_BATCH_SIZE]))
+        return matches
+
+    def _esummary_batch(self, uids: List[str]):
         params = {
             "db": CONFIG.api.CLINVAR_DB,
             "id": ",".join(uids),

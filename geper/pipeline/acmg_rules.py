@@ -1195,6 +1195,56 @@ class ACMGRuleEngine:
         return transcript, (int(pos) if pos is not None else None), ref, alt, query
 
     @staticmethod
+    def _ps1_pm5_lookup_gap(
+        result: CriterionResult, query: Any, clinvar_codon_result: Optional[Dict[str, Any]]
+    ) -> CriterionResult:
+        """
+        Priority 2 ClinVar remediation: PS1/PM5 must not draw a NEGATIVE
+        conclusion from a ClinVar codon lookup that failed or was incomplete.
+
+        - A triggered result is returned unchanged: a qualifying record that
+          WAS retrieved is real evidence even if another position failed.
+        - Only a missense substitution reaches the ClinVar comparison; any
+          other variant class is "not applicable" regardless of the lookup,
+          so it is returned unchanged.
+        - Otherwise, a failed lookup (`error`) or a partial one
+          (`incomplete`) makes the criterion not_evaluated, with a rationale
+          that says the lookup failed -- previously a total failure read
+          "no ClinVar record ... was found at codon N" (as if searched and
+          empty), and a partial failure could conclude not_triggered.
+        """
+        if result.status == "triggered" or not clinvar_codon_result or clinvar_codon_result.get("skipped"):
+            return result
+        if query is None or getattr(query, "category", None) != "missense":
+            return result
+        error = clinvar_codon_result.get("error")
+        if error is not None:
+            reason = f"the ClinVar codon lookup failed ({error or 'no detail returned'})"
+        elif clinvar_codon_result.get("incomplete"):
+            reason = (
+                "the ClinVar codon lookup was incomplete -- some codon positions could not be queried "
+                f"({clinvar_codon_result.get('incomplete_reason') or 'no detail returned'})"
+            )
+        else:
+            return result
+        return CriterionResult(
+            result.code,
+            result.direction,
+            result.strength,
+            "not_evaluated",
+            (
+                f"{result.code} was not evaluated: {reason}, so the absence of a qualifying ClinVar record at "
+                "this codon cannot be concluded."
+            ),
+            supporting_evidence=list(result.supporting_evidence),
+            conflicting_evidence=list(result.conflicting_evidence),
+            evidence_sources=list(result.evidence_sources),
+            confidence="Low",
+            category=NotEvaluatedReason.DATA_UNAVAILABLE.value,
+            details=result.details,
+        )
+
+    @staticmethod
     def _ps1_pm5_result(evaluation: PS1PM5Evaluation, direction: str, nominal_strength: str) -> CriterionResult:
         """
         Adapt a `pipeline/ps1_pm5/models.py::PS1PM5Evaluation` into this
@@ -1252,7 +1302,9 @@ class ACMGRuleEngine:
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
         ).evaluate_ps1(query, matches, transcript, pos, ref, alt)
-        return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
+        return ACMGRuleEngine._ps1_pm5_lookup_gap(
+            ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
+        )
 
     @staticmethod
     def _pm5(
@@ -1281,7 +1333,9 @@ class ACMGRuleEngine:
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
         ).evaluate_pm5(query, matches, transcript, pos, ref, alt)
-        return ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength)
+        return ACMGRuleEngine._ps1_pm5_lookup_gap(
+            ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
+        )
 
     @staticmethod
     def _pm1(interpro_result: Optional[Dict[str, Any]], is_synonymous: Optional[bool] = None) -> CriterionResult:

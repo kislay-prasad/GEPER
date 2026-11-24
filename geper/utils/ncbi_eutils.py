@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
+from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -184,3 +185,41 @@ def warn_if_placeholder_contact(email: str, *, caller: str) -> None:
             "GEPER_NCBI_EMAIL to a real, monitored address before a production run. NCBI's usage policy "
             "requires a genuine contact and may block requests sent with an unreachable one."
         )
+
+
+# ESearch completeness (Priority 2 ClinVar remediation). An esearch caps the
+# returned `idlist` at `retmax` while `count` reports how many records matched.
+# Reading only `idlist` silently truncates: ClinVar's +/-1 bp indel window at
+# BRCA1 c.68_69del (VCV000017662, Pathogenic, expert panel) holds 20 records,
+# and with retmax=10 that record was never fetched, so the variant was reported
+# as having no ClinVar record of its own.
+ESEARCH_MAX_RECORDS = 500
+ESUMMARY_BATCH_SIZE = 200
+
+
+def complete_esearch_idlist(payload: Dict[str, Any], *, source: str) -> List[str]:
+    """
+    The esearch `idlist`, but only if it is the COMPLETE result set.
+
+    Raises `ExternalAPIError` when the reported `count` exceeds the IDs
+    actually returned, so callers fail through their existing error path
+    ("lookup failed") instead of presenting a partial search as complete
+    ("not found" / "no record for this exact variant"). A missing or
+    unparseable `count` is treated as "the list is complete" -- NCBI always
+    sends `count`, and refusing every response that lacks it would turn a
+    format quirk into an outage. The message never embeds the request URL
+    or term (see `ClinVarClient._request_json`'s sanitization note).
+    """
+    result = payload.get("esearchresult", {}) or {}
+    idlist = list(result.get("idlist", []) or [])
+    try:
+        count = int(result.get("count", len(idlist)))
+    except (TypeError, ValueError):
+        count = len(idlist)
+    if count > len(idlist):
+        raise ExternalAPIError(
+            f"{source}: ClinVar search matched {count} records but only {len(idlist)} could be retrieved "
+            f"(limit {ESEARCH_MAX_RECORDS}); the search is incomplete, so it is reported as a failed lookup "
+            "rather than as a complete result."
+        )
+    return idlist

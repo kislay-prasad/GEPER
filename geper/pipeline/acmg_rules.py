@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, cast
 
 from config import CONFIG
+from utils.clinvar_records import conflict_clause, context_clause
 from pipeline.gnomad.models import POPULATION_LABELS
 from pipeline.hgvs_utils import is_mitochondrial_chrom
 from pipeline.interpretation_outcome import determine_interpretation_outcome, determine_review_required_reasons
@@ -781,6 +782,12 @@ def _not_evaluated(
         rationale=f"Not evaluated: {reason}",
         category=category.value,
     )
+
+
+_CLINVAR_CONTEXT_NOTE = (
+    "Context only -- record(s) that contain this allele but are not individual-variant classifications "
+    "(haplotype, diplotype, star allele or no classification of their own); not used as evidence."
+)
 
 
 class ACMGRuleEngine:
@@ -3269,12 +3276,22 @@ class ACMGRuleEngine:
         if not clinvar_result:
             return "no ClinVar record was found for this exact variant."
         status = clinvar_result.get("match_status")
+        if clinvar_result.get("individual_records_conflict"):
+            return conflict_clause(clinvar_result)
         if status == "position_only":
-            others = clinvar_result.get("record_count") or 0
+            # C2: records that only CONTAIN the allele (haplotype, diplotype, ...) are context.
+            others = (clinvar_result.get("record_count") or 0) - len(clinvar_result.get("context_records") or [])
+            if others <= 0:
+                # Every record at this position merely CONTAINS the allele (context only); there is no
+                # separate "other variant" to count, so no count is claimed.
+                return (
+                    "no individual-variant ClinVar record with a classification was found for this exact variant."
+                    + context_clause(clinvar_result)
+                )
             return (
                 f"no ClinVar record was found for this exact variant -- {others} other ClinVar-catalogued "
                 "variant(s) exist at this genomic position, but none match this allele, so their "
-                "classifications are not evidence about this variant."
+                "classifications are not evidence about this variant." + context_clause(clinvar_result)
             )
         return "no ClinVar record was found for this exact variant."
 
@@ -3765,14 +3782,47 @@ class ACMGRuleEngine:
         if not clinvar_result:
             return {"available": False}
 
+        # C2: records that merely CONTAIN the allele (haplotype, diplotype, star allele, record with no
+        # classification of its own) are context. They are listed under `context_records`, labelled
+        # with their record type, and are never `primary_record`.
+        context = [
+            {
+                "accession": r.get("accession"),
+                "title": r.get("title"),
+                "record_type": r.get("record_type"),
+                "record_role": r.get("record_role"),
+                "clinical_significance": r.get("clinical_significance"),
+                "review_status": r.get("review_status"),
+            }
+            for r in (clinvar_result.get("context_records") or [])
+        ]
+
         if clinvar_result.get("match_status") == "matched" and clinvar_result.get("primary_record"):
             top = clinvar_result["primary_record"]
-            return {
+            out: Dict[str, Any] = {
                 "available": True,
                 "clinical_significance": top.get("clinical_significance"),
                 "review_status": top.get("review_status"),
                 "accession": top.get("accession"),
                 "note": "Provided for cross-reference only; not used as an input to this engine's own combining rules.",
+            }
+            if context:
+                out["context_records"] = context
+                out["context_note"] = _CLINVAR_CONTEXT_NOTE
+            return out
+
+        if clinvar_result.get("individual_records_conflict"):
+            return {
+                "available": False,
+                "conflicting_individual_records": [
+                    {
+                        "accession": r.get("accession"),
+                        "clinical_significance": r.get("clinical_significance"),
+                        "review_status": r.get("review_status"),
+                    }
+                    for r in (clinvar_result.get("matched_records") or [])
+                ],
+                "note": conflict_clause(clinvar_result),
             }
 
         if clinvar_result.get("match_status") == "position_only":
@@ -3784,16 +3834,26 @@ class ACMGRuleEngine:
                     "review_status": r.get("review_status"),
                 }
                 for r in (clinvar_result.get("records") or [])
+                if r.get("variant_match") is not True
             ]
-            return {
+            out = {
                 "available": False,
                 "co_located_other_variants": others,
                 "note": (
-                    f"No ClinVar record found for this exact variant. {len(others)} other, non-matching "
-                    "ClinVar-catalogued variant(s) exist at this genomic position (listed for context "
-                    "only -- their classifications are not evidence about this variant)."
+                    (
+                        f"No ClinVar record found for this exact variant. {len(others)} other, non-matching "
+                        "ClinVar-catalogued variant(s) exist at this genomic position (listed for context "
+                        "only -- their classifications are not evidence about this variant)."
+                        if others
+                        else "No individual-variant ClinVar record with a classification was found for this "
+                        "exact variant."
+                    )
+                    + context_clause(clinvar_result)
                 ),
             }
+            if context:
+                out["context_records"] = context
+            return out
 
         return {"available": False}
 

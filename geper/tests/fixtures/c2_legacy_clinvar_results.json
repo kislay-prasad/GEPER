@@ -1,0 +1,202 @@
+{
+ "_provenance": {
+  "note": "`inputs` are ClinVar results shaped as stored before the C2 record-type policy (no evidence_policy, record_type, context_records ...). `outputs` were produced by the UNMODIFIED code at origin/master b99ca97. tests/test_clinvar_record_types.py asserts the current code reproduces them exactly."
+ },
+ "inputs": {
+  "matched": {
+   "found": true,
+   "match_status": "matched",
+   "matched_record_count": 1,
+   "matched_records": [
+    {
+     "accession": "VCV1",
+     "clinical_significance": "Pathogenic",
+     "condition": [
+      "Hereditary cancer"
+     ],
+     "last_evaluated": "2024/01/01 00:00",
+     "review_status": "reviewed by expert panel",
+     "title": "t1",
+     "uid": "1",
+     "variant_match": true
+    }
+   ],
+   "primary_record": {
+    "accession": "VCV1",
+    "clinical_significance": "Pathogenic",
+    "condition": [
+     "Hereditary cancer"
+    ],
+    "last_evaluated": "2024/01/01 00:00",
+    "review_status": "reviewed by expert panel",
+    "title": "t1",
+    "uid": "1",
+    "variant_match": true
+   },
+   "query": [
+    "q"
+   ],
+   "record_count": 2,
+   "records": [
+    {
+     "accession": "VCV1",
+     "clinical_significance": "Pathogenic",
+     "condition": [
+      "Hereditary cancer"
+     ],
+     "last_evaluated": "2024/01/01 00:00",
+     "review_status": "reviewed by expert panel",
+     "title": "t1",
+     "uid": "1",
+     "variant_match": true
+    },
+    {
+     "accession": "VCV2",
+     "clinical_significance": "Benign",
+     "condition": [
+      "Hereditary cancer"
+     ],
+     "last_evaluated": "2024/01/01 00:00",
+     "review_status": "criteria provided, single submitter",
+     "title": "t2",
+     "uid": "2",
+     "variant_match": false
+    }
+   ]
+  },
+  "not_found": {
+   "found": false,
+   "match_status": "not_found",
+   "matched_record_count": 0,
+   "matched_records": [],
+   "primary_record": null,
+   "query": [
+    "q"
+   ],
+   "record_count": 0,
+   "records": []
+  },
+  "position_only": {
+   "found": false,
+   "match_status": "position_only",
+   "matched_record_count": 0,
+   "matched_records": [],
+   "primary_record": null,
+   "query": [
+    "q"
+   ],
+   "record_count": 2,
+   "records": [
+    {
+     "accession": "VCV2",
+     "clinical_significance": "Benign",
+     "condition": [
+      "Hereditary cancer"
+     ],
+     "last_evaluated": "2024/01/01 00:00",
+     "review_status": "criteria provided, single submitter",
+     "title": "t2",
+     "uid": "2",
+     "variant_match": false
+    },
+    {
+     "accession": "VCV3",
+     "clinical_significance": "Benign",
+     "condition": [
+      "Hereditary cancer"
+     ],
+     "last_evaluated": "2024/01/01 00:00",
+     "review_status": "criteria provided, single submitter",
+     "title": "t2",
+     "uid": "3",
+     "variant_match": false
+    }
+   ]
+  }
+ },
+ "outputs": {
+  "content_hash_matched": "171292a8c485d33918cf2e181331daf29010d93620d7b45041f4151f04197ba0",
+  "matched": {
+   "crossref": {
+    "accession": "VCV1",
+    "available": true,
+    "clinical_significance": "Pathogenic",
+    "note": "Provided for cross-reference only; not used as an input to this engine's own combining rules.",
+    "review_status": "reviewed by expert panel"
+   },
+   "evidence": {
+    "clingen_available": false,
+    "clingen_error": null,
+    "clinvar": {
+     "clinical_significance": "Pathogenic",
+     "review_status": "reviewed by expert panel"
+    },
+    "clinvar_available": true,
+    "clinvar_error": null
+   },
+   "markdown": [
+    "### ClinVar",
+    "",
+    "- **this variant** \u2014 **Pathogenic** (reviewed by expert panel) \u2014 Hereditary cancer",
+    "- _different variant at this position_ \u2014 **Benign** (criteria provided, single submitter) \u2014 Hereditary cancer",
+    ""
+   ],
+   "not_found_reason": "no ClinVar record was found for this exact variant."
+  },
+  "not_found": {
+   "crossref": {
+    "available": false
+   },
+   "evidence": {
+    "clingen_available": false,
+    "clingen_error": null,
+    "clinvar_available": false,
+    "clinvar_error": null
+   },
+   "markdown": [
+    "### ClinVar",
+    "",
+    "_No ClinVar record found for this variant._",
+    ""
+   ],
+   "not_found_reason": "no ClinVar record was found for this exact variant."
+  },
+  "position_only": {
+   "crossref": {
+    "available": false,
+    "co_located_other_variants": [
+     {
+      "accession": "VCV2",
+      "clinical_significance": "Benign",
+      "review_status": "criteria provided, single submitter",
+      "title": "t2"
+     },
+     {
+      "accession": "VCV3",
+      "clinical_significance": "Benign",
+      "review_status": "criteria provided, single submitter",
+      "title": "t2"
+     }
+    ],
+    "note": "No ClinVar record found for this exact variant. 2 other, non-matching ClinVar-catalogued variant(s) exist at this genomic position (listed for context only -- their classifications are not evidence about this variant)."
+   },
+   "evidence": {
+    "clingen_available": false,
+    "clingen_error": null,
+    "clinvar_available": false,
+    "clinvar_co_located_count": 2,
+    "clinvar_error": null
+   },
+   "markdown": [
+    "### ClinVar",
+    "",
+    "_No ClinVar record matches this exact variant's allele. The following variant(s) are catalogued at this same genomic position but are NOT this variant:_",
+    "",
+    "- _different variant at this position_ \u2014 **Benign** (criteria provided, single submitter) \u2014 Hereditary cancer",
+    "- _different variant at this position_ \u2014 **Benign** (criteria provided, single submitter) \u2014 Hereditary cancer",
+    ""
+   ],
+   "not_found_reason": "no ClinVar record was found for this exact variant -- 2 other ClinVar-catalogued variant(s) exist at this genomic position, but none match this allele, so their classifications are not evidence about this variant."
+  }
+ }
+}

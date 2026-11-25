@@ -18,6 +18,7 @@ from pipeline.acmg_rules import ACMGRuleEngine
 from pipeline.interpretation_result import build_interpretation_result
 from pipeline.confidence_engine import ConfidenceEngine
 from pipeline.prioritization_engine import PrioritizationEngine, floor_category_for_conflict_severity
+from utils.clinvar_records import conflict_clause, context_clause
 from pipeline.conflict_resolution_engine import ConflictResolutionEngine
 from pipeline.explainability_engine import ExplainabilityEngine
 from pipeline.pvs1.models import LOF_ESTABLISHED, LOF_ESTABLISHED_RECESSIVE, LOF_NOT_ESTABLISHED, LOF_REFUTED
@@ -123,12 +124,24 @@ class InterpretationEngine:
                 f"ClinVar reports '{top.get('clinical_significance', 'unknown significance')}' "
                 f"(review status: {top.get('review_status', 'n/a')})."
             )
+        elif clinvar_result and clinvar_result.get("individual_records_conflict"):
+            evidence.append(conflict_clause(clinvar_result))
         elif clinvar_result and clinvar_result.get("match_status") == "position_only":
-            evidence.append(
-                f"No ClinVar record found for this exact variant ({len(clinvar_records)} other, "
-                "non-matching ClinVar-catalogued variant(s) exist at this genomic position; their "
-                "classifications are not evidence about this variant)."
-            )
+            # C2: records that merely CONTAIN the allele (haplotype, diplotype, ...) are context,
+            # not "other, non-matching variants"; they are counted separately.
+            other_count = len(clinvar_records) - len(clinvar_result.get("context_records") or [])
+            if other_count > 0:
+                evidence.append(
+                    f"No ClinVar record found for this exact variant ({other_count} other, "
+                    "non-matching ClinVar-catalogued variant(s) exist at this genomic position; their "
+                    "classifications are not evidence about this variant)." + context_clause(clinvar_result)
+                )
+            else:
+                # Every record at this position merely contains the allele: no separate "other variant" to count.
+                evidence.append(
+                    "No individual-variant ClinVar record with a classification found for this exact variant."
+                    + context_clause(clinvar_result)
+                )
         else:
             evidence.append("No ClinVar record found; clinical significance is undetermined from this source.")
 

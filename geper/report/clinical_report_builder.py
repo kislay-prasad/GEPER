@@ -26,6 +26,7 @@ from config import CONFIG
 from pipeline.acmg_rules import NotEvaluatedReason, not_evaluated_breakdown
 from pipeline.stage_schemas import StageStatus as _StageStatus
 from pipeline.vcf_parser import VAF_NO_SAMPLE_COLUMNS_REASON
+from utils.clinvar_records import reviewer_attention_text, summarize_context
 from utils.logger import get_logger
 from utils.service_health import HEALTH, ServiceStatus
 from utils.timezone_utils import format_ist_from_iso
@@ -489,6 +490,9 @@ def build_clinical_report(
         "references": _references(ir),
         "data_attribution": list(DATA_ATTRIBUTION),
         "evidence_sources": ir.get("evidence_sources", []),
+        # Sources whose data was retrieved but is context only and NOT evidence about this variant
+        # (e.g. ClinVar haplotype/diplotype records). Kept apart from `evidence_sources` (C2 follow-up).
+        "context_data_sources": ir.get("context_data_sources", []),
     }
 
 
@@ -968,6 +972,9 @@ def _indian_population_frequency(
     }
 
 
+_CLINVAR_CONTEXT_DISPLAY_LIMIT = 5
+
+
 def _clinical_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
     """`clinvar_error`/`clingen_error` distinguish a failed lookup from
     a genuine "no record"/"no curation" result -- see `_protein_knowledge`'s
@@ -996,8 +1003,53 @@ def _clinical_evidence(raw: Dict[str, Any]) -> Dict[str, Any]:
             "clinical_significance": primary.get("clinical_significance"),
             "review_status": primary.get("review_status"),
         }
+    elif clinvar.get("individual_records_conflict"):
+        # Several individual-variant records with different classifications: all preserved,
+        # none chosen (C2).
+        out["clinvar_individual_records_conflict"] = True
+        out["clinvar_conflicting_records"] = [
+            {
+                "accession": r.get("accession"),
+                "clinical_significance": r.get("clinical_significance"),
+                "review_status": r.get("review_status"),
+            }
+            for r in clinvar.get("matched_records") or []
+        ]
     elif clinvar.get("match_status") == "position_only":
-        out["clinvar_co_located_count"] = len(clinvar.get("records") or [])
+        # Records that CONTAIN this allele (haplotype, diplotype, ...) are context, not "other variants".
+        out["clinvar_co_located_count"] = len(
+            [r for r in (clinvar.get("records") or []) if r.get("variant_match") is not True]
+        )
+    context = clinvar.get("context_records") or []
+    if context:
+        # Reviewer-facing, explicitly labelled, never scored (C2). The full list stays in the JSON
+        # document; this summary is capped so a pharmacogene with dozens of diplotypes stays readable.
+        out["clinvar_context_total"] = len(context)
+        out["clinvar_context_by_type"] = summarize_context(context)
+        out["clinvar_context_records"] = [
+            {
+                "accession": r.get("accession"),
+                "title": r.get("title"),
+                "record_type": r.get("record_type"),
+                "record_role_label": r.get("record_role_label"),
+                "clinical_significance": r.get("clinical_significance"),
+                "review_status": r.get("review_status"),
+            }
+            for r in context[:_CLINVAR_CONTEXT_DISPLAY_LIMIT]
+        ]
+    if clinvar.get("evidence_policy"):
+        out["clinvar_evidence_policy"] = clinvar["evidence_policy"]
+        # Non-matching records at this position stay visible next to a matched record too (C2 follow-up):
+        # a count only here, the records themselves in the Markdown ClinVar section and the JSON.
+        other_variants = len([r for r in (clinvar.get("records") or []) if r.get("variant_match") is not True])
+        if other_variants and clinvar.get("match_status") == "matched":
+            out["clinvar_other_variants_count"] = other_variants
+        attention = reviewer_attention_text(clinvar)
+        if attention:
+            out["clinvar_reviewer_attention"] = attention
+        type_warnings = clinvar.get("record_type_warnings") or []
+        if type_warnings:
+            out["clinvar_record_type_warnings"] = [dict(w) for w in type_warnings if isinstance(w, dict)]
     if clingen.get("found"):
         out["clingen_available"] = True
         out["clingen"] = {
@@ -1968,6 +2020,20 @@ def _variant_reviewer_flags(variant_result: Dict[str, Any], clinical: Optional[D
     # flagging every one of those here would be the noise this list avoids.
     if "ba1_contradicted_by_strong_pathogenic_evidence" in (clinical.get("review_required_reasons") or []):
         flags.append("BA1 contradicted by strong pathogenic evidence (expert review required)")
+
+    # C2 follow-up: several individual-variant ClinVar records with DIFFERENT classifications are kept,
+    # none is chosen, and nothing in the scoring reflects them -- so the reviewer is told explicitly.
+    # Display only: this adds no criterion, score or threshold.
+    clinvar_raw = variant_result.get("clinvar")
+    clinvar_raw = clinvar_raw if isinstance(clinvar_raw, dict) else {}
+    evidence = clinical.get("clinical_evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    if clinvar_raw.get("individual_records_conflict") or evidence.get("clinvar_individual_records_conflict"):
+        count = len(clinvar_raw.get("matched_records") or evidence.get("clinvar_conflicting_records") or [])
+        flags.append(
+            f"ClinVar holds {count or 'several'} conflicting individual-variant records for this variant "
+            "(none used as a single classification)"
+        )
 
     return flags
 

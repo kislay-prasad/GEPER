@@ -176,7 +176,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, cast
 from component_identity import SHORT_NAME
 from pipeline.provenance import HashVerification, VersionStatus
 from report.clinical_report_builder import apply_report_revision, candidate_interpretation_of
-from report.models import compute_content_hash, verify_content_hash
+from report.models import CONTENT_HASH_VERSION, compute_content_hash, verify_content_hash
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from report.summary_short import generate_short_pdf
@@ -730,7 +730,12 @@ def _publish_signoff_files(
             document["review_status"] = "reviewed"
             document["reviewed_by"] = physician
             document["reviewed_at"] = approved_at
-            # Phase 6: Compute and store content hash for later verification
+            # Phase 6: Compute and store content hash for later verification. The hash VERSION is recorded
+            # with it in the document (the manifest key set is a fixed contract; the manifest binds the document,
+            # version included, through `results_json_sha256`): every new approval is sealed under the current version,
+            # which attests the ClinVar record attribution as well; a report approved before versioning has
+            # no `content_hash_version` and keeps verifying under the legacy version 1.
+            document["content_hash_version"] = CONTENT_HASH_VERSION
             document["content_hash"] = compute_content_hash(document)
 
             staging = tempfile.mkdtemp(prefix=_STAGING_PREFIX, dir=output_dir)

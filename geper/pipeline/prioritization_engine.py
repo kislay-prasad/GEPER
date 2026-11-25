@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from config import CONFIG
 from pipeline.confidence_engine import ConfidenceEngine
+from utils.clinvar_records import conflict_clause, context_clause
 
 _ACMG_DIRECTIONAL_SCORE = {
     "Pathogenic": 1.0,
@@ -251,9 +252,12 @@ class PrioritizationEngine:
             notes.append(f"ClinVar classifies this variant as '{top.get('clinical_significance')}'.")
             if v >= 0.75:
                 reasons.append(f"✓ {'Pathogenic' if v == 1.0 else 'Likely pathogenic'} ClinVar record")
+        elif clinvar_result and clinvar_result.get("individual_records_conflict"):
+            notes.append(conflict_clause(clinvar_result))
         elif clinvar_result and clinvar_result.get("match_status") == "position_only":
             notes.append(
                 "No ClinVar record found for this exact variant (other, non-matching variants exist at this position)."
+                + context_clause(clinvar_result)
             )
         else:
             notes.append("No ClinVar record found.")

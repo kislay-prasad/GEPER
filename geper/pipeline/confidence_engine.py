@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import CONFIG
+from utils.clinvar_records import conflict_clause, context_clause
 
 
 @dataclass
@@ -195,10 +196,13 @@ class ConfidenceEngine:
             else:
                 quality_parts.append(0.2)
                 notes.append("ClinVar record present with no reported review status.")
+        elif clinvar_result and clinvar_result.get("individual_records_conflict"):
+            notes.append(conflict_clause(clinvar_result))
         elif clinvar_result and clinvar_result.get("match_status") == "position_only":
             notes.append(
                 "No ClinVar record found for this exact variant (other, non-matching variants are "
                 "catalogued at this genomic position, but do not count as evidence about this variant)."
+                + context_clause(clinvar_result)
             )
         else:
             notes.append("No ClinVar record found for this variant.")

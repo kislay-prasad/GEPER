@@ -109,6 +109,7 @@ from report.clinical_report_builder import (
     report_revision_banners,
 )
 from report.pdf_escape import esc
+from utils.clinvar_records import record_type_warning_message
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist, format_ist_from_iso
 
@@ -2540,6 +2541,17 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
                     styles["BulletText"],
                 )
             )
+        elif clinical_evidence.get("clinvar_individual_records_conflict"):
+            conflicting = "; ".join(
+                f"{esc(r.get('clinical_significance')) or 'n/a'} ({esc(r.get('review_status')) or 'n/a'})"
+                for r in clinical_evidence.get("clinvar_conflicting_records") or []
+            )
+            flow.append(
+                Paragraph(
+                    f"• ClinVar: conflicting individual-variant records, none used as a single classification: {conflicting}",
+                    styles["BulletText"],
+                )
+            )
         elif clinical_evidence.get("clinvar_co_located_count"):
             flow.append(
                 Paragraph(
@@ -2549,8 +2561,50 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
                     styles["BulletText"],
                 )
             )
+        elif clinical_evidence.get("clinvar_context_total"):
+            flow.append(
+                Paragraph(
+                    "• ClinVar: no individual-variant record with a classification found for this exact variant.",
+                    styles["BulletText"],
+                )
+            )
         else:
             flow.append(Paragraph("• ClinVar: no record found.", styles["BulletText"]))
+        if clinical_evidence.get("clinvar_context_total"):
+            by_type = ", ".join(
+                f"{esc(k)} x{v}" for k, v in sorted((clinical_evidence.get("clinvar_context_by_type") or {}).items())
+            )
+            flow.append(
+                Paragraph(
+                    "• ClinVar context (not used for classification): "
+                    f"{clinical_evidence['clinvar_context_total']} multi-variant, star-allele or unclassified "
+                    f"record(s) contain this allele ({by_type}).",
+                    styles["BulletText"],
+                )
+            )
+        if clinical_evidence.get("clinvar_other_variants_count"):
+            flow.append(
+                Paragraph(
+                    "• ClinVar other variants at this position (not evidence about this variant): "
+                    f"{clinical_evidence['clinvar_other_variants_count']} non-matching record(s) -- see "
+                    "Annotation Detail below.",
+                    styles["BulletText"],
+                )
+            )
+        if clinical_evidence.get("clinvar_reviewer_attention"):
+            flow.append(
+                Paragraph(
+                    f"! ClinVar reviewer attention: {esc(clinical_evidence['clinvar_reviewer_attention'])}",
+                    styles["StatusWarn"],
+                )
+            )
+        for warning in clinical_evidence.get("clinvar_record_type_warnings") or []:
+            flow.append(
+                Paragraph(
+                    f"• ClinVar record type warning: {esc(record_type_warning_message(warning))}",
+                    styles["BulletText"],
+                )
+            )
         if clinical_evidence.get("clingen_available"):
             cg = clinical_evidence["clingen"]
             flow.append(
@@ -2669,6 +2723,15 @@ def _build_variant_section(idx: int, variant_result: Dict[str, Any], styles: Dic
             styles["BodyText"],
         )
     )
+    context_data_sources = clinical.get("context_data_sources") or []
+    if context_data_sources:
+        flow.append(
+            Paragraph(
+                "<b>Context data retrieved (not evidence about this variant):</b> "
+                f"{esc(', '.join(context_data_sources))}",
+                styles["BodyText"],
+            )
+        )
 
     flow.extend(_build_explainability_flowables(clinical.get("explainability"), styles))
 

@@ -36,6 +36,7 @@ from report.clinical_report_builder import (
     reference_blocks,
     report_revision_banners,
 )
+from utils.clinvar_records import record_type_warning_message, summarize_context
 from utils.logger import get_logger
 from utils.timezone_utils import format_ist_from_iso
 from pipeline.acmg_rules import mtdna_interpretation_disclaimer
@@ -1166,14 +1167,42 @@ class ReportGenerator:
             lines.append(
                 f"- **ClinVar:** _lookup failed (external service issue: {clin['clinvar_error']}) -- not evidence of an absent record, see Annotation Detail below._"
             )
+        elif clin.get("clinvar_individual_records_conflict"):
+            lines.append(
+                "- **ClinVar:** conflicting individual-variant records, none used as a single classification: "
+                + "; ".join(
+                    f"{r.get('clinical_significance') or 'n/a'} ({r.get('review_status') or 'n/a'})"
+                    for r in clin.get("clinvar_conflicting_records") or []
+                )
+            )
         elif clin.get("clinvar_co_located_count"):
             lines.append(
                 f"- **ClinVar:** no record found for this exact variant "
                 f"({clin['clinvar_co_located_count']} other variant(s) catalogued at this genomic "
                 "position, but none match this allele -- see Annotation Detail below)."
             )
+        elif clin.get("clinvar_context_total"):
+            lines.append(
+                "- **ClinVar:** no individual-variant record with a classification found for this exact variant."
+            )
         else:
             lines.append("- **ClinVar:** no record found.")
+        if clin.get("clinvar_context_total"):
+            by_type = ", ".join(f"{k} x{v}" for k, v in sorted((clin.get("clinvar_context_by_type") or {}).items()))
+            lines.append(
+                f"- **ClinVar context (not used for classification):** {clin['clinvar_context_total']} "
+                f"multi-variant, star-allele or unclassified record(s) contain this allele ({by_type}) -- "
+                "see Annotation Detail below."
+            )
+        if clin.get("clinvar_other_variants_count"):
+            lines.append(
+                f"- **ClinVar other variants at this position (not evidence about this variant):** "
+                f"{clin['clinvar_other_variants_count']} non-matching record(s) -- see Annotation Detail below."
+            )
+        if clin.get("clinvar_reviewer_attention"):
+            lines.append(f"- **⚠ ClinVar reviewer attention:** {clin['clinvar_reviewer_attention']}")
+        for warning in clin.get("clinvar_record_type_warnings") or []:
+            lines.append(f"- **ClinVar record type warning:** {record_type_warning_message(warning)}")
         if clin.get("clingen_available"):
             cg = clin["clingen"]
             lines.append(
@@ -1248,12 +1277,18 @@ class ReportGenerator:
         lines.append(", ".join(sources) if sources else "*none*")
         lines.append("")
 
-        lines.extend(ReportGenerator._render_explainability(clinical_report.get("explainability")))
+        lines.extend(
+            ReportGenerator._render_explainability(
+                clinical_report.get("explainability"), clinical_report.get("context_data_sources")
+            )
+        )
 
         return lines
 
     @staticmethod
-    def _render_explainability(explainability: Dict[str, Any]) -> List[str]:
+    def _render_explainability(
+        explainability: Dict[str, Any], context_data_sources: Optional[List[str]] = None
+    ) -> List[str]:
         """
         Phase 7: renders the full explainability trace. Additive
         section (17) after the 16 required by Phase 5 -- everything
@@ -1282,6 +1317,11 @@ class ReportGenerator:
         contributed = explainability.get("evidence_contributed") or []
         lines.append(f"**Evidence sources that contributed:** {', '.join(contributed) if contributed else 'none'}")
         lines.append("")
+        if context_data_sources:
+            lines.append(
+                f"**Context data retrieved (not evidence about this variant):** {', '.join(context_data_sources)}"
+            )
+            lines.append("")
         not_contributed = explainability.get("evidence_not_contributed") or []
         if not_contributed:
             lines.append("**Evidence sources that did not contribute:**")
@@ -1500,6 +1540,9 @@ class ReportGenerator:
             lines.append("_No ClinVar record found for this variant._")
             lines.append("")
             return lines
+        if clinvar.get("evidence_policy"):
+            return ReportGenerator._render_clinvar_by_record_role(clinvar, lines)
+        # Result stored before the record-type policy (no `evidence_policy`): rendered as it always was.
         if clinvar.get("match_status") == "position_only":
             lines.append(
                 "_No ClinVar record matches this exact variant's allele. The following variant(s) are "
@@ -1518,6 +1561,75 @@ class ReportGenerator:
                 f"({record.get('review_status', 'n/a')}) — "
                 f"{', '.join(record.get('condition') or []) or 'condition not specified'}"
             )
+        lines.append("")
+        return lines
+
+    @staticmethod
+    def _render_clinvar_by_record_role(clinvar: Dict[str, Any], lines: List[str]) -> List[str]:
+        """
+        ClinVar section for a result produced under the record-type policy (C2): individual-variant
+        records are labelled as this variant; haplotype, diplotype, star-allele and unclassified
+        records are listed separately as CONTEXT ONLY with their record type, and are never
+        presented as this variant's classification.
+        """
+        eligible = clinvar.get("matched_records") or []
+        context = clinvar.get("context_records") or []
+        others = [r for r in clinvar.get("records") or [] if r.get("variant_match") is not True]
+
+        def detail(record: Dict[str, Any]) -> str:
+            conditions = ", ".join(record.get("condition") or []) or "condition not specified"
+            return (
+                f"**{record.get('clinical_significance') or 'Unknown significance'}** "
+                f"({record.get('review_status') or 'n/a'}) — {conditions}"
+            )
+
+        if clinvar.get("individual_records_conflict"):
+            lines.append(
+                "_ClinVar holds several individual-variant records for this exact variant with conflicting "
+                "classifications. None is selected as a single classification:_"
+            )
+            lines.append("")
+        elif not eligible:
+            lines.append("_No individual-variant ClinVar record with a classification matches this exact variant._")
+            lines.append("")
+        for record in eligible[:3]:
+            lines.append(f"- **this variant** — {detail(record)} — {record.get('accession') or 'accession n/a'}")
+        if len(eligible) > 3:
+            lines.append(f"- _… and {len(eligible) - 3} more individual-variant record(s) in the JSON report._")
+        if context:
+            lines.append("")
+            by_type = ", ".join(f"{k} ×{v}" for k, v in sorted(summarize_context(context).items()))
+            lines.append(
+                f"_Context only — not used for classification, confidence, priority or any ACMG criterion. "
+                f"{len(context)} record(s) contain this allele but are not an individual-variant classification "
+                f"({by_type}):_"
+            )
+            for record in context[:5]:
+                label = record.get("record_role_label") or record.get("record_type") or "record"
+                lines.append(
+                    f"- _{label}_: {record.get('title') or record.get('accession') or 'untitled'} — "
+                    f"{detail(record)} — {record.get('accession') or 'accession n/a'}"
+                )
+            if len(context) > 5:
+                lines.append(f"- _… and {len(context) - 5} more context record(s) in the JSON report._")
+        if others:
+            # Non-matching records stay visible whether or not an individual-variant record exists:
+            # they are a different variant (or an unconfirmed match), listed apart from the matched and
+            # context records and never presented as evidence about this variant.
+            lines.append("")
+            lines.append(
+                "_Other variant(s) catalogued at this same genomic position — NOT this variant and not "
+                "evidence about it:_"
+            )
+            for record in others[:3]:
+                label = (
+                    "different variant at this position"
+                    if record.get("variant_match") is False
+                    else "match unconfirmed"
+                )
+                lines.append(f"- _{label}_ — {detail(record)} — {record.get('accession') or 'accession n/a'}")
+            if len(others) > 3:
+                lines.append(f"- _… and {len(others) - 3} more non-matching record(s) in the JSON report._")
         lines.append("")
         return lines
 

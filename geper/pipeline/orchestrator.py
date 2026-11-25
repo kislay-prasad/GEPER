@@ -122,6 +122,7 @@ from report.json_builder import JSONResultBuilder, build_variant_result
 from report.summary import _parse_patient_meta, _parse_qc_metrics, generate_pdf
 from report.summary_short import generate_short_pdf
 from report.report_generator import ReportGenerator
+from utils.clinvar_records import record_type_warning_message
 from utils.service_health import HEALTH
 from utils.exceptions import (
     AssemblyMismatchError,
@@ -2766,7 +2767,12 @@ class GeperPipeline:
         assembly = self.sequence_context_gen.assembly
         try:
             with self._timer("clinvar"):
-                return self.clinvar_client.query_variant(variant, rsid=rsid, assembly=assembly)
+                result = self.clinvar_client.query_variant(variant, rsid=rsid, assembly=assembly)
+            # A ClinVar record with a missing/unknown record type is context only and never fails the run;
+            # it is surfaced with this variant's stage warnings, naming the accession and the type.
+            for warning in result.get("record_type_warnings") or []:
+                errors.append(record_type_warning_message(warning))
+            return result
         except ExternalAPIError as exc:
             # See `_run_dbsnp_stage`'s matching comment / d1128ee.
             detail = str(exc) or type(exc).__name__

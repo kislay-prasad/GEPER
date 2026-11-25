@@ -153,6 +153,12 @@ class InterpretationResult:
     # re-deriving it from the raw evidence.
     evidence_sources: List[str] = field(default_factory=list)
 
+    # Sources whose data was retrieved for this variant but is CONTEXT ONLY: it is not evidence about the
+    # variant and fed no criterion, score or conflict (e.g. ClinVar haplotype/diplotype/star-allele
+    # records that merely contain this allele). Separate from `evidence_sources` so a reviewer is never
+    # told a source "contributed" when it did not (C2 follow-up).
+    context_data_sources: List[str] = field(default_factory=list)
+
     # Which AI-consensus/context models (AlphaMissense, MMSplice,
     # ESM-2, RNA-FM) genuinely crashed for this variant, as opposed to
     # being legitimately not-run (disabled, ineligible variant type,
@@ -227,6 +233,7 @@ class InterpretationResult:
             "explainability": self.explainability,
             "recommendations": self.recommendations,
             "evidence_sources": self.evidence_sources,
+            "context_data_sources": self.context_data_sources,
             "ai_model_errors": self.ai_model_errors,
             "legacy_summary": self.legacy_summary,
             "legacy_confidence": self.legacy_confidence,
@@ -552,8 +559,19 @@ def build_interpretation_result(
         evidence_sources.add("BLAST")
     if dbsnp_result and dbsnp_result.get("found"):
         evidence_sources.add("dbSNP")
+    context_data_sources: set[str] = set()
     if clinvar_result and clinvar_result.get("records"):
-        evidence_sources.add("ClinVar")
+        if clinvar_result.get("evidence_policy"):
+            # C2 policy: ClinVar is a CONTRIBUTING source only when an individual-variant record (or several
+            # conflicting ones) was actually used. Records that merely contain the allele, or sit at the
+            # same position, are retrieved context -- listed separately, never as "evidence".
+            if clinvar_result.get("matched_records") or clinvar_result.get("individual_records_conflict"):
+                evidence_sources.add("ClinVar")
+            else:
+                context_data_sources.add("ClinVar")
+        else:
+            # Result stored before the record-type policy: unchanged behaviour.
+            evidence_sources.add("ClinVar")
 
     # `or ""` matters, not just type-cleanliness: an absent
     # "classification" key would otherwise pass None as the lookup key
@@ -637,6 +655,7 @@ def build_interpretation_result(
         biological_evidence=biological_evidence,
         recommendations=recommendations,
         evidence_sources=sorted(evidence_sources),
+        context_data_sources=sorted(context_data_sources),
         ai_model_errors=ai_model_errors,
         legacy_summary=interpretation.get("summary"),
         legacy_confidence=interpretation.get("confidence"),

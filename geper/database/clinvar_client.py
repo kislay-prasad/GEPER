@@ -34,6 +34,22 @@ Callers should read `primary_record`/`matched_records`, not `records`
 context/audit display, e.g. "other variants catalogued at this
 position", never for attributing a classification).
 
+Record types (ClinVar audit C2)
+-------------------------------
+A ClinVar record is not always one variant. A haplotype, a diplotype or a
+compound heterozygote is ONE record whose `variation_set` lists every
+component, and whose classification belongs to the combination. Allele
+matching alone therefore attached a haplotype's "Likely pathogenic" (or a
+diplotype's "drug response, practice guideline") to each component variant.
+Each record now carries `record_type` (ClinVar's `obj_type`),
+`component_count` and a `record_role`; only an ELIGIBLE record -- a recognised
+single-allele type, exactly one component, allele-matched, with an
+individual-variant classification -- can populate `matched_records` and
+`primary_record`. Every other record that contains the allele is kept in
+`context_records`, labelled and never used as evidence. The policy and its
+official sources are in `utils/clinvar_records.py` and
+`geper/CLINVAR_RECORD_TYPES.md`.
+
 Candidate-set completeness (the *retrieval* half of this, distinct
 from matching)
 ------------------------------------------------------------------
@@ -81,6 +97,17 @@ from config import CONFIG
 from pipeline.variant_normalization import bare_spdi
 from pipeline.vcf_parser import Variant
 from utils.exceptions import ExternalAPIError
+from utils.clinvar_records import (
+    EVIDENCE_POLICY_VERSION,
+    as_text,
+    classifications_conflict,
+    classify_record_role,
+    is_eligible,
+    order_records,
+    record_type_warning,
+    role_label,
+    summarize_context,
+)
 from utils.logger import get_logger
 from utils.ncbi_eutils import (
     ESEARCH_MAX_RECORDS,
@@ -215,19 +242,35 @@ class ClinVarClient:
                 "query": queries_run,
                 "found": False,
                 "match_status": ClinVarMatchStatus.NOT_FOUND.value,
+                "evidence_policy": EVIDENCE_POLICY_VERSION,
                 "record_count": 0,
                 "matched_record_count": 0,
+                "context_record_count": 0,
                 "records": [],
                 "matched_records": [],
+                "context_records": [],
+                "individual_records_conflict": False,
+                "multiple_eligible_records": False,
+                "record_type_warnings": [],
                 "primary_record": None,
             }
 
         records = self._esummary(uids, variant, assembly)
-        matched_records = [r for r in records if r.get("variant_match") is True]
+        # C2: only an ELIGIBLE record (recognised single-allele type, one component, allele
+        # matched, individual-variant classification) is individual-variant evidence. Every other
+        # record that contains the allele is kept as labelled, context-only information.
+        # See `utils/clinvar_records.py`.
+        matched_records = order_records(r for r in records if r.get("eligible_for_variant_classification"))
+        context_records = order_records(
+            r for r in records if r.get("variant_match") is True and not r.get("eligible_for_variant_classification")
+        )
+        # Several eligible records with DIFFERENT classifications are preserved, never resolved by
+        # picking the newest: no primary record is chosen then.
+        individual_records_conflict = classifications_conflict(matched_records)
 
         if matched_records:
             match_status = ClinVarMatchStatus.MATCHED
-            primary_record = self._select_primary(matched_records)
+            primary_record = None if individual_records_conflict else matched_records[0]
             # Round 30: submitting organisation(s) for every record that
             # can actually contribute to a criterion (PS1/PM5/BP6 all
             # read `matched_records`/`primary_record`, never `records`'
@@ -236,6 +279,8 @@ class ClinVarClient:
             # (logged inside `_fetch_submitters`) leaves `submitters`
             # unset rather than blocking the classification-relevant
             # result already computed above.
+            # Submitters are fetched for the eligible records only (a pharmacogene position can
+            # carry dozens of context records that never reach PS1/PM5/BP6).
             submitters_by_uid = self._fetch_submitters([r["uid"] for r in matched_records])
             for r in matched_records:
                 r["submitters"] = submitters_by_uid.get(r["uid"])
@@ -243,26 +288,55 @@ class ClinVarClient:
             match_status = ClinVarMatchStatus.POSITION_ONLY
             primary_record = None
             logger.info(
-                f"ClinVar returned {len(records)} record(s) for {' | '.join(queries_run)!r} but none "
-                f"match {variant.chrom}:{variant.pos} {variant.ref}>{variant.alt} by allele -- "
-                "reporting POSITION_ONLY, not attributing any of their classifications to this variant."
+                f"ClinVar returned {len(records)} record(s) for {' | '.join(queries_run)!r} but none is an "
+                f"individual-variant record with a classification for {variant.chrom}:{variant.pos} "
+                f"{variant.ref}>{variant.alt} ({len(context_records)} context-only record(s) contain the allele) "
+                "-- reporting POSITION_ONLY, not attributing any of their classifications to this variant."
+            )
+        if context_records:
+            logger.info(
+                f"ClinVar: {len(context_records)} context-only record(s) contain {variant.chrom}:{variant.pos} "
+                f"{variant.ref}>{variant.alt} and are not used as evidence: {summarize_context(context_records)}."
+            )
+        # A record that contains the allele but has a missing/unknown record type (or an impossible
+        # component count) is context only (fail-safe); the structured warning names its accession and
+        # type so a new NCBI record type is noticed rather than silently demoting evidence. Never fatal.
+        record_type_warnings = [w for w in (record_type_warning(r) for r in records) if w is not None]
+        for warning in record_type_warnings:
+            logger.warning(
+                f"ClinVar record {warning['accession'] or warning['uid']} contains {variant.chrom}:{variant.pos} "
+                f"{variant.ref}>{variant.alt} but its record type is {warning['reason']} "
+                f"(obj_type={warning['record_type']!r}, components={warning['component_count']}); "
+                "treated as context only."
             )
 
         return {
             "query": queries_run,
             "found": match_status == ClinVarMatchStatus.MATCHED,
             "match_status": match_status.value,
+            "evidence_policy": EVIDENCE_POLICY_VERSION,
             "record_count": len(records),
             "matched_record_count": len(matched_records),
+            "context_record_count": len(context_records),
             "records": records,
             "matched_records": matched_records,
+            "context_records": context_records,
+            "individual_records_conflict": individual_records_conflict,
+            "multiple_eligible_records": len(matched_records) > 1,
+            "record_type_warnings": record_type_warnings,
             "primary_record": primary_record,
         }
 
     @staticmethod
     def _select_primary(matched_records: "List[Dict[str, Any]]") -> Dict[str, Any]:
         """
-        Picks one record when more than one allele-matched record
+        RETAINED FOR COMPATIBILITY; `query_variant` no longer uses it (C2). It picks the most
+        recently evaluated record, which is not safe as evidence selection: the newest record can
+        be a haplotype, or can disagree with an older eligible record. `query_variant` now orders
+        eligible records deterministically (`utils.clinvar_records.order_records`) and chooses no
+        primary at all when eligible records conflict.
+
+        Original description: picks one record when more than one allele-matched record
         exists for the query variant. In practice this should be rare
         to never -- ClinVar consolidates one allele into one Variation
         ID/accession, so two independently-matching records for the
@@ -387,18 +461,37 @@ class ClinVarClient:
         for uid in result.get("uids", []):
             entry = result.get(uid, {})
             germline = entry.get("germline_classification", {})
+            # C2 hardening: the record-type policy only ever sees text. A malformed (non-text,
+            # unhashable) value from NCBI is treated as missing -- context only -- never raised.
+            raw_record_type = entry.get("obj_type")
+            record_type = as_text(raw_record_type)
+            description = as_text(germline.get("description"))
+            review_status = as_text(germline.get("review_status"))
+            variation_set = entry.get("variation_set")
+            component_count = len(variation_set) if isinstance(variation_set, list) else None
+            role = classify_record_role(record_type, component_count, description)
+            variant_match = self._variant_match(entry, variant, assembly)
             records.append(
                 {
                     "uid": uid,
                     "title": entry.get("title"),
-                    "clinical_significance": germline.get("description"),
-                    "review_status": germline.get("review_status"),
+                    "clinical_significance": description,
+                    "review_status": review_status,
                     "last_evaluated": germline.get("last_evaluated"),
                     "condition": [
                         trait.get("trait_name") for trait in germline.get("trait_set", []) if isinstance(trait, dict)
                     ],
                     "accession": entry.get("accession"),
-                    "variant_match": self._variant_match(entry, variant, assembly),
+                    # `variant_match` keeps its meaning: this record CONTAINS the queried allele.
+                    # Whether it is individual-variant evidence is `eligible_for_variant_classification`.
+                    "variant_match": variant_match,
+                    "record_type": record_type,
+                    # Present only when NCBI sent an `obj_type` that is not text (kept out of the stored result).
+                    **({"record_type_malformed": True} if raw_record_type is not None and record_type is None else {}),
+                    "component_count": component_count,
+                    "record_role": role,
+                    "record_role_label": role_label(role, record_type),
+                    "eligible_for_variant_classification": is_eligible(role, variant_match),
                 }
             )
         return records

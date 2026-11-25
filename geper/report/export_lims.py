@@ -97,6 +97,7 @@ from review.revision_status import ReportRevisionStatus
 from review.signoff import read_clinical_link as _read_clinical_link
 from review.signoff import require_complete_publication as _require_complete_publication
 from review.signoff import require_reviewed as _require_reviewed_general
+from utils.clinvar_records import reviewer_attention_text
 from utils.exceptions import LIMSExportBlockedError, SignoffError
 from utils.logger import get_logger
 
@@ -289,12 +290,57 @@ class LIMSPopulationFrequency(BaseModel):
     dbsnp_rsid: Optional[str] = None
 
 
+# Cap on context records carried into the LIMS JSON (the full list stays in geper_results.json).
+LIMS_CONTEXT_RECORD_LIMIT = 10
+
+
+class LIMSClinVarContextRecord(BaseModel):
+    """A ClinVar record that CONTAINS this variant's allele but is not an individual-variant classification
+    (haplotype, diplotype, star allele, record with no classification of its own). Context only: never used
+    for classification, confidence, priority or any ACMG criterion. JSON export only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    accession: Optional[str] = None
+    record_type: Optional[str] = None  # ClinVar's own record type, e.g. "Diplotype"
+    record_role: Optional[str] = None
+    title: Optional[str] = None
+    clinical_significance: Optional[str] = None
+    review_status: Optional[str] = None
+
+
+class LIMSClinVarRecordTypeWarning(BaseModel):
+    """A ClinVar record that contains this variant's allele but has a missing/unknown record type: kept as
+    context only, never used as evidence. JSON export only."""
+
+    model_config = ConfigDict(frozen=True)
+
+    accession: Optional[str] = None
+    uid: Optional[str] = None
+    record_type: Optional[str] = None
+    component_count: Optional[int] = None
+    reason: Optional[str] = None
+    treated_as: Optional[str] = None
+
+
 class LIMSClinicalDatabase(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     clinvar_significance: Optional[str] = None
     clinvar_review_status: Optional[str] = None
     clingen_gene_validity: Optional[str] = None
+    # ClinVar record-type policy (C2) -- JSON only, additive; the CSV header is a fixed contract and is unchanged.
+    # `None`/empty for a run produced before the policy existed (it carries no `evidence_policy`).
+    clinvar_evidence_policy: Optional[str] = None
+    clinvar_individual_record_count: Optional[int] = None
+    clinvar_individual_records_conflict: bool = False  # several individual-variant records disagree; none is chosen
+    clinvar_context_record_count: Optional[int] = None
+    clinvar_context_records: List[LIMSClinVarContextRecord] = []  # capped at LIMS_CONTEXT_RECORD_LIMIT
+    # Reviewer attention for conflicting individual-variant records (text; None when there is no conflict) and
+    # the non-matching co-located records / unknown-record-type warnings kept for review. JSON only.
+    clinvar_reviewer_attention: Optional[str] = None
+    clinvar_non_matching_record_count: Optional[int] = None
+    clinvar_record_type_warnings: List[LIMSClinVarRecordTypeWarning] = []
 
 
 class LIMSFinding(BaseModel):
@@ -320,6 +366,7 @@ class LIMSFinding(BaseModel):
     conflicting_evidence: List[str] = []
     recommendations: List[str] = []
     evidence_sources: List[str] = []
+    context_data_sources: List[str] = []  # data retrieved but context only (not evidence about this variant)
     stage_errors: List[str] = []  # non-fatal per-stage failures recorded for this variant (variant_result["errors"])
     interpretation_available: bool = True  # False if interpretation_result was missing/errored for this variant -- every field above is then honestly empty/None, not fabricated
 
@@ -577,10 +624,38 @@ def _clinical_database(variant_result: Dict[str, Any]) -> LIMSClinicalDatabase:
     clingen = variant_result.get("clingen") or {}
     primary = clinvar.get("primary_record") or {}
     clinvar_matched = clinvar.get("match_status") == "matched" and bool(primary)
+    policy = clinvar.get("evidence_policy")
+    context = (clinvar.get("context_records") or []) if policy else []
     return LIMSClinicalDatabase(
         clinvar_significance=primary.get("clinical_significance") if clinvar_matched else None,
         clinvar_review_status=primary.get("review_status") if clinvar_matched else None,
         clingen_gene_validity=clingen.get("clinical_validity_summary") if clingen.get("found") else None,
+        clinvar_evidence_policy=policy,
+        clinvar_individual_record_count=clinvar.get("matched_record_count") if policy else None,
+        clinvar_individual_records_conflict=bool(policy and clinvar.get("individual_records_conflict")),
+        clinvar_context_record_count=len(context) if policy else None,
+        clinvar_context_records=[
+            LIMSClinVarContextRecord(
+                accession=r.get("accession"),
+                record_type=r.get("record_type"),
+                record_role=r.get("record_role"),
+                title=r.get("title"),
+                clinical_significance=r.get("clinical_significance"),
+                review_status=r.get("review_status"),
+            )
+            for r in context[:LIMS_CONTEXT_RECORD_LIMIT]
+        ],
+        clinvar_reviewer_attention=reviewer_attention_text(clinvar) if policy else None,
+        clinvar_non_matching_record_count=(
+            len([r for r in (clinvar.get("records") or []) if r.get("variant_match") is not True]) if policy else None
+        ),
+        clinvar_record_type_warnings=[
+            LIMSClinVarRecordTypeWarning(
+                **{k: w.get(k) for k in ("accession", "uid", "record_type", "component_count", "reason", "treated_as")}
+            )
+            for w in ((clinvar.get("record_type_warnings") or []) if policy else [])
+            if isinstance(w, dict)
+        ],
     )
 
 
@@ -635,6 +710,7 @@ def _build_finding(finding_number: int, variant_result: Dict[str, Any]) -> LIMSF
         conflicting_evidence=list(clinical.get("conflicting_evidence") or []),
         recommendations=list(clinical.get("recommendations") or []),
         evidence_sources=list(clinical.get("evidence_sources") or []),
+        context_data_sources=list(clinical.get("context_data_sources") or []),
         stage_errors=list(variant_result.get("errors") or []),
         interpretation_available=True,
     )

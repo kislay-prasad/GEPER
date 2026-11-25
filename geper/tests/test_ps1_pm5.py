@@ -58,9 +58,24 @@ def transcript():
     return transcript_context_from_dict(_TRANSCRIPT_RECORD)
 
 
+# ClinVar's `obj_type` for each frozen record, read live from esummary on 2026-11-24 (the frozen fixture file
+# keeps only the fields PS1/PM5 compares). The C2 record-type guard needs it: only a single-allele record
+# can be a codon anchor.
+_OBJ_TYPE = {
+    "12374": "single nucleotide variant", "182963": "single nucleotide variant", "245851": "single nucleotide variant",
+    "376649": "single nucleotide variant", "4189264": "single nucleotide variant", "1527986": "single nucleotide variant",
+    "2687679": "Duplication", "142714": "single nucleotide variant", "634770": "single nucleotide variant",
+    "1757269": "single nucleotide variant", "663828": "Deletion", "3634432": "single nucleotide variant",
+    "2702402": "single nucleotide variant", "2125367": "single nucleotide variant", "1469551": "single nucleotide variant",
+    "141302": "single nucleotide variant", "823709": "single nucleotide variant", "634690": "single nucleotide variant",
+    "4726444": "Deletion", "265351": "Deletion",
+}  # fmt: skip
+
+
 def _esummary_entry(record):
     """Reconstruct the esummary-shaped entry `clinvar_codon_match_from_esummary` actually parses, from the frozen fixture record."""
     return {
+        "obj_type": _OBJ_TYPE.get(record["uid"], "single nucleotide variant"),
         "title": record["title"],
         "accession": record["accession"],
         "variation_set": [{"canonical_spdi": f"NC_000017.11:{record['pos'] - 1}:{record['ref']}:{record['alt']}"}],

@@ -45,10 +45,12 @@ def _record(
     last_evaluated,
     spdi=None,
     variation_loc=None,
+    obj_type="single nucleotide variant",
 ):
     entry = {
         "uid": uid,
         "accession": accession,
+        "obj_type": obj_type,  # ClinVar record type; absent/unknown means context-only (C2 policy)
         "title": title,
         "germline_classification": {
             "description": significance,

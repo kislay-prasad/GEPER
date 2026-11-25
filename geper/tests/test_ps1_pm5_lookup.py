@@ -103,6 +103,7 @@ class TestQueryCodonCapturesSubmitters(unittest.TestCase):
     _ESUMMARY_ENTRY = {
         "uid": "12374",
         "accession": "VCV000012374",
+        "obj_type": "single nucleotide variant",
         "title": "NM_000546.6(TP53):c.524G>A (p.Arg175His)",
         "variation_set": [{"canonical_spdi": "NC_000017.11:7675088:G:A"}],
         "germline_classification": {

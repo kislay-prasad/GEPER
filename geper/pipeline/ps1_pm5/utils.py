@@ -15,6 +15,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from pipeline.ps1_pm5.models import ClinVarCodonMatch, is_conflicting, star_rating
+from utils.clinvar_records import is_single_allele_record
 
 # Standard three-letter -> one-letter amino acid code, plus ClinVar's
 # stop-codon notations ("Ter", "*", "X" all appear across ClinVar's
@@ -98,6 +99,16 @@ def clinvar_codon_match_from_esummary(uid: str, entry: Dict[str, Any]) -> Option
     an error; every other qualifying record at the same codon is
     unaffected).
     """
+    # C2: only a recognised single-allele record can be a codon anchor. Haplotype, diplotype and
+    # other multi-variant records (and unrecognised or missing record types) are never anchors.
+    # Their titles happened not to parse as a protein change, which was accidental protection;
+    # `esummary` also carries a `protein_change` field on them.
+    variation_set_entry = entry.get("variation_set")
+    if not is_single_allele_record(
+        entry.get("obj_type"), len(variation_set_entry) if isinstance(variation_set_entry, list) else None
+    ):
+        return None
+
     title = entry.get("title")
     parsed = parse_protein_change(title)
     if parsed is None:

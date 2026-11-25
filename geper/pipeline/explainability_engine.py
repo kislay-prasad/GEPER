@@ -257,7 +257,13 @@ class ExplainabilityEngine:
             if name in (evidence_sources or []):
                 continue
             r = (raw_evidence or {}).get(key)
-            if not r:
+            if name == "ClinVar" and r and (r.get("context_records") or []):
+                reason = (
+                    f"Queried; {len(r['context_records'])} record(s) contain this allele but are context only "
+                    "(haplotype, diplotype, star-allele or unclassified records) and are not evidence about "
+                    "this variant."
+                )
+            elif not r:
                 reason = "Not queried for this variant."
             elif r.get("skipped"):
                 reason = "Lookup skipped (see pipeline graceful-fallback log)."

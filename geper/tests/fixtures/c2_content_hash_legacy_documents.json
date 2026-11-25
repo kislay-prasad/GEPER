@@ -1,0 +1,172 @@
+{
+ "_provenance": "Documents and digests produced by UNMODIFIED origin/master (b99ca97) report/models.py::compute_content_hash; a document with no content_hash_version must keep hashing to exactly these.",
+ "documents": {
+  "clinvar_block_without_primary_key": {
+   "assembly": "GRCh38",
+   "variants": [
+    {
+     "clinvar": {
+      "error": "ClinVar request failed",
+      "found": false,
+      "query": null
+     },
+     "interpretation_result": {
+      "acmg_classification": "Uncertain Significance",
+      "gene_symbol": "BRCA1"
+     },
+     "variant": {
+      "alt": "C",
+      "chrom": "17",
+      "pos": 43094298,
+      "ref": "A"
+     }
+    }
+   ]
+  },
+  "clinvar_key_absent": {
+   "assembly": "GRCh37",
+   "caveats": [
+    "x"
+   ],
+   "variants": [
+    {
+     "interpretation_result": {
+      "acmg_classification": "Uncertain Significance",
+      "gene_symbol": "BRCA1"
+     },
+     "variant": {
+      "alt": "C",
+      "chrom": "17",
+      "pos": 43094298,
+      "ref": "A"
+     }
+    }
+   ]
+  },
+  "matched_with_primary": {
+   "assembly": "GRCh38",
+   "variants": [
+    {
+     "candidate_interpretation": {
+      "acmg_classification": {
+       "classification": "Benign",
+       "not_evaluated_count": 3,
+       "triggered_criteria": [
+        {
+         "code": "BA1",
+         "direction": "benign",
+         "strength": "Stand-alone"
+        }
+       ]
+      },
+      "confidence": {
+       "label": "Moderate",
+       "pending": false,
+       "score": 61.5
+      },
+      "conflict_resolution": {
+       "description": "No conflicts",
+       "severity": "None"
+      },
+      "conflicting_evidence": [],
+      "evidence_sources": [
+       "ClinVar",
+       "gnomAD"
+      ],
+      "priority": {
+       "category": "Low",
+       "pending": false,
+       "rank": 3,
+       "score": 12.25
+      },
+      "recommendations": [
+       "Routine reporting"
+      ],
+      "supporting_evidence": [
+       "ClinVar reports 'Benign'"
+      ]
+     },
+     "clinvar": {
+      "found": true,
+      "match_status": "matched",
+      "matched_records": [
+       {
+        "accession": "VCV000041804",
+        "clinical_significance": "Benign",
+        "condition": [
+         "Hereditary cancer"
+        ],
+        "last_evaluated": "2024/01/01 00:00",
+        "review_status": "criteria provided, multiple submitters, no conflicts",
+        "title": "NM_007294.4(BRCA1):c.1233T>G",
+        "uid": "41804",
+        "variant_match": true
+       }
+      ],
+      "primary_record": {
+       "accession": "VCV000041804",
+       "clinical_significance": "Benign",
+       "condition": [
+        "Hereditary cancer"
+       ],
+       "last_evaluated": "2024/01/01 00:00",
+       "review_status": "criteria provided, multiple submitters, no conflicts",
+       "title": "NM_007294.4(BRCA1):c.1233T>G",
+       "uid": "41804",
+       "variant_match": true
+      },
+      "records": [
+       {
+        "accession": "VCV000041804",
+        "clinical_significance": "Benign",
+        "condition": [
+         "Hereditary cancer"
+        ],
+        "last_evaluated": "2024/01/01 00:00",
+        "review_status": "criteria provided, multiple submitters, no conflicts",
+        "title": "NM_007294.4(BRCA1):c.1233T>G",
+        "uid": "41804",
+        "variant_match": true
+       },
+       {
+        "accession": "VCV000054169",
+        "clinical_significance": "Pathogenic",
+        "condition": [
+         "Hereditary cancer"
+        ],
+        "last_evaluated": "2024/01/01 00:00",
+        "review_status": "reviewed by expert panel",
+        "title": "NM_007294.4(BRCA1):c.1233T>G",
+        "uid": "54169",
+        "variant_match": false
+       }
+      ]
+     },
+     "dbsnp": {
+      "found": true,
+      "rsid": "rs80357024"
+     },
+     "gnomad": {
+      "found": true,
+      "global_af": 0.31
+     },
+     "interpretation_result": {
+      "acmg_classification": "Benign",
+      "gene_symbol": "BRCA1"
+     },
+     "variant": {
+      "alt": "C",
+      "chrom": "17",
+      "pos": 43094298,
+      "ref": "A"
+     }
+    }
+   ]
+  }
+ },
+ "master_digests": {
+  "clinvar_block_without_primary_key": "dee3f633462524dc4461d1c5e9748bbafcaa98c9eff8fd35bb59a4db4b0ccab1",
+  "clinvar_key_absent": "931bb099f97dfd5b4dd3e777bd7b2fc12e78ac2d83d8e83ac62430bd5777c705",
+  "matched_with_primary": "731dba34d36920d73922dc3e299755df3ca835b5a57fd8f1e6fcd19720736e6c"
+ }
+}

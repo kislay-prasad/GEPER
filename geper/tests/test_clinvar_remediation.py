@@ -42,7 +42,15 @@ def _variant(pos, ref, alt, chrom="17"):
     return Variant(chrom=chrom, pos=pos, variant_id=".", ref=ref, alt=alt, qual=None, filter_status=None)
 
 
-def _entry(uid, accession, title, significance, review, spdi, loc38, loc37):
+def _entry(uid, accession, title, significance, review, spdi, loc38, loc37, obj_type=None):
+    # ClinVar's `obj_type` (C2 record-type policy): the real value where known, else the plain type implied
+    # by the SPDI's shape. Entries without one are context-only by policy.
+    if obj_type is None:
+        _, _, spdi_ref, spdi_alt = spdi.split(":", 3)
+        if len(spdi_ref) == 1 and len(spdi_alt) == 1:
+            obj_type = "single nucleotide variant"
+        else:
+            obj_type = "Deletion" if len(spdi_ref) > len(spdi_alt) else "Insertion"
     variation_loc = []
     if loc38 is not None:
         variation_loc.append({"assembly_name": "GRCh38", "chr": "17", "start": str(loc38)})
@@ -51,6 +59,7 @@ def _entry(uid, accession, title, significance, review, spdi, loc38, loc37):
     return {
         "uid": uid,
         "accession": accession,
+        "obj_type": obj_type,
         "title": title,
         "germline_classification": {
             "description": significance,
@@ -72,6 +81,7 @@ _BRCA1_C68 = _entry(
     "NC_000017.11:43124027:CTCT:CT",
     43124028,
     41276045,
+    obj_type="Microsatellite",  # live: ClinVar types c.68_69del (a repeat-region deletion) this way
 )
 # Live: VCV000054169, BRCA1 c.1232_1233del; VCV000041804, c.1233T>G.
 _BRCA1_C1232DEL = _entry(

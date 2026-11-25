@@ -33,6 +33,11 @@ the test-file level.
 
 Consumed by `tests/test_acmg_net_points.py`.
 
+Load-time completion (ClinVar audit C3): the recorded `clinvar_codon_result` dicts predate the lookup stating its
+genome build. `loader.py` adds `assembly: "GRCh38"` (the recorded run's `##reference=GRCh38`) to a codon result that
+has matches and no `assembly` key, in memory only -- the JSON stays exactly as extracted. PS1/PM5 read that key to judge
+record identity in the right build and treat a missing one as an unresolved assembly (never silently GRCh38).
+
 ## Regenerating a fixture
 
 Extraction is a pure JSON transform -- no model weights, no network,

@@ -58,6 +58,14 @@ from pipeline.stage_schemas import build_raw_evidence_bundle
 _FIXTURE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+# The build the recorded run used: `nuclear_test_with_mt.vcf` declares `##reference=GRCh38`. The PS1/PM5 codon
+# lookup now states its build in every result (ClinVar audit C3) because PS1/PM5 judge "is this ClinVar record the
+# variant itself?" in that build; a fixture captured before that key existed is completed with it here, at load
+# time, so the recorded JSON stays exactly as extracted. Without it the codon result would read as "assembly
+# unresolved" (by design: never silently GRCh38) and PM5/PS1 would be withheld, which the recorded run did not do.
+_RECORDED_RUN_ASSEMBLY = "GRCh38"
+
+
 class FixtureSchemaError(RuntimeError):
     """Raised when a captured evidence dict no longer matches the
     schema `build_raw_evidence_bundle` validates production's own
@@ -84,6 +92,9 @@ def load_fixture(filename: str) -> Dict[str, Dict[str, Any]]:
     variants = document.get("variants", {})
     for label, entry in variants.items():
         evidence = entry["evidence"]
+        codon_result = evidence.get("clinvar_codon_result")
+        if isinstance(codon_result, dict) and codon_result.get("matches") and "assembly" not in codon_result:
+            codon_result["assembly"] = _RECORDED_RUN_ASSEMBLY
         bundle, error = build_raw_evidence_bundle(
             variant_ref=label,
             clinvar_result=evidence.get("clinvar_result"),

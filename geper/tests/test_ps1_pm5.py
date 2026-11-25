@@ -98,7 +98,8 @@ def matches_for(codon_label):
 
 
 def clinvar_codon_result(codon_label):
-    return {"skipped": False, "found": True, "matches": matches_for(codon_label)}
+    # `assembly` is what `ClinVarCodonLookup.query_codon` always records (C3): the frozen records below are GRCh38.
+    return {"skipped": False, "found": True, "assembly": "GRCh38", "matches": matches_for(codon_label)}
 
 
 def variant(pos, ref, alt):
@@ -216,7 +217,9 @@ class TestPS1KnownVariants(unittest.TestCase):
         """
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7674252, "C", "A")
-        result = evaluator.evaluate_ps1(detail, matches_for("codon237"), transcript(), 7674252, "C", "A")
+        result = evaluator.evaluate_ps1(
+            detail, matches_for("codon237"), transcript(), 7674252, "C", "A", assembly="GRCh38"
+        )
         self.assertTrue(result.applies)
         anchor_uids = {m["uid"] for m in result.matched_anchors}
         self.assertEqual(anchor_uids, {"142714", "1757269"})  # excludes 634770, its own record
@@ -238,7 +241,9 @@ class TestPS1KnownVariants(unittest.TestCase):
         """Arg175Cys has no OTHER ClinVar record at codon 175 also producing Cys -- PS1 must not fire (that's PM5's job)."""
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7675089, "G", "A")
-        result = evaluator.evaluate_ps1(detail, matches_for("codon175"), transcript(), 7675089, "G", "A")
+        result = evaluator.evaluate_ps1(
+            detail, matches_for("codon175"), transcript(), 7675089, "G", "A", assembly="GRCh38"
+        )
         self.assertFalse(result.applies)
 
     def test_confidence_filter_blocks_ps1_on_single_submitter_and_conflicting_only(self):
@@ -252,7 +257,9 @@ class TestPS1KnownVariants(unittest.TestCase):
         """
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7676032, "A", "G")  # c.337T>C, Phe113Leu
-        result = evaluator.evaluate_ps1(detail, matches_for("codon113"), transcript(), 7676032, "A", "G")
+        result = evaluator.evaluate_ps1(
+            detail, matches_for("codon113"), transcript(), 7676032, "A", "G", assembly="GRCh38"
+        )
         self.assertFalse(result.applies)
         self.assertTrue(result.rejected_anchors)  # seen, not silently absent
         self.assertIn("confidence bar", result.rationale)
@@ -263,7 +270,9 @@ class TestPS1KnownVariants(unittest.TestCase):
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7675087, "G", "A")
         self.assertEqual(detail.category, "synonymous")
-        result = evaluator.evaluate_ps1(detail, matches_for("codon175"), transcript(), 7675087, "G", "A")
+        result = evaluator.evaluate_ps1(
+            detail, matches_for("codon175"), transcript(), 7675087, "G", "A", assembly="GRCh38"
+        )
         self.assertFalse(result.applies)
         self.assertIn("synonymous", result.rationale)
 
@@ -285,7 +294,9 @@ class TestPM5KnownVariants(unittest.TestCase):
         """
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7675089, "G", "A")
-        result = evaluator.evaluate_pm5(detail, matches_for("codon175"), transcript(), 7675089, "G", "A")
+        result = evaluator.evaluate_pm5(
+            detail, matches_for("codon175"), transcript(), 7675089, "G", "A", assembly="GRCh38"
+        )
         self.assertTrue(result.applies)
         anchor_uids = {m["uid"] for m in result.matched_anchors}
         self.assertIn("12374", anchor_uids)  # Arg175His
@@ -298,7 +309,9 @@ class TestPM5KnownVariants(unittest.TestCase):
         """The same amino acid as every anchor at this codon is PS1's evidence, not PM5's."""
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7674252, "C", "A")
-        result = evaluator.evaluate_pm5(detail, matches_for("codon237"), transcript(), 7674252, "C", "A")
+        result = evaluator.evaluate_pm5(
+            detail, matches_for("codon237"), transcript(), 7674252, "C", "A", assembly="GRCh38"
+        )
         self.assertFalse(result.applies)
 
     def test_phe113leu_triggers_pm5_via_high_confidence_ile_and_val_anchors(self):
@@ -312,7 +325,9 @@ class TestPM5KnownVariants(unittest.TestCase):
         """
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7676030, "G", "C")  # c.339C>G, Phe113Leu
-        result = evaluator.evaluate_pm5(detail, matches_for("codon113"), transcript(), 7676030, "G", "C")
+        result = evaluator.evaluate_pm5(
+            detail, matches_for("codon113"), transcript(), 7676030, "G", "C", assembly="GRCh38"
+        )
         self.assertTrue(result.applies)
         anchor_uids = {m["uid"] for m in result.matched_anchors}
         self.assertEqual(anchor_uids, {"1469551", "141302"})  # Phe113Ile, Phe113Val
@@ -347,7 +362,7 @@ class TestPM5KnownVariants(unittest.TestCase):
 
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7674252, "C", "A")  # Met237Ile
-        result = evaluator.evaluate_pm5(detail, matches, transcript(), 7674252, "C", "A")
+        result = evaluator.evaluate_pm5(detail, matches, transcript(), 7674252, "C", "A", assembly="GRCh38")
         self.assertNotIn("663828", {m["uid"] for m in result.matched_anchors})
 
 
@@ -393,7 +408,7 @@ class TestSpliceProximityCaveat(unittest.TestCase):
             }
         ]
         detail = coding_consequence_detail(t, 7675053, "C", "G")  # genomic C>G at exon5's last base
-        result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675053, "C", "G")
+        result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675053, "C", "G", assembly="GRCh38")
         self.assertFalse(result.applies)
         self.assertIn("exon-intron junction", result.rationale)
         self.assertTrue(any("0 bp" in c for c in result.caveats_checked))
@@ -420,7 +435,7 @@ class TestSpliceProximityCaveat(unittest.TestCase):
             }
         ]
         detail = coding_consequence_detail(t, 7675089, "G", "C")  # Arg175Gly
-        result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675089, "G", "C")
+        result = PS1PM5Evaluator().evaluate_pm5(detail, constructed_anchor, t, 7675089, "G", "C", assembly="GRCh38")
         self.assertTrue(result.applies)
 
 
@@ -501,7 +516,7 @@ class TestSubmitterNote(unittest.TestCase):
                 m["submitters"] = [{"name": "ClinGen LDCV", "org_id": "9", "scv": "SCV000999"}]
         evaluator = PS1PM5Evaluator()
         detail = coding_consequence_detail(transcript(), 7674252, "C", "A")
-        result = evaluator.evaluate_ps1(detail, matches, transcript(), 7674252, "C", "A")
+        result = evaluator.evaluate_ps1(detail, matches, transcript(), 7674252, "C", "A", assembly="GRCh38")
         self.assertTrue(result.applies)
         self.assertTrue(any("VCV000142714" in line and "ClinGen LDCV" in line for line in result.supporting_evidence))
 

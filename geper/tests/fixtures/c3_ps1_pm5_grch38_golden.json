@@ -1,0 +1,4256 @@
+{
+ "_provenance": "Output of the UNMODIFIED origin/master (26864ae) ACMGRuleEngine._ps1/_pm5 for every SNV allele at the three real frozen TP53 codons (GRCh38). Generated before the C3 change to prove GRCh38 behaviour is preserved.",
+ "rows": [
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "1 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175C)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (C), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "12374",
+     "182963",
+     "376649"
+    ],
+    "rationale": "PM5 applies: this variant produces R175C, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>A (p.Arg175His), Pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "4189264"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000012374 -- NM_000546.6(TP53):c.524G>A (p.Arg175His) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000182963 -- NM_000546.6(TP53):c.524G>T (p.Arg175Leu) -- Likely pathogenic (reviewed by expert panel, 3-star)",
+     "ClinVar: VCV000376649 -- NM_000546.6(TP53):c.523C>G (p.Arg175Gly) -- Pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175C)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (C), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175G)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (G), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "12374",
+     "182963"
+    ],
+    "rationale": "PM5 applies: this variant produces R175G, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>A (p.Arg175His), Pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "245851",
+     "4189264"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000012374 -- NM_000546.6(TP53):c.524G>A (p.Arg175His) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000182963 -- NM_000546.6(TP53):c.524G>T (p.Arg175Leu) -- Likely pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175G)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (G), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "1 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175S)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (S), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "12374",
+     "182963",
+     "376649"
+    ],
+    "rationale": "PM5 applies: this variant produces R175S, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>A (p.Arg175His), Pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "245851"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000012374 -- NM_000546.6(TP53):c.524G>A (p.Arg175His) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000182963 -- NM_000546.6(TP53):c.524G>T (p.Arg175Leu) -- Likely pathogenic (reviewed by expert panel, 3-star)",
+     "ClinVar: VCV000376649 -- NM_000546.6(TP53):c.523C>G (p.Arg175Gly) -- Pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175S)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (S), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675089,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175L)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "12374",
+     "376649"
+    ],
+    "rationale": "PM5 applies: this variant produces R175L, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>A (p.Arg175His), Pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "245851",
+     "4189264"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000012374 -- NM_000546.6(TP53):c.524G>A (p.Arg175His) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000376649 -- NM_000546.6(TP53):c.523C>G (p.Arg175Gly) -- Pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175L)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175P)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (P), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "12374",
+     "182963",
+     "376649"
+    ],
+    "rationale": "PM5 applies: this variant produces R175P, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>A (p.Arg175His), Pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "245851",
+     "4189264"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000012374 -- NM_000546.6(TP53):c.524G>A (p.Arg175His) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000182963 -- NM_000546.6(TP53):c.524G>T (p.Arg175Leu) -- Likely pathogenic (reviewed by expert panel, 3-star)",
+     "ClinVar: VCV000376649 -- NM_000546.6(TP53):c.523C>G (p.Arg175Gly) -- Pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175P)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (P), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175H)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with a DIFFERENT resulting amino acid (H), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "182963",
+     "376649"
+    ],
+    "rationale": "PM5 applies: this variant produces R175H, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.524G>T (p.Arg175Leu), Likely pathogenic, reviewed by expert panel).",
+    "rejected": [
+     "245851",
+     "4189264"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000182963 -- NM_000546.6(TP53):c.524G>T (p.Arg175Leu) -- Likely pathogenic (reviewed by expert panel, 3-star)",
+     "ClinVar: VCV000376649 -- NM_000546.6(TP53):c.523C>G (p.Arg175Gly) -- Pathogenic (reviewed by expert panel, 3-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 175 (R175H)? -> Yes.",
+     "ClinVar records found at this codon: 6.",
+     "Records with the identical resulting amino acid (H), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 175 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675088,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon175",
+   "pos": 7675087,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237L)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237L, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237L)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237V)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (V), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237V, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237V)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (V), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237L)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237L, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237L)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674254,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237R)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (R), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237R, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237R)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (R), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237T)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (T), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237T, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237T)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (T), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237K)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (K), passing the confidence filter and excluding this variant's own record: 3.",
+     "PM5 applies -> Yes, citing 3 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PM5 applies: this variant produces M237K, different amino acid change at the same codon as 3 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237K)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (K), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 237 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674253,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 does not apply: no ClinVar record at codon 237 sharing different amino acid change at the same codon met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 2.",
+     "PS1 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "1757269"
+    ],
+    "rationale": "PS1 applies: this variant produces M237I, same amino acid change as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "strong",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 does not apply: no ClinVar record at codon 237 sharing different amino acid change at the same codon met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": true,
+    "confidence": "High",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 2.",
+     "PS1 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "142714",
+     "634770"
+    ],
+    "rationale": "PS1 applies: this variant produces M237I, same amino acid change as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>A (p.Met237Ile), Pathogenic, reviewed by expert panel).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "strong",
+    "supporting_evidence": [
+     "ClinVar: VCV000142714 -- NM_000546.6(TP53):c.711G>A (p.Met237Ile) -- Pathogenic (reviewed by expert panel, 3-star), condition(s): Li-Fraumeni syndrome",
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with a DIFFERENT resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 does not apply: no ClinVar record at codon 237 sharing different amino acid change at the same codon met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 237 (M237I)? -> Yes.",
+     "ClinVar records found at this codon: 3.",
+     "Records with the identical resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 2.",
+     "PS1 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "1757269",
+     "634770"
+    ],
+    "rationale": "PS1 applies: this variant produces M237I, same amino acid change as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.711G>T (p.Met237Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [],
+    "status": "triggered",
+    "strength": "strong",
+    "supporting_evidence": [
+     "ClinVar: VCV000634770 -- NM_000546.6(TP53):c.711G>T (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV001757269 -- NM_000546.6(TP53):c.711G>C (p.Met237Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon237",
+   "pos": 7674252,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "5 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113V)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (V), passing the confidence filter and excluding this variant's own record: 1.",
+     "PM5 applies -> Yes, citing 1 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113V, different amino acid change at the same codon as 1 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "2125367",
+     "2702402",
+     "3634432",
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113V)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (V), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113L, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic). 2 record(s) were seen but excluded; see caveats_checked.",
+    "rejected": [
+     "2125367",
+     "2702402"
+    ],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "5 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113I)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 1.",
+     "PM5 applies -> Yes, citing 1 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302"
+    ],
+    "rationale": "PM5 applies: this variant produces F113I, different amino acid change at the same codon as 1 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>G (p.Phe113Val), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "2125367",
+     "2702402",
+     "3634432",
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113I)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (I), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676032,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "4 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113C)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (C), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113C, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "2125367",
+     "2702402",
+     "3634432",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113C)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (C), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "4 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113S)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (S), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113S, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "2125367",
+     "2702402",
+     "3634432",
+     "634690"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113S)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (S), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "5 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113Y)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (Y), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113Y, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "2125367",
+     "2702402",
+     "3634432",
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113Y)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (Y), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic).",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676031,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "A"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "C"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": null,
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> No (synonymous)."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 applies only to missense substitutions; this variant's predicted consequence is 'synonymous'.",
+    "rejected": [],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113L, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic). 2 record(s) were seen but excluded; see caveats_checked.",
+    "rejected": [
+     "2125367",
+     "3634432"
+    ],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": true,
+    "confidence": "Moderate",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with a DIFFERENT resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 2.",
+     "PM5 applies -> Yes, citing 2 qualifying ClinVar record(s)."
+    ],
+    "direction": "pathogenic",
+    "matched": [
+     "141302",
+     "1469551"
+    ],
+    "rationale": "PM5 applies: this variant produces F113L, different amino acid change at the same codon as 2 ClinVar record(s) already classified at this codon (strongest: NM_000546.6(TP53):c.337T>A (p.Phe113Ile), Pathogenic/Likely pathogenic, criteria provided, multiple submitters, no conflicts).",
+    "rejected": [
+     "634690",
+     "823709"
+    ],
+    "status": "triggered",
+    "strength": "moderate",
+    "supporting_evidence": [
+     "ClinVar: VCV001469551 -- NM_000546.6(TP53):c.337T>A (p.Phe113Ile) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)",
+     "ClinVar: VCV000141302 -- NM_000546.6(TP53):c.337T>G (p.Phe113Val) -- Pathogenic/Likely pathogenic (criteria provided, multiple submitters, no conflicts, 2-star)"
+    ]
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [
+     "2 ClinVar record(s) at this codon were seen but excluded by the confidence filter (see caveats_checked)."
+    ],
+    "decision_path": [
+     "Qualifying missense substitution at codon 113 (F113L)? -> Yes.",
+     "ClinVar records found at this codon: 7.",
+     "Records with the identical resulting amino acid (L), passing the confidence filter and excluding this variant's own record: 0."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 does not apply: no ClinVar record at codon 113 sharing same amino acid change met the confidence bar (>= 2-star, not conflicting, Pathogenic/Likely pathogenic). 2 record(s) were seen but excluded; see caveats_checked.",
+    "rejected": [
+     "2702402",
+     "3634432"
+    ],
+    "status": "not_triggered",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "T",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "G"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "A",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "C",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "T"
+  },
+  {
+   "PM5": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PM5 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "moderate",
+    "supporting_evidence": []
+   },
+   "PS1": {
+    "applies": false,
+    "confidence": "Low",
+    "conflicting_evidence": [],
+    "decision_path": [
+     "Qualifying missense substitution? -> Could not be determined."
+    ],
+    "direction": "pathogenic",
+    "matched": [],
+    "rationale": "PS1 was not evaluated: this variant's amino-acid consequence could not be determined in the transcript's reading frame (no CDS sequence available, the position falls outside the coding sequence, or ref/alt were not supplied).",
+    "rejected": [],
+    "status": "not_evaluated",
+    "strength": "strong",
+    "supporting_evidence": []
+   },
+   "alt": "G",
+   "codon": "codon113",
+   "pos": 7676030,
+   "ref": "T"
+  }
+ ]
+}

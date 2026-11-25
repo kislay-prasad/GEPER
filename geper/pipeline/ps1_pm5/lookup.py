@@ -29,7 +29,7 @@ import requests
 
 from config import CONFIG
 from pipeline.ps1_pm5.cache import ClinVarCodonCache
-from pipeline.ps1_pm5.utils import clinvar_codon_match_from_esummary, dedupe_by_uid
+from pipeline.ps1_pm5.utils import GRCH37, canonical_build, clinvar_codon_match_from_esummary, dedupe_by_uid
 from pipeline.pvs1.models import TranscriptContext
 from utils.exceptions import ExternalAPIError
 from utils.logger import get_logger
@@ -44,6 +44,11 @@ from utils.ncbi_eutils import (
 )
 
 logger = get_logger(__name__)
+
+# Version of the stored match shape (ClinVar audit C3: matches gained `pos_by_build`, results gained `assembly`).
+# It is part of the cache key AND checked on every cache hit, so an entry written by an older version -- in
+# memory or on disk -- is a miss and is never read as if its matches carried per-assembly positions.
+MATCH_SCHEMA = 2
 
 _SKIPPED_RESULT = {
     "skipped": True,
@@ -74,9 +79,32 @@ class ClinVarCodonLookup:
         Never raises: a network failure is reported inside the returned
         dict's `error` field, matching every other lookup in this
         codebase.
+
+        `assembly` is canonicalised (GRCh37/GRCH37/hg19/b37 -> GRCh37, GRCh38/hg38 -> GRCh38) for the
+        Entrez position field, the cache key and the result's `assembly` key. Anything else (None, "37",
+        "GRCh38.p14", ...) is UNRESOLVED: the lookup is not run -- it would have to guess a build -- and
+        the result says so (`assembly_unresolved`), which makes PS1/PM5 "not evaluated" rather than
+        quietly searching GRCh38 (ClinVar audit C3). The default argument is only for callers that really
+        mean GRCh38; the pipeline always passes the run's own assembly.
         """
         if not CONFIG.ps1_pm5.ENABLED:
             return dict(_SKIPPED_RESULT)
+
+        build = canonical_build(assembly)
+        if build is None:
+            return {
+                "skipped": False,
+                "found": False,
+                "matches": [],
+                "assembly": None,
+                "assembly_unresolved": True,
+                "assembly_input": None if assembly is None else str(assembly),
+                "match_schema": MATCH_SCHEMA,
+                "reason": (
+                    f"the genome assembly of this run ({assembly!r}) is not a supported build "
+                    "(GRCh37/hg19/b37 or GRCh38/hg38), so the ClinVar codon lookup was not run."
+                ),
+            }
 
         positions = transcript.genomic_positions_for_codon(codon_number)
         if not positions:
@@ -85,18 +113,20 @@ class ClinVarCodonLookup:
                 "found": False,
                 "matches": [],
                 "reason": f"codon {codon_number} is out of range for transcript {transcript.transcript_id}.",
+                "assembly": build,
+                "match_schema": MATCH_SCHEMA,
             }
 
-        key = f"codon:{assembly}:{transcript.transcript_id}:{codon_number}"
+        key = f"codon:v{MATCH_SCHEMA}:{build}:{transcript.transcript_id}:{codon_number}"
         if self.cache is not None:
             cached = self.cache.get(key)
-            if cached is not None:
+            if cached is not None and cached.get("match_schema") == MATCH_SCHEMA and cached.get("assembly") == build:
                 result = dict(cached)
                 result["source"] = "cache"
                 return result
 
         chrom = transcript.chrom
-        position_field = "chrpos37" if str(assembly).upper().startswith("GRCH37") else "chrpos38"
+        position_field = "chrpos37" if build == GRCH37 else "chrpos38"
 
         all_matches = []
         errors = []
@@ -139,6 +169,11 @@ class ClinVarCodonLookup:
             "source": "ncbi_eutils",
             "transcript_id": transcript.transcript_id,
             "codon_number": codon_number,
+            # The canonical build the positions above and the Entrez field refer to -- the frame the
+            # decision layer must judge record identity in (C3). `match_schema` versions the stored match
+            # shape (see MATCH_SCHEMA).
+            "assembly": build,
+            "match_schema": MATCH_SCHEMA,
             "queried_positions": positions,
             "matches": [m.to_dict() for m in matches],
             "error": "; ".join(errors) if errors and not matches else None,

@@ -61,6 +61,50 @@ _THREE_TO_ONE = {
 _PROTEIN_CHANGE_RE = re.compile(r"\(p\.([A-Za-z]{3})(\d+)(=|Ter|\*|[A-Za-z]{3})\)")
 
 
+GRCH37 = "GRCh37"
+GRCH38 = "GRCh38"
+
+# Spellings the PS1/PM5 path accepts for each build (matched case-insensitively, whole string). Anything else
+# -- "37", "GRCh38.p14", "GRCh36", "" -- is UNRESOLVED, never silently GRCh38 (ClinVar audit C3).
+_BUILD_ALIASES = {
+    "grch37": GRCH37,
+    "hg19": GRCH37,
+    "b37": GRCH37,
+    "grch38": GRCH38,
+    "hg38": GRCH38,
+}
+
+
+def canonical_build(assembly: Any) -> Optional[str]:
+    """
+    "GRCh37" or "GRCh38" for a supported assembly spelling (GRCh37/GRCH37/hg19/b37, GRCh38/hg38), else None
+    (unresolved). Scope: the PS1/PM5 path only; the rest of the pipeline normalises assemblies on its own.
+    """
+    if not isinstance(assembly, str):
+        return None
+    return _BUILD_ALIASES.get(assembly.strip().lower())
+
+
+def _positions_by_build(variation_loc: Any, spdi_grch38_pos: int) -> Dict[str, int]:
+    """
+    ClinVar's own placement of one component in each build, from `variation_loc[]` (`assembly_name`, 1-based
+    `start`). Only GRCh37/GRCh38 entries with a numeric start are kept. If ClinVar's GRCh38 start disagrees
+    with the SPDI position the record's coordinates are internally inconsistent and nothing is trusted
+    (empty result): a later identity check then reports "cannot be verified" instead of guessing.
+    """
+    found: Dict[str, int] = {}
+    for loc in variation_loc if isinstance(variation_loc, list) else []:
+        if not isinstance(loc, dict):
+            continue
+        name = loc.get("assembly_name")
+        start = str(loc.get("start") if loc.get("start") is not None else "").strip()
+        if name in (GRCH37, GRCH38) and start.isdigit() and name not in found:
+            found[name] = int(start)
+    if GRCH38 in found and found[GRCH38] != spdi_grch38_pos:
+        return {}
+    return found
+
+
 def parse_protein_change(title: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Parse `(p.Arg175His)`-style HGVS.p notation out of a ClinVar
@@ -116,6 +160,7 @@ def clinvar_codon_match_from_esummary(uid: str, entry: Dict[str, Any]) -> Option
 
     variation_set = entry.get("variation_set") or []
     pos = ref = alt = None
+    pos_by_build: Dict[str, int] = {}
     for v in variation_set:
         spdi = v.get("canonical_spdi") if isinstance(v, dict) else None
         if not spdi or spdi.count(":") < 3:
@@ -126,6 +171,10 @@ def clinvar_codon_match_from_esummary(uid: str, entry: Dict[str, Any]) -> Option
         except ValueError:
             continue
         ref, alt = spdi_ref, spdi_alt
+        # `pos` above is a GRCh38 coordinate (canonical SPDI is GRCh38-only). Keep ClinVar's own per-build
+        # placement of the SAME component next to it, so a query in another build can be compared in its
+        # own frame (C3).
+        pos_by_build = _positions_by_build(v.get("variation_loc"), pos)
         break
     if pos is None or not ref or not alt:
         return None
@@ -147,6 +196,7 @@ def clinvar_codon_match_from_esummary(uid: str, entry: Dict[str, Any]) -> Option
         star_rating=star_rating(review_status),
         is_conflicting=is_conflicting(review_status),
         condition=[trait.get("trait_name") for trait in germline.get("trait_set", []) if isinstance(trait, dict)],
+        pos_by_build=pos_by_build,
     )
 
 

@@ -86,6 +86,18 @@ class ClinVarCodonMatch:
     `pos`/`ref`/`alt` are on the genomic forward strand (VCF/SPDI
     convention) so a match can be checked for exact self-identity
     against the query variant without a strand-aware comparison.
+
+    BUILD SEMANTICS (ClinVar audit C3). `pos` is the record's NCBI
+    canonical-SPDI position, and canonical SPDI is always on the GRCh38
+    sequence -- so `pos` is a GRCh38 coordinate whatever assembly the run
+    uses. The record's placement in each build is kept separately in
+    `pos_by_build` (from the record's own `variation_loc`). A query
+    variant's coordinates are in the run's assembly, so whether a record IS
+    the query variant must be decided in that assembly -- see
+    `pipeline/ps1_pm5/decision.py::identify_record`. That decision is
+    deliberately NOT made here: matches are cached per transcript/codon and
+    shared by every variant in the codon, so the model carries the data and
+    never a per-variant verdict.
     """
 
     uid: str
@@ -111,13 +123,22 @@ class ClinVarCodonMatch:
     # -- so it defaults to `None` (not fetched yet / lookup failed),
     # distinct from `[]` (fetched, ClinVar has no submitter on file).
     submitters: Optional[List[Dict[str, Optional[str]]]] = None
+    # ClinVar's own per-build placement of this record (`variation_loc[].start`, 1-based), e.g.
+    # {"GRCh37": 7577570, "GRCh38": 7674252}. Additive (C3). Empty when ClinVar gave no usable
+    # placement, or when it contradicts the SPDI position (then no build other than the
+    # SPDI-implied GRCh38 can be trusted). A match stored before this field existed has no
+    # `pos_by_build` at all, which `identify_record` reads as "identity cannot be verified"
+    # for any build other than GRCh38.
+    pos_by_build: Dict[str, int] = field(default_factory=dict)
 
     @property
     def meets_confidence(self) -> bool:
         return not self.is_conflicting and self.clinical_significance in PATHOGENIC_CLASSIFICATIONS
 
-    def is_same_variant_as(self, pos: int, ref: str, alt: str) -> bool:
-        return self.pos == pos and self.ref.upper() == ref.upper() and self.alt.upper() == alt.upper()
+    # NOTE (C3): an `is_same_variant_as(pos, ref, alt)` helper used to live here. It compared this
+    # record's GRCh38 `pos` with a caller-supplied coordinate in whatever assembly the run used, which
+    # is exactly the C3 defect, and nothing called it. It was removed so it cannot be reintroduced;
+    # use `pipeline/ps1_pm5/decision.py::identify_record`.
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +156,7 @@ class ClinVarCodonMatch:
             "is_conflicting": self.is_conflicting,
             "condition": self.condition,
             "submitters": self.submitters,
+            "pos_by_build": dict(self.pos_by_build),
         }
 
 
@@ -169,6 +191,11 @@ class PS1PM5Evaluation:
     query_codon_number: Optional[int] = None
     query_ref_aa: Optional[str] = None
     query_alt_aa: Optional[str] = None
+    # ClinVar records at this codon that were NOT used as anchors because of an identity check (C3):
+    # this variant's own record, a record whose identity could not be verified, or a position+ALT match
+    # with a different REF. One dict per record: uid, accession, title, reason_code, reason. Additive;
+    # kept so no record is dropped without an auditable reason.
+    excluded_records: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -187,4 +214,5 @@ class PS1PM5Evaluation:
             "query_codon_number": self.query_codon_number,
             "query_ref_aa": self.query_ref_aa,
             "query_alt_aa": self.query_alt_aa,
+            "excluded_records": self.excluded_records,
         }

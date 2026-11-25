@@ -887,11 +887,13 @@ class ACMGRuleEngine:
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
+            clinvar_result=clinvar_result,
         )
         criteria["PM5"] = _mtdna_protein_dependent_gate("PM5") or self._pm5(
             variant_dict=variant_dict,
             transcript_result=transcript_result,
             clinvar_codon_result=clinvar_codon_result,
+            clinvar_result=clinvar_result,
         )
         criteria["PM1"] = _mtdna_protein_dependent_gate("PM1") or self._pm1(
             interpro_result, is_synonymous=is_synonymous
@@ -1187,6 +1189,23 @@ class ACMGRuleEngine:
         )
 
     @staticmethod
+    def _own_clinvar_uids(clinvar_result: Optional[Dict[str, Any]]) -> List[str]:
+        """
+        ClinVar UIDs the VARIANT-LEVEL lookup already confirmed as exact matches for this variant
+        (`variant_match is True`: assembly-aware and validated by the C1/C2 work). PS1/PM5 use them as an
+        additional self-exclusion safeguard (ClinVar audit C3): a codon match with one of these UIDs is the
+        variant's own record whatever the coordinates comparison says. Empty when the variant-level lookup
+        failed or found nothing -- the coordinate identity check still applies then.
+        """
+        if not isinstance(clinvar_result, dict):
+            return []
+        return [
+            str(r["uid"])
+            for r in clinvar_result.get("records") or []
+            if isinstance(r, dict) and r.get("variant_match") is True and r.get("uid") is not None
+        ]
+
+    @staticmethod
     def _ps1_pm5_query_context(
         variant_dict: Optional[Dict[str, Any]], transcript_result: Optional[Dict[str, Any]]
     ) -> Tuple[Optional[TranscriptContext], Optional[int], str, str, Optional[CodingConsequenceDetail]]:
@@ -1234,7 +1253,13 @@ class ACMGRuleEngine:
         if query is None or getattr(query, "category", None) != "missense":
             return result
         error = clinvar_codon_result.get("error")
-        if error is not None:
+        if clinvar_codon_result.get("assembly_unresolved"):
+            # C3: the lookup was deliberately not run -- it would have had to guess GRCh37 or GRCh38.
+            reason = (
+                "the ClinVar codon lookup was not run because the genome assembly of this run "
+                f"({clinvar_codon_result.get('assembly_input')!r}) could not be resolved to GRCh37 or GRCh38"
+            )
+        elif error is not None:
             reason = f"the ClinVar codon lookup failed ({error or 'no detail returned'})"
         elif clinvar_codon_result.get("incomplete"):
             reason = (
@@ -1297,6 +1322,7 @@ class ACMGRuleEngine:
         variant_dict: Optional[Dict[str, Any]] = None,
         transcript_result: Optional[Dict[str, Any]] = None,
         clinvar_codon_result: Optional[Dict[str, Any]] = None,
+        clinvar_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PS1 (Strong): this variant produces the identical amino acid
@@ -1317,7 +1343,16 @@ class ACMGRuleEngine:
                 min_star_rating=CONFIG.ps1_pm5.MIN_STAR_RATING,
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
-        ).evaluate_ps1(query, matches, transcript, pos, ref, alt)
+        ).evaluate_ps1(
+            query,
+            matches,
+            transcript,
+            pos,
+            ref,
+            alt,
+            assembly=(clinvar_codon_result or {}).get("assembly"),
+            own_uids=ACMGRuleEngine._own_clinvar_uids(clinvar_result),
+        )
         return ACMGRuleEngine._ps1_pm5_lookup_gap(
             ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
         )
@@ -1327,6 +1362,7 @@ class ACMGRuleEngine:
         variant_dict: Optional[Dict[str, Any]] = None,
         transcript_result: Optional[Dict[str, Any]] = None,
         clinvar_codon_result: Optional[Dict[str, Any]] = None,
+        clinvar_result: Optional[Dict[str, Any]] = None,
     ) -> CriterionResult:
         """
         PM5 (Moderate): this variant produces a novel amino acid change
@@ -1348,7 +1384,16 @@ class ACMGRuleEngine:
                 min_star_rating=CONFIG.ps1_pm5.MIN_STAR_RATING,
                 splice_proximity_exon_bp=CONFIG.ps1_pm5.SPLICE_PROXIMITY_EXON_BP,
             )
-        ).evaluate_pm5(query, matches, transcript, pos, ref, alt)
+        ).evaluate_pm5(
+            query,
+            matches,
+            transcript,
+            pos,
+            ref,
+            alt,
+            assembly=(clinvar_codon_result or {}).get("assembly"),
+            own_uids=ACMGRuleEngine._own_clinvar_uids(clinvar_result),
+        )
         return ACMGRuleEngine._ps1_pm5_lookup_gap(
             ACMGRuleEngine._ps1_pm5_result(evaluation, direction, nominal_strength), query, clinvar_codon_result
         )

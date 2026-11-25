@@ -923,5 +923,110 @@ class TestContentHashCoversTheNewEvidence(unittest.TestCase):
             self.assertEqual(compute_content_hash(document), fixture["master_digests"][name], name)
 
 
+# ---------------------------------------------------------------------------------------------------
+# 9. a decision-relevant PS1/PM5 exclusion changes the content hash (both hash versions)
+# ---------------------------------------------------------------------------------------------------
+
+
+def _hash_document(case_key, uid, codon_result):
+    """The hashed document of one GRCh37 run; only `codon_result` varies between the two sides of every pair below."""
+    return full_chain(case_key, uid, "GRCh37", codon_result)[:2]
+
+
+def _as_another_variants_record(codon_result, uid):
+    """The same real record, but no longer recognisable as the query's own (other UID, position moved): the pre-C3 outcome."""
+    out = copy.deepcopy(codon_result)
+    for m in out["matches"]:
+        if m["uid"] == uid:
+            m["uid"] = "9999999"
+            m["pos_by_build"]["GRCh37"] += 1000
+    return out
+
+
+class TestDecisionRelevantExclusionsChangeTheContentHash(unittest.TestCase):
+    """
+    Each pair differs ONLY in the ClinVar codon result: the variant, the real variant-level ClinVar record, the ACMG
+    engine and the report chain are identical. Both content-hash versions must tell the two documents apart.
+    """
+
+    def assertHashDiffers(self, doc_a, doc_b):
+        for version in (1, 2):
+            self.assertNotEqual(
+                compute_content_hash(doc_a, version), compute_content_hash(doc_b, version), f"hash version {version}"
+            )
+
+    def test_excluding_the_own_record_vs_counting_it_as_a_third_anchor_changes_the_hash(self):
+        uid = OWN_TP53["c.711G>T"]
+        base = codon_result_for(TP53, 237, "GRCh37")
+        vr_a, doc_a = _hash_document(TP53, uid, base)
+        vr_b, doc_b = _hash_document(TP53, uid, _as_another_variants_record(base, uid))
+        self.assertEqual(len(rule(vr_a, "PS1")["details"]["matched_anchors"]), 2)
+        self.assertEqual(len(rule(vr_b, "PS1")["details"]["matched_anchors"]), 3)
+        self.assertHashDiffers(doc_a, doc_b)  # carried by the hashed supporting evidence (the anchor list)
+
+    def test_excluding_the_own_record_that_decides_ps1_changes_the_hash(self):
+        base = codon_result_for(SLC26A2, 653, "GRCh37")
+        vr_a, doc_a = _hash_document(SLC26A2, OWN_SLC26A2, base)
+        vr_b, doc_b = _hash_document(SLC26A2, OWN_SLC26A2, _as_another_variants_record(base, OWN_SLC26A2))
+        self.assertEqual((rule(vr_a, "PS1")["status"], rule(vr_b, "PS1")["status"]), ("not_triggered", "triggered"))
+        self.assertHashDiffers(doc_a, doc_b)  # carried by the hashed triggered criteria
+
+    def test_a_ref_mismatch_flag_changes_the_hash_although_the_ps1_status_is_unchanged(self):
+        base = codon_result_for(SLC26A2, 653, "GRCh37")
+        sides = []
+        for ref in (None, "N"):  # same position and ALT; the UID is unknown to the variant-level lookup in both
+            side = copy.deepcopy(base)
+            for m in side["matches"]:
+                if m["uid"] == OWN_SLC26A2:
+                    m["uid"] = "9999999"
+                    if ref:
+                        m["ref"] = ref
+            sides.append(_hash_document(SLC26A2, OWN_SLC26A2, side))
+        (vr_a, doc_a), (vr_b, doc_b) = sides
+        self.assertEqual(rule(vr_a, "PS1")["status"], rule(vr_b, "PS1")["status"])
+        self.assertEqual(
+            [e["reason_code"] for e in rule(vr_b, "PS1")["details"]["excluded_records"]], [D.REASON_REF_MISMATCH]
+        )
+        self.assertHashDiffers(doc_a, doc_b)  # carried by the hashed conflicting evidence
+
+    def test_an_unverifiable_record_changes_the_hash_even_when_ps1_stays_triggered(self):
+        uid = OWN_TP53["c.711G>T"]
+        base = codon_result_for(TP53, 237, "GRCh37")
+        extra = copy.deepcopy(base)
+        ghost = copy.deepcopy(next(m for m in extra["matches"] if m["uid"] == OWN_TP53["c.711G>A"]))
+        ghost.update(uid="8888888", accession="VCV008888888")
+        ghost.pop("pos_by_build")  # a same-amino-acid record whose identity cannot be verified
+        extra["matches"].append(ghost)
+        vr_a, doc_a = _hash_document(TP53, uid, base)
+        vr_b, doc_b = _hash_document(TP53, uid, extra)
+        self.assertEqual((rule(vr_a, "PS1")["status"], rule(vr_b, "PS1")["status"]), ("triggered", "triggered"))
+        self.assertHashDiffers(doc_a, doc_b)  # carried by the hashed conflicting evidence only
+
+    def test_known_limitation_a_not_evaluated_criterions_exclusion_note_is_not_in_the_hash(self):
+        """
+        CHARACTERISATION of a documented reporting limitation (see PS1_PM5_ASSEMBLY_IDENTITY.md), not a requirement: when the
+        PS1/PM5 lookup failed or was incomplete the criterion is `not_evaluated`, and its identity-exclusion note lives only in
+        unhashed criterion fields (`conflicting_evidence` is aggregated from triggered/not-triggered rules only). The decision
+        ("not evaluated") is the same either way, so no decision is hidden. A separate auditability task may change this; that
+        task must update this test together with a content-hash version decision.
+        """
+        incomplete = codon_result_for(SLC26A2, 653, "GRCh37")
+        incomplete["incomplete"] = True
+        incomplete["incomplete_reason"] = "synthetic partial lookup"
+        incomplete["matches"] = [m for m in incomplete["matches"] if m["uid"] == OWN_SLC26A2]
+        with_unverifiable = copy.deepcopy(incomplete)
+        ghost = copy.deepcopy(with_unverifiable["matches"][0])
+        ghost.update(uid="7777777", accession="VCV007777777")
+        ghost.pop("pos_by_build")
+        with_unverifiable["matches"].append(ghost)
+        vr_a, doc_a = _hash_document(SLC26A2, OWN_SLC26A2, incomplete)
+        vr_b, doc_b = _hash_document(SLC26A2, OWN_SLC26A2, with_unverifiable)
+        self.assertEqual((rule(vr_a, "PS1")["status"], rule(vr_b, "PS1")["status"]), ("not_evaluated", "not_evaluated"))
+        self.assertEqual(len(rule(vr_a, "PS1")["details"]["excluded_records"]), 1)
+        self.assertEqual(len(rule(vr_b, "PS1")["details"]["excluded_records"]), 2)  # the note is in the JSON detail ...
+        for version in (1, 2):  # ... but not in either hash version
+            self.assertEqual(compute_content_hash(doc_a, version), compute_content_hash(doc_b, version))
+
+
 if __name__ == "__main__":
     unittest.main()

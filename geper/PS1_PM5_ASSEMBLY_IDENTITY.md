@@ -84,6 +84,28 @@ earlier per-variant results verbatim, and the earlier sign-off belongs to the ea
 the new one. (Independently of this change, default resume currently fails with a `TypeError` on a re-run into an
 existing output directory; that is a separate, pre-existing issue.)
 
+## Known reporting limitation (documented; for a separate auditability task)
+
+Identity-exclusion notes are covered by the content hash (versions 1 and 2) whenever they can affect or accompany a
+PS1/PM5 conclusion: an own record removed from the anchor list changes the hashed triggered criteria and supporting
+evidence, and an unverifiable or REF-mismatched record is listed in the hashed conflicting evidence
+(`tests/test_ps1_pm5_assembly_identity.py::TestDecisionRelevantExclusionsChangeTheContentHash`).
+
+One case is **not** covered. When the ClinVar codon lookup failed or was incomplete, PS1/PM5 end `not_evaluated`
+(`ACMGRuleEngine._ps1_pm5_lookup_gap`), and that criterion's exclusion note (`excluded_records`, `unchecked_caveats`,
+`conflicting_evidence` of the criterion) is kept only in `geper_results.json`:
+
+* it is not in the content hash, because the document-level `conflicting_evidence` is aggregated from triggered and
+  not-triggered criteria only (`pipeline/interpretation_result.py`, pre-existing for every not-evaluated criterion), and
+  the hash records only the not-evaluated *count*;
+* it is not shown in the Markdown, PDF or LIMS outputs.
+
+No decision is hidden: the criterion is "not evaluated" with or without the exclusion, and the failed-lookup reason is
+shown. Changing this would alter existing hashes or require a new hash version, so it was deliberately **not** done here
+(no hash version, historical hash or sign-off is changed). A test pins the current behaviour
+(`test_known_limitation_a_not_evaluated_criterions_exclusion_note_is_not_in_the_hash`); the separate task must update
+that test together with its hash-version decision.
+
 ## Not part of this change
 
 The decision layer still does not check that an anchor lies in the query's codon/gene (it relies on position-based

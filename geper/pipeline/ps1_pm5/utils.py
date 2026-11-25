@@ -64,21 +64,26 @@ _PROTEIN_CHANGE_RE = re.compile(r"\(p\.([A-Za-z]{3})(\d+)(=|Ter|\*|[A-Za-z]{3})\
 GRCH37 = "GRCh37"
 GRCH38 = "GRCh38"
 
-# Spellings the PS1/PM5 path accepts for each build (matched case-insensitively, whole string). Anything else
-# -- "37", "GRCh38.p14", "GRCh36", "" -- is UNRESOLVED, never silently GRCh38 (ClinVar audit C3).
+# Spellings the PS1/PM5 path accepts for each build (matched case-insensitively, whole string; surrounding
+# whitespace ignored). Approved policy: GRCh37/GRCH37/hg19/b37 -> GRCh37, GRCh38/hg38/b38 -> GRCh38. Anything
+# else -- "37", "38", "GRCh38.p13", "GRCh37.p13", "GRCh-37", "grch_37", "GRCh36", "" -- is UNRESOLVED, never
+# silently GRCh38 (ClinVar audit C3). Lower-case/whitespace tolerance is kept from the original C3
+# implementation; whether to narrow it to the literal list is an open policy question (see the Phase 0 audit).
 _BUILD_ALIASES = {
     "grch37": GRCH37,
     "hg19": GRCH37,
     "b37": GRCH37,
     "grch38": GRCH38,
     "hg38": GRCH38,
+    "b38": GRCH38,
 }
 
 
 def canonical_build(assembly: Any) -> Optional[str]:
     """
-    "GRCh37" or "GRCh38" for a supported assembly spelling (GRCh37/GRCH37/hg19/b37, GRCh38/hg38), else None
-    (unresolved). Scope: the PS1/PM5 path only; the rest of the pipeline normalises assemblies on its own.
+    "GRCh37" or "GRCh38" for a supported assembly spelling (GRCh37/GRCH37/hg19/b37, GRCh38/hg38/b38), else None
+    (unresolved: None, "", "37", "GRCh38.p14", ...). Scope: the PS1/PM5 path only; the rest of the pipeline
+    normalises assemblies on its own.
     """
     if not isinstance(assembly, str):
         return None

@@ -32,9 +32,12 @@ from pipeline.ps1_pm5.models import ClinVarCodonMatch
 from pipeline.ps1_pm5.utils import canonical_build, clinvar_codon_match_from_esummary, parse_protein_change
 from pipeline.pvs1.utils import CodingConsequenceDetail
 from pipeline.vcf_parser import Variant
+from utils.exceptions import ExternalAPIError
 from report import export_lims
 from report.json_builder import build_variant_result
-from report.models import compute_content_hash
+from report.models import compute_content_hash, content_hash_version_of, verify_content_hash
+from review import signoff as signoff_module
+from review import signoff_status
 from report.report_generator import ReportGenerator
 from report.summary import generate_pdf
 from tests import test_ps1_pm5 as _base  # module import: its TestCase classes must not be re-collected here
@@ -52,7 +55,7 @@ BRCA1_C68 = "BRCA1_c68_69del"
 OWN_SLC26A2 = "4098"  # p.Cys653Ser, P/LP, 2-star: the ONLY same-amino-acid record at its codon
 OWN_TP53 = {"c.711G>T": "634770", "c.711G>C": "1757269", "c.711G>A": "142714"}  # three alleles, one position
 GRCH37_SPELLINGS = ("GRCh37", "GRCH37", "hg19", "b37")
-GRCH38_SPELLINGS = ("GRCh38", "hg38")
+GRCH38_SPELLINGS = ("GRCh38", "hg38", "b38")
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -90,7 +93,10 @@ def query_detail(case_key, uid):
     ]
 
 
-def evaluate(rule, case_key, uid, build_name, assembly=None, own_uids=None, matches=None):
+_UNSET = object()
+
+
+def evaluate(rule, case_key, uid, build_name, assembly=_UNSET, own_uids=None, matches=None):
     """PS1 or PM5 for the real record `uid` taken as the query variant, in `build_name`, through the real evaluator."""
     detail, codon = query_detail(case_key, uid)
     pos, ref, alt = own_query(case_key, uid)[build_name]
@@ -103,7 +109,7 @@ def evaluate(rule, case_key, uid, build_name, assembly=None, own_uids=None, matc
         pos,
         ref,
         alt,
-        assembly=assembly or build_name,
+        assembly=build_name if assembly is _UNSET else assembly,
         own_uids=own_uids,
     )
 
@@ -181,7 +187,9 @@ class TestAssemblyAliases(unittest.TestCase):
                 self.assertTrue(result["assembly_unresolved"])
                 self.assertIsNone(result["assembly"])
                 self.assertEqual(result["matches"], [])
-                self.assertIn("not a supported build", result["reason"])
+                self.assertIn(
+                    "no genome assembly was provided" if value is None else "not a supported build", result["reason"]
+                )
 
     def test_pm5_and_ps1_become_not_evaluated_with_an_explicit_reason_when_the_assembly_is_unresolved(self):
         codon_result = {
@@ -203,6 +211,140 @@ class TestAssemblyAliases(unittest.TestCase):
             self.assertEqual(result.status, "not_evaluated")
             self.assertIn("could not be resolved to GRCh37 or GRCh38", result.rationale)
             self.assertIn("'GRCh38.p14'", result.rationale)
+
+
+# approved assembly policy (Phase 0 audit): the complete matrix
+APPROVED_GRCH37 = ("GRCh37", "GRCH37", "hg19", "b37")
+APPROVED_GRCH38 = ("GRCh38", "hg38", "b38")
+REJECTED_SPELLINGS = (
+    "37",
+    "38",
+    "GRCh38.p13",
+    "GRCh38.p14",
+    "GRCh37.p13",
+    "GRCh-37",
+    "grch_37",
+    "GRCh36",
+    "",
+    "hg18",
+    "foo",
+)
+
+
+class TestApprovedAssemblySpellingMatrix(unittest.TestCase):
+    """The approved policy as one matrix: accepted spellings, rejected spellings, and the missing assembly (None)."""
+
+    def test_every_approved_spelling_resolves_to_its_build(self):
+        for spelling in APPROVED_GRCH37:
+            self.assertEqual(canonical_build(spelling), "GRCh37", spelling)
+        for spelling in APPROVED_GRCH38:
+            self.assertEqual(canonical_build(spelling), "GRCh38", spelling)
+
+    def test_b38_is_a_grch38_alias_and_nothing_else_was_added(self):
+        self.assertEqual(canonical_build("b38"), "GRCh38")
+        # the complete alias table, pinned: a new spelling must be added here deliberately
+        from pipeline.ps1_pm5.utils import _BUILD_ALIASES
+
+        self.assertEqual(
+            _BUILD_ALIASES,
+            {
+                "grch37": "GRCh37",
+                "hg19": "GRCh37",
+                "b37": "GRCh37",
+                "grch38": "GRCh38",
+                "hg38": "GRCh38",
+                "b38": "GRCh38",
+            },
+        )
+
+    def test_every_rejected_spelling_and_every_non_string_is_unresolved(self):
+        for value in REJECTED_SPELLINGS + (" ", None, 37, 38.0, ["GRCh38"], b"GRCh38"):
+            self.assertIsNone(canonical_build(value), repr(value))
+
+    def test_the_documented_case_and_whitespace_tolerance_is_unchanged(self):
+        """Kept from the original C3 implementation; narrowing it to the literal list is an open policy decision."""
+        for value, expected in (("grch37", "GRCh37"), ("HG19", "GRCh37"), (" B38 ", "GRCh38"), ("\thg38\n", "GRCh38")):
+            self.assertEqual(canonical_build(value), expected, repr(value))
+
+    def test_approved_spellings_run_the_lookup_in_the_right_build_and_rejected_ones_never_reach_ncbi(self):
+        for value in APPROVED_GRCH37 + APPROVED_GRCH38 + REJECTED_SPELLINGS + (None,):
+            lookup = ClinVarCodonLookup(cache=ClinVarCodonCache(max_size=10, ttl_seconds=60))
+            terms = []
+            with (
+                mock.patch.object(lookup, "_esearch", side_effect=lambda term: terms.append(term) or []),
+                mock.patch.object(lookup, "_fetch_submitters", return_value={}),
+            ):
+                result = lookup.query_codon(_FakeTranscript(), 653, assembly=value)
+            with self.subTest(value=value):
+                if value in APPROVED_GRCH37:
+                    self.assertEqual((result["assembly"], terms), ("GRCh37", ["5[chr] AND 149981550[chrpos37]"]))
+                elif value in APPROVED_GRCH38:
+                    self.assertEqual((result["assembly"], terms), ("GRCh38", ["5[chr] AND 149981550[chrpos38]"]))
+                else:
+                    self.assertEqual(terms, [])  # no Entrez request, in particular no silent GRCh38 search
+                    self.assertTrue(result["assembly_unresolved"])
+                    self.assertIsNone(result["assembly"])
+                    self.assertEqual(result["matches"], [])
+
+    def test_ps1_and_pm5_are_not_evaluated_for_every_rejected_spelling_and_for_none(self):
+        detail, _ = query_detail(SLC26A2, OWN_SLC26A2)
+        pos, ref, alt = own_query(SLC26A2, OWN_SLC26A2)["GRCh38"]
+        variant = {"chrom": "5", "pos": pos, "ref": ref, "alt": alt}
+        for value in REJECTED_SPELLINGS + (None,):
+            lookup = ClinVarCodonLookup(cache=ClinVarCodonCache(max_size=10, ttl_seconds=60))
+            with mock.patch.object(lookup, "_esearch") as esearch:
+                codon_result = lookup.query_codon(_FakeTranscript(), 653, assembly=value)
+            esearch.assert_not_called()
+            for rule in (ACMGRuleEngine._ps1, ACMGRuleEngine._pm5):
+                with mock.patch.object(
+                    ACMGRuleEngine, "_ps1_pm5_query_context", staticmethod(lambda vd, tr: (None, pos, ref, alt, detail))
+                ):
+                    result = rule(variant_dict=variant, transcript_result={}, clinvar_codon_result=codon_result)
+                with self.subTest(value=value, rule=result.code):
+                    self.assertEqual(result.status, "not_evaluated")
+                    self.assertEqual(result.supporting_evidence, [])
+
+    def test_a_missing_assembly_is_reported_as_missing_and_never_becomes_grch38(self):
+        lookup = ClinVarCodonLookup(cache=ClinVarCodonCache(max_size=10, ttl_seconds=60))
+        with mock.patch.object(lookup, "_esearch") as esearch:
+            missing = lookup.query_codon(_FakeTranscript(), 653, assembly=None)
+            unsupported = lookup.query_codon(_FakeTranscript(), 653, assembly="GRCh38.p14")
+        esearch.assert_not_called()
+        self.assertIsNone(missing["assembly"])
+        self.assertIsNone(missing["assembly_input"])
+        self.assertIn("no genome assembly was provided", missing["reason"])
+        self.assertEqual(unsupported["assembly_input"], "GRCh38.p14")
+        self.assertIn("not a supported build", unsupported["reason"])
+        detail, _ = query_detail(SLC26A2, OWN_SLC26A2)
+        pos, ref, alt = own_query(SLC26A2, OWN_SLC26A2)["GRCh38"]
+        with mock.patch.object(
+            ACMGRuleEngine, "_ps1_pm5_query_context", staticmethod(lambda vd, tr: (None, pos, ref, alt, detail))
+        ):
+            result = ACMGRuleEngine._ps1(
+                variant_dict={"chrom": "5", "pos": pos, "ref": ref, "alt": alt},
+                transcript_result={},
+                clinvar_codon_result=missing,
+            )
+        self.assertEqual(result.status, "not_evaluated")
+        self.assertIn("no genome assembly was provided", result.rationale)
+        self.assertNotIn("GRCh38", result.rationale)  # the build is never named: nothing was assumed
+
+    def test_the_decision_layer_never_judges_identity_in_an_unresolved_build(self):
+        for value in REJECTED_SPELLINGS + (None,):
+            ps1 = evaluate("PS1", SLC26A2, OWN_SLC26A2, "GRCh37", assembly=value, own_uids=None)
+            with self.subTest(value=value):
+                self.assertFalse(ps1.applies)
+                self.assertEqual(uids(ps1.matched_anchors), [])
+                self.assertTrue(ps1.excluded_records)
+                self.assertTrue(
+                    all(e["reason_code"] == D.REASON_UNVERIFIED_ASSEMBLY for e in ps1.excluded_records),
+                )
+
+    def test_b38_behaves_exactly_like_grch38_in_the_decision_layer(self):
+        for rule in ("PS1", "PM5"):
+            a = evaluate(rule, TP53, OWN_TP53["c.711G>T"], "GRCh38", assembly="b38")
+            b = evaluate(rule, TP53, OWN_TP53["c.711G>T"], "GRCh38", assembly="GRCh38")
+            self.assertEqual(a.to_dict(), b.to_dict(), rule)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -646,6 +788,238 @@ class TestIdentityIsIndependentOfTheCodonCache(unittest.TestCase):
         self.assertTrue(result["matches"])
 
 
+class TestStaleCodonCacheEntriesAreNeverTrusted(unittest.TestCase):
+    """
+    Cache compatibility (ClinVar audit C3). An entry is served only if it was written by the current code for the
+    requested build; anything else is a miss, the lookup is repeated, and no stale record can become an anchor. A
+    refetch that fails yields an explicit error (PS1/PM5 not evaluated), never the stale data and never a GRCh38
+    fallback. Existing cache files are only ever appended to.
+    """
+
+    class _Tx:
+        transcript_id = "NM_000546.6"
+        chrom = "17"
+
+        def genomic_positions_for_codon(self, codon):
+            return [7577570]
+
+    STALE_UID = "STALE000001"
+
+    def _stale_match(self, build_name, with_positions=True):
+        match = copy.deepcopy(codon_matches(TP53, 237)[0])
+        match.update(uid=self.STALE_UID, accession="VCV" + self.STALE_UID, clinical_significance="Pathogenic")
+        match.update(star_rating=3, is_conflicting=False)
+        if with_positions:
+            match["pos_by_build"] = {build_name: match["pos"]}
+        else:
+            match.pop("pos_by_build", None)
+        return match
+
+    def _entry(self, build_name, **overrides):
+        entry = {
+            "skipped": False,
+            "found": True,
+            "source": "ncbi_eutils",
+            "transcript_id": "NM_000546.6",
+            "codon_number": 237,
+            "assembly": build_name,
+            "match_schema": MATCH_SCHEMA,
+            "matches": [self._stale_match(build_name)],
+            "error": None,
+            "incomplete": False,
+            "incomplete_reason": None,
+        }
+        entry.update(overrides)
+        return entry
+
+    def _fresh_matches(self):
+        out = [clinvar_codon_match_from_esummary(u, e) for u, e in CASES[TP53]["entries"].items()]
+        return [m for m in out if m is not None and m.codon_number == 237]
+
+    def _query(self, cache, build_name, **patch):
+        lookup = ClinVarCodonLookup(cache=cache)
+        esearch = patch.get("esearch") or mock.Mock(return_value=["634770"])
+        with (
+            mock.patch.object(lookup, "_esearch", esearch),
+            mock.patch.object(lookup, "_esummary", return_value=self._fresh_matches()),
+            mock.patch.object(lookup, "_fetch_submitters", return_value={}),
+        ):
+            result = lookup.query_codon(self._Tx(), 237, assembly=build_name)
+        return result, esearch
+
+    def _assert_refetched_and_stale_unused(self, result, esearch, build_name):
+        esearch.assert_called()
+        self.assertEqual(result["source"], "ncbi_eutils")
+        self.assertEqual(result["assembly"], build_name)
+        self.assertEqual(result["match_schema"], MATCH_SCHEMA)
+        self.assertNotIn(self.STALE_UID, [m["uid"] for m in result["matches"]])
+        self.assertTrue(result["matches"])
+        self.assertTrue(all(isinstance(m.get("pos_by_build"), dict) for m in result["matches"]))
+
+    def _key(self, build_name):
+        return f"codon:v{MATCH_SCHEMA}:{build_name}:NM_000546.6:237"
+
+    def test_a_valid_entry_for_the_requested_build_is_served_without_a_request(self):
+        for build_name in ("GRCh37", "GRCh38"):
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key(build_name), self._entry(build_name))
+            result, esearch = self._query(cache, build_name)
+            with self.subTest(build=build_name):
+                esearch.assert_not_called()
+                self.assertEqual(result["source"], "cache")
+                self.assertEqual([m["uid"] for m in result["matches"]], [self.STALE_UID])
+
+    def test_an_entry_from_before_c3_without_identity_metadata_is_a_miss(self):
+        for build_name, old_key in (("GRCh37", "codon:GRCh37:NM_000546.6:237"), ("GRCh38", "codon:NM_000546.6:237")):
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            old = {"skipped": False, "found": True, "source": "ncbi_eutils", "matches": [self._stale_match("GRCh38")]}
+            for m in old["matches"]:
+                m.pop("pos_by_build")
+            cache.put(old_key, old)
+            # the same stale shape even if it somehow sat under the current key: no schema marker, no assembly
+            cache.put(self._key(build_name), dict(old))
+            result, esearch = self._query(cache, build_name)
+            with self.subTest(build=build_name):
+                self._assert_refetched_and_stale_unused(result, esearch, build_name)
+
+    def test_a_grch37_entry_is_never_used_for_a_grch38_request_and_vice_versa(self):
+        for requested, other in (("GRCh38", "GRCh37"), ("GRCh37", "GRCh38")):
+            # (a) the other build's entry in its own slot: the request's key is simply absent
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key(other), self._entry(other))
+            result, esearch = self._query(cache, requested)
+            with self.subTest(requested=requested, case="other build's slot"):
+                self._assert_refetched_and_stale_unused(result, esearch, requested)
+            # (b) the other build's content sitting under THIS request's key (a mislabelled or copied entry)
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key(requested), self._entry(other))
+            result, esearch = self._query(cache, requested)
+            with self.subTest(requested=requested, case="mislabelled entry"):
+                self._assert_refetched_and_stale_unused(result, esearch, requested)
+
+    def test_an_entry_with_another_or_missing_match_schema_is_a_miss(self):
+        for bad in (MATCH_SCHEMA - 1, MATCH_SCHEMA + 1, None, "2", str(MATCH_SCHEMA), 2.5, True):
+            if bad == MATCH_SCHEMA:  # 2 == 2.0 would pass; not a case here
+                continue
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key("GRCh37"), self._entry("GRCh37", match_schema=bad))
+            result, esearch = self._query(cache, "GRCh37")
+            with self.subTest(match_schema=bad):
+                self._assert_refetched_and_stale_unused(result, esearch, "GRCh37")
+        cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+        entry = self._entry("GRCh37")
+        del entry["match_schema"]
+        cache.put(self._key("GRCh37"), entry)
+        result, esearch = self._query(cache, "GRCh37")
+        self._assert_refetched_and_stale_unused(result, esearch, "GRCh37")
+
+    def test_an_entry_with_missing_or_incomplete_pos_by_build_is_a_miss(self):
+        bad_match_sets = {
+            "key absent": [self._stale_match("GRCh37", with_positions=False)],
+            "None": [dict(self._stale_match("GRCh37"), pos_by_build=None)],
+            "list": [dict(self._stale_match("GRCh37"), pos_by_build=[7577570])],
+            "one record lacks it": [self._stale_match("GRCh37"), self._stale_match("GRCh37", with_positions=False)],
+            "match not a dict": [self._stale_match("GRCh37"), "VCV000000001"],
+            "matches None": None,
+            "matches a dict": {"uid": "x"},
+        }
+        for label, matches in bad_match_sets.items():
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key("GRCh37"), self._entry("GRCh37", matches=matches))
+            result, esearch = self._query(cache, "GRCh37")
+            with self.subTest(case=label):
+                self._assert_refetched_and_stale_unused(result, esearch, "GRCh37")
+
+    def test_an_entry_with_empty_but_present_pos_by_build_is_valid_and_judged_unverified_not_trusted(self):
+        """A real record ClinVar placed in no build has `pos_by_build == {}`; that is a legitimate stored shape."""
+        cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+        match = self._stale_match("GRCh37")
+        match["pos_by_build"] = {}
+        cache.put(self._key("GRCh37"), self._entry("GRCh37", matches=[match]))
+        result, esearch = self._query(cache, "GRCh37")
+        esearch.assert_not_called()
+        self.assertEqual(result["source"], "cache")
+        verdict = identify_record(result["matches"][0], "GRCh37", 7577570, "C", "A")
+        self.assertEqual(verdict.verdict, D.IDENTITY_UNVERIFIED)  # never an anchor
+
+    def test_an_unusable_entry_never_yields_an_anchor_even_when_the_refetch_fails(self):
+        for label, entry in (
+            ("old shape", {"skipped": False, "found": True, "matches": [self._stale_match("GRCh37", False)]}),
+            ("other build", self._entry("GRCh38")),
+            ("other schema", self._entry("GRCh37", match_schema=1)),
+        ):
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+            cache.put(self._key("GRCh37"), entry)
+            failing = mock.Mock(side_effect=ExternalAPIError("simulated outage"))
+            result, esearch = self._query(cache, "GRCh37", esearch=failing)
+            with self.subTest(case=label):
+                esearch.assert_called()
+                self.assertEqual(result["matches"], [])
+                self.assertIn("simulated outage", result["error"])
+                self.assertEqual(result["assembly"], "GRCh37")  # never silently GRCh38
+                detail, _ = query_detail(TP53, OWN_TP53["c.711G>T"])
+                pos, ref, alt = own_query(TP53, OWN_TP53["c.711G>T"])["GRCh37"]
+                for rule in (ACMGRuleEngine._ps1, ACMGRuleEngine._pm5):
+                    with mock.patch.object(
+                        ACMGRuleEngine,
+                        "_ps1_pm5_query_context",
+                        staticmethod(lambda vd, tr: (None, pos, ref, alt, detail)),
+                    ):
+                        outcome = rule(
+                            variant_dict={"chrom": "17", "pos": pos, "ref": ref, "alt": alt},
+                            transcript_result={},
+                            clinvar_codon_result=result,
+                        )
+                    self.assertEqual(outcome.status, "not_evaluated")
+                    self.assertNotIn(self.STALE_UID, " ".join(outcome.supporting_evidence))
+
+    def test_an_unresolved_assembly_never_reads_the_cache_at_all(self):
+        cache = ClinVarCodonCache(max_size=10, ttl_seconds=60)
+        for build_name in ("GRCh37", "GRCh38"):
+            cache.put(self._key(build_name), self._entry(build_name))
+        for value in (None, "", "37", "GRCh38.p14"):
+            hits_before = cache.stats()["hits"]
+            result, esearch = self._query(cache, value)
+            with self.subTest(value=value):
+                esearch.assert_not_called()
+                self.assertTrue(result["assembly_unresolved"])
+                self.assertEqual(result["matches"], [])
+                self.assertEqual(cache.stats()["hits"], hits_before)
+
+    def test_existing_cache_files_are_never_rewritten_or_deleted_only_appended_to(self):
+        old_line = json.dumps({"key": "codon:GRCh37:NM_000546.6:237", "value": {"found": True, "matches": []}})
+        mislabelled = json.dumps({"key": self._key("GRCh37"), "value": self._entry("GRCh38")})
+        no_positions = json.dumps(
+            {
+                "key": "codon:v2:GRCh38:NM_000546.6:237",
+                "value": self._entry("GRCh38", matches=[self._stale_match("GRCh38", False)]),
+            }
+        )
+        original = ("\n".join([old_line, mislabelled, "not json at all", no_positions]) + "\n").encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ps1_pm5_cache.jsonl")
+            with open(path, "wb") as fh:
+                fh.write(original)
+            before_mtime = os.stat(path).st_mtime_ns
+            for build_name in ("GRCh37", "GRCh38"):
+                cache = ClinVarCodonCache(max_size=10, ttl_seconds=60, disk_path=path)
+                result, esearch = self._query(cache, build_name)
+                self._assert_refetched_and_stale_unused(result, esearch, build_name)
+            with open(path, "rb") as fh:
+                after = fh.read()
+            self.assertTrue(after.startswith(original))  # every original byte is still there, unchanged
+            appended = [json.loads(line) for line in after[len(original) :].decode("utf-8").splitlines() if line]
+            self.assertTrue(appended)
+            self.assertTrue(all(a["value"]["match_schema"] == MATCH_SCHEMA for a in appended))
+            self.assertGreaterEqual(os.stat(path).st_mtime_ns, before_mtime)
+            # a second process reading the file now finds the fresh entries and serves them without a request
+            cache = ClinVarCodonCache(max_size=10, ttl_seconds=60, disk_path=path)
+            again, esearch = self._query(cache, "GRCh37")
+            esearch.assert_not_called()
+            self.assertEqual(again["source"], "cache")
+            self.assertNotIn(self.STALE_UID, [m["uid"] for m in again["matches"]])
+
+
 # ---------------------------------------------------------------------------------------------------
 # 5. indels, C2 record roles
 # ---------------------------------------------------------------------------------------------------
@@ -1026,6 +1400,316 @@ class TestDecisionRelevantExclusionsChangeTheContentHash(unittest.TestCase):
         self.assertEqual(len(rule(vr_b, "PS1")["details"]["excluded_records"]), 2)  # the note is in the JSON detail ...
         for version in (1, 2):  # ... but not in either hash version
             self.assertEqual(compute_content_hash(doc_a, version), compute_content_hash(doc_b, version))
+
+
+# ---------------------------------------------------------------------------------------------------
+# 10. sign-off: what a signed report's content hash does and does not detect for PS1/PM5 evidence
+# ---------------------------------------------------------------------------------------------------
+
+with open(os.path.join(_FIXTURES, "c3_signed_documents_ps1_pm5.json"), "r", encoding="utf-8") as _fh:
+    SIGNED = json.load(_fh)
+with open(os.path.join(_FIXTURES, "c2_content_hash_legacy_documents.json"), "r", encoding="utf-8") as _fh:
+    LEGACY_DOCS = json.load(_fh)
+
+# SHA-256 of the two frozen fixtures: they hold the historical digests, and editing either would silently redefine
+# what "an existing signed report still verifies" means. A deliberate fixture change must update these.
+FIXTURE_SHA256 = {
+    "c2_content_hash_legacy_documents.json": "4d9095d8037397a606177b45ada7da85751f24add512cb864d13f5f1f1ca0129",
+    "c3_signed_documents_ps1_pm5.json": "049bd648613d05f5dc84e6aa3ef6bcb4670f87b74fd1f042dfc3ea680f702c78",
+}
+
+
+def _signed(document, version):
+    """A document sealed the way `review/signoff.py::approve()` seals it (version 2 declares itself; version 1 does not)."""
+    out = copy.deepcopy(document)
+    if version == 2:
+        out["content_hash_version"] = 2
+    out["content_hash"] = compute_content_hash(out, version)
+    return out
+
+
+def _clinical_report(document):
+    """The object `report/models.py` reads the evidence trail from (candidate_interpretation, else clinical_report)."""
+    variant = document["variants"][0]
+    return variant.get("candidate_interpretation") or variant.get("clinical_report")
+
+
+def _tp53_codon(extra=None, drop=(), edit=None):
+    base = codon_result_for(TP53, 237, "GRCh37")
+    base["matches"] = [m for m in base["matches"] if m["uid"] not in drop] + list(extra or [])
+    for m in base["matches"]:
+        if edit and m["uid"] in edit:
+            m.update(edit[m["uid"]])
+    return base
+
+
+class TestSignedReportHashAndPs1Pm5Evidence(unittest.TestCase):
+    OWN = OWN_TP53["c.711G>T"]
+
+    def doc(self, codon_result, case=TP53, uid=None):
+        return full_chain(case, uid or self.OWN, "GRCh37", codon_result)[:2]
+
+    def assertSealsDiffer(self, doc_a, doc_b, msg=""):
+        for version in (1, 2):
+            a, b = _signed(doc_a, version), _signed(doc_b, version)
+            self.assertNotEqual(a["content_hash"], b["content_hash"], f"{msg} (hash version {version})")
+            # a report signed on one document does not verify against the other's content
+            self.assertTrue(verify_content_hash(a, a["content_hash"]))
+            self.assertFalse(verify_content_hash({**b, "content_hash": a["content_hash"]}, a["content_hash"]))
+
+    def _extra_record(self, uid, accession, **fields):
+        """A same-amino-acid TP53 codon-237 record, copied from a real one, at the real G>A position (another allele)."""
+        record = copy.deepcopy(next(m for m in codon_matches(TP53, 237) if m["uid"] == OWN_TP53["c.711G>A"]))
+        record.update(uid=uid, accession=accession, **fields)
+        return record
+
+    # ---- 1. supporting anchor ------------------------------------------------------------------------------------
+
+    def test_changing_a_supporting_anchor_changes_the_hash(self):
+        _, base = self.doc(_tp53_codon())
+        anchors = [m["uid"] for m in codon_matches(TP53, 237) if m["uid"] != self.OWN]
+        self.assertEqual(len(anchors), 2)
+        variants = {
+            "an anchor is removed": _tp53_codon(drop=(anchors[0],)),
+            "an anchor's accession differs": _tp53_codon(edit={anchors[0]: {"accession": "VCV000999999"}}),
+            "an anchor's classification differs": _tp53_codon(
+                edit={anchors[0]: {"clinical_significance": "Likely pathogenic"}}
+            ),
+            "an anchor's review status differs": _tp53_codon(
+                edit={anchors[0]: {"review_status": "no assertion criteria provided"}}
+            ),
+            "a further anchor is added": _tp53_codon(extra=[self._extra_record("5555551", "VCV005555551")]),
+        }
+        for label, codon in variants.items():
+            _, other = self.doc(codon)
+            self.assertNotEqual(
+                _clinical_report(base)["supporting_evidence"], _clinical_report(other)["supporting_evidence"], label
+            )
+            self.assertSealsDiffer(base, other, label)
+
+    def test_editing_the_supporting_evidence_of_a_signed_report_breaks_its_seal(self):
+        _, document = self.doc(_tp53_codon())
+        for version in (1, 2):
+            signed = _signed(document, version)
+            self.assertTrue(verify_content_hash(signed, signed["content_hash"]))
+            tampered = copy.deepcopy(signed)
+            evidence = _clinical_report(tampered)["supporting_evidence"]
+            index = next(i for i, e in enumerate(evidence) if "VCV001757269" in e)
+            evidence[index] = evidence[index].replace("VCV001757269", "VCV001757270")
+            self.assertFalse(verify_content_hash(tampered, signed["content_hash"]), f"hash version {version}")
+            tampered["review_status"] = "reviewed"
+            with self.assertRaises(signoff_module.SignoffError):
+                signoff_module.require_reviewed(tampered, "test consumer")
+
+    # ---- 2. conflicting anchor -----------------------------------------------------------------------------------
+
+    def test_changing_a_conflicting_anchor_changes_the_hash(self):
+        low = lambda uid: self._extra_record(uid, "VCV00" + uid, star_rating=0)  # noqa: E731  seen but below the bar
+        _, none_rejected = self.doc(_tp53_codon())
+        _, one_rejected = self.doc(_tp53_codon(extra=[low("5555552")]))
+        _, two_rejected = self.doc(_tp53_codon(extra=[low("5555552"), low("5555553")]))
+        self.assertEqual(_clinical_report(none_rejected)["conflicting_evidence"], [])
+        self.assertEqual(len(_clinical_report(one_rejected)["conflicting_evidence"]), 1)
+        self.assertNotEqual(
+            _clinical_report(one_rejected)["conflicting_evidence"],
+            _clinical_report(two_rejected)["conflicting_evidence"],
+        )
+        self.assertSealsDiffer(none_rejected, one_rejected, "a rejected record appears")
+        self.assertSealsDiffer(one_rejected, two_rejected, "the number of rejected records changes")
+        # an anchor turning conflicting moves from supporting to conflicting evidence
+        anchor = next(m["uid"] for m in codon_matches(TP53, 237) if m["uid"] != self.OWN)
+        _, turned = self.doc(_tp53_codon(edit={anchor: {"is_conflicting": True}}))
+        self.assertSealsDiffer(none_rejected, turned, "an anchor becomes conflicting")
+
+    # ---- 3. triggered criterion ----------------------------------------------------------------------------------
+
+    def test_changing_the_triggered_criterion_changes_the_hash_and_editing_it_breaks_the_seal(self):
+        _, triggered = self.doc(_tp53_codon())  # PS1 triggered
+        _, not_triggered = self.doc(_tp53_codon(drop=tuple(m["uid"] for m in codon_matches(TP53, 237))))
+        self.assertEqual(
+            [c["code"] for c in _clinical_report(triggered)["acmg_classification"]["triggered_criteria"]], ["PS1"]
+        )
+        self.assertSealsDiffer(triggered, not_triggered, "PS1 triggered vs not triggered")
+        for version in (1, 2):
+            signed = _signed(triggered, version)
+            for field, replacement in (("code", "PM5"), ("strength", "supporting"), ("direction", "benign")):
+                tampered = copy.deepcopy(signed)
+                _clinical_report(tampered)["acmg_classification"]["triggered_criteria"][0][field] = replacement
+                self.assertFalse(verify_content_hash(tampered, signed["content_hash"]), f"{field} v{version}")
+            removed = copy.deepcopy(signed)
+            _clinical_report(removed)["acmg_classification"]["triggered_criteria"] = []
+            self.assertFalse(verify_content_hash(removed, signed["content_hash"]), f"removed v{version}")
+
+    # ---- 4/5. excluded records -----------------------------------------------------------------------------------
+
+    def _ghost(self, codon_result, uid, accession, *, strip_positions=False, ref=None):
+        """A same-position, same-ALT copy of the query's own record, under another UID (so the UID safeguard cannot apply)."""
+        record = copy.deepcopy(next(m for m in codon_result["matches"] if m["uid"] == OWN_SLC26A2))
+        record.update(uid=uid, accession=accession)
+        if strip_positions:
+            record.pop("pos_by_build")
+        if ref:
+            record["ref"] = ref
+        codon_result["matches"].append(record)
+
+    def test_changing_an_excluded_records_accession_changes_the_hash(self):
+        base = codon_result_for(SLC26A2, 653, "GRCh37")
+        a, b = copy.deepcopy(base), copy.deepcopy(base)
+        self._ghost(a, "7777771", "VCV007777771", strip_positions=True)
+        self._ghost(b, "7777772", "VCV007777772", strip_positions=True)
+        vr_a, doc_a = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", a)[:2]
+        vr_b, doc_b = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", b)[:2]
+        for vr in (vr_a, vr_b):
+            self.assertEqual(rule(vr, "PS1")["status"], "not_triggered")
+        self.assertEqual([e["accession"] for e in rule(vr_a, "PS1")["details"]["excluded_records"]][-1], "VCV007777771")
+        self.assertEqual([e["accession"] for e in rule(vr_b, "PS1")["details"]["excluded_records"]][-1], "VCV007777772")
+        self.assertSealsDiffer(doc_a, doc_b, "the unverifiable record has another accession")
+
+    def test_changing_an_exclusion_from_identity_unverified_to_ref_mismatch_is_detected(self):
+        base = codon_result_for(SLC26A2, 653, "GRCh37")
+        unverified, mismatch = copy.deepcopy(base), copy.deepcopy(base)
+        self._ghost(unverified, "7777773", "VCV007777773", strip_positions=True)  # no per-build positions: unverifiable
+        self._ghost(mismatch, "7777773", "VCV007777773", ref="N")  # same position and ALT, other REF
+        vr_u, doc_u = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", unverified)[:2]
+        vr_m, doc_m = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", mismatch)[:2]
+        reason = lambda vr: [e["reason_code"] for e in rule(vr, "PS1")["details"]["excluded_records"]][-1]  # noqa: E731
+        self.assertEqual(reason(vr_u), D.REASON_UNVERIFIED_LEGACY_SHAPE)
+        self.assertEqual(reason(vr_m), D.REASON_REF_MISMATCH)
+        self.assertEqual(rule(vr_u, "PS1")["status"], rule(vr_m, "PS1")["status"])  # the PS1 status itself is the same
+        self.assertSealsDiffer(doc_u, doc_m, "unverified -> ref_mismatch")
+
+    def test_an_exclusion_that_changes_no_decision_and_no_reviewer_text_is_not_a_clinical_change(self):
+        """Own-record exclusion by UID vs by coordinates: the same record, the same evidence, only the internal reason differs."""
+        _, doc_a = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", codon_result_for(SLC26A2, 653, "GRCh37"))[:2]
+        by_uid = copy.deepcopy(doc_a)
+        by_coordinates = copy.deepcopy(doc_a)
+        for document, reason in ((by_uid, D.REASON_OWN_VARIANT_LEVEL_UID), (by_coordinates, D.REASON_OWN_COORDINATES)):
+            ps1 = next(
+                r for r in document["variants"][0]["interpretation_result"]["not_triggered_rules"] if r["code"] == "PS1"
+            )
+            ps1["details"]["excluded_records"][0]["reason_code"] = reason
+        for version in (1, 2):
+            self.assertEqual(compute_content_hash(by_uid, version), compute_content_hash(by_coordinates, version))
+
+    # ---- what the hash does NOT see (documented, characterised) --------------------------------------------------
+
+    def test_known_limitation_structured_exclusion_details_alone_are_not_in_the_hash(self):
+        """
+        CHARACTERISATION, not a requirement. The hash reads the evidence trail a reviewer is shown (triggered criteria,
+        supporting/conflicting evidence) -- the decision-relevant consequence of every exclusion is in it (tests above).
+        The structured `details` of a criterion (`excluded_records`, `caveats_checked`, `unchecked_caveats`) are NOT read
+        by `report/models.py::_extract_clinical_content`, so editing them alone, or swapping one rejected record for
+        another of the same count, leaves a signed report's seal intact. Closing this needs a new hash version
+        (documented in PS1_PM5_ASSEMBLY_IDENTITY.md); when that is approved this test must change with it.
+        """
+        base = codon_result_for(SLC26A2, 653, "GRCh37")
+        self._ghost(base, "7777774", "VCV007777774", strip_positions=True)
+        vr, document = full_chain(SLC26A2, OWN_SLC26A2, "GRCh37", base)[:2]
+        for version in (1, 2):
+            signed = _signed(document, version)
+            tampered = copy.deepcopy(signed)
+            ps1 = next(
+                r for r in tampered["variants"][0]["interpretation_result"]["not_triggered_rules"] if r["code"] == "PS1"
+            )
+            for entry in ps1["details"]["excluded_records"]:
+                entry.update(accession="VCV000000001", uid="1", reason_code="anything", verdict="own", title="other")
+            ps1["details"]["caveats_checked"] = ["edited"]
+            ps1["details"]["unchecked_caveats"] = ["edited"]
+            self.assertTrue(verify_content_hash(tampered, signed["content_hash"]), f"v{version}")
+        # two different rejected records, same count: identical hash
+        low_a, low_b = copy.deepcopy(_tp53_codon()), copy.deepcopy(_tp53_codon())
+        low_a["matches"].append(self._extra_record("5555561", "VCV005555561", star_rating=0, title="record A"))
+        low_b["matches"].append(self._extra_record("5555562", "VCV005555562", star_rating=0, title="record B"))
+        (_, doc_a), (_, doc_b) = self.doc(low_a), self.doc(low_b)
+        for version in (1, 2):
+            self.assertEqual(compute_content_hash(doc_a, version), compute_content_hash(doc_b, version))
+
+    # ---- 6. determinism -------------------------------------------------------------------------------------------
+
+    def test_hashes_are_deterministic(self):
+        _, first = self.doc(_tp53_codon())
+        _, second = self.doc(_tp53_codon())
+        shuffled = json.loads(json.dumps(first, sort_keys=True))  # same content, other key order
+        later = copy.deepcopy(first)
+        later.update(generated_at="2027-01-01T00:00:00+00:00", input_vcf="/elsewhere.vcf", reviewed_by="Someone Else")
+        for version in (1, 2):
+            digest = compute_content_hash(first, version)
+            self.assertEqual(digest, compute_content_hash(second, version))
+            self.assertEqual(digest, compute_content_hash(shuffled, version))
+            self.assertEqual(digest, compute_content_hash(later, version))  # run metadata is not clinical content
+            self.assertEqual(digest, compute_content_hash(first, version))
+            self.assertEqual(len(digest), 64)
+        self.assertNotEqual(compute_content_hash(first, 1), compute_content_hash(first, 2))  # versions never collide
+
+    # ---- 7/8. historical digests and signed reports ---------------------------------------------------------------
+
+    def test_the_two_fixtures_are_byte_for_byte_what_they_were(self):
+        import hashlib
+
+        for name, expected in FIXTURE_SHA256.items():
+            with open(os.path.join(_FIXTURES, name), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), expected, name)
+
+    def test_existing_version_1_and_version_2_digests_still_verify(self):
+        # (a) the three C2 legacy documents, v1 as produced by unmodified master and v2 as produced by C2's code
+        for name, digests in SIGNED["legacy_fixture_digests_v1_v2"].items():
+            document = LEGACY_DOCS["documents"][name]
+            self.assertEqual(compute_content_hash(document, 1), LEGACY_DOCS["master_digests"][name], name)
+            self.assertEqual(compute_content_hash(document, 1), digests["1"], name)
+            self.assertEqual(compute_content_hash(document, 2), digests["2"], name)
+        # (b) PS1/PM5-bearing documents "signed" under each version by the C2 hash code (a copy of the git blob)
+        for name, entry in SIGNED["signed_documents"].items():
+            document = entry["document"]
+            v1 = {**copy.deepcopy(document), "content_hash": entry["content_hash_v1"]}
+            v2 = {**copy.deepcopy(document), "content_hash_version": 2, "content_hash": entry["content_hash_v2"]}
+            with self.subTest(document=name):
+                self.assertEqual(content_hash_version_of(v1), 1)  # declares nothing: the legacy version
+                self.assertEqual(content_hash_version_of(v2), 2)
+                self.assertTrue(verify_content_hash(v1, entry["content_hash_v1"]))
+                self.assertTrue(verify_content_hash(v2, entry["content_hash_v2"]))
+                self.assertEqual(compute_content_hash(v1), entry["content_hash_v1"])
+                self.assertEqual(compute_content_hash(v2), entry["content_hash_v2"])
+                self.assertNotEqual(entry["content_hash_v1"], entry["content_hash_v2"])
+                # a seal never verifies under the other version's rules
+                self.assertFalse(verify_content_hash({**v1, "content_hash_version": 2}, entry["content_hash_v1"]))
+                signoff_module.require_reviewed({**v1, "review_status": "reviewed"}, "test consumer")
+                signoff_module.require_reviewed({**v2, "review_status": "reviewed"}, "test consumer")
+
+    def test_the_c3_code_still_produces_the_documents_that_were_signed(self):
+        """Rebuilding the PS1/PM5 documents with the current code gives the same hashed content as the frozen signed ones."""
+        for name, case, uid, codon, build, strip in (
+            ("tp53_grch37_ps1_triggered_own_excluded", TP53, OWN_TP53["c.711G>T"], 237, "GRCh37", False),
+            ("slc26a2_grch37_ps1_not_triggered_own_excluded_pm5_triggered", SLC26A2, OWN_SLC26A2, 653, "GRCh37", False),
+            ("slc26a2_grch37_identity_unverified_conflicting_evidence", SLC26A2, OWN_SLC26A2, 653, "GRCh37", True),
+            ("slc26a2_grch38_ps1_not_triggered_own_excluded_pm5_triggered", SLC26A2, OWN_SLC26A2, 653, "GRCh38", False),
+        ):
+            _, rebuilt = full_chain(case, uid, build, codon_result_for(case, codon, build, strip_positions=strip))[:2]
+            entry = SIGNED["signed_documents"][name]
+            with self.subTest(document=name):
+                self.assertEqual(compute_content_hash(rebuilt, 1), entry["content_hash_v1"])
+                self.assertEqual(compute_content_hash(rebuilt, 2), entry["content_hash_v2"])
+
+    def test_verifying_a_signed_report_never_rewrites_it_and_the_status_check_reads_it_as_consistent(self):
+        entry = SIGNED["signed_documents"]["tp53_grch37_ps1_triggered_own_excluded"]
+        for version, field in ((1, "content_hash_v1"), (2, "content_hash_v2")):
+            document = {**copy.deepcopy(entry["document"]), "content_hash": entry[field], "review_status": "reviewed"}
+            if version == 2:
+                document["content_hash_version"] = 2
+            before = json.dumps(document, sort_keys=True)
+            self.assertTrue(verify_content_hash(document, document["content_hash"]))
+            signoff_module.require_reviewed(document, "test consumer")
+            with tempfile.TemporaryDirectory() as tmp:
+                with open(os.path.join(tmp, signoff_module.RESULTS_FILENAME), "w", encoding="utf-8") as fh:
+                    json.dump(document, fh)
+                self.assertEqual(signoff_status.inspect_local(tmp).document_hash, "self_consistent")
+            self.assertEqual(json.dumps(document, sort_keys=True), before, f"version {version}")
+            self.assertEqual(document.get("content_hash_version"), 2 if version == 2 else None)
+
+    def test_an_unknown_declared_version_never_verifies(self):
+        entry = SIGNED["signed_documents"]["tp53_grch37_ps1_triggered_own_excluded"]
+        for bad in (0, 3, "2", 2.0, True):
+            document = {**copy.deepcopy(entry["document"]), "content_hash_version": bad}
+            self.assertFalse(verify_content_hash(document, entry["content_hash_v2"]), repr(bad))
 
 
 if __name__ == "__main__":

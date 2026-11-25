@@ -1255,9 +1255,14 @@ class ACMGRuleEngine:
         error = clinvar_codon_result.get("error")
         if clinvar_codon_result.get("assembly_unresolved"):
             # C3: the lookup was deliberately not run -- it would have had to guess GRCh37 or GRCh38.
+            assembly_input = clinvar_codon_result.get("assembly_input")
             reason = (
-                "the ClinVar codon lookup was not run because the genome assembly of this run "
-                f"({clinvar_codon_result.get('assembly_input')!r}) could not be resolved to GRCh37 or GRCh38"
+                "the ClinVar codon lookup was not run because no genome assembly was provided for this run"
+                if assembly_input is None
+                else (
+                    "the ClinVar codon lookup was not run because the genome assembly of this run "
+                    f"({assembly_input!r}) could not be resolved to GRCh37 or GRCh38"
+                )
             )
         elif error is not None:
             reason = f"the ClinVar codon lookup failed ({error or 'no detail returned'})"

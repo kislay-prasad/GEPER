@@ -57,6 +57,31 @@ _SKIPPED_RESULT = {
 }
 
 
+def _cached_result_is_usable(cached: Any, build: str) -> bool:
+    """
+    Whether a cached codon result may be served for a query in `build` (ClinVar audit C3). Anything not provably
+    written by the current code FOR THIS BUILD is a miss, so the lookup is repeated (and the entry overwritten in
+    memory / appended on disk -- an existing cache file is never deleted or rewritten):
+
+    * the stored match schema is not the current one (an older shape without per-assembly positions);
+    * the stored result's `assembly` is not exactly this query's canonical build (another build's entry,
+      or none);
+    * `matches` is not a list of dicts that each carry a `pos_by_build` mapping (the per-assembly positions the
+      identity decision needs; an entry without them could only ever yield "identity unverified").
+
+    A hit therefore never contributes an anchor that was judged in another build's coordinates, and nothing falls
+    back to GRCh38.
+    """
+    if not isinstance(cached, dict):
+        return False
+    if cached.get("match_schema") != MATCH_SCHEMA or cached.get("assembly") != build:
+        return False
+    matches = cached.get("matches")
+    if not isinstance(matches, list):
+        return False
+    return all(isinstance(m, dict) and isinstance(m.get("pos_by_build"), dict) for m in matches)
+
+
 class ClinVarCodonLookup:
     """High-level, cached ClinVar codon-neighborhood lookup used by the orchestrator's PS1/PM5 stage."""
 
@@ -80,7 +105,7 @@ class ClinVarCodonLookup:
         dict's `error` field, matching every other lookup in this
         codebase.
 
-        `assembly` is canonicalised (GRCh37/GRCH37/hg19/b37 -> GRCh37, GRCh38/hg38 -> GRCh38) for the
+        `assembly` is canonicalised (GRCh37/GRCH37/hg19/b37 -> GRCh37, GRCh38/hg38/b38 -> GRCh38) for the
         Entrez position field, the cache key and the result's `assembly` key. Anything else (None, "37",
         "GRCh38.p14", ...) is UNRESOLVED: the lookup is not run -- it would have to guess a build -- and
         the result says so (`assembly_unresolved`), which makes PS1/PM5 "not evaluated" rather than
@@ -101,8 +126,13 @@ class ClinVarCodonLookup:
                 "assembly_input": None if assembly is None else str(assembly),
                 "match_schema": MATCH_SCHEMA,
                 "reason": (
-                    f"the genome assembly of this run ({assembly!r}) is not a supported build "
-                    "(GRCh37/hg19/b37 or GRCh38/hg38), so the ClinVar codon lookup was not run."
+                    "no genome assembly was provided for this run, so the ClinVar codon lookup was not run "
+                    "(it would have to guess GRCh37 or GRCh38)."
+                    if assembly is None
+                    else (
+                        f"the genome assembly of this run ({assembly!r}) is not a supported build "
+                        "(GRCh37/hg19/b37 or GRCh38/hg38/b38), so the ClinVar codon lookup was not run."
+                    )
                 ),
             }
 
@@ -120,7 +150,7 @@ class ClinVarCodonLookup:
         key = f"codon:v{MATCH_SCHEMA}:{build}:{transcript.transcript_id}:{codon_number}"
         if self.cache is not None:
             cached = self.cache.get(key)
-            if cached is not None and cached.get("match_schema") == MATCH_SCHEMA and cached.get("assembly") == build:
+            if cached is not None and _cached_result_is_usable(cached, build):
                 result = dict(cached)
                 result["source"] = "cache"
                 return result
